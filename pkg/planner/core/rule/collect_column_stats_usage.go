@@ -297,7 +297,8 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 	// Save the current state of orderingColumns and joinColumns to restore after visiting children.
 	// This prevents columns from different branches of the plan tree from contaminating each other.
 	savedOrderingColumns := c.orderingColumns
-	savedJoinColumns := c.joinColumns
+	savedJoinColumns := make([]*expression.Column, len(c.joinColumns))
+	copy(savedJoinColumns, c.joinColumns)
 
 	switch x := lp.(type) {
 	case *logicalop.LogicalSort:
@@ -324,9 +325,10 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			c.orderingColumns = expression.ExtractColumnsFromExpressions(orderExprs, nil)
 		}
 	case *logicalop.LogicalJoin:
-		// Extract and store join columns to propagate to DataSource
+		// Extract and accumulate join columns to propagate to DataSource
 		// Note: LeftConditions and RightConditions are not join conditions between tables,
 		// they are filters on individual tables, so we only extract from EqualConditions and OtherConditions
+		// We accumulate (append) rather than replace to capture join columns from parent joins
 		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
 		for _, cond := range x.EqualConditions {
 			joinExprs = append(joinExprs, cond)
@@ -334,9 +336,12 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		for _, cond := range x.OtherConditions {
 			joinExprs = append(joinExprs, cond)
 		}
-		c.joinColumns = expression.ExtractColumnsFromExpressions(joinExprs, nil)
+		newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
+		// Append new join columns to existing ones to accumulate from parent joins
+		c.joinColumns = append(c.joinColumns, newJoinCols...)
 	case *logicalop.LogicalApply:
-		// Extract and store join columns to propagate to DataSource
+		// Extract and accumulate join columns to propagate to DataSource
+		// We accumulate (append) rather than replace to capture join columns from parent joins
 		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
 		for _, cond := range x.EqualConditions {
 			joinExprs = append(joinExprs, cond)
@@ -344,15 +349,44 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		for _, cond := range x.OtherConditions {
 			joinExprs = append(joinExprs, cond)
 		}
-		c.joinColumns = expression.ExtractColumnsFromExpressions(joinExprs, nil)
+		newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
+		// Append new join columns to existing ones to accumulate from parent joins
+		c.joinColumns = append(c.joinColumns, newJoinCols...)
 	}
 
 	for _, child := range lp.Children() {
 		// passing the new asked column groups down.
 		c.collectFromPlan(curColGroups, child)
-		// Restore the state after visiting each child to prevent cross-contamination between siblings
+		// Restore the state after visiting each child to prevent cross-contamination between siblings.
+		// For joinColumns, we restore to the value we had when entering this node (savedJoinColumns),
+		// which includes join columns from parent joins. Then we re-apply this node's join columns
+		// so that the next sibling sees the same accumulated join columns.
 		c.orderingColumns = savedOrderingColumns
-		c.joinColumns = savedJoinColumns
+		c.joinColumns = make([]*expression.Column, len(savedJoinColumns))
+		copy(c.joinColumns, savedJoinColumns)
+		// Re-apply this node's join columns if it's a join
+		switch x := lp.(type) {
+		case *logicalop.LogicalJoin:
+			joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+			for _, cond := range x.EqualConditions {
+				joinExprs = append(joinExprs, cond)
+			}
+			for _, cond := range x.OtherConditions {
+				joinExprs = append(joinExprs, cond)
+			}
+			newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
+			c.joinColumns = append(c.joinColumns, newJoinCols...)
+		case *logicalop.LogicalApply:
+			joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+			for _, cond := range x.EqualConditions {
+				joinExprs = append(joinExprs, cond)
+			}
+			for _, cond := range x.OtherConditions {
+				joinExprs = append(joinExprs, cond)
+			}
+			newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
+			c.joinColumns = append(c.joinColumns, newJoinCols...)
+		}
 	}
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
