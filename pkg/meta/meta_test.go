@@ -947,16 +947,6 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 			},
 			Enable: true,
 		},
-<<<<<<< HEAD
-		ForeignKeys: []*model.FKInfo{{
-			ID:       1,
-			Name:     pmodel.NewCIStr("fk"),
-			RefTable: pmodel.NewCIStr("t"),
-			RefCols:  []pmodel.CIStr{pmodel.NewCIStr("a")},
-			Cols:     []pmodel.CIStr{pmodel.NewCIStr("t_a")},
-		}},
-=======
->>>>>>> fe6d5d6fd40 (infoschema: remove foreign key table from tableInfoResident (#59879))
 		TiFlashReplica: &model.TiFlashReplicaInfo{
 			Count:          0,
 			LocationLabels: []string{"a,b,c"},
