@@ -169,6 +169,9 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 	if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 		m.MaxNodeCount = variable.TidbOptInt(sv, 0)
+		if m.MaxNodeCount == -1 { // -1 means calculate automatically
+			m.MaxNodeCount = scheduler.CalcMaxNodeCountByStoresNum(ctx, sctx.GetStore())
+		}
 	}
 	if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
 		m.SetConcurrency(variable.TidbOptInt(sv, 0))
