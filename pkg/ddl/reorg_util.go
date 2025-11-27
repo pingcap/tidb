@@ -113,6 +113,15 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		autoConc = calc.CalcConcurrency()
 		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
 		factorField = zap.Float64("amplifyFactor", factors.AmplifyFactor)
+		logutil.DDLLogger().Info("automatically calculate reorg resources",
+			zap.Int64("tableID", tbl.Meta().ID),
+			zap.String("tableName", tbl.Meta().Name.String()),
+			zap.Int64("tableSizeInBytes", tableSizeInBytes),
+			zap.Int("cpuNum", cpuNum),
+			zap.Int("autoConcurrency", autoConc),
+			zap.Int("autoMaxNodeCount", autoMaxNode),
+			factorField,
+		)
 	}
 	if setReorgParam {
 		if shouldCalResource && setDistTaskParam {
@@ -158,6 +167,13 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			return dbterror.ErrUnsupportedDistTask
 		}
 	}
+	if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+		m.MaxNodeCount = variable.TidbOptInt(sv, 0)
+	}
+	if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
+		m.SetConcurrency(variable.TidbOptInt(sv, 0))
+	}
+
 	failpoint.InjectCall("beforeInitReorgMeta", m)
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
