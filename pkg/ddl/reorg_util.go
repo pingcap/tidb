@@ -167,7 +167,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			return dbterror.ErrUnsupportedDistTask
 		}
 	}
-	if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+	if sv, ok := sessVars.GetSystemVar(vardef.TiDBIndexLookupConcurrency); ok {
 		m.MaxNodeCount = variable.TidbOptInt(sv, 0)
 		if m.MaxNodeCount == -1 { // -1 means calculate automatically
 			m.MaxNodeCount = scheduler.CalcMaxNodeCountByStoresNum(ctx, sctx.GetStore())
