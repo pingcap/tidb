@@ -1771,7 +1771,7 @@ func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *inge
 
 			// only when first execution or old index id is not dropped
 			if !fromCheckpoint || sql.OldIndexIDFound {
-				if err := rc.unsafeSession.ExecuteInternal(ectx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+				if err := indexSession.ExecuteInternal(ectx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 					return errors.Trace(err)
 				}
 			}
