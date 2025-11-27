@@ -19,6 +19,11 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
+// Under Classic kernel, TiFlash nodes have the label {"engine":"tiflash"}.
+// Under NextGen kernel,
+// - TiFlash write nodes have the label {"engine":"tiflash", "engine_role":"write"},
+// - TiFlash compute nodes have the label {"engine":"tiflash_compute", "exclusive":"no-data"}, and no Region is stored on them.
+
 // IsTiFlash check whether the store is based on tiflash engine.
 func IsTiFlash(store *metapb.Store) bool {
 	for _, label := range store.Labels {
