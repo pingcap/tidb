@@ -70,9 +70,14 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 	writeMasterStatusHeader := func() {
 		if serverInfo.ServerVersion == nil {
 			buffer.WriteString("SHOW MASTER STATUS:")
+		} else if serverType == version.ServerTypeMariaDB {
+			// All MariaDB versions
+			buffer.WriteString("SHOW MASTER STATUS:")
 		} else if serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
+			// Older MySQL versions
 			buffer.WriteString("SHOW MASTER STATUS:")
 		} else {
+			// Newer MySQL versions
 			buffer.WriteString("SHOW BINARY LOG STATUS:")
 		}
 		if afterConn {
@@ -154,6 +159,15 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 		return errors.Errorf("unsupported serverType %s for recordGlobalMetaData", serverType.String())
 	}
 	buffer.WriteString("\n")
+
+	var versionstr string
+	err := db.QueryRowContext(context.Background(), "SELECT VERSION()").Scan(&versionstr)
+	if err != nil {
+		tctx.L().Warn("fail to get version", zap.Error(err))
+	} else {
+		fmt.Fprintf(buffer, "SELECT VERSION():\n\tVersion: %s\n\n", versionstr)
+	}
+
 	if serverType == version.ServerTypeTiDB {
 		return nil
 	}
