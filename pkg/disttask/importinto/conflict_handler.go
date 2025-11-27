@@ -28,7 +28,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -144,7 +144,7 @@ func (h *baseConflictKVHandler) encodeAndHandleRow(ctx context.Context,
 	handle tidbkv.Handle, val []byte) (err error) {
 	tbl := h.tableImporter.Table
 	tblMeta := tbl.Meta()
-	decodedData, _, err := tables.DecodeRawRowData(h.encoder.SessionCtx,
+	decodedData, _, err := tables.DecodeRawRowData(h.encoder.SessionCtx.GetExprCtx(),
 		tblMeta, handle, tbl.Cols(), val)
 	if err != nil {
 		return errors.Trace(err)
