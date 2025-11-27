@@ -2160,13 +2160,13 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	regularCount := 0
 
 	// First, handle database-only operations
-	for _, dbReplace := range schemasReplace.DbReplaceMap {
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
 
 		// Skip if we already processed this database in delete section
-		if _, alreadyProcessed := deletedTablesMap[dbReplace.DbID]; alreadyProcessed {
+		if _, alreadyProcessed := deletedTablesMap[upstreamDBID]; alreadyProcessed {
 			continue
 		}
 
@@ -2186,20 +2186,20 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	}
 
 	// Then, handle table operations
-	for _, dbReplace := range schemasReplace.DbReplaceMap {
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
 
 		if len(dbReplace.TableMap) > 0 {
-			for _, tableReplace := range dbReplace.TableMap {
+			for upstreamTableID, tableReplace := range dbReplace.TableMap {
 				if tableReplace.FilteredOut {
 					continue
 				}
 
 				// skip if this table is in the deleted list
-				if tableIDsSet, dbExists := deletedTablesMap[dbReplace.DbID]; dbExists {
-					if _, isDeleted := tableIDsSet[tableReplace.TableID]; isDeleted {
+				if tableIDsSet, dbExists := deletedTablesMap[upstreamDBID]; dbExists {
+					if _, isDeleted := tableIDsSet[upstreamTableID]; isDeleted {
 						continue
 					}
 				}
