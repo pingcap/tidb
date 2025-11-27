@@ -134,6 +134,16 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	}}, true)
 	require.NoError(t, err)
 
+	// skip check collate but type mismatch
+	mockedDBTI = dbTI.Clone()
+	mockedDBTI.Columns[1].SetCollate("utf8mb4_bin")
+	mockedUserTI.Columns[1].FieldType.SetFlen(2000) // Columns[1] is `DB` char(64)
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}}, true)
+	require.NoError(t, err)
+
 	// another column collate mismatch
 	mockedDBTI = dbTI.Clone()
 	mockedDBTI.Columns[0].SetCollate("utf8mb4_general_ci")

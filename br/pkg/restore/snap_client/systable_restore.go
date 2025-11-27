@@ -704,11 +704,12 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 					col.Name, col.FieldType.String())
 			}
 			typeEq, collateEq := utils.IsTypeCompatible(backupCol.FieldType, col.FieldType)
-			canLoadSysTablePhysical = canLoadSysTablePhysical && collateEq
+			canLoadSysTablePhysical = canLoadSysTablePhysical && collateEq && typeEq
+			collateCompatible := collateEq
 			if typeEq && (!collateEq && collationCheck) {
-				collateEq = checkSysTableColumnCollateCompatibility(mysql.SystemDB, table.Info.Name.L, col.Name.L, backupCol.GetCollate(), col.GetCollate())
+				collateCompatible = checkSysTableColumnCollateCompatibility(mysql.SystemDB, table.Info.Name.L, col.Name.L, backupCol.GetCollate(), col.GetCollate())
 			}
-			if !(typeEq && collateEq) {
+			if !(typeEq && collateCompatible) {
 				log.Error("incompatible column",
 					zap.Stringer("table", table.Info.Name),
 					zap.String("col in cluster", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())),
