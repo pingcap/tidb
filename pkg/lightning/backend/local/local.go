@@ -119,7 +119,7 @@ var (
 
 	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
-	MaxWriteAndIngestRetryTimes = 3
+	MaxWriteAndIngestRetryTimes = 5
 
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
