@@ -179,13 +179,14 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 
 	var err error
-	// In strict SQL mode, data truncation during write operations should be treated as an error, not a warning.
-	// However, for SELECT statements, TiDB sets TruncateAsWarning to true by default (in ResetContextOfStmt).
-	// Since CTE materializes results to temporary storage (similar to writing to a table), we enforce strictness here.
+	// For recursive CTEs in strict SQL mode, disable TruncateAsWarning during optimization (e.g., constant folding).
+	// This ensures data truncation errors are caught early and consistently. Without this, constant folding during
+	// optimization would silently truncate data, while later execution stages would error, leading to inconsistent behavior.
+	// We only apply this when: (1) strict mode is enabled, and (2) this is a recursive CTE being optimized.
 	sessVars := p.SCtx().GetSessionVars()
 	sc := sessVars.StmtCtx
 	originalFlags := sc.TypeFlags()
-	if sessVars.SQLMode.HasStrictMode() && originalFlags.TruncateAsWarning() {
+	if p.Cte.RecursivePartLogicalPlan != nil && sessVars.SQLMode.HasStrictMode() && originalFlags.TruncateAsWarning() {
 		sc.SetTypeFlags(originalFlags.WithTruncateAsWarning(false))
 		defer func() {
 			sc.SetTypeFlags(originalFlags)
@@ -226,7 +227,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 				return nil, false, err
 			}
 		}
-		recurStat := p.Cte.RecursivePartPhysicalPlan.StatsInfo()
+		recurStat := p.Cte.RecursivePartLogicalPlan.StatsInfo()
 		for i, col := range selfSchema.Columns {
 			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.Cte.RecursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}

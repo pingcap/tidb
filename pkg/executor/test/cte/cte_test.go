@@ -300,4 +300,41 @@ func TestCTEStrictModeDataTruncation(t *testing.T) {
 	`)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Data Too Long")
+
+	err = tk.QueryToErr(`
+		WITH RECURSIVE cte AS (
+			SELECT CAST('abcdefgh' AS CHAR(3)) AS short_str, 1 AS n
+			UNION ALL
+			SELECT short_str, n + 1
+			FROM cte
+			WHERE n < 2
+		)
+		SELECT * FROM cte
+	`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Data Too Long")
+
+	err = tk.QueryToErr(`
+		WITH RECURSIVE cte AS (
+			SELECT 'start' AS path, 1 AS level
+			UNION ALL
+			SELECT
+				CAST(CONCAT(path, '/', level) AS CHAR(10)) AS path,
+				level + 1
+			FROM cte
+			WHERE level < 3
+		)
+		SELECT * FROM cte
+	`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Data Too Long")
+
+	// Non-recursive CTE: constant folding happens during optimization phase before materialization,
+	// so no Data Too Long error occurs.
+	tk.MustQuery(`
+		WITH cte AS (
+			SELECT CAST('abcdefgh' AS CHAR(3)) AS short_str, 1 AS n
+		)
+		SELECT * FROM cte
+	`).Check(testkit.Rows("abc 1"))
 }

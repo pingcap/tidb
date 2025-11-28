@@ -6980,6 +6980,20 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 		b.buildingCTE = saveBuildingCTE
 	}()
 
+	// For recursive CTEs in strict SQL mode, we need to disable TruncateAsWarning during optimization (e.g., constant folding).
+	// This ensures data truncation errors are caught early and consistently. Without this, constant folding during optimization
+	// would silently truncate data, while later execution stages would error, leading to inconsistent behavior.
+	// Non-recursive CTEs don't need this because constant folding happens before materialization, avoiding the issue.
+	sessVars := b.ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
+	originalFlags := sc.TypeFlags()
+	if sessVars.SQLMode.HasStrictMode() && originalFlags.TruncateAsWarning() {
+		sc.SetTypeFlags(originalFlags.WithTruncateAsWarning(false))
+		defer func() {
+			sc.SetTypeFlags(originalFlags)
+		}()
+	}
+
 	if isRecursive {
 		// buildingRecursivePartForCTE likes a stack. We save it before building a recursive CTE and restore it after building.
 		// We need a stack because we need to handle the nested recursive CTE. And buildingRecursivePartForCTE indicates the innermost CTE.
