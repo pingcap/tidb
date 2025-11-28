@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -37,7 +38,7 @@ func IsTiFlashContained(plan base.Plan) (tiFlashPushDown, tiFlashExchangePushDow
 		if !isPhysical {
 			return
 		}
-		if tableReader, ok := pp.(*PhysicalTableReader); ok {
+		if tableReader, ok := pp.(*physicalop.PhysicalTableReader); ok {
 			tiFlashPushDown = tableReader.StoreType == kv.TiFlash
 			if tiFlashPushDown && tableReader.GetTablePlan().TP() == plancodec.TypeExchangeSender {
 				tiFlashExchangePushDown = true

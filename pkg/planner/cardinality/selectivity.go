@@ -29,6 +29,7 @@ import (
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -80,6 +81,7 @@ func Selectivity(
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
 		ret = pseudoSelectivity(ctx, coll, exprs)
+		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
 		if sc.EnableOptimizerCETrace {
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
 				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
@@ -125,6 +127,11 @@ func Selectivity(
 		return a.ID == b.ID
 	})
 	for _, col := range extractedCols {
+		if col.IsHidden && col.VirtualExpr != nil {
+			// For expression index, only the index stats should be used,
+			// column stats can be ignored.
+			continue
+		}
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {
@@ -134,20 +141,23 @@ func Selectivity(
 				return 0, nil, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
+			var cnt float64
+			var cntEst statistics.RowEstimate
 			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
-				var cnt float64
-				cnt, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
+				cntEst, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
+				cnt = cntEst.Est
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
-			cnt, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
+			cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
+			cnt = cntEst.Est
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 		} else if !col.IsHidden {
 			// TODO: We are able to remove this path if we remove the async stats load.
@@ -203,13 +213,12 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, minCnt, maxCnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
+			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			selectivity := cnt / float64(coll.RealtimeCount)
-			minSelectivity := minCnt / float64(coll.RealtimeCount)
-			maxSelectivity := maxCnt / float64(coll.RealtimeCount)
+			countResult.DivideAll(float64(coll.RealtimeCount))
+			selectivity, minSelectivity, maxSelectivity := countResult.Est, countResult.MinEst, countResult.MaxEst
 			nodes = append(nodes, &StatsNode{
 				Tp:                       IndexType,
 				ID:                       id,
@@ -238,7 +247,7 @@ func Selectivity(
 		// of the extracted access conditions, we multiply another selectionFactor for the residual
 		// conditions.
 		if set.partCover {
-			ret *= selectionFactor
+			ret *= ctx.GetSessionVars().SelectivityFactor
 		}
 		if sc.EnableOptimizerCETrace {
 			// Tracing for the expression estimation results after applying this StatsNode.
@@ -364,7 +373,7 @@ OUTER:
 			curSelectivity, _, err := Selectivity(ctx, coll, cnfItems, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-				curSelectivity = selectionFactor
+				curSelectivity = ctx.GetSessionVars().SelectivityFactor
 			}
 
 			selectivity = selectivity + curSelectivity - selectivity*curSelectivity
@@ -430,7 +439,7 @@ OUTER:
 	if mask > 0 {
 		minSelectivity := 1.0
 		if len(notCoveredConstants) > 0 || len(notCoveredDNF) > 0 || len(notCoveredOtherExpr) > 0 {
-			minSelectivity = math.Min(minSelectivity, selectionFactor)
+			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().SelectivityFactor)
 		}
 		if len(notCoveredStrMatch) > 0 {
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetStrMatchDefaultSelectivity())
@@ -442,6 +451,7 @@ OUTER:
 		if sc.EnableOptimizerDebugTrace {
 			debugtrace.RecordAnyValuesWithNames(ctx, "Default Selectivity", minSelectivity)
 		}
+		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
 	}
 
 	if sc.EnableOptimizerCETrace {
@@ -796,6 +806,24 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 	return nil
 }
 
+// findPrefixOfIndex will find columns in index by checking the unique id.
+// So it will return at once no matching column is found.
+func findPrefixOfIndex(cols []*expression.Column, idxColIDs []int64) []*expression.Column {
+	retCols := make([]*expression.Column, 0, len(idxColIDs))
+idLoop:
+	for _, id := range idxColIDs {
+		for _, col := range cols {
+			if col.UniqueID == id {
+				retCols = append(retCols, col)
+				continue idLoop
+			}
+		}
+		// If no matching column is found, just return.
+		return retCols
+	}
+	return retCols
+}
+
 // findPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
 // So it will return at once no matching column is found.
 func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, idxColIDs []int64,
@@ -817,7 +845,7 @@ func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, 
 		}
 		return retCols
 	}
-	return expression.FindPrefixOfIndex(cols, idxColIDs)
+	return findPrefixOfIndex(cols, idxColIDs)
 }
 
 func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, rangeType ranger.RangeType,
@@ -1163,6 +1191,7 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 // outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
 // and the searched value does not appear in the topN
 func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64, modifyCount int64) (result float64) {
+	// TODO: align or merge this out-of-range-est methods with `Histogram.OutOfRangeRowCount`.
 	// If the table hasn't been modified, it's safe to return 0.
 	if modifyCount == 0 {
 		return 0
@@ -1179,7 +1208,7 @@ func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increa
 	if newRows < 0 {
 		newRows = min(notNullCount, realtimeRowCount)
 	}
-	// if no NDV - derive an NDV using sqrt
+	// if no NDV - derive an NDV using sqrt, this could happen for unanalyzed tables
 	if ndv <= 0 {
 		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
 	} else {
@@ -1187,6 +1216,13 @@ func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increa
 		// the caller of the function
 		ndv *= increaseFactor
 	}
+	// If topN represents all NDV values, the NDV should be relatively small.
+	// Small NDV could cause extremely inaccurate result, use `outOfRangeBetweenRate` to smooth the result.
+	// For example, TopN = {(value:1, rows: 10000), (2, 10000), (3, 10000)} and newRows = 15000, we should assume most
+	// newly added rows are 1, 2 or 3. Then for an out-of-range estimation like `where col=9999`, the result should be
+	// close to 0, but if we still use the original NDV, the result could be extremely large: 15000/3 = 5000.
+	// See #64137 for a concrete example.
+	ndv = max(ndv, float64(outOfRangeBetweenRate)) // avoid inaccurate estimate caused by small NDV
 	return max(1, newRows/ndv)
 }
 
@@ -1241,10 +1277,11 @@ func crossValidationSelectivity(
 			Collators:   []collate.Collator{idxPointRange.Collators[i]},
 		}
 
-		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+		rowCountEst, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
 		if err != nil {
 			return 0, 0, err
 		}
+		rowCount := rowCountEst.Est
 		crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
 
 		if rowCount < minRowCount {

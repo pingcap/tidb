@@ -27,6 +27,7 @@ record=0
 record_case=""
 stats="s"
 collation_opt=2
+runs_on_port=0
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
@@ -41,7 +42,7 @@ function help_message()
 
     -d <y|Y|n|N|b|B>: \"y\" or \"Y\" for only enabling the new collation during test.
                       \"n\" or \"N\" for only disabling the new collation during test.
-                      \"b\" or \"B\" for tests the prefix is `collation`, enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
+                      \"b\" or \"B\" for tests the prefix is 'collation', enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
                       Enable/Disable the new collation during the integration test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
@@ -58,6 +59,8 @@ function help_message()
     -t <test-name>: Run tests in file \"t/<test-name>.test\".
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
+
+    -P <port>: Use tidb-server running on <port> for testing.
 
 "
 }
@@ -126,8 +129,13 @@ function extract_stats()
     unzip -qq s.zip
 }
 
-while getopts "t:s:r:b:d:c:i:h" opt; do
+while getopts "t:s:r:b:d:c:i:P:h" opt; do
     case $opt in
+        P)
+            runs_on_port="$OPTARG"
+            port="$OPTARG"
+            build=0
+            ;;
         t)
             tests="$OPTARG"
             ;;
@@ -190,7 +198,7 @@ if [ $build -eq 1 ]; then
     fi
     build_mysql_tester
 else
-    if [ -z "$tidb_server" ]; then
+    if [ -z "$tidb_server" ] && [ "$runs_on_port" -eq 0 ]; then
         tidb_server="./integrationtest_tidb-server"
         if [[ ! -f "$tidb_server" ]]; then
             build_tidb_server
@@ -210,9 +218,12 @@ fi
 
 rm -rf $mysql_tester_log
 
-ports=($(find_multiple_available_ports 4000 2))
-port=${ports[0]}
-status=${ports[1]}
+if [ "$runs_on_port" -eq 0 ]
+then
+    ports=($(find_multiple_available_ports 4000 2))
+    port=${ports[0]}
+    status=${ports[1]}
+fi
 
 function start_tidb_server()
 {
@@ -220,6 +231,7 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
+
     start_options="-P $port -status $status -config $config_file"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         start_options="$start_options -store tikv -path ${TIKV_PATH}"
@@ -228,10 +240,11 @@ function start_tidb_server()
     fi
 
     if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
-        start_options="$start_options -keyspace-name SYSTEM"
+        start_options="$start_options -keyspace-name SYSTEM --tidb-service-scope dxf_service"
     fi
 
     echo "start tidb-server, log file: $mysql_tester_log"
+    $tidb_server -V
     $tidb_server $start_options > $mysql_tester_log 2>&1 &
     SERVER_PID=$!
     echo "tidb-server(PID: $SERVER_PID) started"
@@ -311,23 +324,35 @@ function check_case_name() {
 check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
-    start_tidb_server
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        start_tidb_server
+    fi
     run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        kill -15 $SERVER_PID
+        while ps -p $SERVER_PID > /dev/null; do
+            sleep 1
+        done
+    fi
     check_data_race
 fi
 
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
-    start_tidb_server
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        start_tidb_server
+    fi
     run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        kill -15 $SERVER_PID
+        while ps -p $SERVER_PID > /dev/null; do
+            sleep 1
+        done
+    fi
     check_data_race
 fi
 

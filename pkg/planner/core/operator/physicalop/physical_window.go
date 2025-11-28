@@ -17,6 +17,7 @@ package physicalop
 import (
 	"bytes"
 	"fmt"
+	"math"
 
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -169,7 +170,7 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	FormatWindowFuncDescs(ectx, buffer, p.WindowFuncDescs, p.Schema())
 	buffer.WriteString(" over(")
 	isFirst := true
-	buffer = util.ExplainPartitionBy(ectx, buffer, p.PartitionBy, false)
+	buffer = property.ExplainPartitionBy(ectx, buffer, p.PartitionBy, false)
 	if len(p.PartitionBy) > 0 {
 		isFirst = false
 	}
@@ -334,4 +335,146 @@ func (p *PhysicalWindow) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) 
 		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
 	}, nil
+}
+
+func tryToGetMppWindows(lw *logicalop.LogicalWindow, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	if !prop.IsSortItemAllForPartition() {
+		return nil
+	}
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
+		return nil
+	}
+	if prop.MPPPartitionTp == property.BroadcastType {
+		return nil
+	}
+
+	{
+		allSupported := true
+		sctx := lw.SCtx()
+		for _, windowFunc := range lw.WindowFuncDescs {
+			if !windowFunc.CanPushDownToTiFlash(util.GetPushDownCtx(sctx)) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function `" + windowFunc.Name + "` or its arguments are not supported now.")
+				allSupported = false
+			} else if !expression.IsPushDownEnabled(windowFunc.Name, kv.TiFlash) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because window function `" + windowFunc.Name + "` is blocked by blacklist, check `table mysql.expr_pushdown_blacklist;` for more information.")
+				return nil
+			}
+		}
+		if !allSupported {
+			return nil
+		}
+
+		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
+			ctx := lw.SCtx().GetExprCtx()
+			if _, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
+				return nil
+			}
+			if !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), lw.Frame.Start.CalcFuncs, kv.TiFlash) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down")
+				return nil
+			}
+			if _, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
+				return nil
+			}
+			if !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), lw.Frame.End.CalcFuncs, kv.TiFlash) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down")
+				return nil
+			}
+
+			if !lw.CheckComparisonForTiFlash(lw.Frame.Start) || !lw.CheckComparisonForTiFlash(lw.Frame.End) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down, because Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.")
+				return nil
+			}
+		}
+	}
+
+	var byItems []property.SortItem
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
+	childProperty := &property.PhysicalProperty{
+		ExpectedCnt:           math.MaxFloat64,
+		CanAddEnforcer:        true,
+		SortItems:             byItems,
+		TaskTp:                property.MppTaskType,
+		SortItemsForPartition: byItems,
+		CTEProducerStatus:     prop.CTEProducerStatus,
+	}
+	if !prop.IsPrefix(childProperty) {
+		return nil
+	}
+
+	if len(lw.PartitionBy) > 0 {
+		partitionCols := lw.GetPartitionKeys()
+		// trying to match the required partitions.
+		if prop.MPPPartitionTp == property.HashType {
+			matches := prop.IsSubsetOf(partitionCols)
+			if len(matches) == 0 {
+				// do not satisfy the property of its parent, so return empty
+				return nil
+			}
+			partitionCols = property.ChoosePartitionKeys(partitionCols, matches)
+		}
+		childProperty.MPPPartitionTp = property.HashType
+		childProperty.MPPPartitionCols = partitionCols
+	} else {
+		childProperty.MPPPartitionTp = property.SinglePartitionType
+	}
+
+	if prop.MPPPartitionTp == property.SinglePartitionType && childProperty.MPPPartitionTp != property.SinglePartitionType {
+		return nil
+	}
+
+	window := PhysicalWindow{
+		WindowFuncDescs: lw.WindowFuncDescs,
+		PartitionBy:     lw.PartitionBy,
+		OrderBy:         lw.OrderBy,
+		Frame:           lw.Frame,
+		StoreTp:         kv.TiFlash,
+	}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(lw.SCtx().GetSessionVars(), prop.ExpectedCnt), lw.QueryBlockOffset(), childProperty)
+	window.SetSchema(lw.Schema())
+
+	return []base.PhysicalPlan{window}
+}
+
+// ExhaustPhysicalPlans4LogicalWindow generates PhysicalWindow plan from LogicalWindow.
+func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	lw := lp.(*logicalop.LogicalWindow)
+	windows := make([]base.PhysicalPlan, 0, 2)
+
+	// we lift the p.CanPushToCop(tiFlash) check here.
+	if lw.SCtx().GetSessionVars().IsMPPAllowed() {
+		mppWindows := tryToGetMppWindows(lw, prop)
+		windows = append(windows, mppWindows...)
+	}
+
+	// if there needs a mpp task, we don't generate tidb window function.
+	if prop.TaskTp == property.MppTaskType {
+		return windows, true, nil
+	}
+	var byItems []property.SortItem
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems,
+		CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+	if !prop.IsPrefix(childProperty) {
+		return nil, true, nil
+	}
+	window := PhysicalWindow{
+		WindowFuncDescs: lw.WindowFuncDescs,
+		PartitionBy:     lw.PartitionBy,
+		OrderBy:         lw.OrderBy,
+		Frame:           lw.Frame,
+	}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(lw.SCtx().GetSessionVars(), prop.ExpectedCnt), lw.QueryBlockOffset(), childProperty)
+	window.SetSchema(lw.Schema())
+
+	windows = append(windows, window)
+	return windows, true, nil
 }

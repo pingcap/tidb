@@ -24,6 +24,7 @@ go_library(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errno",
@@ -45,6 +46,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/plugin",
         "//pkg/privilege",
@@ -108,6 +110,7 @@ go_library(
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
         "//pkg/util/topsql/stmtstats",
+        "//pkg/util/traceevent",
         "//pkg/util/tracing",
         "//pkg/util/versioninfo",
         "@com_github_blacktear23_go_proxyprotocol//:go-proxyprotocol",

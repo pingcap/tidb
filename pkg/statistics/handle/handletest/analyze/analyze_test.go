@@ -21,11 +21,15 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -252,4 +256,55 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+}
+
+func TestAnalyzeMetricsCounters(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	readCounter := func(counter prometheus.Counter) float64 {
+		var metric dto.Metric
+		require.NoError(t, counter.Write(&metric))
+		return metric.Counter.GetValue()
+	}
+
+	manualSucc := metrics.ManualAnalyzeCounter.WithLabelValues("succ")
+	manualFail := metrics.ManualAnalyzeCounter.WithLabelValues("failed")
+	autoSucc := metrics.AutoAnalyzeCounter.WithLabelValues("succ")
+	autoFail := metrics.AutoAnalyzeCounter.WithLabelValues("failed")
+
+	h := dom.StatsHandle()
+
+	tk.MustExec("create table t_metrics_manual(a int)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("insert into t_metrics_manual values (1),(2)")
+
+	beforeManualSucc := readCounter(manualSucc)
+	beforeManualFail := readCounter(manualFail)
+
+	tk.MustExec("analyze table t_metrics_manual")
+
+	require.Equal(t, beforeManualSucc+1, readCounter(manualSucc))
+	require.Equal(t, beforeManualFail, readCounter(manualFail))
+
+	tk.MustExec("create table t_metrics_auto(a int)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("insert into t_metrics_auto values (1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	origMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = origMinCnt
+	}()
+
+	beforeAutoSucc := readCounter(autoSucc)
+	beforeAutoFail := readCounter(autoFail)
+
+	require.True(t, h.HandleAutoAnalyze())
+
+	require.Equal(t, beforeAutoSucc+1, readCounter(autoSucc))
+	require.Equal(t, beforeAutoFail, readCounter(autoFail))
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -48,7 +49,7 @@ type writeTestSuite struct {
 	afterWriterClose   func()
 
 	optionalFilePath string
-	onClose          OnCloseFunc
+	onClose          OnWriterCloseFunc
 }
 
 func writePlainFile(s *writeTestSuite) {
@@ -370,7 +371,7 @@ func readMergeIter(t *testing.T, s *readTestSuite) {
 	var totalSize int
 	readBufSize := s.memoryLimit / len(files)
 	zeroOffsets := make([]uint64, len(files))
-	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 1)
 	intest.AssertNoError(err)
 
 	kvCnt := 0
@@ -519,10 +520,11 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.beforeMerge()
 	}
 
+	wctx := workerpool.NewContext(ctx)
+
 	now := time.Now()
-	err = MergeOverlappingFiles(
-		ctx,
-		datas,
+	op := NewMergeOperator(
+		wctx,
 		s.store,
 		int64(5*size.MB),
 		mergeOutput,
@@ -532,6 +534,13 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.concurrency,
 		s.mergeIterHotspot,
 		engineapi.OnDuplicateKeyIgnore,
+	)
+
+	err = MergeOverlappingFiles(
+		wctx,
+		datas,
+		s.concurrency,
+		op,
 	)
 
 	intest.AssertNoError(err)

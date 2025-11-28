@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -51,6 +52,12 @@ import (
 
 const (
 	outOfRangeBetweenRate float64 = 100
+)
+
+var (
+	// Global static chunk for pseudo histograms to avoid chunk allocation
+	globalPseudoChunkOnce sync.Once
+	globalPseudoChunk     *chunk.Chunk
 )
 
 // Histogram represents statistics for a column or index.
@@ -115,15 +122,55 @@ type scalar struct {
 // EmptyScalarSize is the size of empty scalar.
 const EmptyScalarSize = int64(unsafe.Sizeof(scalar{}))
 
-// NewHistogram creates a new histogram.
-func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+// initGlobalPseudoChunk initializes the global static chunk for pseudo histograms
+func initGlobalPseudoChunk() {
+	// Create a minimal empty chunk that can be shared across all pseudo histograms
+	// Use a basic field type that won't cause issues when shared
+	globalPseudoChunk = chunk.NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)})
+}
+
+// getGlobalPseudoChunk returns the shared static chunk for pseudo histograms
+// WARNING: The returned chunk MUST NOT be modified. It is shared across all pseudo histograms.
+// Pseudo histograms should never have buckets added or bounds modified.
+func getGlobalPseudoChunk() *chunk.Chunk {
+	globalPseudoChunkOnce.Do(initGlobalPseudoChunk)
+	return globalPseudoChunk
+}
+
+// prepareFieldTypeForHistogram prepares the field type for histogram usage.
+// For string types, it clones the field type and sets the collation to binary
+// to avoid decoding issues with the histogram's key representation.
+func prepareFieldTypeForHistogram(tp *types.FieldType) *types.FieldType {
 	if tp.EvalType() == types.ETString {
 		// The histogram will store the string value's 'sort key' representation of its collation.
-		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
+		// If we directly set the field type's collation to its original one, we would decode the Key representation using its collation.
 		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
 		tp = tp.Clone()
 		tp.SetCollate(charset.CollationBin)
 	}
+	return tp
+}
+
+// NewPseudoHistogram creates a pseudo histogram that reuses global static components
+// This avoids chunk allocation while preserving field type semantics.
+func NewPseudoHistogram(id int64, tp *types.FieldType) *Histogram {
+	tp = prepareFieldTypeForHistogram(tp)
+	return &Histogram{
+		ID:                id,
+		NDV:               0,
+		NullCount:         0,
+		LastUpdateVersion: 0,
+		Tp:                tp,
+		Bounds:            getGlobalPseudoChunk(),
+		Buckets:           make([]Bucket, 0),
+		TotColSize:        0,
+		Correlation:       0,
+	}
+}
+
+// NewHistogram creates a new histogram.
+func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+	tp = prepareFieldTypeForHistogram(tp)
 	return &Histogram{
 		ID:                id,
 		NDV:               ndv,
@@ -566,7 +613,7 @@ func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) f
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 // The input sctx is required for stats version 2. For version 1, it is just for debug trace, you can pass nil safely.
-func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) float64 {
+func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) RowEstimate {
 	lessCountA, bktIndexA := hg.LessRowCountWithBktIdx(sctx, a)
 	lessCountB, bktIndexB := hg.LessRowCountWithBktIdx(sctx, b)
 	rangeEst := lessCountB - lessCountA
@@ -597,12 +644,77 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 				if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
 					skewEstimate -= hg.Buckets[bktIndexA].Repeat
 				}
-				// Add a scaled ratio of the worst case skewed estimate to our regular estimate
-				return rangeEst + max(0, (float64(skewEstimate)-rangeEst)*skewRatio)
+				return CalculateSkewRatioCounts(rangeEst, float64(skewEstimate), skewRatio)
 			}
 		}
 	}
-	return rangeEst
+	return DefaultRowEst(rangeEst)
+}
+
+// CalculateSkewRatioCounts calculates the default, min, and max skew estimates given a skew ratio.
+func CalculateSkewRatioCounts(estimate, skewEstimate, skewRatio float64) RowEstimate {
+	skewDiff := skewEstimate - estimate
+	// Add a "ratio" of the skewEstimate to adjust the default row estimate.
+	skewAmt := max(0, skewDiff*skewRatio)
+	maxSkewAmt := min(skewDiff, 2*skewAmt)
+	return RowEstimate{estimate + skewAmt, estimate, estimate + maxSkewAmt}
+}
+
+// RowEstimate stores the min, default, and max row count estimates.
+type RowEstimate struct {
+	Est    float64
+	MinEst float64
+	MaxEst float64
+}
+
+// DefaultRowEst returns a RowEstimate with same value for all three fields
+func DefaultRowEst(est float64) RowEstimate {
+	return RowEstimate{est, est, est}
+}
+
+// Add adds two RowEstimates together, storing result in the first RowEstimate.
+func (r *RowEstimate) Add(r1 RowEstimate) {
+	r.Est += r1.Est
+	r.MinEst += r1.MinEst
+	r.MaxEst += r1.MaxEst
+}
+
+// AddAll adds a float64 value to all three fields of the RowEstimate and stores the result.
+func (r *RowEstimate) AddAll(f float64) {
+	r.Est += f
+	r.MinEst += f
+	r.MaxEst += f
+}
+
+// Subtract subtracts two RowEstimates together, storing result in the first RowEstimate.
+func (r *RowEstimate) Subtract(r1 RowEstimate) {
+	r.Est -= r1.Est
+	r.MinEst -= r1.MinEst
+	r.MaxEst -= r1.MaxEst
+}
+
+// MultiplyAll multiplies all three fields of the RowEstimate by a float64 value and stores the result.
+func (r *RowEstimate) MultiplyAll(f float64) {
+	r.Est *= f
+	r.MinEst *= f
+	r.MaxEst *= f
+}
+
+// DivideAll divides all three fields of the RowEstimate by a float64 value and stores the result.
+func (r *RowEstimate) DivideAll(f float64) {
+	r.Est /= f
+	r.MinEst /= f
+	r.MaxEst /= f
+}
+
+// Clamp clamps all three fields of the RowEstimate to the given min and max values.
+// Don't allow MinEst to be greater than Est, or MaxEst to be less than Est.
+func (r *RowEstimate) Clamp(f1, f2 float64) {
+	r.Est = mathutil.Clamp(r.Est, f1, f2)
+	r.MinEst = min(r.MinEst, r.Est)
+	r.MinEst = mathutil.Clamp(r.MinEst, f1, f2)
+	r.MaxEst = max(r.MaxEst, r.Est)
+	r.MaxEst = mathutil.Clamp(r.MaxEst, f1, f2)
 }
 
 // TotalRowCount returns the total count of this histogram.
@@ -953,7 +1065,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
 	realtimeRowCount, modifyCount, histNDV int64,
-) (result float64) {
+) (result RowEstimate) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -964,31 +1076,25 @@ func (hg *Histogram) OutOfRangeRowCount(
 			"realtimeRowCount", realtimeRowCount,
 		)
 		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result.Est)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	if hg.Len() == 0 {
-		return 0
+		return DefaultRowEst(0)
 	}
 
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
 	oneValue := float64(0)
 	if histNDV > 0 {
-		oneValue = hg.NotNullCount() / max(float64(histNDV), outOfRangeBetweenRate) // avoid inaccurate selectivity caused by small NDV
-	}
-
-	// We may have missed the true lowest/highest values due to sampling - and we are out of
-	// range without any modifications. So return oneValue to avoid underestimation.
-	if modifyCount == 0 {
-		return oneValue
+		oneValue = max(1, hg.NotNullCount()/max(float64(histNDV), outOfRangeBetweenRate)) // avoid inaccurate selectivity caused by small NDV
 	}
 
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
 	if !allowUseModifyCount {
-		return oneValue
+		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
 	}
 
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
@@ -1029,7 +1135,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// make sure l < r
 	if l >= r {
-		return 0
+		return DefaultRowEst(0)
 	}
 
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
@@ -1101,20 +1207,49 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+	// percentInHist is the percentage of rows that were included in the histogram.
+	// This is used to scale back the out-of-range estimate.
+	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
+	addedOutOfRangePct := min(1.0-percentInHist, 0.5)
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount = (addedRows * 0.5) * totalPercent
+	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
+
+	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
+	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
+	// account for at least 1% of the total row count as a worst case for "addedRows".
+	// We inflate this here so ONLY to impact the MaxEst value.
+	if modifyCount == 0 || addedRows == 0 {
+		if realtimeRowCount <= 0 {
+			realtimeRowCount = int64(hg.TotalRowCount())
+		}
+		// Use outOfRangeBetweenRate as a divisor to get a small percentage of the approximate
+		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
+		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+	}
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 	if skewRatio > 0 {
 		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
-		avgRowCount = avgRowCount + (addedRows-avgRowCount)*skewRatio
+		result := CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
+		result.Est = max(result.Est, oneValue)
+		result.MinEst = 1
+		result.MaxEst = max(result.Est, addedRows)
+		return result
 	}
 
-	// Use oneValue as lower bound
-	return max(avgRowCount, oneValue)
+	// Use oneValue as lower bound and provide meaningful min/max estimates
+	finalEst := max(avgRowCount, oneValue)
+	// Maximum could be as high as all added rows.
+	maxEst := max(finalEst, addedRows)
+
+	return RowEstimate{
+		Est:    finalEst,
+		MinEst: 1, // Assume a minimum of 1 row qualifies
+		MaxEst: maxEst,
+	}
 }
 
 // Copy deep copies the histogram.
@@ -1184,7 +1319,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 				continue
 			}
 			dataSet[string(prefixColData)] = struct{}{}
-			res := hg.BetweenRowCount(nil, types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext()))
+			res := hg.BetweenRowCount(nil, types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext())).Est
 			if res >= limit {
 				dataCnts = append(dataCnts, dataCnt{prefixColData, uint64(res)})
 			}
@@ -1461,7 +1596,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
 	// This only occurs when there are no histogram records in the histogram system table.
-	// It happens only to tables whose DDL events haven’t been processed yet and that have no indexes or keys,
+	// It happens only to tables whose DDL events haven't been processed yet and that have no indexes or keys,
 	// with the predicate column feature enabled.
 	if len(hists) == 0 {
 		return nil, nil

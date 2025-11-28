@@ -7,18 +7,18 @@ drop table if exists t2;
 create table t2(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t2 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
 // IN
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 in (select c3 from t1) order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─Projection	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#9))
-    └─HashJoin	5542.21	root		CARTESIAN left outer semi join, left side:IndexMerge, other cond:eq(index_merge.t1.c3, index_merge.t1.c3)
-      ├─TableReader(Build)	10000.00	root		data:TableFullScan
-      │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─IndexMerge(Probe)	5542.21	root		type: union
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 in (select c3 from t1) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#9))
+    └─HashJoin	root		CARTESIAN left outer semi join, left side:IndexMerge, other cond:eq(index_merge.t1.c3, index_merge.t1.c3)
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─IndexMerge(Probe)	root		type: union
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 in (select c3 from t1) order by 1;
 c1	c2	c3
 1	1	1
@@ -27,18 +27,18 @@ c1	c2	c3
 4	4	4
 5	5	5
 // NOT IN
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 not in (select c3 from t1) order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─Projection	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#9))
-    └─HashJoin	5542.21	root		Null-aware anti left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c3, index_merge.t1.c3)]
-      ├─TableReader(Build)	10000.00	root		data:TableFullScan
-      │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─IndexMerge(Probe)	5542.21	root		type: union
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 not in (select c3 from t1) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#9))
+    └─HashJoin	root		Null-aware anti left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c3, index_merge.t1.c3)]
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─IndexMerge(Probe)	root		type: union
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 not in (select c3 from t1) order by 1;
 c1	c2	c3
 1	1	1
@@ -47,14 +47,22 @@ c1	c2	c3
 4	4	4
 5	5	5
 // MAX
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select max(c3) from t1) order by 1;
-id	estRows	task	access object	operator info
-Sort	3325.55	root		index_merge.t1.c1
-└─IndexMerge	1843.09	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	1843.09	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5)))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select max(c3) from t1) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, ScalarQueryCol#10(5))))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:max(index_merge.t1.c3)->Column#9
+    └─TopN	root		index_merge.t1.c3:desc, offset:0, count:1
+      └─TableReader	root		data:TopN
+        └─TopN	cop[tikv]		index_merge.t1.c3:desc, offset:0, count:1
+          └─Selection	cop[tikv]		not(isnull(index_merge.t1.c3))
+            └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select max(c3) from t1) order by 1;
 c1	c2	c3
 1	1	1
@@ -63,18 +71,18 @@ c1	c2	c3
 4	4	4
 5	5	5
 // EXISTS
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─Projection	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#10))
-    └─HashJoin	5542.21	root		left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
-      ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
-      │ └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
-      └─IndexMerge(Probe)	5542.21	root		type: union
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#10))
+    └─HashJoin	root		left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
+      ├─IndexReader(Build)	root		index:IndexFullScan
+      │ └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+      └─IndexMerge(Probe)	root		type: union
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
 c1	c2	c3
 1	1	1
@@ -83,18 +91,18 @@ c1	c2	c3
 4	4	4
 5	5	5
 // EXISTS
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and NOT EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─Projection	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#10))
-    └─HashJoin	5542.21	root		anti left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
-      ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
-      │ └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
-      └─IndexMerge(Probe)	5542.21	root		type: union
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and NOT EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#10))
+    └─HashJoin	root		anti left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
+      ├─IndexReader(Build)	root		index:IndexFullScan
+      │ └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+      └─IndexMerge(Probe)	root		type: union
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and NOT EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
 c1	c2	c3
 1	1	1
@@ -103,14 +111,20 @@ c1	c2	c3
 4	4	4
 5	5	5
 // Non-Correlated
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select count(1) from t2) order by 1;
-id	estRows	task	access object	operator info
-Sort	3325.55	root		index_merge.t1.c1
-└─IndexMerge	1843.09	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	1843.09	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5)))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select count(1) from t2) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, ScalarQueryCol#20(5))))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#20
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:count(Column#17)->Column#9
+    └─IndexReader	root		index:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:count(1)->Column#17
+        └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select count(1) from t2) order by 1;
 c1	c2	c3
 1	1	1
@@ -119,20 +133,20 @@ c1	c2	c3
 4	4	4
 5	5	5
 // ANY
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ANY(select count(1) from t2) order by 1;
-id	estRows	task	access object	operator info
-Sort	5098.44	root		index_merge.t1.c1
-└─HashJoin	5098.44	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#10), if(ne(Column#11, 0), NULL, 0))), and(ne(Column#12, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
-  ├─StreamAgg(Build)	1.00	root		funcs:min(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
-  │ └─StreamAgg	1.00	root		funcs:count(Column#25)->Column#9
-  │   └─IndexReader	1.00	root		index:StreamAgg
-  │     └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#25
-  │       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
-  └─IndexMerge(Probe)	2825.66	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─Selection(Probe)	2825.66	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), if(isnull(index_merge.t1.c3), NULL, 1)))
-      └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ANY(select count(1) from t2) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#10), if(ne(Column#11, 0), NULL, 0))), and(ne(Column#12, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
+  ├─StreamAgg(Build)	root		funcs:min(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
+  │ └─StreamAgg	root		funcs:count(Column#25)->Column#9
+  │   └─IndexReader	root		index:StreamAgg
+  │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#25
+  │       └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+  └─IndexMerge(Probe)	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), if(isnull(index_merge.t1.c3), NULL, 1)))
+      └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ANY(select count(1) from t2) order by 1;
 c1	c2	c3
 1	1	1
@@ -141,20 +155,20 @@ c1	c2	c3
 4	4	4
 5	5	5
 // SOME
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > SOME(select count(1) from t2) order by 1;
-id	estRows	task	access object	operator info
-Sort	5098.44	root		index_merge.t1.c1
-└─HashJoin	5098.44	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#10), if(ne(Column#11, 0), NULL, 0))), and(ne(Column#12, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
-  ├─StreamAgg(Build)	1.00	root		funcs:min(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
-  │ └─StreamAgg	1.00	root		funcs:count(Column#25)->Column#9
-  │   └─IndexReader	1.00	root		index:StreamAgg
-  │     └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#25
-  │       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
-  └─IndexMerge(Probe)	2825.66	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─Selection(Probe)	2825.66	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), if(isnull(index_merge.t1.c3), NULL, 1)))
-      └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > SOME(select count(1) from t2) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#10), if(ne(Column#11, 0), NULL, 0))), and(ne(Column#12, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
+  ├─StreamAgg(Build)	root		funcs:min(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
+  │ └─StreamAgg	root		funcs:count(Column#25)->Column#9
+  │   └─IndexReader	root		index:StreamAgg
+  │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#25
+  │       └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+  └─IndexMerge(Probe)	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), if(isnull(index_merge.t1.c3), NULL, 1)))
+      └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > SOME(select count(1) from t2) order by 1;
 c1	c2	c3
 1	1	1
@@ -163,19 +177,19 @@ c1	c2	c3
 4	4	4
 5	5	5
 // ALL
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
-id	estRows	task	access object	operator info
-Sort	5542.21	root		index_merge.t1.c1
-└─HashJoin	5542.21	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#10), if(ne(Column#11, 0), NULL, 1)), or(eq(Column#12, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
-  ├─StreamAgg(Build)	1.00	root		funcs:max(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
-  │ └─StreamAgg	1.00	root		funcs:count(Column#25)->Column#9
-  │   └─IndexReader	1.00	root		index:StreamAgg
-  │     └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#25
-  │       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
-  └─IndexMerge(Probe)	5542.21	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#10), if(ne(Column#11, 0), NULL, 1)), or(eq(Column#12, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
+  ├─StreamAgg(Build)	root		funcs:max(Column#9)->Column#10, funcs:sum(0)->Column#11, funcs:count(1)->Column#12
+  │ └─StreamAgg	root		funcs:count(Column#25)->Column#9
+  │   └─IndexReader	root		index:StreamAgg
+  │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#25
+  │       └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+  └─IndexMerge(Probe)	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 c1	c2	c3
 1	1	1
@@ -184,20 +198,26 @@ c1	c2	c3
 4	4	4
 5	5	5
 // SELECT FIELD
-explain format = 'brief' select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
-id	estRows	task	access object	operator info
-Sort	5542.21	root		index_merge.t1.c1
-└─Projection	5542.21	root		index_merge.t1.c1, 15->Column#25
-  └─HashJoin	5542.21	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
-    ├─StreamAgg(Build)	1.00	root		funcs:max(Column#13)->Column#14, funcs:sum(0)->Column#15, funcs:count(1)->Column#16
-    │ └─StreamAgg	1.00	root		funcs:count(Column#38)->Column#13
-    │   └─IndexReader	1.00	root		index:StreamAgg
-    │     └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#38
-    │       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
-    └─IndexMerge(Probe)	5542.21	root		type: union
-      ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-      ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-      └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Projection	root		index_merge.t1.c1, ScalarQueryCol#25(15)->Column#26
+  └─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
+    ├─StreamAgg(Build)	root		funcs:max(Column#13)->Column#14, funcs:sum(0)->Column#15, funcs:count(1)->Column#16
+    │ └─StreamAgg	root		funcs:count(Column#39)->Column#13
+    │   └─IndexReader	root		index:StreamAgg
+    │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#39
+    │       └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+    └─IndexMerge(Probe)	root		type: union
+      ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+      └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#25
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:sum(Column#24)->Column#22
+    └─IndexReader	root		index:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:sum(index_merge.t2.c2)->Column#24
+        └─IndexFullScan	cop[tikv]	table:t2, index:c2(c2)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 c1	(select sum(c2) from t2)
 1	15
@@ -206,24 +226,24 @@ c1	(select sum(c2) from t2)
 4	15
 5	15
 // MULTIPLE LEVEL
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 IN (select c1 from t2 where c2 in (select c3 from t2)) order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─Projection	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Selection	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#13))
-    └─HashJoin	5542.21	root		CARTESIAN left outer semi join, left side:IndexMerge, other cond:eq(index_merge.t1.c3, index_merge.t2.c1)
-      ├─HashJoin(Build)	9990.00	root		inner join, equal:[eq(index_merge.t2.c2, index_merge.t2.c3)]
-      │ ├─HashAgg(Build)	7992.00	root		group by:index_merge.t2.c3, funcs:firstrow(index_merge.t2.c3)->index_merge.t2.c3
-      │ │ └─TableReader	9990.00	root		data:Selection
-      │ │   └─Selection	9990.00	cop[tikv]		not(isnull(index_merge.t2.c3))
-      │ │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-      │ └─TableReader(Probe)	9990.00	root		data:Selection
-      │   └─Selection	9990.00	cop[tikv]		not(isnull(index_merge.t2.c2))
-      │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-      └─IndexMerge(Probe)	5542.21	root		type: union
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 IN (select c1 from t2 where c2 in (select c3 from t2)) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#13))
+    └─HashJoin	root		CARTESIAN left outer semi join, left side:IndexMerge, other cond:eq(index_merge.t1.c3, index_merge.t2.c1)
+      ├─HashJoin(Build)	root		inner join, equal:[eq(index_merge.t2.c2, index_merge.t2.c3)]
+      │ ├─HashAgg(Build)	root		group by:index_merge.t2.c3, funcs:firstrow(index_merge.t2.c3)->index_merge.t2.c3
+      │ │ └─TableReader	root		data:Selection
+      │ │   └─Selection	cop[tikv]		not(isnull(index_merge.t2.c3))
+      │ │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      │ └─TableReader(Probe)	root		data:Selection
+      │   └─Selection	cop[tikv]		not(isnull(index_merge.t2.c2))
+      │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      └─IndexMerge(Probe)	root		type: union
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 IN (select c1 from t2 where c2 in (select c3 from t2)) order by 1;
 c1	c2	c3
 1	1	1
@@ -235,14 +255,14 @@ c1	c2	c3
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int as (c1 + c2), key(c1), key(c2));
 insert into t1(c1, c2) values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
-id	estRows	task	access object	operator info
-Sort	4060.74	root		index_merge.t1.c1
-└─Selection	2250.55	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-  └─IndexMerge	5542.21	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+  └─IndexMerge	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 c1	c2	c3
 1	1	2
@@ -250,14 +270,14 @@ c1	c2	c3
 3	3	6
 4	4	8
 5	5	10
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = c1 + c2 order by 1;
-id	estRows	task	access object	operator info
-Sort	5098.44	root		index_merge.t1.c1
-└─Selection	2825.66	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, plus(index_merge.t1.c1, index_merge.t1.c2))))
-  └─IndexMerge	5542.21	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = c1 + c2 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, plus(index_merge.t1.c1, index_merge.t1.c2))))
+  └─IndexMerge	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = c1 + c2 order by 1;
 c1	c2	c3
 1	1	2
@@ -265,14 +285,14 @@ c1	c2	c3
 3	3	6
 4	4	8
 5	5	10
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and substring(c3, c2) order by 1;
-id	estRows	task	access object	operator info
-Sort	5098.44	root		index_merge.t1.c1
-└─Selection	2825.66	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), istrue_with_null(cast(substring(cast(index_merge.t1.c3, var_string(20)), index_merge.t1.c2), double BINARY))))
-  └─IndexMerge	5542.21	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and substring(c3, c2) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), istrue_with_null(cast(substring(cast(index_merge.t1.c3, var_string(20)), index_merge.t1.c2), double BINARY))))
+  └─IndexMerge	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and substring(c3, c2) order by 1;
 c1	c2	c3
 1	1	2
@@ -280,14 +300,14 @@ c1	c2	c3
 3	3	6
 4	4	8
 5	5	10
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 order by 1;
-id	estRows	task	access object	operator info
-Sort	4800.37	root		index_merge.t1.c1
-└─Selection	2660.47	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), index_merge.t1.c3))
-  └─IndexMerge	5542.21	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), index_merge.t1.c3))
+  └─IndexMerge	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 order by 1;
 c1	c2	c3
 1	1	2
@@ -300,14 +320,14 @@ create global binding for
 select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1
 using
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
-explain format = 'brief' select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
-id	estRows	task	access object	operator info
-Sort	4060.74	root		index_merge.t1.c1
-└─Selection	2250.55	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-  └─IndexMerge	5542.21	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+  └─IndexMerge	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 c1	c2	c3
 1	1	2
@@ -315,6 +335,7 @@ c1	c2	c3
 3	3	6
 4	4	8
 5	5	10
+drop global binding for select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 ///// CREATE TABLE/VIEW
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
@@ -335,14 +356,14 @@ c1	c2	c3
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
-id	estRows	task	access object	operator info
-Sort	4060.74	root		index_merge.t1.c1
-└─IndexMerge	2250.55	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	2250.55	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 c1	c2	c3
 1	1	1
@@ -351,12 +372,12 @@ c1	c2	c3
 4	4	4
 5	5	5
 drop index c1 on t1;
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
-id	estRows	task	access object	operator info
-Sort	4060.74	root		index_merge.t1.c1
-└─TableReader	4060.74	root		data:Selection
-  └─Selection	4060.74	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─TableReader	root		data:Selection
+  └─Selection	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 c1	c2	c3
 1	1	1
@@ -365,14 +386,14 @@ c1	c2	c3
 4	4	4
 5	5	5
 alter table t1 add index c1(c1);
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
-id	estRows	task	access object	operator info
-Sort	4060.74	root		index_merge.t1.c1
-└─IndexMerge	2250.55	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	2250.55	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 c1	c2	c3
 1	1	1
@@ -384,65 +405,65 @@ c1	c2	c3
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
-explain format = 'brief' delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
-id	estRows	task	access object	operator info
-Delete	N/A	root		N/A
-└─Sort	4056.68	root		index_merge.t1.c1
-  └─HashJoin	4056.68	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
-    ├─HashAgg(Build)	3245.34	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1
-    │ └─IndexMerge	2248.30	root		type: union
-    │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    │   └─Selection(Probe)	2248.30	cop[tikv]		not(isnull(index_merge.t1.c1)), or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-    │     └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	9990.00	root		data:Selection
-      └─Selection	9990.00	cop[tikv]		not(isnull(index_merge.t1.c1))
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
+id	task	access object	operator info
+Delete	root		N/A
+└─Sort	root		index_merge.t1.c1
+  └─HashJoin	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
+    ├─HashAgg(Build)	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1
+    │ └─IndexMerge	root		type: union
+    │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    │   └─Selection(Probe)	cop[tikv]		not(isnull(index_merge.t1.c1)), or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+    │     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(index_merge.t1.c1))
+        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
 select * from t1;
 c1	c2	c3
 ///// UPDATE
-explain format = 'brief' update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10);
-id	estRows	task	access object	operator info
-Update	N/A	root		N/A
-└─HashJoin	4056.68	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
-  ├─HashAgg(Build)	3245.34	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1
-  │ └─IndexMerge	2248.30	root		type: union
-  │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  │   └─Selection(Probe)	2248.30	cop[tikv]		not(isnull(index_merge.t1.c1)), or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-  │     └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─TableReader(Probe)	9990.00	root		data:Selection
-    └─Selection	9990.00	cop[tikv]		not(isnull(index_merge.t1.c1))
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10);
+id	task	access object	operator info
+Update	root		N/A
+└─HashJoin	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
+  ├─HashAgg(Build)	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1
+  │ └─IndexMerge	root		type: union
+  │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  │   └─Selection(Probe)	cop[tikv]		not(isnull(index_merge.t1.c1)), or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+  │     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(index_merge.t1.c1))
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10);
 select * from t1;
 c1	c2	c3
 ///// FOR UPDATE
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
-id	estRows	task	access object	operator info
-Sort	4060.74	root		index_merge.t1.c1
-└─Projection	4060.74	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─SelectLock	4060.74	root		for update 0
-    └─IndexMerge	2250.55	root		type: union
-      ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-      ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-      └─Selection(Probe)	2250.55	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-        └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+  └─SelectLock	root		for update 0
+    └─IndexMerge	root		type: union
+      ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+      └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+        └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
 c1	c2	c3
 ///// TEMPORARY Table. Not support for now.
 drop table if exists t1;
 create temporary table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
-id	estRows	task	access object	operator info
-Projection	4060.74	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-└─UnionScan	4060.74	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-  └─IndexLookUp	4060.74	root		
-    ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t1, index:c1(c1)	keep order:true, stats:pseudo
-    └─Selection(Probe)	4060.74	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-      └─TableRowIDScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+id	task	access object	operator info
+Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+└─UnionScan	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+  └─IndexLookUp	root		
+    ├─IndexFullScan(Build)	cop[tikv]	table:t1, index:c1(c1)	keep order:true, stats:pseudo
+    └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+      └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 c1	c2	c3
 1	1	1
@@ -451,11 +472,11 @@ c1	c2	c3
 4	4	4
 5	5	5
 ///// MEMORY Table
-explain format = 'brief' select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(Column#119)->Column#120
-└─StreamAgg	1.00	root		funcs:count(1)->Column#119
-  └─MemTableScan	10000.00	root	table:STATEMENTS_SUMMARY	
+explain format = 'plan_tree' select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column#121)->Column#122
+└─StreamAgg	root		funcs:count(1)->Column#121
+  └─MemTableScan	root	table:STATEMENTS_SUMMARY	
 show warnings;
 Level	Code	Message
 Warning	1815	use_index_merge(index_merge.t_alias) is inapplicable, check whether the table(index_merge.t_alias) exists
@@ -466,29 +487,29 @@ count(c1)
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 order by 1 limit 1 offset 2;
-id	estRows	task	access object	operator info
-TopN	1.00	root		index_merge.t1.c1, offset:2, count:1
-└─IndexMerge	3.00	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─TopN(Probe)	3.00	cop[tikv]		index_merge.t1.c1, offset:0, count:3
-    └─Selection	1841.86	cop[tikv]		lt(index_merge.t1.c3, 10)
-      └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 order by 1 limit 1 offset 2;
+id	task	access object	operator info
+TopN	root		index_merge.t1.c1, offset:2, count:1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─TopN(Probe)	cop[tikv]		index_merge.t1.c1, offset:0, count:3
+    └─Selection	cop[tikv]		lt(index_merge.t1.c3, 10)
+      └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 order by 1 limit 1 offset 2;
 c1	c2	c3
 3	3	3
 ///// GROUP BY
-explain format = 'brief' select /*+ use_index_merge(t1) */ sum(c1) from t1 where (c1 < 10 or c2 < 10) and c3 < 10 group by c1 order by 1;
-id	estRows	task	access object	operator info
-Sort	1473.49	root		Column#5
-└─HashAgg	1473.49	root		group by:Column#13, funcs:sum(Column#12)->Column#5
-  └─Projection	1841.86	root		cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#12, index_merge.t1.c1->Column#13
-    └─IndexMerge	1841.86	root		type: union
-      ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-      ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-      └─Selection(Probe)	1841.86	cop[tikv]		lt(index_merge.t1.c3, 10)
-        └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ sum(c1) from t1 where (c1 < 10 or c2 < 10) and c3 < 10 group by c1 order by 1;
+id	task	access object	operator info
+Sort	root		Column#5
+└─HashAgg	root		group by:Column#13, funcs:sum(Column#12)->Column#5
+  └─Projection	root		cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#12, index_merge.t1.c1->Column#13
+    └─IndexMerge	root		type: union
+      ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+      └─Selection(Probe)	cop[tikv]		lt(index_merge.t1.c3, 10)
+        └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ sum(c1) from t1 where (c1 < 10 or c2 < 10) and c3 < 10 group by c1 order by 1;
 sum(c1)
 1
@@ -500,22 +521,22 @@ sum(c1)
 drop table if exists t2;
 create table t2(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t2 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select avg(t2.c1) from t2 where t1.c1 = t2.c1 group by t2.c1) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
-id	estRows	task	access object	operator info
-Sort	1841.86	root		index_merge.t1.c1
-└─Projection	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Apply	1841.86	root		inner join, equal:[eq(Column#10, Column#9)]
-    ├─Projection(Build)	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#10
-    │ └─IndexMerge	1841.86	root		type: union
-    │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
-    │   └─Selection(Probe)	1841.86	cop[tikv]		lt(index_merge.t1.c3, 10)
-    │     └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─MaxOneRow(Probe)	1841.86	root		
-      └─StreamAgg	3683.72	root		group by:index_merge.t2.c1, funcs:avg(Column#17, Column#18)->Column#9
-        └─IndexReader	3683.72	root		index:StreamAgg
-          └─StreamAgg	3683.72	cop[tikv]		group by:index_merge.t2.c1, funcs:count(index_merge.t2.c1)->Column#17, funcs:sum(index_merge.t2.c1)->Column#18
-            └─IndexRangeScan	4604.65	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(index_merge.t1.c1, index_merge.t2.c1)], keep order:true, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select avg(t2.c1) from t2 where t1.c1 = t2.c1 group by t2.c1) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+  └─Apply	root		inner join, equal:[eq(Column#10, Column#9)]
+    ├─Projection(Build)	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#10
+    │ └─IndexMerge	root		type: union
+    │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
+    │   └─Selection(Probe)	cop[tikv]		lt(index_merge.t1.c3, 10)
+    │     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─MaxOneRow(Probe)	root		
+      └─StreamAgg	root		group by:index_merge.t2.c1, funcs:avg(Column#17, Column#18)->Column#9
+        └─IndexReader	root		index:StreamAgg
+          └─StreamAgg	cop[tikv]		group by:index_merge.t2.c1, funcs:count(index_merge.t2.c1)->Column#17, funcs:sum(index_merge.t2.c1)->Column#18
+            └─IndexRangeScan	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(index_merge.t1.c1, index_merge.t2.c1)], keep order:true, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select avg(t2.c1) from t2 where t1.c1 = t2.c1 group by t2.c1) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
 c1	c2	c3
 1	1	1
@@ -523,25 +544,25 @@ c1	c2	c3
 3	3	3
 4	4	4
 5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select /*+ use_index_merge(t2) */ avg(t2.c1) from t2 where t1.c1 = t2.c1 and t2.c1 < 10 or t2.c2 < 10 group by t2.c1 order by c1 limit 1 offset 2) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
-id	estRows	task	access object	operator info
-Sort	1841.86	root		index_merge.t1.c1
-└─Projection	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
-  └─Apply	1841.86	root		inner join, equal:[eq(Column#11, Column#9)]
-    ├─Projection(Build)	1841.86	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#11
-    │ └─IndexMerge	1841.86	root		type: union
-    │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
-    │   └─Selection(Probe)	1841.86	cop[tikv]		lt(index_merge.t1.c3, 10)
-    │     └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TopN(Probe)	1841.86	root		index_merge.t2.c1, offset:2, count:1
-      └─HashAgg	4900166.23	root		group by:Column#23, funcs:avg(Column#22)->Column#9, funcs:firstrow(Column#23)->index_merge.t2.c1
-        └─Projection	6125207.79	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column#22, index_merge.t2.c1->Column#23
-          └─IndexMerge	6125207.79	root		type: union
-            ├─Selection(Build)	6121.12	cop[tikv]		eq(index_merge.t1.c1, index_merge.t2.c1)
-            │ └─IndexRangeScan	6121120.92	cop[tikv]	table:t2, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-            ├─IndexRangeScan(Build)	6121120.92	cop[tikv]	table:t2, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-            └─TableRowIDScan(Probe)	6125207.79	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select /*+ use_index_merge(t2) */ avg(t2.c1) from t2 where t1.c1 = t2.c1 and t2.c1 < 10 or t2.c2 < 10 group by t2.c1 order by c1 limit 1 offset 2) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+  └─Apply	root		inner join, equal:[eq(Column#11, Column#9)]
+    ├─Projection(Build)	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#11
+    │ └─IndexMerge	root		type: union
+    │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
+    │   └─Selection(Probe)	cop[tikv]		lt(index_merge.t1.c3, 10)
+    │     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TopN(Probe)	root		index_merge.t2.c1, offset:2, count:1
+      └─HashAgg	root		group by:Column#23, funcs:avg(Column#22)->Column#9, funcs:firstrow(Column#23)->index_merge.t2.c1
+        └─Projection	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column#22, index_merge.t2.c1->Column#23
+          └─IndexMerge	root		type: union
+            ├─Selection(Build)	cop[tikv]		eq(index_merge.t1.c1, index_merge.t2.c1)
+            │ └─IndexRangeScan	cop[tikv]	table:t2, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+            ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+            └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select /*+ use_index_merge(t2) */ avg(t2.c1) from t2 where t1.c1 = t2.c1 and t2.c1 < 10 or t2.c2 < 10 group by t2.c1 order by c1 limit 1 offset 2) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
 c1	c2	c3
 3	3	3
@@ -549,14 +570,14 @@ c1	c2	c3
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, c4 int, c5 int, key(c1), key(c2), key(c3), key(c4));
 insert into t1 values(1, 1, 1, 1, 1), (2, 2, 2, 2, 2), (3, 3, 3, 3, 3), (4, 4, 4, 4, 4), (5, 5, 5, 5, 5);
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c3 < 10 or c4 < 10) order by 1;
-id	estRows	task	access object	operator info
-Sort	3071.61	root		index_merge.t1.c1
-└─IndexMerge	3071.61	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	3071.61	cop[tikv]		or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c4, 10))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c3 < 10 or c4 < 10) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c4, 10))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c3 < 10 or c4 < 10) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -564,14 +585,14 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) order by 1;
-id	estRows	task	access object	operator info
-Sort	2086.93	root		index_merge.t1.c1
-└─IndexMerge	1156.62	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	1156.62	cop[tikv]		or(and(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c2, 10)), and(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c4, 10)))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(and(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c2, 10)), and(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c4, 10)))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -579,14 +600,14 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) and c5 < 10 order by 1;
-id	estRows	task	access object	operator info
-Sort	1430.96	root		index_merge.t1.c1
-└─IndexMerge	793.07	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	793.07	cop[tikv]		or(and(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c2, 10)), and(lt(index_merge.t1.c3, 10), and(lt(index_merge.t1.c4, 10), lt(index_merge.t1.c5, 10))))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) and c5 < 10 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(and(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c2, 10)), and(lt(index_merge.t1.c3, 10), and(lt(index_merge.t1.c4, 10), lt(index_merge.t1.c5, 10))))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) and c4 < 10 order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -594,14 +615,14 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where ((c1 < 10 and c4 < 10) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
-id	estRows	task	access object	operator info
-Sort	2250.55	root		index_merge.t1.c1
-└─IndexMerge	1247.30	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	1247.30	cop[tikv]		or(and(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c4, 10)), lt(index_merge.t1.c2, 10)), or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c5, 10))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where ((c1 < 10 and c4 < 10) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(and(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c4, 10)), lt(index_merge.t1.c2, 10)), or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c5, 10))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where ((c1 < 10 and c4 < 10) or c2 < 10) and (c3 < 10 or c4 < 10) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -609,12 +630,12 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and (c1 < 10 or c4 < 10)) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
-id	estRows	task	access object	operator info
-Sort	2978.47	root		index_merge.t1.c1
-└─TableReader	2978.47	root		data:Selection
-  └─Selection	2978.47	cop[tikv]		or(and(or(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c3, 10)), or(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c4, 10))), lt(index_merge.t1.c2, 10)), or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c5, 10))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and (c1 < 10 or c4 < 10)) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─TableReader	root		data:Selection
+  └─Selection	cop[tikv]		or(and(or(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c3, 10)), or(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c4, 10))), lt(index_merge.t1.c2, 10)), or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c5, 10))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 Warning	1105	IndexMerge is inapplicable
@@ -625,14 +646,14 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and c1 < 10) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
-id	estRows	task	access object	operator info
-Sort	2523.42	root		index_merge.t1.c1
-└─IndexMerge	1398.53	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	1398.53	cop[tikv]		or(and(or(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c3, 10)), lt(index_merge.t1.c1, 10)), lt(index_merge.t1.c2, 10)), or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c5, 10))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and c1 < 10) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(and(or(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c3, 10)), lt(index_merge.t1.c1, 10)), lt(index_merge.t1.c2, 10)), or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c5, 10))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and c1 < 10) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -642,47 +663,47 @@ c1	c2	c3	c4	c5
 5	5	5	5	5
 ///// All kinds of expressions
 // common functions
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and coalesce(c1, c2, c4) = 1 order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─IndexMerge	4433.77	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	4433.77	cop[tikv]		eq(coalesce(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c4), 1)
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and coalesce(c1, c2, c4) = 1 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(coalesce(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c4), 1)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and coalesce(c1, c2, c4) = 1 order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and greatest(c1, c2, c4) = 1 order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─Selection	4433.77	root		eq(greatest(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c4), 1)
-  └─IndexMerge	5542.21	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and greatest(c1, c2, c4) = 1 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Selection	root		eq(greatest(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c4), 1)
+  └─IndexMerge	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and greatest(c1, c2, c4) = 1 order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
 // math functions
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and abs(c1) = 1 order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─IndexMerge	4433.77	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	4433.77	cop[tikv]		eq(abs(index_merge.t1.c1), 1)
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and abs(c1) = 1 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(abs(index_merge.t1.c1), 1)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and abs(c1) = 1 order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and pi() order by 1;
-id	estRows	task	access object	operator info
-Sort	5542.21	root		index_merge.t1.c1
-└─IndexMerge	5542.21	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and pi() order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and pi() order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -690,14 +711,14 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ceil(c1) order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─IndexMerge	4433.77	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	4433.77	cop[tikv]		ceil(index_merge.t1.c1)
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ceil(c1) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		ceil(index_merge.t1.c1)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ceil(c1) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -705,43 +726,43 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and truncate(c1, 1) = 1 order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─Selection	4433.77	root		eq(truncate(index_merge.t1.c1, 1), 1)
-  └─IndexMerge	5542.21	root		type: union
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and truncate(c1, 1) = 1 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─Selection	root		eq(truncate(index_merge.t1.c1, 1), 1)
+  └─IndexMerge	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and truncate(c1, 1) = 1 order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and sqrt(-1) order by 1;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and sqrt(-1) order by 1;
+id	task	access object	operator info
+TableDual	root		rows:0
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and sqrt(-1) order by 1;
 c1	c2	c3	c4	c5
 // string functions
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and substring(c3, 1, 1) = '1' order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─IndexMerge	4433.77	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	4433.77	cop[tikv]		eq(substring(cast(index_merge.t1.c3, var_string(20)), 1, 1), "1")
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and substring(c3, 1, 1) = '1' order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(substring(cast(index_merge.t1.c3, var_string(20)), 1, 1), "1")
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and substring(c3, 1, 1) = '1' order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
 // control functions
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ifnull(c1, c2) order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─IndexMerge	4433.77	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	4433.77	cop[tikv]		ifnull(index_merge.t1.c1, index_merge.t1.c2)
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ifnull(c1, c2) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		ifnull(index_merge.t1.c1, index_merge.t1.c2)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ifnull(c1, c2) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -749,14 +770,14 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and if(c1, c2, c3) order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─IndexMerge	4433.77	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	4433.77	cop[tikv]		if(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3)
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and if(c1, c2, c3) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		if(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and if(c1, c2, c3) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -764,28 +785,28 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c1 between 1 and 2) order by 1;
-id	estRows	task	access object	operator info
-Sort	138.56	root		index_merge.t1.c1
-└─IndexMerge	87.26	root		type: union
-  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t1, index:c1(c1)	range:[1,2], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	87.26	cop[tikv]		ge(index_merge.t1.c1, 1), le(index_merge.t1.c1, 2)
-    └─TableRowIDScan	3490.25	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c1 between 1 and 2) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[1,2], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		ge(index_merge.t1.c1, 1), le(index_merge.t1.c1, 2)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c1 between 1 and 2) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
 2	2	2	2	2
 // mixed usage
 set @a = 1;
-explain format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and length(substring(sqrt(c3), @a, 1)) = char_length(if(c1, c2, c3)) order by 1;
-id	estRows	task	access object	operator info
-Sort	4433.77	root		index_merge.t1.c1
-└─IndexMerge	4433.77	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	4433.77	cop[tikv]		eq(length(substring(cast(sqrt(cast(index_merge.t1.c3, double BINARY)), var_string(370)), 1, 1)), char_length(cast(if(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3), var_string(20))))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and length(substring(sqrt(c3), @a, 1)) = char_length(if(c1, c2, c3)) order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(length(substring(cast(sqrt(cast(index_merge.t1.c3, double BINARY)), var_string(370)), 1, 1)), char_length(cast(if(index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3), var_string(20))))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and length(substring(sqrt(c3), @a, 1)) = char_length(if(c1, c2, c3)) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -797,14 +818,14 @@ c1	c2	c3	c4	c5
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, c4 int, c5 int, key(c1), key(c2), key(c3), key(c4));
 insert into t1 values(1, 1, 1, 1, 1), (2, 2, 2, 2, 2), (3, 3, 3, 3, 3), (4, 4, 4, 4, 4), (5, 5, 5, 5, 5);
-explain format = 'brief' with cte1 as (select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
-id	estRows	task	access object	operator info
-Sort	4060.74	root		index_merge.t1.c1
-└─IndexMerge	2250.55	root		type: union
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	2250.55	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-    └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' with cte1 as (select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 with cte1 as (select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -812,20 +833,20 @@ c1	c2	c3	c4	c5
 3	3	3	3	3
 4	4	4	4	4
 5	5	5	5	5
-explain format = 'brief' with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10 UNION ALL select c1 + 100 from cte1 where c1 < 10) select * from cte1 order by 1;
-id	estRows	task	access object	operator info
-Sort	7309.33	root		index_merge.t1.c1
-└─CTEFullScan	7309.33	root	CTE:cte1	data:CTE_0
-CTE_0	7309.33	root		Recursive CTE
-├─Projection(Seed Part)	4060.74	root		index_merge.t1.c1
-│ └─IndexMerge	2250.55	root		type: union
-│   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-│   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-│   └─Selection(Probe)	2250.55	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-│     └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection(Recursive Part)	3248.59	root		cast(plus(index_merge.t1.c1, 100), int)->index_merge.t1.c1
-  └─Selection	3248.59	root		lt(index_merge.t1.c1, 10)
-    └─CTETable	4060.74	root		Scan on CTE_0
+explain format = 'plan_tree' with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10 UNION ALL select c1 + 100 from cte1 where c1 < 10) select * from cte1 order by 1;
+id	task	access object	operator info
+Sort	root		index_merge.t1.c1
+└─CTEFullScan	root	CTE:cte1	data:CTE_0
+CTE_0	root		Recursive CTE
+├─Projection(Seed Part)	root		index_merge.t1.c1
+│ └─IndexMerge	root		type: union
+│   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+│   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+│   └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+│     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection(Recursive Part)	root		cast(plus(index_merge.t1.c1, 100), int)->index_merge.t1.c1
+  └─Selection	root		lt(index_merge.t1.c1, 10)
+    └─CTETable	root		Scan on CTE_0
 with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10 UNION ALL select c1 + 100 from cte1 where c1 < 10) select * from cte1 order by 1;
 c1
 1
@@ -838,16 +859,16 @@ c1
 103
 104
 105
-explain format = 'brief' with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
-id	estRows	task	access object	operator info
-Sort	1.80	root		Column#16
-└─CTEFullScan	1.80	root	CTE:cte1	data:CTE_0
-CTE_0	1.80	root		Recursive CTE
-├─Projection(Seed Part)	1.00	root		1->Column#4, 1->Column#5, 1->Column#6
-│ └─TableDual	1.00	root		rows:1
-└─Projection(Recursive Part)	0.80	root		cast(plus(Column#7, 1), bigint BINARY)->Column#13, cast(plus(Column#8, 1), bigint BINARY)->Column#14, cast(plus(Column#9, 1), bigint BINARY)->Column#15
-  └─Selection	0.80	root		or(lt(Column#7, 10), and(lt(Column#8, 10), lt(Column#9, 10)))
-    └─CTETable	1.00	root		Scan on CTE_0
+explain format = 'plan_tree' with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
+id	task	access object	operator info
+Sort	root		Column#16
+└─CTEFullScan	root	CTE:cte1	data:CTE_0
+CTE_0	root		Recursive CTE
+├─Projection(Seed Part)	root		1->Column#4, 1->Column#5, 1->Column#6
+│ └─TableDual	root		rows:1
+└─Projection(Recursive Part)	root		cast(plus(Column#7, 1), bigint BINARY)->Column#13, cast(plus(Column#8, 1), bigint BINARY)->Column#14, cast(plus(Column#9, 1), bigint BINARY)->Column#15
+  └─Selection	root		or(lt(Column#7, 10), and(lt(Column#8, 10), lt(Column#9, 10)))
+    └─CTETable	root		Scan on CTE_0
 show warnings;
 Level	Code	Message
 Warning	1815	use_index_merge(index_merge.t_alias) is inapplicable, check whether the table(index_merge.t_alias) exists

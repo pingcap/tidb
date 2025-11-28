@@ -105,7 +105,7 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
-		tk.MustExec("set tidb_redact_log=0;")
+		tk.MustExec("set @@global.tidb_redact_log=0;")
 	}()
 
 	tk.MustExec(`use test`)
@@ -145,7 +145,7 @@ func TestSlowQueryMisc(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
-		tk.MustExec("set tidb_redact_log=0;")
+		tk.MustExec("set @@global.tidb_redact_log=0;")
 	}()
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
@@ -157,7 +157,7 @@ func TestSlowQueryMisc(t *testing.T) {
 		"where query like 'select%sleep%' order by time desc limit 1").
 		Check(testkit.Rows("select sleep(?), 1 [arguments: 0.01];"))
 
-	tk.MustExec("set tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	tk.MustExec(`prepare mystmt2 from 'select sleep(?), 2';`)
 	tk.MustExec("execute mystmt2 using @num;")
 	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
@@ -167,7 +167,7 @@ func TestSlowQueryMisc(t *testing.T) {
 	// Test 3 kinds of stale-read query.
 	tk.MustExec("create table test.t_stale_read (a int)")
 	time.Sleep(time.Second + time.Millisecond*10)
-	tk.MustExec("set tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 	tk.MustExec("set @@tidb_read_staleness='-1'")
 	tk.MustQuery("select a from test.t_stale_read")
 	tk.MustExec("set @@tidb_read_staleness='0'")
@@ -222,7 +222,7 @@ func TestSlowQuerySessionAlias(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
-		tk.MustExec("set tidb_redact_log=0;")
+		tk.MustExec("set @@global.tidb_redact_log=0;")
 	}()
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
@@ -267,6 +267,7 @@ select * from t;
 # Cop_proc_avg: 0 Cop_proc_addr: 172.16.6.173:40161
 # Cop_wait_avg: 0 Cop_wait_addr: 172.16.6.173:40161
 # Mem_max: 186
+# Mem_arbitration: 215
 # Prepared: false
 # Plan_from_cache: false
 # Plan_from_binding: false
@@ -313,6 +314,9 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
 	tk.MustExec("set @@time_zone='+10:00'")
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2022-04-21 16:44:54' and time < '2022-04-21 16:44:55'").Check(testkit.Rows("1"))
+
+	// issues 58194
+	tk.MustQuery("select max(Mem_arbitration) from `information_schema`.`slow_query`").Check(testkit.Rows("215"))
 }
 
 func TestIssue37066(t *testing.T) {

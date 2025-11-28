@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -71,7 +72,12 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
-	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, config.DefaultBatchSize, plan.MaxEngineSize)
+	} else {
+		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	}
+
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
@@ -294,6 +300,9 @@ func TestGetLocalBackendCfg(t *testing.T) {
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("nextgen doesn't support import from server disk")
+	}
 	username, err := user.Current()
 	require.NoError(t, err)
 	if username.Name == "root" {
@@ -425,6 +434,8 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy"},
 		},
 	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
 	for _, testcase := range testcases {
 		for _, fileName := range testcase.fileNames {
 			c.Format = DataFormatAuto

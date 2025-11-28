@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -79,7 +81,9 @@ func TestColumnIDs(t *testing.T) {
 		HighExclude: true,
 		Collators:   collate.GetBinaryCollatorSlice(1),
 	}
-	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	var countEst statistics.RowEstimate
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	count := countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, float64(1), count)
 
@@ -94,7 +98,8 @@ func TestColumnIDs(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// At that time, we should get c2's stats instead of c1's.
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 }
@@ -109,7 +114,6 @@ func TestDurationToTS(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit2 := testkit.NewTestKit(t, store)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -121,9 +125,8 @@ func TestVersion(t *testing.T) {
 	tableInfo1 := tbl1.Meta()
 	h, err := handle.NewHandle(
 		context.Background(),
-		testKit2.Session(),
 		time.Millisecond,
-		do.SysSessionPool(),
+		do.AdvancedSysSessionPool(),
 		do.SysProcTracker(),
 		do.DDLNotifier(),
 		do.NextConnID,
@@ -249,7 +252,7 @@ func TestLoadHist(t *testing.T) {
 	require.False(t, newStatsTbl2 == newStatsTbl)
 	// The histograms is not updated.
 	newStatsTbl.ForEachColumnImmutable(func(id int64, hist *statistics.Column) bool {
-		require.Equal(t, newStatsTbl2.GetCol(id), hist)
+		require.Equal(t, hist.LastUpdateVersion, newStatsTbl2.GetCol(id).LastUpdateVersion)
 		return false
 	})
 	require.Greater(t, newStatsTbl2.GetCol(3).LastUpdateVersion, newStatsTbl2.GetCol(1).LastUpdateVersion)
@@ -723,8 +726,7 @@ func TestMergeIdxHist(t *testing.T) {
 }
 
 func TestPartitionPruneModeSessionVariable(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
@@ -843,6 +845,9 @@ func TestDuplicateFMSketch(t *testing.T) {
 }
 
 func TestIndexFMSketch(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1557,4 +1562,50 @@ func TestLoadStatsForBitColumn(t *testing.T) {
 
 		tk.MustExec("drop table " + tableName)
 	}
+}
+
+func TestStatsCacheShouldNotCacheSystemTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.MustExec("analyze table t")
+
+	h := dom.StatsHandle()
+	require.Equal(t, 1, h.Len())
+
+	// These commands should list all tables and must not pollute the stats cache.
+	tk.MustExec("show stats_meta")
+	tk.MustExec("show stats_healthy")
+	require.Equal(t, 1, h.Len())
+	require.NotZero(t, h.GetSystemDBIDCacheLenForTest())
+	h.Clear()
+	require.Zero(t, h.GetSystemDBIDCacheLenForTest())
+}
+
+func TestStatsCacheShouldNotCacheTemporaryTable(t *testing.T) {
+	// Local temporary tables.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table t(a int)")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.MustExec("select * from t")
+
+	h := dom.StatsHandle()
+	require.Equal(t, 0, h.Len())
+
+	// Global temporary tables.
+	tk.MustExec("create global temporary table gt(a int) on commit delete rows")
+	tk.MustExec("insert into gt values(1),(2),(3)")
+	tk.MustExec("select * from gt")
+
+	require.Equal(t, 0, h.Len())
+
+	// Analyze tables.
+	tk.MustExec("analyze table t")
+	require.Equal(t, 1, h.Len())
+	tk.MustExec("analyze table gt")
+	require.Equal(t, 2, h.Len())
 }

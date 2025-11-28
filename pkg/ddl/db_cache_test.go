@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -25,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,15 +57,23 @@ func TestAlterTableCache(t *testing.T) {
 	checkTableCacheStatus(t, tk, "test", "t1", model.TableCacheStatusEnable)
 	tk.MustExec("alter table t1 nocache")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set global tidb_enable_metadata_lock=0")
-	/*Test can't skip schema checker*/
-	tk.MustExec("drop table if exists t1,t2")
-	tk.MustExec("CREATE TABLE t1 (a int)")
-	tk.MustExec("CREATE TABLE t2 (a int)")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 set a=1;")
-	tk2.MustExec("alter table t1 cache;")
-	tk.MustGetDBError("commit", domain.ErrInfoSchemaChanged)
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_metadata_lock=0")
+		/*Test can't skip schema checker*/
+		tk.MustExec("drop table if exists t1,t2")
+		tk.MustExec("CREATE TABLE t1 (a int)")
+		tk.MustExec("CREATE TABLE t2 (a int)")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 set a=1;")
+		tk2.MustExec("alter table t1 cache;")
+		tk.MustGetDBError("commit", domain.ErrInfoSchemaChanged)
+	} else {
+		tk.MustExec("drop table if exists t1,t2")
+		tk.MustExec("CREATE TABLE t1 (a int)")
+		tk.MustExec("CREATE TABLE t2 (a int)")
+		tk.MustExec("insert into t1 set a=1;")
+		tk2.MustExec("alter table t1 cache;")
+	}
 	/* Test can skip schema checker */
 	tk.MustExec("begin")
 	tk.MustExec("alter table t1 nocache")
@@ -164,9 +173,13 @@ func TestCacheTableSizeLimit(t *testing.T) {
 }
 
 func TestIssue34069(t *testing.T) {
+	testIssue34069(t, sem.V1)
+	testIssue34069(t, sem.V2)
+}
+
+func testIssue34069(t *testing.T, semVer string) {
 	store := testkit.CreateMockStore(t)
-	sem.Enable()
-	defer sem.Disable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))

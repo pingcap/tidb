@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
-	"io"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -112,47 +111,6 @@ func (c mockConn) ExecContext(_ context.Context, _ string, _ []driver.NamedValue
 }
 
 func (mockConn) Close() error { return nil }
-
-type mockRows struct {
-	driver.Rows
-	start int64
-	end   int64
-}
-
-func (r *mockRows) Columns() []string {
-	return []string{"id", "raw_handle", "raw_row"}
-}
-
-func (r *mockRows) Close() error { return nil }
-
-func (r *mockRows) Next(dest []driver.Value) error {
-	if r.start >= r.end {
-		return io.EOF
-	}
-	dest[0] = r.start  // id
-	dest[1] = []byte{} // raw_handle
-	dest[2] = []byte{} // raw_row
-	r.start++
-	return nil
-}
-
-func (c mockConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	expectedQuery := "SELECT id, raw_handle, raw_row.*"
-	if err := sqlmock.QueryMatcherRegexp.Match(expectedQuery, query); err != nil {
-		return &mockRows{}, nil
-	}
-	if len(args) != 4 {
-		return &mockRows{}, nil
-	}
-	// args are tableName, start, end, and limit.
-	start := max(args[1].Value.(int64), 1)
-	end := min(args[2].Value.(int64), c.totalRows+1)
-	limit := args[3].Value.(int64)
-	if start+limit < end {
-		end = start + limit
-	}
-	return &mockRows{start: start, end: end}, nil
-}
 
 func TestReplaceConflictOneKey(t *testing.T) {
 	column1 := &model.ColumnInfo{

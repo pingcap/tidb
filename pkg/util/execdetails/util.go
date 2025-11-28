@@ -43,9 +43,10 @@ func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails,
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
-	ruDetails = util.NewRUDetails()
 	if ruDetailsVal := ctx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
 		ruDetails = ruDetailsVal.(*util.RUDetails)
+	} else {
+		ruDetails = util.NewRUDetails()
 	}
 
 	return

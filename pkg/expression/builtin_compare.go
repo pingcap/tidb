@@ -1555,10 +1555,11 @@ func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType,
 		return con, false
 	}
 	return &Constant{
-		Value:        dt,
-		RetType:      targetFieldType,
-		DeferredExpr: con.DeferredExpr,
-		ParamMarker:  con.ParamMarker,
+		Value:         dt,
+		RetType:       targetFieldType,
+		DeferredExpr:  con.DeferredExpr,
+		ParamMarker:   con.ParamMarker,
+		SubqueryRefID: con.SubqueryRefID,
 	}, false
 }
 
@@ -1601,10 +1602,11 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 	}
 	if c == 0 {
 		return &Constant{
-			Value:        intDatum,
-			RetType:      &targetFieldType,
-			DeferredExpr: con.DeferredExpr,
-			ParamMarker:  con.ParamMarker,
+			Value:         intDatum,
+			RetType:       &targetFieldType,
+			DeferredExpr:  con.DeferredExpr,
+			ParamMarker:   con.ParamMarker,
+			SubqueryRefID: con.SubqueryRefID,
 		}, false
 	}
 	switch op {
@@ -1648,10 +1650,11 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 				return con, true
 			}
 			return &Constant{
-				Value:        intDatum,
-				RetType:      &targetFieldType,
-				DeferredExpr: con.DeferredExpr,
-				ParamMarker:  con.ParamMarker,
+				Value:         intDatum,
+				RetType:       &targetFieldType,
+				DeferredExpr:  con.DeferredExpr,
+				ParamMarker:   con.ParamMarker,
+				SubqueryRefID: con.SubqueryRefID,
 			}, false
 		}
 	}

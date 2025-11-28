@@ -23,16 +23,20 @@ import (
 	"github.com/pingcap/failpoint"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -52,6 +56,7 @@ var (
 
 // Manager monitors the task table and manages the taskExecutors.
 type Manager struct {
+	store     kv.Storage
 	taskTable TaskTable
 	mu        struct {
 		sync.RWMutex
@@ -67,22 +72,27 @@ type Manager struct {
 	logger       *zap.Logger
 	slotManager  *slotManager
 	nodeResource *proto.NodeResource
+	trace        *traceevent.Trace
 }
 
 // NewManager creates a new task executor Manager.
-func NewManager(ctx context.Context, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
+func NewManager(ctx context.Context, store kv.Storage, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
 	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
 	}
 
 	m := &Manager{
+		store:        store,
 		id:           id,
 		taskTable:    taskTable,
 		logger:       logger,
 		slotManager:  newSlotManager(resource.TotalCPU),
 		nodeResource: resource,
+		trace:        traceevent.NewTrace(),
 	}
+
+	ctx = tracing.WithFlightRecorder(ctx, m.trace)
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.taskExecutors = make(map[int64]TaskExecutor)
 
@@ -145,8 +155,10 @@ func (m *Manager) handleTasksLoop() {
 		}
 
 		m.handleTasks()
+		m.trace.DiscardOrFlush(m.ctx)
+
 		// service scope might change, so we call WithLabelValues every time.
-		metrics.DistTaskUsedSlotsGauge.WithLabelValues(vardef.ServiceScope.Load()).
+		dxfmetric.UsedSlotsGauge.WithLabelValues(vardef.ServiceScope.Load()).
 			Set(float64(m.slotManager.usedSlots()))
 		metrics.GlobalSortUploadWorkerCount.Set(float64(litstorage.GetActiveUploadWorkerCount()))
 	}
@@ -160,6 +172,9 @@ func (m *Manager) handleTasksLoop() {
 // when there is no enough slots to run a task even after considers preemption,
 // tasks with low ranking can run.
 func (m *Manager) handleTasks() {
+	r := tracing.StartRegion(m.ctx, "taskexecutor.handleTasks")
+	defer r.End()
+
 	// we don't query task in 'modifying' state, if it's prev-state is 'pending'
 	// or 'paused', then they are not executable, if it's 'running', it should be
 	// queried out soon as 'modifying' is a fast process.
@@ -320,6 +335,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		slotMgr:   m.slotManager,
 		nodeRc:    m.getNodeResource(),
 		execID:    m.id,
+		Store:     m.store,
 	})
 	err = executor.Init(m.ctx)
 	if err != nil {

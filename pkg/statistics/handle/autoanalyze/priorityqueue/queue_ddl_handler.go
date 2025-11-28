@@ -169,7 +169,11 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
-	tableInfo, idxes := event.GetAddIndexInfo()
+	tableInfo, idxes, analyzed := event.GetAddIndexInfo()
+	if analyzed {
+		// if an added index is already analyzed in ddl, skip it here.
+		return nil
+	}
 
 	intest.AssertFunc(func() bool {
 		// Columnar index has a separate job type. We should not see columnar index here.
@@ -205,9 +209,9 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 				return nil
 			}
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
-			// FIXME: https://github.com/pingcap/tidb/issues/62861
-			// nolint
-			return pq.pushWithoutLock(job)
+			if err := pq.pushWithoutLock(job); err != nil {
+				return err
+			}
 		}
 		return nil
 	}

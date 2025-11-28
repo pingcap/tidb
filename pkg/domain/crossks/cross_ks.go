@@ -16,6 +16,8 @@ package crossks
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -23,7 +25,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -51,15 +52,26 @@ const crossKSSessPoolSize = 5
 // Manager manages all cross keyspace sessions.
 type Manager struct {
 	mu sync.RWMutex
+	// the store of current instance
+	store kv.Storage
 	// keyspace name -> session manager
 	sessMgrs map[string]*SessionManager
 }
 
 // NewManager creates a new cross keyspace session manager.
-func NewManager() *Manager {
+func NewManager(store kv.Storage) *Manager {
 	return &Manager{
+		store:    store,
 		sessMgrs: make(map[string]*SessionManager),
 	}
+}
+
+// GetAllKeyspace returns all keyspace names that have session managers.
+// used in tests.
+func (m *Manager) GetAllKeyspace() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return slices.Collect(maps.Keys(m.sessMgrs))
 }
 
 // Get gets a session manager for the specified keyspace.
@@ -84,7 +96,7 @@ func (m *Manager) GetOrCreate(
 	// corrupt user data, and it's harder to diagnose those issues, so we use
 	// runtime check instead of intest.Assert here, in case some code path are not
 	// covered by tests.
-	if kerneltype.IsClassic() || config.GetGlobalKeyspaceName() == ks {
+	if kerneltype.IsClassic() || m.store.GetKeyspace() == ks {
 		return nil, errors.New("cross keyspace session manager is not available in classic kernel or current keyspace")
 	}
 	if mgr, ok := m.Get(ks); ok {
@@ -109,7 +121,7 @@ func (m *Manager) GetOrCreate(
 		if err != nil {
 			err2 := store.Close()
 			if err2 != nil {
-				logutil.BgLogger().Error("failed to close store", zap.Error(err2))
+				logutil.BgLogger().Warn("failed to close store", zap.Error(err2))
 			}
 		}
 	}()
@@ -150,7 +162,7 @@ func (m *Manager) GetOrCreate(
 			cancel()
 			err2 := etcdCli.Close()
 			if err2 != nil {
-				logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+				logutil.BgLogger().Warn("failed to close etcd client", zap.Error(err2))
 			}
 		}
 	}()
@@ -302,14 +314,14 @@ func (m *SessionManager) close() {
 	m.wg.Wait()
 	m.schemaVerSyncer.Close()
 	if err := m.etcdCli.Close(); err != nil {
-		logger.Error("failed to close etcd client", zap.Error(err))
+		logger.Warn("failed to close etcd client", zap.Error(err))
 	}
 	// lifecycle of SYSTEM store is managed outside, skip close.
 	needCloseStore := ks != keyspace.System
 	failpoint.InjectCall("skipCloseStore", &needCloseStore)
 	if needCloseStore {
 		if err := m.store.Close(); err != nil {
-			logger.Error("failed to close store", zap.Error(err))
+			logger.Warn("failed to close store", zap.Error(err))
 		}
 	}
 }

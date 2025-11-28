@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -45,11 +44,14 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // ColumnarIndexExtra is the extra information for columnar index.
@@ -144,6 +146,11 @@ type PhysicalTableScan struct {
 
 	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
 	UsedColumnarIndexes []*ColumnarIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
@@ -202,7 +209,7 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	// to scan, but this would only help improve accuracy of NDV for one column, for other columns,
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
-	ts.SetStats(ds.TableStats.ScaleByExpectCnt(rowCount))
+	ts.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(ts.PhysicalTableID) != nil {
 		ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
@@ -275,54 +282,25 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	if p.Table != nil {
 		clonedScan.Table = p.Table.Clone()
 	}
-	clonedScan.Columns = util.CloneColInfos(p.Columns)
-	clonedScan.Ranges = util.CloneRanges(p.Ranges)
+	clonedScan.Columns = sliceutil.DeepClone(p.Columns)
+	clonedScan.Ranges = sliceutil.DeepClone(p.Ranges)
 	clonedScan.TableAsName = p.TableAsName
 	clonedScan.RangeInfo = p.RangeInfo
-	clonedScan.runtimeFilterList = make([]*RuntimeFilter, 0, len(p.runtimeFilterList))
-	for _, rf := range p.runtimeFilterList {
-		clonedRF := rf.Clone()
-		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
-	}
-	clonedScan.UsedColumnarIndexes = make([]*ColumnarIndexExtra, 0, len(p.UsedColumnarIndexes))
-	for _, colIdx := range p.UsedColumnarIndexes {
-		colIdxClone := *colIdx
-		clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
-	}
-	return clonedScan, nil
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableScan)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(p.AccessCondition, nil)
-	cloned.FilterCondition = utilfuncp.CloneExpressionsForPlanCache(p.FilterCondition, nil)
-	cloned.LateMaterializationFilterCondition = utilfuncp.CloneExpressionsForPlanCache(p.LateMaterializationFilterCondition, nil)
-	cloned.HandleIdx = make([]int, len(p.HandleIdx))
-	copy(cloned.HandleIdx, p.HandleIdx)
-	if p.HandleCols != nil {
-		cloned.HandleCols = p.HandleCols.Clone()
-	}
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	if p.SampleInfo != nil {
-		return nil, false
-	}
-	cloned.constColsByCond = make([]bool, len(p.constColsByCond))
-	copy(cloned.constColsByCond, p.constColsByCond)
 	if p.runtimeFilterList != nil {
-		return nil, false
+		clonedScan.runtimeFilterList = make([]*RuntimeFilter, 0, len(p.runtimeFilterList))
+		for _, rf := range p.runtimeFilterList {
+			clonedRF := rf.Clone()
+			clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
+		}
 	}
 	if p.UsedColumnarIndexes != nil {
-		return nil, false
+		clonedScan.UsedColumnarIndexes = make([]*ColumnarIndexExtra, 0, len(p.UsedColumnarIndexes))
+		for _, colIdx := range p.UsedColumnarIndexes {
+			colIdxClone := *colIdx
+			clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
+		}
 	}
-	return cloned, true
+	return clonedScan, nil
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -391,7 +369,7 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 	ctx := p.SCtx()
 	if p.Table.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(p.Table)
-		idxCols, idxColLens := expression.IndexInfo2PrefixCols(p.Columns, p.Schema().Columns, pkIdx)
+		idxCols, idxColLens := util.IndexInfo2PrefixCols(p.Columns, p.Schema().Columns, pkIdx)
 		for _, cond := range access {
 			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 			if err != nil {
@@ -643,7 +621,7 @@ func (p *PhysicalTableScan) BuildPushedDownSelection(stats *property.StatsInfo, 
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalTableScan) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalTableScan) GetPlanCostVer1(_ property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalTableScan(p, option)
 }
 
@@ -651,7 +629,7 @@ func (p *PhysicalTableScan) GetPlanCostVer1(_ property.TaskType, option *optimiz
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experimenp.
 func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalTableScan(p, taskType, option, isChildOfINL...)
 }
 
@@ -780,4 +758,130 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 	executorID := p.ExplainID().String()
 	err = tables.SetPBColumnsDefaultValue(ctx.GetExprCtx(), ptsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err
+}
+
+// BuildIndexMergeTableScan returns Selection that will be pushed to TiKV.
+// Filters that cannot be pushed to TiKV are also returned, and an extra Selection above IndexMergeReader will be constructed later.
+func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expression.Expression,
+	totalRowCount float64, matchProp bool) (base.PhysicalPlan, []expression.Expression, bool, error) {
+	ts := PhysicalTableScan{
+		Table:           ds.TableInfo,
+		Columns:         slices.Clone(ds.Columns),
+		TableAsName:     ds.TableAsName,
+		DBName:          ds.DBName,
+		PhysicalTableID: ds.PhysicalTableID,
+		HandleCols:      ds.HandleCols,
+		TblCols:         ds.TblCols,
+		TblColHists:     ds.TblColHists,
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	ts.SetIsPartition(ds.PartitionDefIdx != nil)
+	ts.SetSchema(ds.Schema().Clone())
+	err := setIndexMergeTableScanHandleCols(ds, ts)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	ts.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), totalRowCount))
+	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+	if usedStats != nil && usedStats.GetUsedInfo(ts.PhysicalTableID) != nil {
+		ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
+	}
+	if ds.StatisticTable.Pseudo {
+		ts.StatsInfo().StatsVersion = statistics.PseudoVersion
+	}
+	var currentTopPlan base.PhysicalPlan = ts
+	if len(tableFilters) > 0 {
+		pushedFilters, remainingFilters := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), tableFilters)
+		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)
+		pushedFilters = pushedFilters1
+		remainingFilters = append(remainingFilters, remainingFilters1...)
+		if len(pushedFilters) != 0 {
+			selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, pushedFilters, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+				selectivity = cost.SelectionFactor
+			}
+			sel := PhysicalSelection{Conditions: pushedFilters}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), selectivity*totalRowCount), ts.QueryBlockOffset())
+			sel.SetChildren(ts)
+			currentTopPlan = sel
+		}
+		if len(remainingFilters) > 0 {
+			return currentTopPlan, remainingFilters, false, nil
+		}
+	}
+	// If we don't need to use ordered scan, we don't need do the following codes for adding new columns.
+	if !matchProp {
+		return currentTopPlan, nil, false, nil
+	}
+
+	// Add the row handle into the schema.
+	columnAdded := false
+	if ts.Table.PKIsHandle {
+		pk := ts.Table.GetPkColInfo()
+		pkCol := expression.ColInfo2Col(ts.TblCols, pk)
+		if !ts.Schema().Contains(pkCol) {
+			ts.Schema().Append(pkCol)
+			ts.Columns = append(ts.Columns, pk)
+			columnAdded = true
+		}
+	} else if ts.Table.IsCommonHandle {
+		idxInfo := ts.Table.GetPrimaryKey()
+		for _, idxCol := range idxInfo.Columns {
+			col := ts.TblCols[idxCol.Offset]
+			if !ts.Schema().Contains(col) {
+				columnAdded = true
+				ts.Schema().Append(col)
+				ts.Columns = append(ts.Columns, col.ToInfo())
+			}
+		}
+	} else if !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
+		ts.Schema().Append(ts.HandleCols.GetCol(0))
+		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+		columnAdded = true
+	}
+
+	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
+	if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		tmpColumns, tmpSchema, newColAdded := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+		ts.Columns = tmpColumns
+		ts.SetSchema(tmpSchema)
+		columnAdded = columnAdded || newColAdded
+	}
+	return currentTopPlan, nil, columnAdded, nil
+}
+
+// extractFiltersForIndexMerge returns:
+// `pushed`: exprs that can be pushed to TiKV.
+// `remaining`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
+// Why do we need this func?
+// IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
+//
+//	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
+//	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
+func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
+	for _, expr := range filters {
+		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.TiKV) {
+			pushed = append(pushed, expr)
+			continue
+		}
+		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.UnSpecified) {
+			remaining = append(remaining, expr)
+		}
+	}
+	return
+}
+
+// setIndexMergeTableScanHandleCols set the handle columns of the table scan.
+func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTableScan) (err error) {
+	handleCols := ds.HandleCols
+	if handleCols == nil {
+		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+	}
+	hdColNum := handleCols.NumCols()
+	exprCols := make([]*expression.Column, 0, hdColNum)
+	for i := range hdColNum {
+		col := handleCols.GetCol(i)
+		exprCols = append(exprCols, col)
+	}
+	ts.HandleCols, err = handleCols.ResolveIndices(expression.NewSchema(exprCols...))
+	return
 }

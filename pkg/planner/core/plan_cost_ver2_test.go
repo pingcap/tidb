@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -152,14 +151,14 @@ func BenchmarkGetPlanCost(b *testing.B) {
 		b.Fatal(err)
 	}
 	phyPlan := plan.(base.PhysicalPlan)
-	_, err = core.GetPlanCost(phyPlan, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
+	_, err = core.GetPlanCost(phyPlan, property.RootTaskType, costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = core.GetPlanCost(phyPlan, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
+		_, _ = core.GetPlanCost(phyPlan, property.RootTaskType, costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
 	}
 }
 
@@ -648,6 +647,24 @@ func TestIndexLookUpRowsLimit(t *testing.T) {
 		require.Equal(t, "(scan(5*logrowsize(48)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
 		rs = tk.MustQuery("explain format='cost_trace' select * from t use index(ia) where a>6 limit 20 offset 100").Rows()
 		require.Equal(t, "(scan(20*logrowsize(48)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
+	})
+}
+
+func TestMergeJoinCostWithOtherConds(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table t1 (id int, a int, b int, c int, primary key(id, a))`)
+		tk.MustExec(`create table t2 (id int, a int, b int, c int, primary key(id, a))`)
+		cost1Str := tk.MustQuery(`explain format='verbose' select /*+ merge_join(t1, t2) */ * from t1 join t2 on t1.id=t2.id`).Rows()[0][2].(string)
+		cost2Str := tk.MustQuery(`explain format='verbose' select /*+ merge_join(t1, t2) */ * from t1 join t2 on t1.id=t2.id and t1.a>t2.a`).Rows()[0][2].(string)
+
+		cost1, err := strconv.ParseFloat(cost1Str, 64)
+		require.Nil(t, err)
+		cost2, err := strconv.ParseFloat(cost2Str, 64)
+		require.Nil(t, err)
+
+		// cost2 should be larger than cost1 since it has an additional condition `t1.a>t2.a`
+		require.Less(t, cost1, cost2)
 	})
 }
 

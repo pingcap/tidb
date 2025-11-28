@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -196,6 +197,11 @@ func (s *Syncer) setDynamicServerInfo(ds *DynamicInfo) {
 
 // GetAllServerInfo returns all server information from etcd.
 func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+	failpoint.Inject("mockGetAllServerInfo", func(val failpoint.Value) {
+		res := make(map[string]*ServerInfo)
+		err := json.Unmarshal([]byte(val.(string)), &res)
+		failpoint.Return(res, err)
+	})
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
 		info := s.info.Load()
@@ -227,7 +233,7 @@ func (s *Syncer) RemoveServerInfo() {
 	if s.etcdCli == nil {
 		return
 	}
-	err := util.DeleteKeyFromEtcd(s.serverInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
+	err := etcd.DeleteKeyFromEtcd(s.serverInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
 	}

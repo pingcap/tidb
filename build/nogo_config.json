@@ -11,15 +11,6 @@
       "pkg/extension/enterprise/audit/filter.go": "pkg/extension/enterprise/audit/filter.go"
     }
   },
-  "asciicheck": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
-      "lightning/pkg/web/res_vfsdata.go": "ignore code"
-    }
-  },
   "asmdecl": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -520,6 +511,7 @@
   "misspell": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
+      "pkg/planner/core/casetest/tpcds/main_test.go": "ignore code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       "$GOROOT/": "ignore GOROOT code",
@@ -600,7 +592,8 @@
       "pkg/owner/": "owner code",
       "pkg/timer/": "timer code",
       "pkg/domain": "domain code",
-      "pkg/workloadlearning": "workloadlearning code"
+      "pkg/workloadlearning": "workloadlearning code",
+      "pkg/kv": "kv code"
     }
   },
   "shift": {
@@ -691,40 +684,8 @@
       "br/pkg/conn/": "br/pkg/conn/ coded",
       "br/pkg/checkpoint/": "br/pkg/checkpoint/ coded",
       "br/pkg/backup/": "br/pkg/backup/ coded",
-      "pkg/planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
-      "pkg/planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
-      "pkg/planer/core/casetest/dag": "planer/core/casetest/dag",
-      "pkg/planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
-      "pkg/planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
-      "pkg/planer/core/casetest/hint": "planer/core/casetest/hint",
-      "pkg/planer/core/casetest/mpp": "planer/core/casetest/mpp",
-      "pkg/planer/core/casetest/partition": "planer/core/casetest/partition",
-      "pkg/planer/core/casetest/pushdown": "planer/core/casetest/pushdown",
-      "pkg/planer/core/casetest/rule": "planer/core/casetest/rule",
-      "pkg/planer/core/casetest/scalarsubquery": "planer/core/casetest/scalarsubquery",
-      "pkg/planer/core/casetest/testdata": "planer/core/casetest/testdata",
-      "pkg/planer/core/casetest/windows": "planer/core/casetest/windows",
-      "pkg/planer/core/tests/": "planer/core/tests/",
-      "pkg/executor/test/admintest": "executor/test/admintest",
-      "pkg/executor/test/aggregate": "executor/test/aggregate",
-      "pkg/executor/test/autoidtest": "executor/test/autoidtest",
-      "pkg/executor/test/distsqltest": "executor/test/distsqltest",
-      "pkg/executor/test/fktest": "executor/test/fktest",
-      "pkg/executor/test/indexmergereadtest": "executor/test/indexmergereadtest",
-      "pkg/executor/test/jointest": "executor/test/jointest",
-      "pkg/executor/test/kvtest": "executor/test/kvtest",
-      "pkg/executor/test/loaddatatest": "executor/test/loaddatatest",
-      "pkg/executor/test/loadremotetest": "executor/test/loadremotetest",
-      "pkg/executor/test/memtest": "executor/test/memtest",
-      "pkg/executor/test/oomtest": "executor/test/oomtest",
-      "pkg/executor/test/partitiontest": "executor/test/partitiontest",
-      "pkg/executor/test/passwordtest": "executor/test/passwordtest",
-      "pkg/executor/test/seqtest": "executor/test/seqtest",
-      "pkg/executor/test/showtest": "executor/test/showtest",
-      "pkg/executor/test/simpletest": "executor/test/simpletest",
-      "pkg/executor/test/splittest": "executor/test/splittest",
-      "pkg/executor/test/tiflashtest": "executor/test/tiflashtest",
-      "pkg/executor/test/unstabletest": "executor/test/unstabletest",
+      "pkg/planner/core": "planner/core",
+      "pkg/executor/test": "executor/test",
       "br/": "br code",
       "pkg/session/test": "session/test code",
       "pkg/ddl/tests": "ddl/tests code",

@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -188,6 +189,23 @@ func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expres
 	return m
 }
 
+var uniqueIDToColumnMapPool = sync.Pool{
+	New: func() any {
+		return make(map[int64]*Column, 4)
+	},
+}
+
+// GetUniqueIDToColumnMap gets map[int64]*Column map from the pool.
+func GetUniqueIDToColumnMap() map[int64]*Column {
+	return uniqueIDToColumnMapPool.Get().(map[int64]*Column)
+}
+
+// PutUniqueIDToColumnMap puts map[int64]*Column map back to the pool.
+func PutUniqueIDToColumnMap(m map[int64]*Column) {
+	clear(m)
+	uniqueIDToColumnMapPool.Put(m)
+}
+
 // ExtractColumnsMapFromExpressionsWithReusedMap is the same as ExtractColumnsFromExpressions, but map can be reused.
 func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter func(*Column) bool, exprs ...Expression) {
 	if len(exprs) == 0 {
@@ -199,6 +217,23 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 	for _, expr := range exprs {
 		extractColumns(m, expr, filter)
 	}
+}
+
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr, filter)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
 }
 
 // ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
@@ -553,6 +588,13 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
+					// If the newArg is a ScalarFunction(cast), BuildCastFunctionWithCheck will modify the newArg.RetType,
+					// So we need to deep copy RetType.
+					// TODO: Expression interface needs a deep copy method.
+					if newArgFunc, ok := newArg.(*ScalarFunction); ok {
+						newArgFunc.RetType = newArgFunc.RetType.DeepCopy()
+						newArg = newArgFunc
+					}
 					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
 					terror.Log(err)
 				} else {
@@ -801,14 +843,17 @@ var logicalOps = map[string]struct{}{
 	ast.EQ:                 {},
 	ast.NE:                 {},
 	ast.UnaryNot:           {},
+	ast.Like:               {},
 	ast.LogicAnd:           {},
 	ast.LogicOr:            {},
 	ast.LogicXor:           {},
 	ast.In:                 {},
 	ast.IsNull:             {},
-	ast.IsTruthWithoutNull: {},
 	ast.IsFalsity:          {},
-	ast.Like:               {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsTruthWithNull:    {},
+	ast.NullEQ:             {},
+	ast.Regexp:             {},
 }
 
 var oppositeOp = map[string]string{

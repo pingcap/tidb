@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,16 +30,17 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,7 +76,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				sql: "select * from t where c>1",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					switch pp := p.(type) {
-					case *plannercore.PhysicalTableReader:
+					case *physicalop.PhysicalTableReader:
 						stats := pp.StatsInfo().HistColl
 						require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[1].ID))
 						require.Greater(t, countFullStats(stats, tableInfo.Columns[2].ID), 0)
@@ -120,7 +122,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[0].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[0].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -130,7 +132,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[1].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -140,7 +142,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[1].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -150,7 +152,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[1].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -160,7 +162,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[1].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -168,11 +170,11 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // recursive CTE
 				sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					pc, ok := p.(*plannercore.PhysicalCTE)
+					pc, ok := p.(*physicalop.PhysicalCTE)
 					require.True(t, ok)
 					pp, ok := pc.SeedPlan.(*physicalop.PhysicalProjection)
 					require.True(t, ok)
-					reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
+					reader, ok := pp.Children()[0].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -180,9 +182,9 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // check idx(b)
 				sql: "select * from t USE INDEX(idx) where b >= 10",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
+					pr, ok := p.(*physicalop.PhysicalIndexLookUpReader)
 					require.True(t, ok)
-					pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+					pis, ok := pr.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 					require.True(t, ok)
 					require.True(t, pis.StatsInfo().HistColl.GetIdx(1).IsEssentialStatsLoaded())
 				},
@@ -327,7 +329,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		plan, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.NoError(t, err) // not fail sql for timeout when pseudo=true
 		switch pp := plan.(type) {
-		case *plannercore.PhysicalTableReader:
+		case *physicalop.PhysicalTableReader:
 			stats := pp.StatsInfo().HistColl
 			require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[0].ID))
 			require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[2].ID)) // pseudo stats
@@ -420,7 +422,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 			}
 
 			// call the function
-			res := plannercore.CollectDependingVirtualCols(tblID2Tbl, neededItems)
+			res := rule.CollectDependingVirtualCols(tblID2Tbl, neededItems)
 
 			// record and check the output
 			cols := make([]string, 0, len(res))
@@ -436,6 +438,89 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 				output[i].OutputColNames = cols
 			})
 			require.Equal(t, output[i].OutputColNames, cols)
+		}
+	})
+}
+
+func TestStatsAnalyzedInDDL(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("set session tidb_stats_update_during_ddl = 1")
+		// test normal table
+		testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+
+		// insert data
+		for i := range 50 {
+			testKit.MustExec("insert into t values (?,?,?)", i, i, i)
+		}
+		var (
+			input  []string
+			output []struct {
+				Query  string
+				Result []string
+			}
+		)
+		testData := GetPlanStatsData()
+		testData.LoadTestCases(t, &input, &output, cascades, caller)
+		var (
+			lastIsSelect     bool
+			lastStatsVersion string
+			curStatsVersion  string
+		)
+		getHistID := func(name string, isIndex bool) (int64, int64) {
+			require.NoError(t, dom.Reload())
+			is := dom.InfoSchema()
+			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			require.NoError(t, err)
+			tableID := tbl.Meta().ID
+			histID := int64(0)
+			if isIndex {
+				histID = tbl.Meta().FindIndexByName(name).ID
+			} else {
+				histID = dbutil.FindColumnByName(tbl.Meta().Columns, name).ID
+			}
+			return tableID, histID
+		}
+		for i, sql := range input {
+			isSelect := strings.HasPrefix(sql, "select")
+			testdata.OnRecord(func() {
+				output[i].Query = input[i]
+				if isSelect {
+					// explain the query
+					output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format='brief' " + sql).Rows())
+				} else {
+					output[i].Result = nil
+				}
+			})
+			if isSelect {
+				// explain the query
+				testKit.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(output[i].Result...))
+				// assert the version
+				indexName := ""
+				if strings.Contains(sql, "idx_c") {
+					indexName = "idx_c"
+				} else {
+					indexName = "idx_bc"
+				}
+				tableID, histID := getHistID(indexName, true)
+				res := testKit.MustQuery("select version from mysql.stats_histograms where table_id = ? and hist_id = ? and is_index=?;", tableID, histID, true)
+				if len(res.Rows()) > 0 {
+					curStatsVersion = res.Rows()[0][0].(string)
+					// since the index is re-analyzed, so each usage of them use a new version.
+					if lastIsSelect {
+						require.Equal(t, lastStatsVersion, curStatsVersion)
+					} else {
+						// last is ddl
+						require.NotEqual(t, lastStatsVersion, curStatsVersion)
+					}
+					lastStatsVersion = curStatsVersion
+				}
+				lastIsSelect = true
+			} else {
+				// run the ddl anyway
+				testKit.MustExec(sql)
+				lastIsSelect = false
+			}
 		}
 	})
 }

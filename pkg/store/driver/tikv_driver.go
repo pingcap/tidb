@@ -35,6 +35,7 @@ import (
 	txn_driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
@@ -264,6 +265,7 @@ type tikvStore struct {
 	opts      sync.Map
 	clusterID uint64
 	keyspace  string
+	closed    bool
 }
 
 // GetOption wraps around sync.Map.
@@ -369,6 +371,14 @@ func (s *tikvStore) GetMPPClient() kv.MPPClient {
 func (s *tikvStore) Close() error {
 	mc.Lock()
 	defer mc.Unlock()
+	// we shouldn't call Close twice, but store is cached, and in some real TiKV
+	// test of nextgen, we have multiple places want to manage the store's lifecycle,
+	// such as real TiKV testkit and cross keyspace session manager, so we add it
+	// to avoid double close.
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	delete(mc.cache, s.UUID())
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
@@ -458,6 +468,9 @@ func (c *injectTraceClient) SendRequest(ctx context.Context, addr string, req *t
 		source.ConnectionId = info.ConnectionID
 		source.SessionAlias = info.SessionAlias
 	}
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
+		return config.Event.DevDebug.Type == traceevent.DevDebugTypeSendRequestTraceIDMissing
+	})
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 

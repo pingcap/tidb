@@ -138,9 +138,17 @@ func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	bytesConsumed := int64(0)
 	diskConsumed := int64(0)
+	var memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes any
 	if pi.StmtCtx != nil {
 		if pi.MemTracker != nil {
 			bytesConsumed = pi.MemTracker.BytesConsumed()
+		}
+		if dur := pi.StmtCtx.MemTracker.MemArbitration(); dur > 0 {
+			memArbitration = dur.Seconds()
+		}
+		if ts, sz := pi.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {
+			memWaitArbitrateStartTime = ts.In(tz).Format("2006-01-02 15:04:05.999")
+			memWaitArbitrateBytes = sz
 		}
 		if pi.DiskTracker != nil {
 			diskConsumed = pi.DiskTracker.BytesConsumed()
@@ -155,7 +163,10 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	if pi.SQLCPUUsage != nil {
 		cpuUsages = pi.SQLCPUUsage.GetCPUUsages()
 	}
-	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
+	return append(pi.ToRowForShow(true), pi.Digest,
+		bytesConsumed,
+		memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes,
+		diskConsumed,
 		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, cpuUsages.TidbCPUTime.Nanoseconds(), cpuUsages.TikvCPUTime.Nanoseconds())
 }
 
@@ -247,4 +258,9 @@ type Manager interface {
 	GetInternalSessionStartTSList() []uint64
 	// GetConAttrs gets the connection attributes
 	GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string
+
+	// GetStatusVars gets status variables
+	// This returns a map with the processid as key and the value is another map
+	// with the key and value of each available status variable.
+	GetStatusVars() map[uint64]map[string]string
 }

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -372,6 +373,111 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 	tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30 6"))
 	tk.MustQuery("select id1 from gcai_table use index(idx1)").Check(testkit.Rows("6"))
 	tk.MustExec("admin check table gcai_table")
+}
+
+func TestAnalyzeStuck(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_add_index_stuck")
+	tk.MustExec("create table t_add_index_stuck (c1 int, c2 int, c3 int)")
+
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t_add_index_stuck values (?, ?, ?)", i, i, i)
+	}
+
+	oldCumulativeTimeout := ddl.DefaultCumulativeTimeout
+	defer func() {
+		ddl.DefaultCumulativeTimeout = oldCumulativeTimeout
+	}()
+	ddl.DefaultCumulativeTimeout = 2 * time.Second
+
+	// enable failpoint to simulate analyze stuck
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		time.Sleep(ddl.DefaultCumulativeTimeout + 10*time.Second)
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := tk.Session().Execute(context.Background(), "alter table t_add_index_stuck add index c3_index(c3)")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10*time.Second + time.Minute):
+		t.Fatalf("add index did not finish in expected time")
+	}
+
+	tbl := external.GetTableByName(t, tk, "test", "t_add_index_stuck")
+	var found bool
+	for _, idx := range tbl.Indices() {
+		if strings.EqualFold(idx.Meta().Name.L, "c3_index") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
+
+	// verify analyze eventually executes successfully by checking stats_meta
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show stats_meta where table_name = 't_add_index_stuck'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+
+	go func() {
+		_, err := tk.Session().Execute(context.Background(), "alter table t_add_index_stuck modify column c2 bigint")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10*time.Second + time.Minute):
+		t.Fatalf("modify column did not finish in expected time")
+	}
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show stats_meta where table_name = 't_add_index_stuck'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+}
+
+func TestAnalyzeOwnerResignNoReRun(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
+	tk.MustExec("drop table if exists t_analyze_owner_resign")
+	tk.MustExec("create table t_analyze_owner_resign (c1 int, c2 int, key(c2))")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t_analyze_owner_resign values (?, ?)", i, i)
+	}
+
+	var callCount int32
+	var resignedFlag int32
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		atomic.AddInt32(&callCount, 1)
+	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/analyzeTableDone", func(job *model.Job) {
+		if atomic.CompareAndSwapInt32(&resignedFlag, 0, 1) {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			// Simulate write-conflict on ddl job table.
+			updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+			updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+		}
+	})
+
+	_, err := tk.Session().Execute(context.Background(), "alter table t_analyze_owner_resign add index idx_c2(c2)")
+	require.NoError(t, err)
+	require.Equal(t, int32(1), atomic.LoadInt32(&callCount), "analyze should not be re-run after owner resigns")
 }
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
@@ -1088,13 +1194,26 @@ func TestAddIndexWithDupIndex(t *testing.T) {
 }
 
 func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a bigint primary key clustered, b int);")
+
 	// The subtask execution order is not guaranteed in distributed reorg. We need to disable it first.
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+
+	if kerneltype.IsClassic() {
+		tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	}
+	if kerneltype.IsNextGen() {
+		// For next-gen, we set tidb_ddl_reorg_worker_cnt automatically by calculating the table size,
+		// which needs PD client. So for this UT, we mock the table size to set worker cnt to 1.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockTableSize", `return(1024)`)
+	}
+
 	for i := 1; i <= 12; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
@@ -1130,6 +1249,141 @@ func getJobsBySQL(se sessionapi.Session, tbl, condition string) ([]*model.Job, e
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil
+}
+
+func TestAddIndexWithAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	// add index
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
+	tk.MustExec("create table t(a int NOT NULL DEFAULT 10, b int, index idx_b(b))")
+	for i := range 50 {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	tk.MustExec("ALTER TABLE t ADD index idx(a)")
+	tk.MustQuery("select * from t use index(idx) where a >1")
+	tk.MustQuery("select * from t use index(idx_b) where b >1")
+	// get meta elements
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	aInfo := tbl.Meta().FindPublicColumnByName("a")
+	require.NotNil(t, aInfo)
+	bInfo := tbl.Meta().FindPublicColumnByName("b")
+	require.NotNil(t, bInfo)
+	idxInfo := tbl.Meta().FindIndexByName("idx")
+	require.NotNil(t, idxInfo)
+	idxBInfo := tbl.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxBInfo)
+	// check the stats handle
+	statsTable, ok := dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	require.True(t, ok)
+	// check the stats element is analyzed
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(aInfo.ID, false))
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxInfo.ID, true))
+	require.NotNil(t, statsTable.HistColl.GetCol(aInfo.ID))
+	require.NotNil(t, statsTable.HistColl.GetIdx(idxInfo.ID))
+	colAStatsVer := statsTable.HistColl.GetCol(aInfo.ID).Histogram.LastUpdateVersion
+	indexAStatsVer := statsTable.HistColl.GetIdx(idxInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colAStatsVer, indexAStatsVer)
+	// for other columns and indexes, they are also analyzed.
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(bInfo.ID, false))
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxBInfo.ID, true))
+	require.NotNil(t, statsTable.HistColl.GetCol(bInfo.ID))
+	require.NotNil(t, statsTable.HistColl.GetIdx(idxBInfo.ID))
+	colBStatsVer := statsTable.HistColl.GetCol(bInfo.ID).Histogram.LastUpdateVersion
+	indexBStatsVer := statsTable.HistColl.GetIdx(idxBInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colBStatsVer, indexBStatsVer)
+	require.Equal(t, indexAStatsVer, indexBStatsVer)
+
+	// test alter column
+	tk.MustExec("ALTER TABLE t modify column a varchar(10)")
+	tk.MustQuery("select * from t use index(idx) where a >1")
+	tk.MustQuery("select * from t use index(idx_b) where b >1")
+	// reload the schema info
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	aInfo = tbl.Meta().FindPublicColumnByName("a")
+	require.NotNil(t, aInfo)
+	idxInfo = tbl.Meta().FindIndexByName("idx")
+	require.NotNil(t, idxInfo)
+	// check the stats handle
+	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	require.True(t, ok)
+	// check the stats element is analyzed
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(aInfo.ID, false))
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxInfo.ID, true))
+	require.NotNil(t, statsTable.HistColl.GetCol(aInfo.ID))
+	require.NotNil(t, statsTable.HistColl.GetIdx(idxInfo.ID))
+	colAStatsVer2 := statsTable.HistColl.GetCol(aInfo.ID).Histogram.LastUpdateVersion
+	indexAStatsVer2 := statsTable.HistColl.GetIdx(idxInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colAStatsVer2, indexAStatsVer2)
+	// colsAStatsVer2 is not same as colAStatsVer
+	require.True(t, colAStatsVer != colAStatsVer2)
+	// for other columns and indexes, they are also analyzed.
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(bInfo.ID, false))
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxBInfo.ID, true))
+	require.NotNil(t, statsTable.HistColl.GetCol(bInfo.ID))
+	require.NotNil(t, statsTable.HistColl.GetIdx(idxBInfo.ID))
+	colBStatsVer2 := statsTable.HistColl.GetCol(bInfo.ID).Histogram.LastUpdateVersion
+	indexBStatsVer2 := statsTable.HistColl.GetIdx(idxBInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colAStatsVer2, colBStatsVer2)
+	require.Equal(t, indexAStatsVer2, indexBStatsVer2)
+	// colsAStatsVer2 is not same as colAStatsVer
+	require.True(t, colBStatsVer != colBStatsVer2)
+
+	// for partition table, add index with analyze should be banned.
+	tk.MustExec("CREATE TABLE pt(id INT NOT NULL, stu_id INT NOT NULL) " +
+		"PARTITION BY RANGE (stu_id) (PARTITION p0 VALUES LESS THAN (25),PARTITION p1 VALUES LESS THAN (51))")
+	for i := range 50 {
+		tk.MustExec("insert into pt values (?,?)", i, i)
+	}
+	tk.MustExec("analyze table pt all columns")
+	// reload the schema info
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+	require.NoError(t, err)
+	idInfo := tbl.Meta().FindPublicColumnByName("id")
+	require.NotNil(t, idInfo)
+	// check the stats handle
+	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	require.True(t, ok)
+	// column is analyzed from last time.
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, false))
+	require.NotNil(t, statsTable.HistColl.GetCol(idInfo.ID))
+	idColStatsVer := statsTable.HistColl.GetCol(idInfo.ID).Histogram.LastUpdateVersion
+
+	tk.MustExec("ALTER TABLE pt ADD index idx(id)")
+	tk.MustQuery("select * from pt use index(idx) where id >1")
+	// reload the schema info
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+	require.NoError(t, err)
+	idInfo = tbl.Meta().FindPublicColumnByName("id")
+	require.NotNil(t, idInfo)
+	idxInfo = tbl.Meta().FindIndexByName("idx")
+	require.NotNil(t, idxInfo)
+
+	// check the stats handle
+	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	require.True(t, ok)
+	// column is analyzed from last time.
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, false))
+	// index is not analyzed.
+	require.False(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, true))
+	// column analyze time is same as before.
+	require.NotNil(t, statsTable.HistColl.GetCol(idInfo.ID))
+	idColStatsVer2 := statsTable.HistColl.GetCol(idInfo.ID).Histogram.LastUpdateVersion
+	// assert that column id is analyzed from
+	require.Equal(t, idColStatsVer, idColStatsVer2)
+
+	// modify column for partitioned table.
+	tk.MustExec("ALTER TABLE pt modify column id varchar(10)")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1( id int, a int, b int, index idx(id, a));")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	tk.MustExec("analyze table t1 all columns with 1 topn, 10 buckets;")
+	tk.MustExec(" ALTER TABLE t1 ADD INDEX idx_a(a), ADD INDEX idx_b(b);")
+	tk.MustQuery("explain select * from t1 where a = 1;").CheckContain("TableFullScan")
 }
 
 func TestCreateTableWithVectorIndex(t *testing.T) {
@@ -1703,6 +1957,9 @@ func TestAddColumnarIndexRollback(t *testing.T) {
 }
 
 func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
