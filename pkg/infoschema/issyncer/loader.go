@@ -299,6 +299,10 @@ func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
 			l.logger.Warn("Load DB filter was ignored in a `CREATE DATABASE`", zap.Int64("diff", diff.Version))
 			return false
 		}
+		// Always accept db unrelated DDLs, like `CREATE PLACEMENT POLICY`.
+		if diff.SchemaID == 0 {
+			return false
+		}
 
 		is := l.infoCache.GetLatest()
 		schema, ok := is.SchemaByID(diff.SchemaID)
