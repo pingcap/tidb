@@ -567,9 +567,9 @@ func (index *IndexInfo) IsColumnarIndex() bool {
 	return index.VectorInfo != nil || index.InvertedInfo != nil // || index.FullTextInfo != nil
 }
 
-// IsFulltextIndexOnTiCI checks whether the index is a fulltext index.
+// IsTiCIIndex checks whether the index is a fulltext index.
 // Fulltext index only exists in TiCI, no actual index data need to be written to KV layer.
-func (index *IndexInfo) IsFulltextIndexOnTiCI() bool {
+func (index *IndexInfo) IsTiCIIndex() bool {
 	return index.FullTextInfo != nil || index.HybridInfo != nil
 }
 
