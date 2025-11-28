@@ -293,16 +293,12 @@ type LoadDataController struct {
 	// if there's NO column list clause in SQL statement, then it's table's columns
 	// else it's user defined list.
 	FieldMappings []*FieldMapping
-<<<<<<< HEAD
-	// see InsertValues.InsertColumns
-=======
 	// InsertColumns the columns stated in the SQL statement to insert.
 	// as IMPORT INTO have 2 place to state columns, in column-vars and in set clause,
 	// so it's computed from both clauses:
 	//  - append columns from column-vars to InsertColumns
 	//  - append columns from left hand of set clause to InsertColumns
 	// it's similar to InsertValues.InsertColumns.
->>>>>>> 99a94f5b093 (importinto: fix panic when field is missing for generated column (#64659))
 	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
