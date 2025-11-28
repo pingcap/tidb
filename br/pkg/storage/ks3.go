@@ -567,7 +567,7 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.AddRetryableError(err)
 		log.L().Warn(
 			"read s3 object failed, will retry",
 			zap.String("file", r.name),

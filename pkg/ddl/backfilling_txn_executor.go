@@ -263,7 +263,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 		)
 		switch b.tp {
 		case typeAddIndexWorker:
-			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblAddIdxRate, false)
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, b.tbl, jc, metrics.LblAddIdxRate, false)
 			if err != nil {
 				return err
 			}
@@ -276,7 +276,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			runner = newBackfillWorker(b.ctx, idxWorker)
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
-			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblMergeTmpIdxRate, false)
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, b.tbl, jc, metrics.LblMergeTmpIdxRate, false)
 			if err != nil {
 				return err
 			}

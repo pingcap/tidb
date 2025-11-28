@@ -1764,7 +1764,7 @@ func doReorgWorkForCreateIndex(
 				zap.String("table", tbl.Meta().Name.O))
 			return true, ver, nil
 		}
-		return runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+		return runIndexReorgAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
@@ -1782,7 +1782,7 @@ func doReorgWorkForCreateIndex(
 					done, ver, err = runIngestReorgJob(w, jobCtx, job, tbl, allIndexInfos)
 				}
 			case model.ReorgTypeTxnMerge:
-				done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+				done, ver, err = runIndexReorgAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
 			}
 			if err != nil || !done {
 				return false, ver, errors.Trace(err)
@@ -1814,7 +1814,7 @@ func doReorgWorkForCreateIndex(
 	case model.BackfillStateMerging:
 		skipReorg := checkIfTempIndexReorgWorkCanSkip(w.store, w.sess.Session(), tbl, allIndexInfos, job)
 		if !skipReorg {
-			done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, true)
+			done, ver, err = runIndexReorgAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, true)
 			if !done {
 				return false, ver, err
 			}
@@ -1836,7 +1836,7 @@ func doReorgWorkForCreateIndex(
 
 func runIngestReorgJobDist(w *worker, jobCtx *jobContext, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
-	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+	done, ver, err = runIndexReorgAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
@@ -1850,7 +1850,7 @@ func runIngestReorgJobDist(w *worker, jobCtx *jobContext, job *model.Job,
 
 func runIngestReorgJob(w *worker, jobCtx *jobContext, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
-	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+	done, ver, err = runIndexReorgAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
 	if err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
@@ -1892,7 +1892,7 @@ func isRetryableError(err error) bool {
 	return true
 }
 
-func runReorgJobAndHandleErr(
+func runIndexReorgAndHandleErr(
 	w *worker,
 	jobCtx *jobContext,
 	job *model.Job,
@@ -1924,6 +1924,7 @@ func runReorgJobAndHandleErr(
 		// and then run the reorg next time.
 		return false, ver, errors.Trace(err)
 	}
+	reorgInfo.reorgType = model.ActionAddIndex
 	err = overwriteReorgInfoFromGlobalCheckpoint(w, rh.s, job, reorgInfo)
 	if err != nil {
 		return false, ver, errors.Trace(err)
@@ -3557,7 +3558,7 @@ type cleanUpIndexWorker struct {
 }
 
 func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*cleanUpIndexWorker, error) {
-	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblCleanupIdxRate, false)
+	bCtx, err := newBackfillCtx(id, reorgInfo, t, jc, metrics.LblCleanupIdxRate, false)
 	if err != nil {
 		return nil, err
 	}
