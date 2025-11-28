@@ -44,9 +44,9 @@ func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	i, rLen := 0, 0
 	r := rune(0)
 	for i < len(str) {
-		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('锟�') and size 1.
 		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
-		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '锟�'.
 		r, rLen = utf8.DecodeRuneInString(str[i:])
 		invalid := r == utf8.RuneError && rLen == 1
 		if invalid {
@@ -61,6 +61,11 @@ func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 		buf = append(buf, byte(u16))
 	}
 	return buf
+}
+
+// MaxLenOneByte implement Collator interface.
+func (*gbkChineseCICollator) MaxLenOneByte() int {
+	return 2
 }
 
 // Pattern implements Collator interface.
