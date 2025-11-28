@@ -304,6 +304,9 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 			buffer.Write(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.AccessCondition))
 		}
 		buffer.WriteString(", ")
+		if p.FtsQueryInfo.TopK != nil {
+			buffer.WriteString(fmt.Sprintf("topK: %d, ", *p.FtsQueryInfo.TopK))
+		}
 	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))

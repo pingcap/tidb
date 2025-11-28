@@ -4326,6 +4326,9 @@ func buildIndexLookUpPushDownDAGReq(ctx sessionctx.Context, columns []*model.Ind
 // buildIndexReq is designed to create a DAG for index request.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans ...base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
+	if idxScan.Index.IsTiCIIndex() {
+		plans = []base.PhysicalPlan{plans[len(plans)-1]}
+	}
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, idxScan.StoreType)
 	if err != nil {
 		return nil, err
@@ -4414,10 +4417,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 	var err error
 	if v.IndexLookUpPushDown {
 		indexReq, err = buildIndexLookUpPushDownDAGReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans, v.IndexPlansUnNatureOrders)
-	} else if !is.Index.IsTiCIIndex() {
-		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans...)
 	} else {
-		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans[len(v.IndexPlans)-1])
+		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans...)
 	}
 	if err != nil {
 		return nil, err
