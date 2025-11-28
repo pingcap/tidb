@@ -179,6 +179,19 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 
 	var err error
+	// In strict SQL mode, data truncation during write operations should be treated as an error, not a warning.
+	// However, for SELECT statements, TiDB sets TruncateAsWarning to true by default (in ResetContextOfStmt).
+	// Since CTE materializes results to temporary storage (similar to writing to a table), we enforce strictness here.
+	sessVars := p.SCtx().GetSessionVars()
+	sc := sessVars.StmtCtx
+	originalFlags := sc.TypeFlags()
+	if sessVars.SQLMode.HasStrictMode() && originalFlags.TruncateAsWarning() {
+		sc.SetTypeFlags(originalFlags.WithTruncateAsWarning(false))
+		defer func() {
+			sc.SetTypeFlags(originalFlags)
+		}()
+	}
+
 	if p.Cte.SeedPartPhysicalPlan == nil {
 		// Build push-downed predicates.
 		if len(p.Cte.PushDownPredicates) > 0 {
@@ -213,7 +226,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 				return nil, false, err
 			}
 		}
-		recurStat := p.Cte.RecursivePartLogicalPlan.StatsInfo()
+		recurStat := p.Cte.RecursivePartPhysicalPlan.StatsInfo()
 		for i, col := range selfSchema.Columns {
 			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.Cte.RecursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}

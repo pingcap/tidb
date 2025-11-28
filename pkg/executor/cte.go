@@ -356,6 +356,19 @@ func (p *cteProducer) genCTEResult(ctx context.Context) (err error) {
 	if p.resTbl.Error() != nil {
 		return p.resTbl.Error()
 	}
+
+	// In strict SQL mode, data truncation during write operations should be treated as an error, not a warning.
+	// However, for SELECT statements, TiDB sets TruncateAsWarning to true by default (in ResetContextOfStmt).
+	// Since CTE materializes results to temporary storage (similar to writing to a table), we enforce strictness here.
+	sessVars := p.ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
+	originalFlags := sc.TypeFlags()
+	if sessVars.SQLMode.HasStrictMode() && originalFlags.TruncateAsWarning() {
+		sc.SetTypeFlags(originalFlags.WithTruncateAsWarning(false))
+		defer func() {
+			sc.SetTypeFlags(originalFlags)
+		}()
+	}
 	resAction := setupCTEStorageTracker(p.resTbl, p.ctx, p.memTracker, p.diskTracker)
 	iterInAction := setupCTEStorageTracker(p.iterInTbl, p.ctx, p.memTracker, p.diskTracker)
 	var iterOutAction *chunk.SpillDiskAction
