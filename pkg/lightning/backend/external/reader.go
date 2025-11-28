@@ -50,8 +50,7 @@ func readAllData(
 	)
 	defer func() {
 		if err != nil {
-			output.keysPerFile = nil
-			output.valuesPerFile = nil
+			output.kvsPerFile = nil
 			for _, b := range output.memKVBuffers {
 				b.Destroy()
 			}
@@ -142,7 +141,7 @@ func readOneFile(
 
 	ts := time.Now()
 
-	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024)
+	rd, err := NewKVReader(ctx, dataFile, storage, startOffset, 64*1024)
 	if err != nil {
 		return err
 	}
@@ -161,13 +160,12 @@ func readOneFile(
 		}
 	}
 
-	keys := make([][]byte, 0, 1024)
-	values := make([][]byte, 0, 1024)
+	kvs := make([]KVPair, 0, 1024)
 	size := 0
 	droppedSize := 0
 
 	for {
-		k, v, err := rd.nextKV()
+		k, v, err := rd.NextKV()
 		if err != nil {
 			if goerrors.Is(err, io.EOF) {
 				break
@@ -183,14 +181,15 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		keys = append(keys, smallBlockBuf.AddBytes(k))
-		values = append(values, smallBlockBuf.AddBytes(v))
+		kvs = append(kvs, KVPair{
+			Key:   smallBlockBuf.AddBytes(k),
+			Value: smallBlockBuf.AddBytes(v),
+		})
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
-	output.keysPerFile = append(output.keysPerFile, keys)
-	output.valuesPerFile = append(output.valuesPerFile, values)
+	output.kvsPerFile = append(output.kvsPerFile, kvs)
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()

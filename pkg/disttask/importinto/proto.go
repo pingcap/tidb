@@ -16,6 +16,7 @@ package importinto
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -51,9 +53,10 @@ type TaskMeta struct {
 // Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
+	external.BaseExternalMeta
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
-	Chunks   []Chunk
+	Chunks   []Chunk            `external:"true"`
 	Checksum map[int64]Checksum // see KVGroupChecksum for definition of map key.
 	Result   Result
 	// MaxIDs stores the max id that have been used during encoding for each allocator type.
@@ -61,9 +64,17 @@ type ImportStepMeta struct {
 	// NewPanickingAllocators for more info.
 	MaxIDs map[autoid.AllocatorType]int64
 
-	SortedDataMeta *external.SortedKVMeta
+	SortedDataMeta *external.SortedKVMeta `external:"true"`
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external.SortedKVMeta
+	SortedIndexMetas map[int64]*external.SortedKVMeta `external:"true"`
+	// it's the sum of all conflict KVs in all SortedKVMeta, we keep it here to
+	// avoid get the external meta when no conflict KVs.
+	RecordedConflictKVCount uint64
+}
+
+// Marshal marshals the import step meta to JSON.
+func (m *ImportStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 const (
@@ -74,31 +85,112 @@ const (
 
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
+	external.BaseExternalMeta
 	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
-	KVGroup               string   `json:"kv-group"`
-	DataFiles             []string `json:"data-files"`
-	external.SortedKVMeta `json:"sorted-kv-meta"`
+	KVGroup                 string   `json:"kv-group"`
+	DataFiles               []string `json:"data-files" external:"true"`
+	external.SortedKVMeta   `external:"true"`
+	RecordedConflictKVCount uint64 `json:"recorded-conflict-kv-count,omitempty"`
+}
+
+// Marshal the merge sort step meta to JSON.
+func (m *MergeSortStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
+}
+
+// KVGroupConflictInfos is the conflict infos of a kv group.
+type KVGroupConflictInfos struct {
+	ConflictInfos map[string]*common.ConflictInfo `json:"conflict-infos,omitempty"`
+}
+
+func (gci *KVGroupConflictInfos) addDataConflictInfo(other *common.ConflictInfo) {
+	gci.addConflictInfo(dataKVGroup, other)
+}
+
+func (gci *KVGroupConflictInfos) addIndexConflictInfo(indexID int64, other *common.ConflictInfo) {
+	kvGroup := IndexID2KVGroup(indexID)
+	gci.addConflictInfo(kvGroup, other)
+}
+
+func (gci *KVGroupConflictInfos) addConflictInfo(kvGroup string, other *common.ConflictInfo) {
+	if other.Count == 0 {
+		return
+	}
+	if gci.ConflictInfos == nil {
+		gci.ConflictInfos = make(map[string]*common.ConflictInfo, 1)
+	}
+	ci, ok := gci.ConflictInfos[kvGroup]
+	if !ok {
+		ci = &common.ConflictInfo{}
+		gci.ConflictInfos[kvGroup] = ci
+	}
+	ci.Merge(other)
+}
+
+// CollectConflictsStepMeta is the meta of collect conflicts step.
+type CollectConflictsStepMeta struct {
+	external.BaseExternalMeta
+	Infos                   KVGroupConflictInfos `json:"infos" external:"true"`
+	RecordedDataKVConflicts int64                `json:"recorded-data-kv-conflicts,omitempty"`
+	// Checksum is the checksum of all conflicts rows.
+	Checksum *Checksum `json:"checksum,omitempty"`
+	// ConflictedRowCount is the count of all conflicted rows.
+	ConflictedRowCount int64 `json:"conflicted-row-count,omitempty"`
+	// ConflictedRowFilenames is the filenames of all conflicted rows.
+	// Note: this file is for user to resolve conflicts manually.
+	ConflictedRowFilenames []string `json:"conflicted-row-filenames,omitempty"`
+	// TooManyConflictsFromIndex is true if there are too many conflicts from index.
+	// if true, we will skip checksum.
+	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`
+}
+
+// Marshal marshals the collect conflicts step meta to JSON.
+func (m *CollectConflictsStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
+}
+
+// ConflictResolutionStepMeta is the meta of conflict resolution step.
+type ConflictResolutionStepMeta struct {
+	external.BaseExternalMeta
+	Infos KVGroupConflictInfos `json:"infos" external:"true"`
+}
+
+// Marshal marshals the conflict resolution step meta to JSON.
+func (m *ConflictResolutionStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
-	KVGroup               string `json:"kv-group"`
-	external.SortedKVMeta `json:"sorted-kv-meta"`
-	DataFiles             []string `json:"data-files"`
-	StatFiles             []string `json:"stat-files"`
-	RangeJobKeys          [][]byte `json:"range-job-keys"`
-	RangeSplitKeys        [][]byte `json:"range-split-keys"`
-	TS                    uint64   `json:"ts"`
+	external.BaseExternalMeta
+	KVGroup                 string `json:"kv-group"`
+	external.SortedKVMeta   `json:"sorted-kv-meta" external:"true"`
+	RecordedConflictKVCount uint64   `json:"recorded-conflict-kv-count,omitempty"`
+	DataFiles               []string `json:"data-files" external:"true"`
+	StatFiles               []string `json:"stat-files" external:"true"`
+	RangeJobKeys            [][]byte `json:"range-job-keys" external:"true"`
+	RangeSplitKeys          [][]byte `json:"range-split-keys" external:"true"`
+	TS                      uint64   `json:"ts"`
 
 	Result Result
 }
 
+// Marshal marshals the write ingest step meta to JSON.
+func (m *WriteIngestStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
+}
+
 // PostProcessStepMeta is the meta of post process step.
 type PostProcessStepMeta struct {
-	// accumulated checksum of all subtasks in import step. See KVGroupChecksum for
-	// definition of map key.
+	// accumulated checksum of all subtasks in encode step. See KVGroupChecksum
+	// for definition of map key.
 	Checksum map[int64]Checksum
+	// DeletedRowsChecksum is the checksum of all deleted rows due to conflicts.
+	DeletedRowsChecksum Checksum
+	// TooManyConflictsFromIndex is true if there are too many conflicts from index.
+	// if true, the DeletedRowsChecksum might not be accurate, we will skip checksum.
+	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`
 	// MaxIDs of max all max-ids of subtasks in import step.
 	MaxIDs map[autoid.AllocatorType]int64
 }
@@ -116,19 +208,23 @@ type SharedVars struct {
 
 	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external.SortedKVMeta
-	ShareMu          sync.Mutex
+	SortedIndexMetas        map[int64]*external.SortedKVMeta
+	RecordedConflictKVCount uint64
+	ShareMu                 sync.Mutex
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.SortedDataMeta.MergeSummary(summary)
+	sv.RecordedConflictKVCount += summary.ConflictInfo.Count
 }
 
 func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
+	sv.RecordedConflictKVCount += summary.ConflictInfo.Count
+
 	meta, ok := sv.SortedIndexMetas[indexID]
 	if !ok {
 		meta = external.NewSortedKVMeta(summary)
@@ -178,8 +274,33 @@ type Checksum struct {
 	Size uint64
 }
 
+func newFromKVChecksum(sum *verification.KVChecksum) *Checksum {
+	return &Checksum{
+		Sum:  sum.Sum(),
+		KVs:  sum.SumKVS(),
+		Size: sum.SumSize(),
+	}
+}
+
+// ToKVChecksum converts the Checksum to verification.KVChecksum.
+func (c *Checksum) ToKVChecksum() *verification.KVChecksum {
+	sum := verification.MakeKVChecksum(c.Size, c.KVs, c.Sum)
+	return &sum
+}
+
 // Result records the metrics information.
 // This portion of the code may be implemented uniformly in the framework in the future.
 type Result struct {
-	LoadedRowCnt uint64
+	LoadedRowCnt     uint64
+	ConflictedRowCnt uint64
+}
+
+// IndexID2KVGroup converts index id to kv group name.
+// exported for test.
+func IndexID2KVGroup(indexID int64) string {
+	return fmt.Sprintf("%d", indexID)
+}
+
+func kvGroup2IndexID(kvGroup string) (int64, error) {
+	return strconv.ParseInt(kvGroup, 10, 64)
 }

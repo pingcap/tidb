@@ -2383,7 +2383,15 @@ func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	} else {
 		result.AppendNull(7)
 	}
-	result.AppendString(8, info.ErrorMessage)
+	if info.IsSuccess() {
+		var msg string
+		if info.Summary.ConflictedRows > 0 {
+			msg = fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictedRows)
+		}
+		result.AppendString(8, msg)
+	} else {
+		result.AppendString(8, info.ErrorMessage)
+	}
 	result.AppendTime(9, info.CreateTime)
 	if info.StartTime.IsZero() {
 		result.AppendNull(10)

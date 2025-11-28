@@ -407,6 +407,9 @@ func (sm *Manager) doCleanupTask() {
 	if len(tasks) == 0 {
 		return
 	}
+	failpoint.Inject("skipCleanup", func() {
+		failpoint.Return()
+	})
 	sm.logger.Info("cleanup routine start")
 	err = sm.cleanupFinishedTasks(tasks)
 	if err != nil {

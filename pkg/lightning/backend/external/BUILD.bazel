@@ -79,6 +79,7 @@ go_test(
     deps = [
         "//br/pkg/membuf",
         "//br/pkg/storage",
+        "//pkg/config",
         "//pkg/kv",
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/common",
@@ -102,6 +103,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_exp//rand",
+        "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
