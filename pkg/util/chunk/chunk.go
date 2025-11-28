@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
@@ -488,6 +489,7 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 	dst.length++
 }
 
+// CalculateLenDeltaAppendCellFromRawData calculates the delta len after calling `AppendCellFromRawData`
 func CalculateLenDeltaAppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset int) (dataLenDelta int, offsetLenDelta int) {
 	if dst.isFixed() {
 		elemLen := len(dst.elemBuf)
@@ -506,10 +508,20 @@ func CalculateLenDeltaAppendCellFromRawData(dst *Column, rowData unsafe.Pointer,
 func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset int) int {
 	if dst.isFixed() {
 		elemLen := len(dst.elemBuf)
+		if intest.InTest && (len(dst.data) + elemLen > cap(dst.data)) {
+			panic("fail to reserve enough memory for dst.data")
+		}
 		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset), elemLen)...)
 		currentOffset += elemLen
 	} else {
 		elemLen := *(*uint32)(unsafe.Add(rowData, currentOffset))
+		if intest.InTest {
+			if len(dst.data) + int(elemLen) > cap(dst.data) {
+				panic("fail to reserve enough memory for dst.data")
+			} else if len(dst.offsets) + 1 > cap(dst.offsets) {
+				panic("fail to reserve enough memory for dst.offsets")
+			}
+		}
 		if elemLen > 0 {
 			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset+sizeUint32), int(elemLen))...)
 		}

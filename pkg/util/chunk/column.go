@@ -133,7 +133,7 @@ func newFixedLenColumn(elemLen, capacity int) *Column {
 func newVarLenColumn(capacity int) *Column {
 	return &Column{
 		offsets:    make([]int64, 1, getOffsetsCap(capacity)),
-		data:       make([]byte, 0, getDataMemCap(estimatedElemLen, capacity)),
+		data:       make([]byte, 0, getDataMemCap(capacity, estimatedElemLen)),
 		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
 	}
 }
@@ -245,16 +245,14 @@ func (c *Column) appendNullBitmap(notNull bool) {
 	}
 }
 
-// Reserve allocate some memory for the column
+// Reserve allocates some memory for the column
 func (c *Column) Reserve(nullBitmapExpectedCap int64, dataExpectedCap int64, offsetExpectedCap int64) {
 	currentNullBitmapLen := int64(len(c.nullBitmap))
 	nullBitmapExpectedCap += currentNullBitmapLen
 	if int64(cap(c.nullBitmap)) < nullBitmapExpectedCap {
 		if currentNullBitmapLen > 0 {
 			tmp := make([]byte, currentNullBitmapLen, nullBitmapExpectedCap)
-			for i := range currentNullBitmapLen {
-				tmp[i] = c.nullBitmap[i]
-			}
+			copy(tmp[:currentNullBitmapLen], c.nullBitmap[:currentNullBitmapLen])
 			c.nullBitmap = tmp
 		} else {
 			c.nullBitmap = make([]byte, 0, nullBitmapExpectedCap)
@@ -266,9 +264,7 @@ func (c *Column) Reserve(nullBitmapExpectedCap int64, dataExpectedCap int64, off
 	if int64(cap(c.data)) < dataExpectedCap {
 		if currentDataLen > 0 {
 			tmp := make([]byte, currentDataLen, dataExpectedCap)
-			for i := range currentDataLen {
-				tmp[i] = c.data[i]
-			}
+			copy(tmp[:currentDataLen], c.data[:currentDataLen])
 			c.data = tmp
 		} else {
 			c.data = make([]byte, 0, dataExpectedCap)
@@ -276,13 +272,11 @@ func (c *Column) Reserve(nullBitmapExpectedCap int64, dataExpectedCap int64, off
 	}
 
 	currentOffsetLen := int64(len(c.offsets))
-	offsetExpectedCap += currentDataLen
+	offsetExpectedCap += currentOffsetLen
 	if int64(cap(c.offsets)) < offsetExpectedCap {
 		if currentOffsetLen > 0 {
 			tmp := make([]int64, currentOffsetLen, offsetExpectedCap)
-			for i := range currentOffsetLen {
-				tmp[i] = c.offsets[i]
-			}
+			copy(tmp[:currentOffsetLen], c.offsets[:currentOffsetLen])
 			c.offsets = tmp
 		} else {
 			c.offsets = make([]int64, 0, offsetExpectedCap)
