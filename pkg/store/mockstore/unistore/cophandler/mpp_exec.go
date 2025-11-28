@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -426,6 +428,7 @@ func (e *indexScanExec) next() (*chunk.Chunk, error) {
 
 type indexLookUpExec struct {
 	baseMPPExec
+	keyspaceID          uint32
 	indexHandleOffsets  []uint32
 	tblScanPB           *tipb.TableScan
 	isCommonHandle      bool
@@ -590,12 +593,25 @@ func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts
 		return nil
 	}
 
+	var codecV2 tikv.Codec
+	if kerneltype.IsNextGen() {
+		codecV2, err = tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+			Id: e.keyspaceID,
+		})
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
 	for _, h := range sortedHandles {
 		if handleFilter != nil && !handleFilter(h.Handle) {
 			leftRows[h.IndexOrder] = true
 			continue
 		}
 		rowKey := tablecodec.EncodeRowKey(e.tblScanPB.TableId, h.Encoded())
+		if codecV2 != nil {
+			rowKey = codecV2.EncodeKey(rowKey)
+		}
 		mvccKey := codec.EncodeBytes(nil, rowKey)
 		if curRegion.Found {
 			if e.regionContainsKey(curRegion.Region, mvccKey) {
