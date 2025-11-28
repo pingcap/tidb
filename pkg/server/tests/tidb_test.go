@@ -3283,6 +3283,12 @@ func TestAuditPluginRetrying(t *testing.T) {
 	})
 
 	runExplicitTransactionRetry := func(db *sql.DB, isOptimistic bool) {
+		if isOptimistic {
+			// We cannot set `tidb_disable_txn_auto_retry` to `OFF` because it's already deprecated.
+			// For the test, we just use failpoint to workaround this limitation.
+			failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
+			defer failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable")
+		}
 		_, err := db.Exec("DROP TABLE IF EXISTS retry_test")
 		require.NoError(t, err)
 		_, err = db.Exec("CREATE TABLE retry_test (id INT PRIMARY KEY, val INT)")
@@ -3299,10 +3305,6 @@ func TestAuditPluginRetrying(t *testing.T) {
 			if isOptimistic {
 				_, err = conn.ExecContext(context.Background(), "SET tidb_txn_mode = 'optimistic'")
 				require.NoError(t, err)
-				// We cannot set `tidb_disable_txn_auto_retry` to `OFF` because it's already deprecated.
-				// For the test, we just use failpoint to workaround this limitation.
-				failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
-				defer failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable")
 			}
 
 			return conn
