@@ -16,6 +16,7 @@ package importinto
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -127,6 +128,8 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 
 	// Call Backend.PostProcess to finish TiCI index upload if needed.
 	// This should be called after all engines are imported.
+	// We need to recreate TableImporter here because post process step executor is different
+	// from import step executor. The same tidbTaskID will ensure we get the same TiCI job ID.
 	tableImporter, err := getTableImporter(ctx, p.taskID, p.taskMeta, p.store, logger)
 	if err != nil {
 		logger.Warn("failed to get table importer for post process", zap.Error(err))
@@ -137,9 +140,17 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 				logger.Warn("failed to close table importer", zap.Error(closeErr))
 			}
 		}()
-		if backend := tableImporter.Backend(); backend != nil {
-			if err := backend.PostProcess(ctx); err != nil {
-				return errors.Annotate(err, "backend post process failed")
+		// Re-initialize TiCI writer group with the same taskID to get the same job ID
+		backend := tableImporter.Backend()
+		if backend != nil {
+			taskIDStr := strconv.FormatInt(p.taskID, 10)
+			if err := backend.InitTiCIWriterGroup(ctx, plan.TableInfo, plan.DBName, taskIDStr); err != nil {
+				logger.Warn("failed to init TiCI writer group for post process", zap.Error(err))
+				// Continue with other post process steps even if we can't init TiCI writer group
+			} else {
+				if err := backend.PostProcess(ctx); err != nil {
+					return errors.Annotate(err, "backend post process failed")
+				}
 			}
 		}
 	}
