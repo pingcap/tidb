@@ -785,7 +785,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		rNameMap := make(map[string]int, len(rNames))
 		for _, name := range lNames {
 			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" {
+			if name.ColName.L == "_tidb_rowid" ||
+				name.ColName.L == "_tidb_commit_ts" {
 				continue
 			}
 			// record left map
@@ -797,7 +798,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		}
 		for _, name := range rNames {
 			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" {
+			if name.ColName.L == "_tidb_rowid" ||
+				name.ColName.L == "_tidb_commit_ts" {
 				continue
 			}
 			// record right map
@@ -826,7 +828,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	commonLen := 0
 	for i, lName := range lNames {
 		// Natural join should ignore _tidb_rowid
-		if lName.ColName.L == "_tidb_rowid" {
+		if lName.ColName.L == "_tidb_rowid" ||
+			lName.ColName.L == "_tidb_commit_ts" {
 			continue
 		}
 		for j := commonLen; j < len(rNames); j++ {
@@ -3579,7 +3582,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID {
+			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID && col.ID != model.ExtraCommitTSID {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -4652,6 +4655,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ds.AppendTableCol(extraCol)
 		}
 	}
+	// Append extra commit ts column to the schema.
+	commitTSCol := ds.NewExtraCommitTSSchemaCol()
+	ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
+	schema.Append(commitTSCol)
+	names = append(names, &types.FieldName{
+		DBName:      dbName,
+		TblName:     tableInfo.Name,
+		ColName:     model.ExtraCommitTSName,
+		OrigColName: model.ExtraCommitTSName,
+	})
+	ds.AppendTableCol(commitTSCol)
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)
@@ -5238,15 +5252,21 @@ func pruneAndBuildColPositionInfoForDelete(
 	tblID2Table map[int64]table.Table,
 	hasFK bool,
 ) (physicalop.TblColPosInfoSlice, *bitset.BitSet, error) {
-	var nonPruned *bitset.BitSet
 	// If there is foreign key, we can't prune the columns.
 	// Use a very relax check for foreign key cascades and checks.
 	// If there's one table containing foreign keys, all of the tables would not do pruning.
 	// It should be strict in the future or just support pruning column when there is foreign key.
-	if !hasFK {
-		nonPruned = bitset.New(uint(len(names)))
-		nonPruned.SetAll()
+	//if !hasFK {
+	nonPruned := bitset.New(uint(len(names)))
+	nonPruned.SetAll()
+	// find _tidb_commit_ts in names and clear the index in nonPruned
+	for i, name := range names {
+		if name.ColName.L == model.ExtraCommitTSName.L {
+			nonPruned.Clear(uint(i))
+			continue
+		}
 	}
+	//}
 	cols2PosInfos := make(physicalop.TblColPosInfoSlice, 0, len(tblID2Handle))
 	for tid, handleCols := range tblID2Handle {
 		for _, handleCol := range handleCols {
@@ -5262,6 +5282,14 @@ func pruneAndBuildColPositionInfoForDelete(
 		return a.Cmp(b)
 	})
 	prunedColCnt := 0
+	if len(cols2PosInfos) > 0 {
+		firstStart := cols2PosInfos[0].Start
+		for i := range firstStart {
+			if !nonPruned.Test(uint(i)) {
+				prunedColCnt++
+			}
+		}
+	}
 	var err error
 	for i := range cols2PosInfos {
 		cols2PosInfo := &cols2PosInfos[i]
@@ -5270,16 +5298,18 @@ func pruneAndBuildColPositionInfoForDelete(
 		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
 		// nonPrunedSet will be nil if it's a point get or has foreign keys.
 		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
-			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
+			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
 			if err != nil {
 				return nil, nil, err
 			}
+			prunedColCnt++
 			continue
 		}
 		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned)
 		if err != nil {
 			return nil, nil, err
 		}
+		prunedColCnt++
 	}
 	return cols2PosInfos, nonPruned, nil
 }
@@ -5301,12 +5331,13 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 
 // buildSingleTableColPosInfoForDelete builds columns mapping for delete without pruning any columns.
 // It's temp code path for partition table, foreign key and point get plan.
-func buildSingleTableColPosInfoForDelete(
-	tbl table.Table,
-	colPosInfo *physicalop.TblColPosInfo,
-) error {
+func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *physicalop.TblColPosInfo, prePrunedCount int) error {
 	tblLen := len(tbl.DeletableCols())
+	colPosInfo.Start -= prePrunedCount
 	colPosInfo.End = colPosInfo.Start + tblLen
+	for col := range colPosInfo.HandleCols.IterColumns() {
+		col.Index -= prePrunedCount
+	}
 	return nil
 }
 
@@ -5470,6 +5501,13 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	proj.SetOutputNames(make(types.NameSlice, len(p.OutputNames())))
 	copy(proj.OutputNames(), p.OutputNames())
 	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
+	for i := len(proj.OutputNames()) - 1; i >= 0; i-- {
+		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
+			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
+			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
+			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
+		}
+	}
 	proj.SetChildren(p)
 	p = proj
 
@@ -5800,8 +5838,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	if err != nil {
 		return nil, err
 	}
-	oldSchema := p.Schema()
-	oldLen := oldSchema.Len()
+	oldLen := p.Schema().Len()
 
 	// For explicit column usage, should use the all-public columns.
 	if ds.Where != nil {
@@ -5927,6 +5964,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		return nil, err
 	}
 	preProjNames := p.OutputNames()[:oldLen]
+	//for i := len(preProjNames) - 1; i >= 0; i-- {
+	//	if preProjNames[i].ColName.L == "_tidb_commit_ts" {
+	//		preProjNames = slices.Delete(preProjNames, i, i+1)
+	//		oldLen--
+	//	}
+	//}
 	if del.IsMultiTable {
 		// tblID2TableName is the table map value is an array which contains table aliases.
 		// Table ID may not be unique for deleting multiple tables, for statements like
@@ -5979,6 +6022,15 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	p = proj
 	del.SetOutputNames(p.OutputNames())
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
+
+	// resolve indices for handle columns in del.TblColPosInfos
+	for i, colPosInfo := range del.TblColPosInfos {
+		resolvedHandleCols, err := colPosInfo.HandleCols.ResolveIndices(del.SelectPlan.Schema())
+		if err != nil {
+			return nil, err
+		}
+		del.TblColPosInfos[i].HandleCols = resolvedHandleCols
+	}
 
 	return del, err
 }
