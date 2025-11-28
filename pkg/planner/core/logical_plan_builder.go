@@ -5284,7 +5284,7 @@ func pruneAndBuildColPositionInfoForDelete(
 	prunedColCnt := 0
 	if len(cols2PosInfos) > 0 {
 		firstStart := cols2PosInfos[0].Start
-		for i := 0; i < firstStart; i++ {
+		for i := range firstStart {
 			if !nonPruned.Test(uint(i)) {
 				prunedColCnt++
 			}
