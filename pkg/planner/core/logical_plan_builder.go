@@ -5282,6 +5282,14 @@ func pruneAndBuildColPositionInfoForDelete(
 		return a.Cmp(b)
 	})
 	prunedColCnt := 0
+	if len(cols2PosInfos) > 0 {
+		firstStart := cols2PosInfos[0].Start
+		for i := 0; i < firstStart; i++ {
+			if !nonPruned.Test(uint(i)) {
+				prunedColCnt++
+			}
+		}
+	}
 	var err error
 	for i := range cols2PosInfos {
 		cols2PosInfo := &cols2PosInfos[i]
