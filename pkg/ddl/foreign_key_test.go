@@ -443,3 +443,18 @@ func TestForeignKeyInWriteOnlyMode(t *testing.T) {
 		require.Contains(t, err.Error(), "Table 'test.child' doesn't exist")
 	}
 }
+
+func TestFix59705(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set foreign_key_checks=off;")
+	tk.MustExec("create table child (id int,pid_test int,foreign key (pid_test) references parent(pid));")
+	tk.MustGetErrMsg("alter table child change column pid_test pid varchar(10);", "[schema:1146]Table 'test.parent' doesn't exist")
+	tk.MustExec("create table parent(pid int primary key);")
+	tk.MustGetErrMsg("alter table child change column pid_test pid varchar(10);", "[ddl:3780]Referencing column 'pid' and referenced column 'pid' in foreign key constraint 'fk_1' are incompatible.")
+	tk.MustQuery("select * from information_schema.key_column_usage;")
+	tk.MustExec("alter table child change column pid_test pid int")
+	tk.MustQuery("select * from information_schema.key_column_usage;")
+	tk.MustQuery("show create table child").Check(testkit.Rows("child CREATE TABLE `child` (\n  `id` int(11) DEFAULT NULL,\n  `pid` int(11) DEFAULT NULL,\n  KEY `fk_1` (`pid`),\n  CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `parent` (`pid`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
