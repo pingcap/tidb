@@ -1415,6 +1415,30 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 	}
 }
 
+type ddlAnalyze struct{}
+
+func withDDLAnalyzeCtx(w *worker) context.Context {
+	return context.WithValue(w.ctx, ddlAnalyze{}, struct{}{})
+}
+
+// IsDDLAnalyzeCtx checks if the analyze is triggered by DDL.
+func IsDDLAnalyzeCtx(ctx context.Context) bool {
+	_, ok := ctx.Value(ddlAnalyze{}).(struct{})
+	return ok
+}
+
+// ContainModifyingColumn checks if columns contain any column which is modifying.
+// If so, we should skip analyzing for this table except the final analyze after job is non-revertible.
+func ContainModifyingColumn(columns []*model.ColumnInfo) bool {
+	for _, col := range columns {
+		if col.ChangingFieldType != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
 // analyzeTableAfterCreateIndex analyzes the table after creating index.
 func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) (done, timedOut, failed bool) {
 	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
@@ -1481,7 +1505,7 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 				return err
 			}
 			failpoint.InjectCall("beforeAnalyzeTable")
-			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			_, _, err = exec.ExecRestrictedSQL(withDDLAnalyzeCtx(w), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			failpoint.InjectCall("afterAnalyzeTable", &err)
 			if err != nil {
 				logutil.DDLLogger().Warn("analyze table failed",
