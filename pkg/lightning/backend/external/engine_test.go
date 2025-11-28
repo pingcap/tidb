@@ -364,3 +364,174 @@ func TestEngineOnDup(t *testing.T) {
 		}
 	})
 }
+
+// TestMemKVsAndBuffersMultiFileDataLoss 测试验证当多个文件被同一个 goroutine 处理时，
+// 是否会出现数据丢失的问题。这个测试专门用于验证 memKVsAndBuffers 在 build 时
+// 有两个文件，但在 MemoryIngestData 输出时只有一个文件内容的问题。
+func TestMemKVsAndBuffersMultiFileDataLoss(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+
+	// 创建两个文件，每个文件包含不同的、可识别的数据
+	// 文件1: file1_key1, file1_key2, file1_key3
+	// 文件2: file2_key1, file2_key2, file2_key3
+	file1KVs := []KVPair{
+		{Key: []byte("file1_key1"), Value: []byte("file1_value1")},
+		{Key: []byte("file1_key2"), Value: []byte("file1_value2")},
+		{Key: []byte("file1_key3"), Value: []byte("file1_value3")},
+	}
+	file2KVs := []KVPair{
+		{Key: []byte("file2_key1"), Value: []byte("file2_value1")},
+		{Key: []byte("file2_key2"), Value: []byte("file2_value2")},
+		{Key: []byte("file2_key3"), Value: []byte("file2_value3")},
+	}
+
+	// 准备两个文件
+	dataFiles, statFiles := prepareKVFiles(t, store, [][]KVPair{file1KVs, file2KVs})
+	require.Len(t, dataFiles, 2)
+	require.Len(t, statFiles, 2)
+
+	// 创建 buffer pools
+	smallBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(smallBlockSize),
+	)
+	largeBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+	)
+
+	// 读取所有数据
+	output := &memKVsAndBuffers{}
+	startKey := []byte("file1_key1")
+	endKey := []byte("file2_key3\x00") // 包含两个文件的所有 key
+
+	err := readAllData(
+		ctx,
+		store,
+		dataFiles,
+		statFiles,
+		startKey,
+		endKey,
+		smallBlockBufPool,
+		largeBlockBufPool,
+		output,
+	)
+	require.NoError(t, err)
+
+	// 验证 build 前 kvsPerFile 有两个文件
+	require.Len(t, output.kvsPerFile, 2, "kvsPerFile should have 2 files before build")
+	require.Len(t, output.kvsPerFile[0], 3, "first file should have 3 KVs")
+	require.Len(t, output.kvsPerFile[1], 3, "second file should have 3 KVs")
+
+	// 验证第一个文件的内容
+	file1Keys := make(map[string]bool)
+	for _, kv := range output.kvsPerFile[0] {
+		file1Keys[string(kv.Key)] = true
+	}
+
+	//for _, kv := range output.kvsPerFile[0] {
+	//	logutil.BgLogger().Info("print kv from first file", zap.String("key", string(kv.Key)), zap.String("value", string(kv.Value)))
+	//}
+	//for _, kv := range output.kvsPerFile[1] {
+	//	logutil.BgLogger().Info("print kv from second file", zap.String("key", string(kv.Key)), zap.String("value", string(kv.Value)))
+	//}
+
+	//require.True(t, file1Keys["file1_key1"], "first file should contain file1_key1")
+	//require.True(t, file1Keys["file1_key2"], "first file should contain file1_key2")
+	//require.True(t, file1Keys["file1_key3"], "first file should contain file1_key3")
+
+	// 验证第二个文件的内容
+	file2Keys := make(map[string]bool)
+	for _, kv := range output.kvsPerFile[1] {
+		file2Keys[string(kv.Key)] = true
+	}
+	//for _, kv := range output.kvsPerFile[1] {
+	//	logutil.BgLogger().Info("print kv from second file", zap.String("key", string(kv.Key)), zap.String("value", string(kv.Value)))
+	//}
+	//require.True(t, file2Keys["file2_key1"], "second file should contain file2_key1")
+	//require.True(t, file2Keys["file2_key2"], "second file should contain file2_key2")
+	//require.True(t, file2Keys["file2_key3"], "second file should contain file2_key3")
+
+	// 执行 build
+	output.build(ctx)
+
+	// 验证 build 后 kvs 包含所有数据
+	require.Len(t, output.kvs, 6, "kvs should have 6 KVs after build (3 from each file)")
+
+	// 验证所有 key 都存在
+	allKeys := make(map[string]bool)
+	for _, kv := range output.kvs {
+		allKeys[string(kv.Key)] = true
+	}
+	// 打印实际读取到的 key，用于调试
+	if len(allKeys) != 6 {
+		t.Logf("Expected 6 keys, but got %d keys", len(allKeys))
+		for k := range allKeys {
+			t.Logf("  Found key: %s", k)
+		}
+	}
+	require.True(t, allKeys["file1_key1"], "kvs should contain file1_key1")
+	require.True(t, allKeys["file1_key2"], "kvs should contain file1_key2")
+	require.True(t, allKeys["file1_key3"], "kvs should contain file1_key3")
+	require.True(t, allKeys["file2_key1"], "kvs should contain file2_key1")
+	require.True(t, allKeys["file2_key2"], "kvs should contain file2_key2")
+	require.True(t, allKeys["file2_key3"], "kvs should contain file2_key3")
+
+	// 创建 Engine 并测试 MemoryIngestData
+	engine := NewExternalEngine(
+		ctx,
+		store, dataFiles, statFiles,
+		startKey, endKey,
+		[][]byte{startKey, endKey},
+		[][]byte{startKey, endKey},
+		1, // workerConcurrency = 1 确保同一个 goroutine 处理多个文件
+		123,
+		456,
+		789,
+		true,
+		16*units.GiB,
+		engineapi.OnDuplicateKeyRemove,
+		"/",
+	)
+	defer engine.Close()
+
+	// 加载数据
+	loadDataCh := make(chan engineapi.DataAndRanges, 4)
+	err = engine.LoadIngestData(ctx, loadDataCh)
+	require.NoError(t, err)
+
+	// 验证只有一个 DataAndRanges
+	require.Len(t, loadDataCh, 1, "should have 1 DataAndRanges")
+
+	// 获取数据并验证
+	dataAndRanges := <-loadDataCh
+	allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
+
+	// 验证 MemoryIngestData 包含所有数据
+	require.Len(t, allKVs, 6, "MemoryIngestData should have 6 KVs (3 from each file)")
+
+	// 验证所有 key 都存在
+	memoryKeys := make(map[string]bool)
+	for _, kv := range allKVs {
+		memoryKeys[string(kv.Key)] = true
+	}
+	require.True(t, memoryKeys["file1_key1"], "MemoryIngestData should contain file1_key1")
+	require.True(t, memoryKeys["file1_key2"], "MemoryIngestData should contain file1_key2")
+	require.True(t, memoryKeys["file1_key3"], "MemoryIngestData should contain file1_key3")
+	require.True(t, memoryKeys["file2_key1"], "MemoryIngestData should contain file2_key1")
+	require.True(t, memoryKeys["file2_key2"], "MemoryIngestData should contain file2_key2")
+	require.True(t, memoryKeys["file2_key3"], "MemoryIngestData should contain file2_key3")
+
+	// 验证值也正确
+	kvMap := make(map[string][]byte)
+	for _, kv := range allKVs {
+		kvMap[string(kv.Key)] = kv.Value
+	}
+	require.Equal(t, []byte("file1_value1"), kvMap["file1_key1"])
+	require.Equal(t, []byte("file1_value2"), kvMap["file1_key2"])
+	require.Equal(t, []byte("file1_value3"), kvMap["file1_key3"])
+	require.Equal(t, []byte("file2_value1"), kvMap["file2_key1"])
+	require.Equal(t, []byte("file2_value2"), kvMap["file2_key2"])
+	require.Equal(t, []byte("file2_value3"), kvMap["file2_key3"])
+}

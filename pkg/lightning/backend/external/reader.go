@@ -188,9 +188,24 @@ func readOneFile(
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
+	fileIndex := len(output.kvsPerFile)
 	output.kvsPerFile = append(output.kvsPerFile, kvs)
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
+
+	// Log file reading completion for debugging data flow
+	if len(kvs) > 0 {
+		firstKey := hex.EncodeToString(kvs[0].Key)
+		lastKey := hex.EncodeToString(kvs[len(kvs)-1].Key)
+		logutil.Logger(ctx).Info("readOneFile completed",
+			zap.String("dataFile", dataFile),
+			zap.Int("fileIndex", fileIndex),
+			zap.Int("kvCount", len(kvs)),
+			zap.Int("size", size),
+			zap.Int("droppedSize", droppedSize),
+			zap.String("firstKey", firstKey),
+			zap.String("lastKey", lastKey))
+	}
 	return nil
 }

@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"encoding/hex"
 	"io"
 	"strings"
 	"sync"
@@ -322,8 +323,11 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	//nolint: errcheck
 	defer iter.Close()
 
+	// Track the number of KVs read from iterator for debugging
+	iterKVCount := int64(0)
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
+		iterKVCount++
 		pairs = append(pairs, &sst.Pair{
 			Key:   k,
 			Value: v,
@@ -353,6 +357,14 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	if iter.Error() != nil {
 		return nil, errors.Trace(iter.Error())
 	}
+
+	// Log iterator completion to track actual data read during write operation
+	tidblogutil.Logger(ctx).Info("dowrite: iter completed",
+		zap.Int64("totalIterKVCount", iterKVCount),
+		zap.Int64("totalCount", totalCount),
+		zap.Int64("totalSize", totalSize),
+		zap.String("keyRangeStart", hex.EncodeToString(job.keyRange.Start)),
+		zap.String("keyRangeEnd", hex.EncodeToString(job.keyRange.End)))
 
 	if len(pairs) > 0 {
 		in := &ingestcli.WriteRequest{

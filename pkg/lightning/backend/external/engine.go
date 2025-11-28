@@ -99,14 +99,26 @@ type memKVsAndBuffers struct {
 func (b *memKVsAndBuffers) build(ctx context.Context) {
 	sumKVCnt := 0
 	fileKVCnts := make([]int, 0, len(b.kvsPerFile))
+	// Log data from each file before merging for debugging
 	for i, keys := range b.kvsPerFile {
-		fileCnt := len(keys)
-		sumKVCnt += fileCnt
-		fileKVCnts = append(fileKVCnts, fileCnt)
-		if fileCnt > 0 {
+		cnt := len(keys)
+		sumKVCnt += cnt
+		fileKVCnts = append(fileKVCnts, cnt)
+		if cnt > 0 {
+			firstKey := ""
+			lastKey := ""
+			if len(keys) > 0 {
+				firstKey = hex.EncodeToString(keys[0].Key)
+				lastKey = hex.EncodeToString(keys[len(keys)-1].Key)
+			}
 			logutil.Logger(ctx).Debug("[DXF DEBUG] building memKVsAndBuffers file stats",
 				zap.Int("fileIndex", i),
-				zap.Int("fileKVCnt", fileCnt))
+				zap.Int("fileKVCnt", cnt))
+			logutil.Logger(ctx).Info("building memKVsAndBuffers: file data",
+				zap.Int("fileIndex", i),
+				zap.Int("kvCount", cnt),
+				zap.String("firstKey", firstKey),
+				zap.String("lastKey", lastKey))
 		}
 	}
 	b.droppedSize = 0
@@ -116,17 +128,28 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 	b.droppedSizePerFile = nil
 
 	logutil.Logger(ctx).Info("building memKVsAndBuffers",
-		zap.Int("sumKVCnt", sumKVCnt),
-		zap.Int("droppedSize", b.droppedSize),
 		zap.Int("fileCount", len(b.kvsPerFile)),
-		zap.Ints("fileKVCnts", fileKVCnts))
+		zap.Ints("fileKVCnts", fileKVCnts),
+		zap.Int("sumKVCnt", sumKVCnt),
+		zap.Int("droppedSize", b.droppedSize))
 
+	// Merge all KVs from kvsPerFile into a single slice
 	b.kvs = make([]KVPair, 0, sumKVCnt)
 	for i := range b.kvsPerFile {
+		beforeLen := len(b.kvs)
 		b.kvs = append(b.kvs, b.kvsPerFile[i]...)
+		afterLen := len(b.kvs)
+		logutil.Logger(ctx).Info("building memKVsAndBuffers: merging file",
+			zap.Int("fileIndex", i),
+			zap.Int("fileKVCnt", len(b.kvsPerFile[i])),
+			zap.Int("beforeMergeLen", beforeLen),
+			zap.Int("afterMergeLen", afterLen))
 		b.kvsPerFile[i] = nil
 	}
 	b.kvsPerFile = nil
+
+	logutil.Logger(ctx).Info("building memKVsAndBuffers: completed",
+		zap.Int("finalKVCnt", len(b.kvs)))
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -415,12 +438,21 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		zap.Duration("deduplicateDur", deduplicateDur),
 	)
 
+	// Log data before and after building IngestData to track data flow
+	logutil.Logger(ctx).Info("before buildIngestData",
+		zap.Int("deduplicatedKVsLen", len(deduplicatedKVs)),
+		zap.Int("memKVBuffersLen", len(e.memKVsAndBuffers.memKVBuffers)))
+
 	data := e.buildIngestData(
 		deduplicatedKVs,
 		e.memKVsAndBuffers.memKVBuffers,
 	)
 
-	// release the reference of e.memKVsAndBuffers
+	logutil.Logger(ctx).Info("after buildIngestData",
+		zap.Int("MemoryIngestDataKVsLen", len(data.kvs)),
+		zap.Int("MemoryIngestDataMemBufLen", len(data.memBuf)))
+
+	// Release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.kvs = nil
 	e.memKVsAndBuffers.memKVBuffers = nil
 	e.memKVsAndBuffers.size = 0
@@ -722,6 +754,14 @@ func (m *MemoryIngestData) NewIter(
 		firstKeyIdx: firstKeyIdx,
 		lastKeyIdx:  lastKeyIdx,
 	}
+	// Log iter creation details to track data range accessible by the iterator
+	logutil.Logger(ctx).Info("MemoryIngestData.NewIter",
+		zap.Int("totalKVs", len(m.kvs)),
+		zap.Int("firstKeyIdx", firstKeyIdx),
+		zap.Int("lastKeyIdx", lastKeyIdx),
+		zap.Int("iterKVRange", lastKeyIdx-firstKeyIdx+1),
+		zap.String("lowerBound", hex.EncodeToString(lowerBound)),
+		zap.String("upperBound", hex.EncodeToString(upperBound)))
 	return iter
 }
 
