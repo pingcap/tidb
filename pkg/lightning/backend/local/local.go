@@ -1362,12 +1362,20 @@ func (local *Backend) ImportEngine(
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
-		tidblogutil.Logger(ctx).Info("import engine success",
+		diffCount := lfLength - importedLength
+		diffRatio := float64(0)
+		if lfLength > 0 {
+			diffRatio = float64(diffCount) / float64(lfLength) * 100
+		}
+		tidblogutil.Logger(ctx).Info("[DXF DEBUG] import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),
 			zap.Int64("kvs", lfLength),
 			zap.Int64("importedSize", importedSize),
-			zap.Int64("importedCount", importedLength))
+			zap.Int64("importedCount", importedLength),
+			zap.Int64("diffCount", diffCount),
+			zap.Float64("diffRatioPercent", diffRatio),
+			zap.Bool("hasDataLoss", diffCount > 0))
 	}
 	return err
 }
@@ -1476,6 +1484,15 @@ func (local *Backend) doImport(
 			switch job.stage {
 			case regionScanned, wrote:
 				job.retryCount++
+
+				// Get imported count before retry
+				var beforeRetryImportedCount int64
+				if externalData, ok := job.ingestData.(*external.MemoryIngestData); ok {
+					_, beforeRetryImportedCount = externalData.ImportedStatistics()
+				} else if localData, ok := job.ingestData.(*Engine); ok {
+					_, beforeRetryImportedCount = localData.ImportedStatistics()
+				}
+
 				if job.retryCount > MaxWriteAndIngestRetryTimes {
 					job.done(&jobWg)
 					lastErr := job.lastRetryableErr
@@ -1489,17 +1506,34 @@ func (local *Backend) doImport(
 							zap.Stringer("stage", job.stage),
 							zap.Error(lastErr))
 					}
+					tidblogutil.Logger(ctx).Error("[DXF DEBUG] region job retry limit exceeded",
+						logutil.Key("startKey", job.keyRange.Start),
+						logutil.Key("endKey", job.keyRange.End),
+						zap.Stringer("stage", job.stage),
+						zap.Int("retryCount", job.retryCount),
+						zap.Int64("beforeRetryImportedCount", beforeRetryImportedCount),
+						zap.Error(lastErr))
 					return lastErr
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
 				sleepSecond := min(math.Pow(2, float64(job.retryCount)), float64(maxRetryBackoffSecond))
 				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
-				tidblogutil.Logger(ctx).Info("put job back to jobCh to retry later",
+
+				// Get write result info for logging
+				var writeCount int64
+				if job.writeResult != nil {
+					writeCount = job.writeResult.count
+				}
+
+				tidblogutil.Logger(ctx).Warn("[DXF DEBUG] put job back to jobCh to retry later",
 					logutil.Key("startKey", job.keyRange.Start),
 					logutil.Key("endKey", job.keyRange.End),
 					zap.Stringer("stage", job.stage),
 					zap.Int("retryCount", job.retryCount),
-					zap.Time("waitUntil", job.waitUntil))
+					zap.Time("waitUntil", job.waitUntil),
+					zap.Int64("writeCount", writeCount),
+					zap.Int64("beforeRetryImportedCount", beforeRetryImportedCount),
+					zap.Error(job.lastRetryableErr))
 				if !retryer.push(job) {
 					// retryer is closed by worker error
 					job.done(&jobWg)

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -371,6 +372,16 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		return nil, errors.Trace(err)
 	}
 
+	tidblogutil.Logger(ctx).Info("[DXF DEBUG] region job write completed",
+		logutil.Key("startKey", job.keyRange.Start),
+		logutil.Key("endKey", job.keyRange.End),
+		zap.Int64("totalCount", totalCount),
+		zap.Int64("totalSize", totalSize),
+		zap.Uint64("regionID", job.region.Region.GetId()),
+		zap.Int("retryCount", job.retryCount),
+		zap.Stringer("stage", job.stage),
+		zap.Bool("isRetry", job.retryCount > 0))
+
 	return &tikvWriteResult{
 		count:            totalCount,
 		totalBytes:       totalSize,
@@ -383,9 +394,45 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 		Region:    job.region,
 		WriteResp: job.writeResult.nextGenWriteResp,
 	}
+	
+	// Get imported count before ingest
+	var beforeImportedCount int64
+	if externalData, ok := job.ingestData.(*external.MemoryIngestData); ok {
+		_, beforeImportedCount = externalData.ImportedStatistics()
+	}
+	
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {
+		tidblogutil.Logger(ctx).Warn("[DXF DEBUG] region job ingest failed",
+			logutil.Key("startKey", job.keyRange.Start),
+			logutil.Key("endKey", job.keyRange.End),
+			zap.Int64("writeCount", job.writeResult.count),
+			zap.Int64("writeSize", job.writeResult.totalBytes),
+			zap.Uint64("regionID", job.region.Region.GetId()),
+			zap.Int("retryCount", job.retryCount),
+			zap.Int64("beforeImportedCount", beforeImportedCount),
+			zap.Stringer("stage", job.stage),
+			zap.Bool("isRetry", job.retryCount > 0),
+			zap.Error(err))
 		return err
 	}
+	
+	// Get imported count after ingest (before Finish)
+	var afterImportedCount int64
+	if externalData, ok := job.ingestData.(*external.MemoryIngestData); ok {
+		_, afterImportedCount = externalData.ImportedStatistics()
+	}
+	
+	tidblogutil.Logger(ctx).Info("[DXF DEBUG] region job ingest success",
+		logutil.Key("startKey", job.keyRange.Start),
+		logutil.Key("endKey", job.keyRange.End),
+		zap.Int64("writeCount", job.writeResult.count),
+		zap.Int64("writeSize", job.writeResult.totalBytes),
+		zap.Uint64("regionID", job.region.Region.GetId()),
+		zap.Int("retryCount", job.retryCount),
+		zap.Int64("beforeImportedCount", beforeImportedCount),
+		zap.Int64("afterImportedCount", afterImportedCount),
+		zap.Stringer("stage", job.stage),
+		zap.Bool("isRetry", job.retryCount > 0))
 	return nil
 }

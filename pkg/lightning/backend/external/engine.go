@@ -98,8 +98,16 @@ type memKVsAndBuffers struct {
 
 func (b *memKVsAndBuffers) build(ctx context.Context) {
 	sumKVCnt := 0
-	for _, keys := range b.kvsPerFile {
-		sumKVCnt += len(keys)
+	fileKVCnts := make([]int, 0, len(b.kvsPerFile))
+	for i, keys := range b.kvsPerFile {
+		fileCnt := len(keys)
+		sumKVCnt += fileCnt
+		fileKVCnts = append(fileKVCnts, fileCnt)
+		if fileCnt > 0 {
+			logutil.Logger(ctx).Debug("[DXF DEBUG] building memKVsAndBuffers file stats",
+				zap.Int("fileIndex", i),
+				zap.Int("fileKVCnt", fileCnt))
+		}
 	}
 	b.droppedSize = 0
 	for _, size := range b.droppedSizePerFile {
@@ -109,7 +117,9 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 
 	logutil.Logger(ctx).Info("building memKVsAndBuffers",
 		zap.Int("sumKVCnt", sumKVCnt),
-		zap.Int("droppedSize", b.droppedSize))
+		zap.Int("droppedSize", b.droppedSize),
+		zap.Int("fileCount", len(b.kvsPerFile)),
+		zap.Ints("fileKVCnts", fileKVCnts))
 
 	b.kvs = make([]KVPair, 0, sumKVCnt)
 	for i := range b.kvsPerFile {
@@ -739,4 +749,15 @@ func (m *MemoryIngestData) DecRef() {
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	m.importedKVSize.Add(totalBytes)
 	m.importedKVCount.Add(totalCount)
+}
+
+// ImportedStatistics returns the imported kv size and imported kv count.
+func (m *MemoryIngestData) ImportedStatistics() (importedSize int64, importedKVCount int64) {
+	if m.importedKVSize != nil {
+		importedSize = m.importedKVSize.Load()
+	}
+	if m.importedKVCount != nil {
+		importedKVCount = m.importedKVCount.Load()
+	}
+	return importedSize, importedKVCount
 }

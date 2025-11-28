@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -277,7 +278,38 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 			return
 		}
 
+		// Get current imported count before Finish
+		var beforeCount int64
+		if externalData, ok := j.ingestData.(*external.MemoryIngestData); ok {
+			_, beforeCount = externalData.ImportedStatistics()
+		} else if localData, ok := j.ingestData.(*Engine); ok {
+			_, beforeCount = localData.ImportedStatistics()
+		}
+
 		j.ingestData.Finish(j.writeResult.totalBytes, j.writeResult.count)
+
+		// Get current imported count after Finish
+		var afterCount int64
+		if externalData, ok := j.ingestData.(*external.MemoryIngestData); ok {
+			_, afterCount = externalData.ImportedStatistics()
+		} else if localData, ok := j.ingestData.(*Engine); ok {
+			_, afterCount = localData.ImportedStatistics()
+		}
+
+		tidblogutil.Logger(context.Background()).Info("[DXF DEBUG] region job Finish called",
+			logutil.Key("startKey", j.keyRange.Start),
+			logutil.Key("endKey", j.keyRange.End),
+			zap.Int64("finishCount", j.writeResult.count),
+			zap.Int64("finishSize", j.writeResult.totalBytes),
+			zap.Int64("beforeImportedCount", beforeCount),
+			zap.Int64("afterImportedCount", afterCount),
+			zap.Int64("deltaCount", afterCount-beforeCount),
+			zap.Uint64("regionID", j.region.Region.GetId()),
+			zap.Int("retryCount", j.retryCount),
+			zap.Stringer("stage", j.stage),
+			zap.Bool("isRetry", j.retryCount > 0),
+			zap.Bool("deltaMatchesFinishCount", afterCount-beforeCount == j.writeResult.count))
+
 		if j.metrics != nil {
 			j.metrics.BytesCounter.WithLabelValues(metric.StateImported).
 				Add(float64(j.writeResult.totalBytes))
@@ -1025,6 +1057,14 @@ func (q *regionJobRetryer) run() {
 					q.protectedToPutBack.mu.Unlock()
 					return
 				case q.putBackCh <- q.protectedToPutBack.toPutBack:
+					job := q.protectedToPutBack.toPutBack
+					tidblogutil.Logger(q.ctx).Info("[DXF DEBUG] region job retryer putting job back",
+						logutil.Key("startKey", job.keyRange.Start),
+						logutil.Key("endKey", job.keyRange.End),
+						zap.Stringer("stage", job.stage),
+						zap.Int("retryCount", job.retryCount),
+						zap.Time("waitUntil", job.waitUntil),
+						zap.Uint64("regionID", job.region.Region.GetId()))
 					q.protectedToPutBack.toPutBack = nil
 					q.protectedToPutBack.mu.Unlock()
 				}
