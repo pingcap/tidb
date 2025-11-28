@@ -51,6 +51,8 @@ type DataSource struct {
 
 	AstIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
+	// HasForceHints indicates whether there is any force/use index hint.
+	HasForceHints bool
 	Table         table.Table
 	TableInfo     *model.TableInfo `hash64-equals:"true"`
 	Columns       []*model.ColumnInfo
@@ -175,6 +177,8 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 	if err != nil {
 		return nil, nil, err
 	}
+	// Removing the unused TiCI indexes is done later. Because we will not enter
+	// the predicate push down when the table doesn't have any filter.
 	return predicates, ds, nil
 }
 
@@ -720,13 +724,10 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	ftsFuncs map[*expression.ScalarFunction]struct{},
 ) error {
 	// Fulltext index must be used. So we prune all other possible access paths.
-	prunedHintedPath := false
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		pruned := path.Index == nil || path.Index.ID != index.ID
-		prunedHintedPath = prunedHintedPath || (pruned && path.Forced)
-		return pruned
+		return path.Index == nil || path.Index.ID != index.ID
 	})
-	if prunedHintedPath && !ds.PossibleAccessPaths[0].Forced {
+	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
 
@@ -764,22 +765,20 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 // CleanUnusedTiCIIndexes removes the unused TiCI indexes from PossibleAccessPaths and AllPossibleAccessPaths.
 // It also checks whether all hinted indexes is pruned, and raises a warning if so.
 func (ds *DataSource) CleanUnusedTiCIIndexes() {
-	useIndexIsPruned := false
 	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
 		return path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0
 	})
+	origLen := len(ds.PossibleAccessPaths)
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		if path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0 {
-			useIndexIsPruned = path.Forced
-			return true
-		}
-		return false
+		return path.Index != nil && path.Index.FullTextInfo != nil && len(path.AccessConds) == 0
 	})
+	nowLen := len(ds.PossibleAccessPaths)
 	stillHasHintedIndex := false
 	for _, path := range ds.PossibleAccessPaths {
 		stillHasHintedIndex = stillHasHintedIndex || path.Forced
 	}
-	if useIndexIsPruned && !stillHasHintedIndex {
+	// Here we only append warning for TiCI index's conflicting hint.
+	if origLen > nowLen && ds.HasForceHints && !stillHasHintedIndex {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
 }

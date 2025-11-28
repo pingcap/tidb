@@ -682,6 +682,42 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
 	return utilfuncp.GetPlanCostVer24PhysicalIndexScan(p, taskType, option, args...)
 }
 
+// TryToPassTiCITopN checks whether the TopN can be embeded into TiCI index scan.
+func (p *PhysicalIndexScan) TryToPassTiCITopN(topN *PhysicalTopN) {
+	hybridSearchInfo := p.Index.HybridInfo
+	if hybridSearchInfo != nil && hybridSearchInfo.Sort != nil {
+		orderMatched := true
+		orderPos := 0
+	checkLoop:
+		for _, byItem := range topN.ByItems {
+			if orderPos >= len(hybridSearchInfo.Sort.Columns) || !orderMatched {
+				break
+			}
+			switch x := byItem.Expr.(type) {
+			case *expression.Column:
+				if byItem.Desc != !hybridSearchInfo.Sort.IsAsc[orderPos] {
+					orderMatched = false
+					break checkLoop
+				}
+				colID := p.Table.Columns[hybridSearchInfo.Sort.Columns[orderPos].Offset].ID
+				if colID != x.ID {
+					orderMatched = false
+					break checkLoop
+				}
+				orderPos++
+			case *expression.ScalarFunction:
+				orderMatched = false
+				break checkLoop
+			}
+		}
+		if orderMatched {
+			p.FtsQueryInfo.TopK = new(uint32)
+			// The passed TopN here may be the global one. We need to consider the offset.
+			*p.FtsQueryInfo.TopK = uint32(topN.Count) + uint32(topN.Offset)
+		}
+	}
+}
+
 // GetPhysicalIndexScan4LogicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
 func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
 	ds := s.Source

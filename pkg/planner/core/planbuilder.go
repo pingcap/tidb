@@ -1212,7 +1212,7 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	return true
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, bool, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1264,7 +1264,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if check && latestIndexes == nil {
 				latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tblInfo.ID, 0)
 				if err != nil {
-					return nil, err
+					return nil, false, err
 				}
 			}
 			if check {
@@ -1292,11 +1292,11 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			publicPaths = append(publicPaths, path)
 		}
 	}
-	var ticiIndexPaths []*util.AccessPath = nil
+	var ticiIndexPaths []*util.AccessPath
 	if hasTiCIIndex {
 		// FTS_MATCH_XXX can only be executed in TiCI engine.
 		// So we need to store it here and try to add it later if the USE_INDEX hint delete any of them.
-		// The removal of the unhinted TiCI index paths will be done after we dicide the availabilty of each index.
+		// The removal of the unhinted TiCI index paths will be done after we dicide the availability of each index.
 		ticiIndexPaths = make([]*util.AccessPath, 0, len(publicPaths))
 		for _, path := range publicPaths {
 			if path.Index != nil && path.Index.IsTiCIIndex() {
@@ -1382,7 +1382,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				err := plannererrors.ErrKeyDoesNotExist.FastGenByArgs(idxName, tblInfo.Name)
 				// if hint is from comment-style sql hints, we should throw a warning instead of error.
 				if i < indexHintsLen {
-					return nil, err
+					return nil, false, err
 				}
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -1396,7 +1396,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
 				if i < indexHintsLen {
-					return nil, err
+					return nil, false, err
 				}
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -1457,7 +1457,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 	if hasTiCIIndex {
 		// Following previous comments, we add back the unhinted TiCI index paths.
-		// And remove them later after we dicide the availabilty of each index.
+		// And remove them later after we decide the availability of each index.
 		tiCIIndexMap := make(map[int64]*util.AccessPath)
 		for _, path := range ticiIndexPaths {
 			tiCIIndexMap[path.Index.ID] = path
@@ -1472,7 +1472,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		}
 	}
 
-	return available, nil
+	return available, hasUseOrForce, nil
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
