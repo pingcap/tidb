@@ -179,6 +179,20 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 
 	var err error
+	// For recursive CTEs in strict SQL mode, disable TruncateAsWarning during optimization (e.g., constant folding).
+	// This ensures data truncation errors are caught early and consistently. Without this, constant folding during
+	// optimization would silently truncate data, while later execution stages would error, leading to inconsistent behavior.
+	// We only apply this when: (1) strict mode is enabled, and (2) this is a recursive CTE being optimized.
+	sessVars := p.SCtx().GetSessionVars()
+	sc := sessVars.StmtCtx
+	originalFlags := sc.TypeFlags()
+	if p.Cte.RecursivePartLogicalPlan != nil && sessVars.SQLMode.HasStrictMode() && originalFlags.TruncateAsWarning() {
+		sc.SetTypeFlags(originalFlags.WithTruncateAsWarning(false))
+		defer func() {
+			sc.SetTypeFlags(originalFlags)
+		}()
+	}
+
 	if p.Cte.SeedPartPhysicalPlan == nil {
 		// Build push-downed predicates.
 		if len(p.Cte.PushDownPredicates) > 0 {
