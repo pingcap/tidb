@@ -2385,8 +2385,8 @@ func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	}
 	if info.IsSuccess() {
 		var msg string
-		if info.Summary.ConflictRows > 0 {
-			msg = fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictRows)
+		if info.Summary.ConflictedRows > 0 {
+			msg = fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictedRows)
 		}
 		result.AppendString(8, msg)
 	} else {

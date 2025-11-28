@@ -610,7 +610,7 @@ func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMet
 	}
 
 	if globalSort {
-		taskMeta.Result.LoadedRowCnt, taskMeta.Result.ConflictRowCnt, err = getLoadedRowCountOnGlobalSort(handle, task)
+		taskMeta.Result.LoadedRowCnt, taskMeta.Result.ConflictedRowCnt, err = getLoadedRowCountOnGlobalSort(handle, task)
 		if err != nil {
 			return err
 		}
@@ -698,8 +698,8 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 	// we have already switch import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	summary := &importer.JobSummary{
-		ImportedRows: taskMeta.Result.LoadedRowCnt,
-		ConflictRows: taskMeta.Result.ConflictRowCnt,
+		ImportedRows:   taskMeta.Result.LoadedRowCnt,
+		ConflictedRows: taskMeta.Result.ConflictedRowCnt,
 	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)

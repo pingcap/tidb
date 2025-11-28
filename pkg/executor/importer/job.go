@@ -106,9 +106,9 @@ type JobSummary struct {
 	// if the job is using global-sort, this number will be the rows after conflict
 	// resolution.
 	ImportedRows uint64 `json:"imported-rows,omitempty"`
-	// ConflictRows is the number of rows that had conflicts during import with
+	// ConflictedRows is the number of rows that are conflicted during import with
 	// global-sort.
-	ConflictRows uint64 `json:"conflict-rows,omitempty"`
+	ConflictedRows uint64 `json:"conflicted-rows,omitempty"`
 }
 
 // JobInfo is the information of import into job.
