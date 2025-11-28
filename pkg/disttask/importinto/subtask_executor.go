@@ -125,6 +125,25 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		return err
 	}
 
+	// Call Backend.PostProcess to finish TiCI index upload if needed.
+	// This should be called after all engines are imported.
+	tableImporter, err := getTableImporter(ctx, p.taskID, p.taskMeta, p.store, logger)
+	if err != nil {
+		logger.Warn("failed to get table importer for post process", zap.Error(err))
+		// Continue with other post process steps even if we can't get table importer
+	} else {
+		defer func() {
+			if closeErr := tableImporter.Close(); closeErr != nil {
+				logger.Warn("failed to close table importer", zap.Error(closeErr))
+			}
+		}()
+		if backend := tableImporter.Backend(); backend != nil {
+			if err := backend.PostProcess(ctx); err != nil {
+				return errors.Annotate(err, "backend post process failed")
+			}
+		}
+	}
+
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	for id, cksum := range subtaskMeta.Checksum {
 		callLog.Info(
