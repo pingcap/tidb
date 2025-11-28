@@ -212,6 +212,7 @@ func (svr *Server) KvGet(ctx context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.GetResponse{RegionError: reqCtx.regErr}, nil
 	}
+	var commitTS uint64
 	reqCtx.returnCommitTS = req.NeedCommitTs
 	pair, err := svr.mvccStore.GetPair(reqCtx, req.Key, req.Version)
 	if err != nil {
@@ -219,9 +220,12 @@ func (svr *Server) KvGet(ctx context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb
 			Error: convertToKeyError(err),
 		}, nil
 	}
+	if req.NeedCommitTs {
+		commitTS = pair.CommitTs
+	}
 	return &kvrpcpb.GetResponse{
 		Value:    pair.Value,
-		CommitTs: pair.CommitTs,
+		CommitTs: commitTS,
 	}, nil
 }
 

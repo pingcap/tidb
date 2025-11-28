@@ -136,6 +136,7 @@ type PointGetExecutor struct {
 	lock             bool
 	lockWaitTime     int64
 	rowDecoder       *rowcodec.ChunkDecoder
+	commitTSOffset   int
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -215,6 +216,12 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
+	e.commitTSOffset = -1
+	for i, col := range e.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			e.commitTSOffset = i
+		}
+	}
 
 	sessVars := e.Ctx().GetSessionVars()
 	if sessVars.IsReplicaReadClosestAdaptive() {
@@ -702,9 +709,14 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		// if the query has max execution time set, we need to set the context deadline for the get request
 		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
 		defer cancel()
-		return e.snapshot.Get(ctxWithTimeout, key)
+		ctx = ctxWithTimeout
 	}
-	return e.snapshot.Get(ctx, key)
+	var avoidAllocation [1]kv.GetOption
+	opts := avoidAllocation[:0]
+	if e.commitTSOffset >= 0 {
+		opts = append(opts, kv.WithReturnCommitTS())
+	}
+	return e.snapshot.Get(ctx, key, opts...)
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
