@@ -82,16 +82,10 @@ func ExprCoveredByOneTiCIIndex(
 			_, lhsIsConst := x.GetArgs()[0].(*Constant)
 			_, rhsIsConst := x.GetArgs()[1].(*Constant)
 			if lhsIsCol && rhsIsConst {
-				if invertedIndexesColIDs.Has(int(lhsCol.ID)) {
-					return true
-				}
-				return false
+				return invertedIndexesColIDs.Has(int(lhsCol.ID))
 			}
 			if rhsIsCol && lhsIsConst {
-				if invertedIndexesColIDs.Has(int(rhsCol.ID)) {
-					return true
-				}
-				return false
+				return invertedIndexesColIDs.Has(int(rhsCol.ID))
 			}
 			return false
 		default:
