@@ -610,6 +610,9 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		// Ensure expression evaluation during optimization (e.g. uncorrelated scalar subquery preprocessing)
+		// follows the same ExprCtx as the PlanContext, even if the PlanContext is a wrapper.
+		sctx = makeOverrideExprSessionCtx(sctx, pctx.GetExprCtx())
 
 		e := newExecutorBuilder(sctx, is, nil)
 		executor := e.build(p)

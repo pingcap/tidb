@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -6982,15 +6983,23 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 	}()
 
 	if isRecursive {
+		origCtx := b.ctx
+		// Recursive CTE materializes rows into an internal worktable. In strict SQL mode, truncation should be an error
+		// (INSERT semantics). Use a stricter ExprCtx while building the seed/recursive sub-plan to scope the behavior.
+		if b.ctx.GetSessionVars().SQLMode.HasStrictMode() {
+			b.ctx = planctx.WithTruncateErrLevel(origCtx, errctx.LevelError)
+			defer func() { b.ctx = origCtx }()
+		}
+
 		// buildingRecursivePartForCTE likes a stack. We save it before building a recursive CTE and restore it after building.
 		// We need a stack because we need to handle the nested recursive CTE. And buildingRecursivePartForCTE indicates the innermost CTE.
 		saveCheck := b.buildingRecursivePartForCTE
 		b.buildingRecursivePartForCTE = false
+		defer func() { b.buildingRecursivePartForCTE = saveCheck }()
 		err = b.buildRecursiveCTE(ctx, cte.Query.Query)
 		if err != nil {
 			return nil, err
 		}
-		b.buildingRecursivePartForCTE = saveCheck
 	} else {
 		p, err = b.buildResultSetNode(ctx, cte.Query.Query, true)
 		if err != nil {

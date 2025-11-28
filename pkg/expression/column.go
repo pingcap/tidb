@@ -454,22 +454,22 @@ const columnPrefix = "Column#"
 // Note: ExplainFormat is normalized to lowercase when set, but we use strings.ToLower as a defensive measure
 // in case the format wasn't normalized in some code path.
 func shouldRemoveColumnNumbers(ctx ParamValues) bool {
-	if evalCtx, ok := ctx.(EvalContext); ok {
-		if sessionCtx, ok := evalCtx.(*sessionexpr.EvalContext); ok {
-			stmtCtx := sessionCtx.Sctx().GetSessionVars().StmtCtx
-			// Only check format if we're actually in an explain statement
-			if !stmtCtx.InExplainStmt {
-				return false
-			}
-			format := stmtCtx.ExplainFormat
-			// Use ToLower defensively in case format wasn't normalized in some code path
-			formatLower := strings.ToLower(strings.TrimSpace(format))
-			if formatLower == types.ExplainFormatPlanTree {
-				return true
-			}
-		}
+	evalCtx, ok := ctx.(EvalContext)
+	if !ok {
+		return false
 	}
-	return false
+
+	sctx := sessionexpr.UnwrapInternalSctx(evalCtx)
+	if sctx == nil {
+		return false
+	}
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	// Only check format if we're actually in an explain statement.
+	if !stmtCtx.InExplainStmt {
+		return false
+	}
+	formatLower := strings.ToLower(strings.TrimSpace(stmtCtx.ExplainFormat))
+	return formatLower == types.ExplainFormatPlanTree
 }
 
 // StringWithCtx implements Expression interface.

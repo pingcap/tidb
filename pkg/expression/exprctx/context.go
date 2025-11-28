@@ -179,6 +179,26 @@ type innerOverrideEvalContext struct {
 	errCtx  errctx.Context
 }
 
+// UnwrapEvalContext returns the underlying EvalContext.
+// It is used by callers that need to reach the original concrete implementation (e.g. sessionexpr.EvalContext).
+func (ctx *innerOverrideEvalContext) UnwrapEvalContext() EvalContext {
+	return ctx.EvalContext
+}
+
+// UnwrapInternalSctx returns the underlying internal session context as `any` (if any).
+//
+// NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
+// (sessionctx -> planctx -> exprctx).
+func (ctx *innerOverrideEvalContext) UnwrapInternalSctx() any {
+	type internalSctxUnwrapper interface {
+		UnwrapInternalSctx() any
+	}
+	if u, ok := ctx.EvalContext.(internalSctxUnwrapper); ok {
+		return u.UnwrapInternalSctx()
+	}
+	return nil
+}
+
 // TypeCtx implements EvalContext.TypeCtx
 func (ctx *innerOverrideEvalContext) TypeCtx() types.Context {
 	return ctx.typeCtx
@@ -186,6 +206,44 @@ func (ctx *innerOverrideEvalContext) TypeCtx() types.Context {
 
 // ErrCtx implements EvalContext.GetEvalCtx
 func (ctx *innerOverrideEvalContext) ErrCtx() errctx.Context {
+	return ctx.errCtx
+}
+
+// innerOverrideStaticConvertibleEvalContext is like innerOverrideEvalContext but preserves the extra methods in
+// StaticConvertibleEvalContext (used by plan cache).
+type innerOverrideStaticConvertibleEvalContext struct {
+	StaticConvertibleEvalContext
+	typeCtx types.Context
+	errCtx  errctx.Context
+}
+
+// UnwrapEvalContext returns the underlying EvalContext.
+// It is used by callers that need to reach the original concrete implementation (e.g. sessionexpr.EvalContext).
+func (ctx *innerOverrideStaticConvertibleEvalContext) UnwrapEvalContext() EvalContext {
+	return ctx.StaticConvertibleEvalContext
+}
+
+// UnwrapInternalSctx returns the underlying internal session context as `any` (if any).
+//
+// NOTE: It returns `any` instead of `sessionctx.Context` to avoid a dependency cycle
+// (sessionctx -> planctx -> exprctx).
+func (ctx *innerOverrideStaticConvertibleEvalContext) UnwrapInternalSctx() any {
+	type internalSctxUnwrapper interface {
+		UnwrapInternalSctx() any
+	}
+	if u, ok := ctx.StaticConvertibleEvalContext.(internalSctxUnwrapper); ok {
+		return u.UnwrapInternalSctx()
+	}
+	return nil
+}
+
+// TypeCtx implements EvalContext.TypeCtx
+func (ctx *innerOverrideStaticConvertibleEvalContext) TypeCtx() types.Context {
+	return ctx.typeCtx
+}
+
+// ErrCtx implements EvalContext.GetEvalCtx
+func (ctx *innerOverrideStaticConvertibleEvalContext) ErrCtx() errctx.Context {
 	return ctx.errCtx
 }
 
@@ -197,6 +255,34 @@ type innerOverrideBuildContext struct {
 // GetEvalCtx implements BuildContext.GetEvalCtx
 func (ctx *innerOverrideBuildContext) GetEvalCtx() EvalContext {
 	return ctx.evalCtx
+}
+
+// overrideEvalExprContext overrides EvalCtx while delegating all other ExprContext methods.
+type overrideEvalExprContext struct {
+	ExprContext
+	evalCtx EvalContext
+}
+
+// GetEvalCtx implements BuildContext.GetEvalCtx.
+func (ctx *overrideEvalExprContext) GetEvalCtx() EvalContext {
+	return ctx.evalCtx
+}
+
+// overrideEvalStaticConvertibleExprContext overrides EvalCtx while delegating all other ExprContext methods.
+// It also preserves `StaticConvertibleExprContext` if the original context supports it.
+type overrideEvalStaticConvertibleExprContext struct {
+	StaticConvertibleExprContext
+	evalCtx       EvalContext
+	staticEvalCtx StaticConvertibleEvalContext
+}
+
+// GetEvalCtx implements BuildContext.GetEvalCtx.
+func (ctx *overrideEvalStaticConvertibleExprContext) GetEvalCtx() EvalContext {
+	return ctx.evalCtx
+}
+
+func (ctx *overrideEvalStaticConvertibleExprContext) GetStaticConvertibleEvalContext() StaticConvertibleEvalContext {
+	return ctx.staticEvalCtx
 }
 
 // CtxWithHandleTruncateErrLevel returns a new BuildContext with the specified level for handling truncate error.
@@ -229,6 +315,41 @@ func CtxWithHandleTruncateErrLevel(ctx BuildContext, level errctx.Level) BuildCo
 			typeCtx:     tc.WithFlags(flags),
 			errCtx:      ec.WithErrGroupLevel(errctx.ErrGroupTruncate, level),
 		},
+	}
+}
+
+// WithHandleTruncateErrLevel returns a new ExprContext with the specified level for handling truncate error.
+// It is like CtxWithHandleTruncateErrLevel but keeps the returned value as an ExprContext.
+//
+// NOTE: The returned context is only guaranteed to implement `ExprContext`. It preserves
+// `StaticConvertibleExprContext` when the original context supports it, but it intentionally doesn't preserve
+// arbitrary extra methods on the original concrete type, because the override is meant to be a minimal scoped
+// change for expression evaluation.
+func WithHandleTruncateErrLevel(ctx ExprContext, level errctx.Level) ExprContext {
+	overrideBuildCtx := CtxWithHandleTruncateErrLevel(ctx, level)
+	if overrideBuildCtx == ctx {
+		return ctx
+	}
+
+	evalCtx := overrideBuildCtx.GetEvalCtx()
+	if staticConvertibleCtx, ok := ctx.(StaticConvertibleExprContext); ok {
+		newTypeCtx := evalCtx.TypeCtx()
+		newErrCtx := evalCtx.ErrCtx()
+		staticEvalCtx := &innerOverrideStaticConvertibleEvalContext{
+			StaticConvertibleEvalContext: staticConvertibleCtx.GetStaticConvertibleEvalContext(),
+			typeCtx:                      newTypeCtx,
+			errCtx:                       newErrCtx,
+		}
+		return &overrideEvalStaticConvertibleExprContext{
+			StaticConvertibleExprContext: staticConvertibleCtx,
+			evalCtx:                      staticEvalCtx,
+			staticEvalCtx:                staticEvalCtx,
+		}
+	}
+
+	return &overrideEvalExprContext{
+		ExprContext: ctx,
+		evalCtx:     evalCtx,
 	}
 }
 
