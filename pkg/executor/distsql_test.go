@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -649,4 +650,37 @@ func TestIndexLookUpPushDownCopTask(t *testing.T) {
 	localIndexLookUpRow := r.Rows()[2]
 	require.Contains(t, localIndexLookUpRow[0], "LocalIndexLookUp", r.String())
 	require.Equal(t, "3", localIndexLookUpRow[2], r.String())
+}
+
+func TestIndexLookUpConcurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a int, b int, key k(a))`)
+	for i := 0; i < 50; i++ {
+		tk.MustExec("insert into t values(?, ?)", i, i*10)
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/setRangesPerTask", "return(1)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/setRangesPerTask")
+	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
+	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
+	defer atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
+	tk.Session().GetSessionVars().IndexLookupSize = 5
+	tk.Session().GetSessionVars().MaxChunkSize = 5
+	conds := []string{
+		"a between 5 and 9",
+		"a between 15 and 19",
+		"a between 25 and 29",
+		"a between 35 and 39",
+		"a between 45 and 49",
+	}
+
+	for concurrency := 1; concurrency <= 5; concurrency++ {
+		tk.MustExec("set @@tidb_index_lookup_concurrency=" + strconv.Itoa(concurrency))
+		tk.MustQuery("select b from t force index(k) where " + strings.Join(conds, " or ") + " order by a desc limit 15").Check(
+			testkit.Rows("490", "480", "470", "460", "450", "390", "380", "370", "360", "350", "290", "280", "270", "260", "250"),
+		)
+	}
 }
