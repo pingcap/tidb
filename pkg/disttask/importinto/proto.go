@@ -291,7 +291,8 @@ func (c *Checksum) ToKVChecksum() *verification.KVChecksum {
 // Result records the metrics information.
 // This portion of the code may be implemented uniformly in the framework in the future.
 type Result struct {
-	LoadedRowCnt uint64
+	LoadedRowCnt   uint64
+	ConflictRowCnt uint64
 }
 
 // IndexID2KVGroup converts index id to kv group name.
