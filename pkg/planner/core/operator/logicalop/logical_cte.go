@@ -179,6 +179,19 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 
 	var err error
+	// Recursive CTE materializes rows into an internal worktable. In strict SQL mode, truncation should be an error
+	// (INSERT semantics), so temporarily disable TruncateAsWarning during optimization to prevent constant folding
+	// from silently truncating values.
+	sessVars := p.SCtx().GetSessionVars()
+	sc := sessVars.StmtCtx
+	originalFlags := sc.TypeFlags()
+	if p.Cte.RecursivePartLogicalPlan != nil && sessVars.SQLMode.HasStrictMode() && originalFlags.TruncateAsWarning() {
+		sc.SetTypeFlags(originalFlags.WithTruncateAsWarning(false))
+		defer func() {
+			sc.SetTypeFlags(originalFlags)
+		}()
+	}
+
 	if p.Cte.SeedPartPhysicalPlan == nil {
 		// Build push-downed predicates.
 		if len(p.Cte.PushDownPredicates) > 0 {

@@ -280,3 +280,79 @@ WHERE
 		"    └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:g keep order:false, stats:pseudo"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 }
+
+func TestCTEStrictModeDataTruncation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES'")
+
+	// Recursive CTE behaves like writing into an internal worktable in MySQL: truncation should be an error in strict mode.
+	err := tk.QueryToErr(`
+		WITH RECURSIVE cte_test AS (
+			SELECT NULL AS test_col, 1 AS step
+			UNION ALL
+			SELECT 'abc', step + 1
+			FROM cte_test
+			WHERE step < 2
+		)
+		SELECT * FROM cte_test;
+	`)
+	require.True(t, terror.ErrorEqual(err, types.ErrDataTooLong))
+
+	// Truncation from CAST in the recursive CTE should also be an error (MySQL errors instead of warning).
+	err = tk.QueryToErr(`
+		WITH RECURSIVE cte AS (
+			SELECT CAST('abcdefgh' AS CHAR(3)) AS s, 1 AS n
+			UNION ALL
+			SELECT s, n + 1
+			FROM cte
+			WHERE n < 2
+		)
+		SELECT * FROM cte;
+	`)
+	require.True(t, terror.ErrorEqual(err, types.ErrDataTooLong))
+
+	err = tk.QueryToErr(`
+		WITH RECURSIVE cte AS (
+			SELECT CAST('x' AS CHAR(10)) AS s, 1 AS n
+			UNION ALL
+			SELECT CAST('abcdefgh' AS CHAR(3)), n + 1
+			FROM cte
+			WHERE n < 2
+		)
+		SELECT * FROM cte;
+	`)
+	require.True(t, terror.ErrorEqual(err, types.ErrDataTooLong))
+
+	// Non-recursive CTE: truncation should be a warning like a normal SELECT.
+	tk.MustQuery(`
+		WITH cte AS (
+			SELECT CAST('abcdefgh' AS CHAR(3)) AS short_str, 1 AS n
+		)
+		SELECT * FROM cte
+	`).Check(testkit.Rows("abc 1"))
+	tk.MustQuery("show warnings").CheckContain("Data Too Long, field len 3, data len 8")
+}
+
+func TestCTENonStrictModeDataTruncation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("SET SESSION sql_mode = ''")
+
+	// Recursive CTE truncation should be a warning in non-strict mode.
+	tk.MustQuery(`
+		WITH RECURSIVE cte AS (
+			SELECT CAST('abcdefgh' AS CHAR(3)) AS s, 1 AS n
+			UNION ALL
+			SELECT s, n + 1
+			FROM cte
+			WHERE n < 2
+		)
+		SELECT * FROM cte;
+	`).Check(testkit.Rows("abc 1", "abc 2"))
+	tk.MustQuery("show warnings").CheckContain("Data Too Long, field len 3, data len 8")
+}
