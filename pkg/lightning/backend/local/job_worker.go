@@ -381,7 +381,7 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 }
 
 func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) error {
-	if n, err := rand.Int(rand.Reader, big.NewInt(2)); err != nil && n.Int64() == 0 {
+	if n, err := rand.Int(rand.Reader, big.NewInt(2)); err == nil && n.Int64() == 0 {
 		return errors.New("injected random error")
 	}
 	in := &ingestcli.IngestRequest{
