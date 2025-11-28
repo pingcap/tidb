@@ -30,11 +30,26 @@ import (
 
 // AsSctx converts PlanContext to sessionctx.Context.
 func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
-	sctx, ok := pctx.(sessionctx.Context)
-	if !ok {
-		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
+	// Some PlanContext implementations are wrappers (e.g. planctx.WithExprCtx). Unwrap them to recover
+	// the underlying session-backed context when needed.
+	type planCtxUnwrapper interface {
+		UnwrapPlanContext() base.PlanContext
 	}
-	return sctx, nil
+	for {
+		if sctx, ok := pctx.(sessionctx.Context); ok {
+			return sctx, nil
+		}
+		u, ok := pctx.(planCtxUnwrapper)
+		if !ok {
+			break
+		}
+		next := u.UnwrapPlanContext()
+		if next == nil || next == pctx {
+			break
+		}
+		pctx = next
+	}
+	return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
