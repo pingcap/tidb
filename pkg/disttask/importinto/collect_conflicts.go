@@ -425,7 +425,7 @@ func getConflictRowFilenamePrefix(taskID, subtaskID int64, uuid string) string {
 	// we need to keep this file for the user to check the conflict rows, so we
 	// don't put it under '<task-id>/' directory to avoid it being deleted by the
 	// cleanup process.
-	return path.Join("conflict-rows", fmt.Sprintf("%d", taskID), fmt.Sprintf("%d-%s", subtaskID, uuid))
+	return path.Join("conflicted-rows", fmt.Sprintf("%d", taskID), fmt.Sprintf("%d-%s", subtaskID, uuid))
 }
 
 // getConflictRowFileName returns the file name to store the conflict rows.
