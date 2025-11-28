@@ -41,7 +41,7 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source, cloud-nativ
 
 - **[Open Source Commitment](https://www.pingcap.com/blog/open-source-is-in-our-dna-reaffirming-tidb-commitment?utm_source=github&utm_medium=tidb)**: Open source is at the core of TiDB's identity. All source code is available on GitHub under the Apache 2.0 license, including enterprise-grade features. TiDB is built with the belief that open source enables transparency, innovation, and collaboration. We actively encourage contributions from the community to help build a vibrant and inclusive ecosystem, reaffirming our commitment to open development and accessibility for everyone.
 
-## Quick start
+## Quick Start
 
 1. Start a TiDB cluster.
 
