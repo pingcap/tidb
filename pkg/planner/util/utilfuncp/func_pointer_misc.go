@@ -415,8 +415,15 @@ var CompareTaskCost func(curTask, bestTask base.Task) (
 	curIsBetter bool, err error)
 
 // GetPossibleAccessPaths is used in static pruning, when it is not needed, remove this func pointer.
-var GetPossibleAccessPaths func(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint,
-	tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error)
+var GetPossibleAccessPaths func(
+	ctx base.PlanContext,
+	tableHints *hint.PlanHints,
+	indexHints []*ast.IndexHint,
+	tbl table.Table,
+	dbName, tblName ast.CIStr,
+	check bool,
+	hasFlagPartitionProcessor bool,
+) ([]*util.AccessPath, bool, error)
 
 // **************************************** plan clone related ********************************************
 
