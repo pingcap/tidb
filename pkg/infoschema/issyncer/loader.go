@@ -295,11 +295,12 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
 	if l.loadDBFilter != nil {
 		// Always accept newly created schema as we cannot access its name in this context.
-		if diff.Type == model.ActionCreateSchema {
-			l.logger.Warn("Load DB filter was ignored in a `CREATE DATABASE`", zap.Int64("diff", diff.Version))
+		// Always accept `CREATE PLACEMENT POLICY`: its `schemaID` is ID of this poilcy but not zero.
+		if diff.Type == model.ActionCreateSchema || diff.Type == model.ActionCreatePlacementPolicy {
+			l.logger.Warn("Load DB filter was ignored.", zap.Int64("diff", diff.Version), zap.Stringer("type", diff.Type))
 			return false
 		}
-		// Always accept db unrelated DDLs, like `CREATE PLACEMENT POLICY`.
+		// Always accept db unrelated DDLs.
 		if diff.SchemaID == 0 {
 			return false
 		}
