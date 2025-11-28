@@ -349,13 +349,14 @@ Update	root		N/A
     └─HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
       ├─HashAgg(Build)	root		group by:executor__explain.t2.id2, funcs:count(1)->Column#22, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
       │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
-      │   ├─HashJoin(Build)	root		inner join, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
+      │   ├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
       │   │ ├─Projection(Build)	root		executor__explain.t1.id2
       │   │ │ └─IndexLookUp	root		
       │   │ │   ├─IndexRangeScan(Build)	cop[tikv]	table:rn, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
       │   │ │   └─TableRowIDScan(Probe)	cop[tikv]	table:rn	keep order:false, stats:pseudo
-      │   │ └─TableReader(Probe)	root		data:TableFullScan
-      │   │   └─TableFullScan	cop[tikv]	table:b	keep order:false, stats:pseudo
+      │   │ └─IndexLookUp(Probe)	root		
+      │   │   ├─IndexRangeScan(Build)	cop[tikv]	table:b, index:IX_id2(id2)	range: decided by [eq(executor__explain.t2.id2, executor__explain.t1.id2)], keep order:false, stats:pseudo
+      │   │   └─TableRowIDScan(Probe)	cop[tikv]	table:b	keep order:false, stats:pseudo
       │   └─IndexReader(Probe)	root		index:Selection
       │     └─Selection	cop[tikv]		not(isnull(executor__explain.t3.id20))
       │       └─IndexRangeScan	cop[tikv]	table:c, index:IX_id20(id20)	range: decided by [eq(executor__explain.t3.id20, executor__explain.t2.id10)], keep order:false, stats:pseudo
