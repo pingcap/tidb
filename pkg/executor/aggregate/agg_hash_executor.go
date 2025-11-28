@@ -157,6 +157,8 @@ type HashAggExec struct {
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
 
+	HasDistinct bool
+
 	invalidMemoryUsageForTrackingTest bool
 
 	FileNamePrefixForTest string
@@ -422,7 +424,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		return err
 	}
 
-	if isTrackerEnabled && isParallelHashAggSpillEnabled {
+	if isTrackerEnabled && isParallelHashAggSpillEnabled &&!e.HasDistinct {
 		if e.diskTracker != nil {
 			e.diskTracker.Reset()
 		} else {
