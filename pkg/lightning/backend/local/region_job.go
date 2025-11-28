@@ -660,7 +660,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
 func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
-	if n, err := rand.Int(rand.Reader, big.NewInt(2)); err != nil && n.Int64() == 0 {
+	if n, err := rand.Int(rand.Reader, big.NewInt(2)); err == nil && n.Int64() == 0 {
 		return errors.New("injected random error")
 	}
 	failpoint.Inject("fakeRegionJobs", func() {
