@@ -95,6 +95,7 @@ type Parser struct {
 
 	explicitCharset       bool
 	strictDoubleFieldType bool
+	enableMariaDB         bool
 
 	// the following fields are used by yyParse to reduce allocation.
 	cache  []yySymType
@@ -144,6 +145,11 @@ func (parser *Parser) reset() {
 	parser.SetStrictDoubleTypeCheck(true)
 	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	parser.SetSQLMode(mode)
+}
+
+// SetMariaDB is setting the parser mode for extended MariaDB syntax
+func (parser *Parser) SetMariaDB(b bool) {
+	parser.enableMariaDB = b
 }
 
 // SetStrictDoubleTypeCheck enables/disables strict double type check.
