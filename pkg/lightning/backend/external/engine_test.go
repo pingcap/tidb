@@ -325,18 +325,29 @@ func TestEngineOnDup(t *testing.T) {
 	})
 }
 
-func TestChangeEngineConcurrency(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+type dummyWorker struct{}
 
+func (w *dummyWorker) TunePoolSize(int32, bool) {
+}
+
+func (w *dummyWorker) GetPoolSize() int32 {
+	return 0
+}
+
+func TestChangeEngineConcurrency(t *testing.T) {
 	var (
-		outCh    chan engineapi.DataAndRanges
-		eg       errgroup.Group
-		e        *Engine
-		finished atomic.Int32
+		outCh     chan engineapi.DataAndRanges
+		eg        errgroup.Group
+		e         *Engine
+		finished  atomic.Int32
+		updatedCh chan struct{}
 	)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
 
 	resetFn := func() {
 		outCh = make(chan engineapi.DataAndRanges, 4)
+		updatedCh = make(chan struct{})
 		eg = errgroup.Group{}
 		finished.Store(0)
 		e = &Engine{
@@ -344,6 +355,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 			workerConcurrency: *atomic.NewInt32(4),
 			readyCh:           make(chan struct{}),
 		}
+		e.SetWorker(&dummyWorker{})
 
 		// Load and consume the data
 		eg.Go(func() error {
@@ -351,44 +363,51 @@ func TestChangeEngineConcurrency(t *testing.T) {
 			return e.LoadIngestData(context.Background(), outCh)
 		})
 		eg.Go(func() error {
+			<-updatedCh
 			for data := range outCh {
-				// mock some time consuming job
-				data.Data.IncRef()
-				time.Sleep(time.Millisecond * 100)
-				finished.Add(1)
 				data.Data.DecRef()
+				finished.Add(1)
 			}
 			return nil
 		})
 	}
 
 	t.Run("reduce concurrency", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+			updatedCh <- struct{}{}
+		})
+
 		resetFn()
-		// Wait part of the data being processed
+		// Make sure update concurrency is triggered.
 		require.Eventually(t, func() bool {
-			return finished.Load() > 2
-		}, time.Second, 10*time.Millisecond)
-		e.UpdateResource(context.Background(), 1, 1024)
+			return len(outCh) >= 4
+		}, 5*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 1, 1024))
 		require.NoError(t, eg.Wait())
 	})
 
 	t.Run("increase concurrency", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+			updatedCh <- struct{}{}
+		})
+
 		resetFn()
-		// Wait part of the data being processed
+		// Make sure update concurrency is triggered.
 		require.Eventually(t, func() bool {
-			return finished.Load() > 2
-		}, time.Second, 10*time.Millisecond)
-		e.UpdateResource(context.Background(), 8, 1024)
+			return len(outCh) >= 4
+		}, 5*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 8, 1024))
 		require.NoError(t, eg.Wait())
 	})
 
 	t.Run("increase concurrency after loading all data", func(t *testing.T) {
 		resetFn()
-		// Wait part of the data being processed
+		close(updatedCh)
+		// Wait all of the data being processed
 		require.Eventually(t, func() bool {
 			return finished.Load() >= 16
 		}, 3*time.Second, 10*time.Millisecond)
-		e.UpdateResource(context.Background(), 8, 1024)
+		require.NoError(t, e.UpdateResource(context.Background(), 8, 1024))
 		require.NoError(t, eg.Wait())
 	})
 }

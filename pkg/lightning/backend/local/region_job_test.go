@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -676,6 +677,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 
 	type testCase struct {
 		fp               string
+		expr             string
 		mockGeneratorErr bool
 		mockDrainerErr   bool
 		wgErr            string
@@ -683,7 +685,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 	}
 
 	singleTest := func(t *testing.T, tc testCase) {
-		testfailpoint.Enable(t, tc.fp, "return")
+		testfailpoint.Enable(t, tc.fp, tc.expr)
 
 		workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
 		jobToWorkerCh := make(chan *regionJob)
@@ -697,25 +699,33 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 			},
 		}
 
-		op := newRegionJobOperator(
-			workerCtx, workGroup, jobWg,
+		pool := getRegionJobWorkerPool(
+			workerCtx, jobWg,
 			local, nil,
 			jobToWorkerCh, jobFromWorkerCh, 1,
 		)
-		require.NoError(t, op.Open())
+
+		wctx := workerpool.NewContext(workerCtx)
+		var opErr error
+		workGroup.Go(func() error {
+			pool.Start(wctx)
+			<-wctx.Done()
+			pool.Release()
+			opErr = wctx.OperatorErr()
+			return opErr
+		})
 
 		workGroup.Go(func() error {
 			return drainer(workerCtx, jobFromWorkerCh, jobWg, tc.mockDrainerErr)
 		})
 
-		var opErr error
 		workGroup.Go(func() error {
 			if err := generator(workerCtx, jobToWorkerCh, jobWg, tc.mockGeneratorErr); err != nil {
 				return err
 			}
 			jobWg.Wait()
-			opErr = op.Close()
-			return opErr
+			wctx.Cancel()
+			return nil
 		})
 
 		wgErr := workGroup.Wait()
@@ -734,6 +744,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 	tests := []testCase{
 		{
 			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			expr:             "return",
 			mockGeneratorErr: false,
 			mockDrainerErr:   false,
 			wgErr:            "",
@@ -741,6 +752,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 		},
 		{
 			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			expr:             "return",
 			mockGeneratorErr: false,
 			mockDrainerErr:   true,
 			wgErr:            "drainer error",
@@ -748,6 +760,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 		},
 		{
 			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			expr:             "return",
 			mockGeneratorErr: true,
 			mockDrainerErr:   false,
 			wgErr:            "generator error",
@@ -755,6 +768,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 		},
 		{
 			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/injectPanicForRegionJob",
+			expr:             "panic",
 			mockGeneratorErr: false,
 			mockDrainerErr:   false,
 			wgErr:            "region job worker panic",

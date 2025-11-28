@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -36,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
-	rutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
+	rcmgrutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	putil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -59,7 +58,7 @@ type regionJobWorker interface {
 }
 
 type regionJobBaseWorker struct {
-	ctx *workerpool.Context
+	ctx context.Context
 
 	jobInCh  chan *regionJob
 	jobOutCh chan *regionJob
@@ -81,16 +80,14 @@ type regionJobBaseWorker struct {
 // HandleTask process a single job that reads from the job channel.
 // If the worker fails to process the job, it will set the error to the context.
 // Besides, the worker must call jobWg.done() if it does not put the job into jobOutCh.
-func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) error {
+func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err error) {
 	// As we need to call job.done() after panic, we recover here rather than in worker pool.
 	defer putil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
-		w.ctx.OnError(errors.Errorf("region job worker panic"))
+		err = errors.Errorf("region job worker panic")
 		job.done(w.jobWg)
 	}, false)
 
-	failpoint.Inject("injectPanicForRegionJob", func() {
-		panic("mock panic")
-	})
+	failpoint.Inject("injectPanicForRegionJob", nil)
 
 	defer func() {
 		failpoint.Inject("mockJobWgDone", func(val failpoint.Value) {
@@ -434,24 +431,14 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 	return nil
 }
 
-type jobOperator struct {
-	ctx *workerpool.Context
-	*operator.AsyncOperator[*regionJob, *regionJob]
-
-	// workerGroup is used to notify other component to quit in error case
-	workerGroup *putil.ErrorGroupWithRecover
-}
-
-func newRegionJobOperator(
+func getRegionJobWorkerPool(
 	workerCtx context.Context,
-	workGroup *putil.ErrorGroupWithRecover,
 	jobWg *sync.WaitGroup,
 	local *Backend,
 	balancer *storeBalancer,
 	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
 	clusterID uint64,
-) *jobOperator {
-	wctx := workerpool.NewContext(workerCtx)
+) *workerpool.WorkerPool[*regionJob, *regionJob] {
 	var (
 		sourceChannel   = jobToWorkerCh
 		afterExecuteJob func([]*metapb.Peer)
@@ -465,47 +452,15 @@ func newRegionJobOperator(
 	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
 
 	pool := workerpool.NewWorkerPool(
-		"RegionJobOperator",
-		rutil.DistTask,
+		"regionJobWorkerPool",
+		rcmgrutil.DistTask,
 		local.GetWorkerConcurrency(),
 		func() workerpool.Worker[*regionJob, *regionJob] {
-			return local.newRegionJobWorker(wctx, clusterID, sourceChannel, jobFromWorkerCh, jobWg, afterExecuteJob)
+			return local.newRegionJobWorker(workerCtx, clusterID, sourceChannel, jobFromWorkerCh, jobWg, afterExecuteJob)
 		},
 	)
 
-	op := &jobOperator{
-		ctx:           wctx,
-		AsyncOperator: operator.NewAsyncOperator(wctx, pool),
-		workerGroup:   workGroup,
-	}
-	op.SetSink(operator.NewSimpleDataChannel(jobFromWorkerCh))
-	op.SetSource(operator.NewSimpleDataChannel(sourceChannel))
-	return op
-}
-
-func (*jobOperator) String() string {
-	return "jobOperator"
-}
-
-// Open starts the job operator.
-// Besides, it will also start a goroutine to monitor the context cancellation.
-// If the context is canceled, it will return the error catched in the worker pool.
-func (j *jobOperator) Open() error {
-	// In happy path, this goroutine will exit when we call j.Close().
-	// In error case:
-	// 1. if other goroutine in the worker group returns error, j.ctx will be canceled
-	// 2. if this worker pool meets error, this error will be exposed to the worker pool,
-	//    so all components in the worker pool can quit and make `jobWg.Wait()` pass.
-	j.workerGroup.Go(func() error {
-		<-j.ctx.Done()
-		return j.ctx.OperatorErr()
-	})
-	return j.AsyncOperator.Open()
-}
-
-func (j *jobOperator) Close() error {
-	j.ctx.Cancel()
-	//nolint: errcheck
-	j.AsyncOperator.Close()
-	return j.ctx.OperatorErr()
+	pool.SetResultSender(jobFromWorkerCh)
+	pool.SetTaskReceiver(sourceChannel)
+	return pool
 }

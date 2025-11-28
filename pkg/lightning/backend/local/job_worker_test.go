@@ -24,13 +24,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	ingestclimock "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mock"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
-	rutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
+	rcmgrutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -38,16 +37,16 @@ import (
 )
 
 func newRegionJobOperatorForTest(
+	workerCtx context.Context,
 	preRunJobFn func(ctx context.Context, job *regionJob) error,
 	writeFn func(ctx context.Context, job *regionJob) (*tikvWriteResult, error),
 	ingestFn func(ctx context.Context, job *regionJob) error,
 ) (
-	op *jobOperator,
+	op *workerpool.WorkerPool[*regionJob, *regionJob],
 	jobWg *sync.WaitGroup,
 	inChan chan<- *regionJob,
 	outChan <-chan *regionJob,
 ) {
-	workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
 	jobWg = &sync.WaitGroup{}
 	wctx := workerpool.NewContext(workerCtx)
 	jobToWorkerCh := make(chan *regionJob, 256)
@@ -71,7 +70,7 @@ func newRegionJobOperatorForTest(
 
 	pool := workerpool.NewWorkerPool(
 		"RegionJobOperator",
-		rutil.DistTask,
+		rcmgrutil.DistTask,
 		4,
 		func() workerpool.Worker[*regionJob, *regionJob] {
 			return &regionJobBaseWorker{
@@ -93,15 +92,9 @@ func newRegionJobOperatorForTest(
 			}
 		},
 	)
-
-	op = &jobOperator{
-		ctx:           wctx,
-		AsyncOperator: operator.NewAsyncOperator(wctx, pool),
-		workerGroup:   workGroup,
-	}
-	op.SetSink(operator.NewSimpleDataChannel(jobFromWorkerCh))
-	op.SetSource(operator.NewSimpleDataChannel(jobToWorkerCh))
-	return op, jobWg, jobToWorkerCh, jobFromWorkerCh
+	pool.SetResultSender(jobFromWorkerCh)
+	pool.SetTaskReceiver(jobToWorkerCh)
+	return pool, jobWg, jobToWorkerCh, jobFromWorkerCh
 }
 
 func TestRegionJobBaseWorker(t *testing.T) {
@@ -126,15 +119,28 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		testfailpoint.Enable(t,
 			"github.com/pingcap/tidb/pkg/lightning/backend/local/mockJobWgDone",
 			fmt.Sprintf("return(%d)", generateCount))
-		op, jobWg, jobInCh, jobOutCh := newRegionJobOperatorForTest(preRunFn, writeFn, ingestFn)
+		workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		pool, jobWg, jobInCh, jobOutCh := newRegionJobOperatorForTest(workerCtx, preRunFn, writeFn, ingestFn)
 
-		jobInCh <- job
-		jobWg.Add(1)
-		close(jobInCh)
+		wctx := workerpool.NewContext(workerCtx)
+		workGroup.Go(func() error {
+			pool.Start(wctx)
+			<-wctx.Done()
+			pool.Release()
+			return wctx.OperatorErr()
+		})
 
-		require.NoError(t, op.Open())
-		jobWg.Wait()
-		err := op.Close()
+		workGroup.Go(func() error {
+			jobInCh <- job
+			jobWg.Add(1)
+			close(jobInCh)
+			jobWg.Wait()
+
+			wctx.Cancel()
+			return nil
+		})
+
+		err := workGroup.Wait()
 		require.Equal(t, 0, len(jobInCh))
 		return jobOutCh, err
 	}

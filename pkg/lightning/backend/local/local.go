@@ -1513,26 +1513,27 @@ func (local *Backend) doImport(
 		clusterID = local.pdCli.GetClusterID(ctx)
 	}
 
-	worker := newRegionJobOperator(
-		workerCtx, workGroup, &jobWg,
+	pool := getRegionJobWorkerPool(
+		workerCtx, &jobWg,
 		local, balancer,
 		jobToWorkerCh, jobFromWorkerCh,
 		clusterID,
 	)
+	wctx := workerpool.NewContext(workerCtx)
 
 	if e, ok := engine.(*external.Engine); ok {
-		e.SetWorker(worker)
+		e.SetWorker(pool)
 	}
 
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
 
-	if err := worker.Open(); err != nil {
-		close(jobFromWorkerCh)
-		_ = workGroup.Wait()
-		return errors.Trace(err)
-	}
+	workGroup.Go(func() error {
+		pool.Start(wctx)
+		<-wctx.Done()
+		return wctx.OperatorErr()
+	})
 
 	failpoint.Label("afterStartWorker")
 
@@ -1564,17 +1565,14 @@ func (local *Backend) doImport(
 				return allZero
 			})
 		}
-		return worker.Close()
+
+		// Close the pool, as well as the channel.
+		wctx.Cancel()
+		pool.Release()
+		return nil
 	})
 
 	err := workGroup.Wait()
-
-	// Wait for all workers to quit in error case
-	if err != nil {
-		//nolint: errcheck
-		_ = worker.Close()
-	}
-
 	if err != nil && !common.IsContextCanceledError(err) {
 		tidblogutil.Logger(ctx).Error("do import meets error", zap.Error(err))
 	}
@@ -1582,7 +1580,7 @@ func (local *Backend) doImport(
 }
 
 func (local *Backend) newRegionJobWorker(
-	ctx *workerpool.Context,
+	ctx context.Context,
 	clusterID uint64,
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,
