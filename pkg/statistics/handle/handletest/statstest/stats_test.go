@@ -508,7 +508,7 @@ func TestInitStats(t *testing.T) {
 
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
-	require.True(t, tableStats2.IsAnalyzed())
+	checkAnalyzedTableBasicMeta(t, tableStats2, 6)
 	// Check index stats
 	checkAnalyzedIndexStats(t, tableStats2, tbl2.Meta(), 2, 6, 2)
 	// Check column stats
@@ -629,7 +629,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 
 	// Check global stats (predicate columns)
 	t2GlobalStats := h.GetPhysicalTableStats(globalT2ID, tbl2.Meta())
-	require.True(t, t2GlobalStats.IsAnalyzed())
+	checkAnalyzedTableBasicMeta(t, t2GlobalStats, 6)
 	// Check index stats
 	checkAnalyzedIndexStats(t, t2GlobalStats, tbl2.Meta(), 2, 6, 2)
 	// Check column stats
@@ -638,7 +638,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 
 	// Check partition p0 stats (predicate columns)
 	t2p0Stats := h.GetPhysicalTableStats(t2p0ID, tbl2.Meta())
-	require.True(t, t2p0Stats.IsAnalyzed())
+	checkAnalyzedTableBasicMeta(t, t2p0Stats, 3)
 	// Check index stats
 	checkAnalyzedIndexStats(t, t2p0Stats, tbl2.Meta(), 2, 3, 1)
 	// Check column stats
