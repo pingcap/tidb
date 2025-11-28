@@ -20,7 +20,7 @@ CUR=$(cd `dirname $0`; pwd)
 
 # const value
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
-res_file="$TEST_DIR/sql_res.$TEST_NAME.log"
+res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 TASK_NAME="br_pitr"
 
 restart_services_allowing_huge_index() {
@@ -85,14 +85,14 @@ current_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
 
 check_result() {
     echo "check br log"
-    check_contains "restore log success summary" "$res_file"
+    check_contains "restore log success summary"
     ## check feature history ddl delete range
     check_not_contains "rewrite delete range"
     echo "" > $res_file
     echo "check sql result"
     run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
     expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
-    check_contains "DELETE_RANGE_CNT: $expect_delete_range" "$res_file"
+    check_contains "DELETE_RANGE_CNT: $expect_delete_range"
     ## check feature compatibility between PITR and accelerate indexing
     bash $CUR/check/check_ingest_repair.sh
 }
