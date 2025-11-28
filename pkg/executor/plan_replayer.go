@@ -356,6 +356,7 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 			c := context.Background()
 			_, err = ctx.GetSQLExecutor().Execute(c, sql)
 			if err != nil {
+				logutil.BgLogger().Warn("load bindings failed", zap.Error(err), zap.String("sql", sql))
 				return err
 			}
 		}
@@ -501,7 +502,6 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 
 	err = loadAllBindings(e.Ctx, z)
 	if err != nil {
-		logutil.BgLogger().Warn("load bindings failed", zap.Error(err))
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
 	return nil
