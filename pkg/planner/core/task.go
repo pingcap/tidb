@@ -1307,45 +1307,14 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		var pushedDownTopN *physicalop.PhysicalTopN
 		var newGlobalTopN *physicalop.PhysicalTopN
 		if !copTask.IndexPlanFinished && canPushToIndexPlan(copTask.IndexPlan, cols) {
-			indexStoreTp := copTask.GetStoreType()
-			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.IndexPlan, indexStoreTp)
-			if indexStoreTp == kv.TiCI {
-				indexScanPlan := copTask.IndexPlan
-				for len(indexScanPlan.Children()) > 0 {
-					indexScanPlan = indexScanPlan.Children()[0]
-				}
-				indexScan := indexScanPlan.(*physicalop.PhysicalIndexScan)
-				hybridSearchInfo := indexScan.Index.HybridInfo
-				if hybridSearchInfo != nil && hybridSearchInfo.Sort != nil {
-					orderMatched := true
-					orderPos := 0
-				checkLoop:
-					for _, byItem := range pushedDownTopN.ByItems {
-						if orderPos >= len(hybridSearchInfo.Sort.Columns) || !orderMatched {
-							break
-						}
-						switch x := byItem.Expr.(type) {
-						case *expression.Column:
-							if byItem.Desc != !hybridSearchInfo.Sort.IsAsc[orderPos] {
-								orderMatched = false
-								break checkLoop
-							}
-							colID := indexScan.Table.Columns[hybridSearchInfo.Sort.Columns[orderPos].Offset].ID
-							if colID != x.ID {
-								orderMatched = false
-								break checkLoop
-							}
-							orderPos++
-						case *expression.ScalarFunction:
-							orderMatched = false
-							break checkLoop
-						}
-					}
-					if orderMatched {
-						indexScan.FtsQueryInfo.TopK = new(uint32)
-						*indexScan.FtsQueryInfo.TopK = uint32(pushedDownTopN.Count)
-					}
-				}
+			indexScanPlan := copTask.IndexPlan
+			for len(indexScanPlan.Children()) > 0 {
+				indexScanPlan = indexScanPlan.Children()[0]
+			}
+			indexScan := indexScanPlan.(*physicalop.PhysicalIndexScan)
+			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.IndexPlan, indexScan.StoreType)
+			if indexScan.StoreType == kv.TiCI {
+				indexScan.TryToPassTiCITopN(pushedDownTopN)
 			}
 			copTask.IndexPlan = pushedDownTopN
 			if newGlobalTopN != nil {
@@ -1358,6 +1327,17 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 				return attachPlan2Task(newGlobalTopN, rootTask)
 			}
 		} else {
+			if !copTask.IndexPlanFinished {
+				indexScanPlan := copTask.IndexPlan
+				for len(indexScanPlan.Children()) > 0 {
+					indexScanPlan = indexScanPlan.Children()[0]
+				}
+				indexScan := indexScanPlan.(*physicalop.PhysicalIndexScan)
+				pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.IndexPlan, indexScan.StoreType)
+				if indexScan.StoreType == kv.TiCI {
+					indexScan.TryToPassTiCITopN(pushedDownTopN)
+				}
+			}
 			// It works for both normal index scan and index merge scan.
 			copTask.FinishIndexPlan()
 			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())
