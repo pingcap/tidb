@@ -172,9 +172,9 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	// Store join columns in the DataSource first if they belong to this DataSource
 	// Join columns come from EqualConditions and OtherConditions of joins
 	joinColSet := make(map[int64]struct{})
-	if len(c.joinColumns) > 0 {
+	if len(c.joinColumns) > 0 && ds.Schema() != nil {
 		for _, joinCol := range c.joinColumns {
-			if ds.Schema().Contains(joinCol) {
+			if joinCol != nil && ds.Schema().Contains(joinCol) {
 				if _, exists := joinColSet[joinCol.UniqueID]; !exists {
 					ds.JoinColumns = append(ds.JoinColumns, joinCol)
 					joinColSet[joinCol.UniqueID] = struct{}{}
@@ -238,10 +238,10 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	}
 
 	// Store ordering columns (sort + MIN/MAX/FIRST_VALUE) in the DataSource if they belong to this DataSource
-	if len(c.orderingColumns) > 0 {
+	if len(c.orderingColumns) > 0 && ds.Schema() != nil {
 		orderingColSet := make(map[int64]struct{})
 		for _, orderingCol := range c.orderingColumns {
-			if ds.Schema().Contains(orderingCol) {
+			if orderingCol != nil && ds.Schema().Contains(orderingCol) {
 				if _, exists := orderingColSet[orderingCol.UniqueID]; !exists {
 					ds.OrderingColumns = append(ds.OrderingColumns, orderingCol)
 					orderingColSet[orderingCol.UniqueID] = struct{}{}
