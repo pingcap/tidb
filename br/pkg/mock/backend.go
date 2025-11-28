@@ -343,5 +343,5 @@ func (m *MockTargetInfoGetter) FetchRemoteTableModels(arg0 context.Context, arg1
 // FetchRemoteTableModels indicates an expected call of FetchRemoteTableModels.
 func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteTableModels(ctx, schemaName, tableNames any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteTableModels), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteTableModels), ctx, schemaName, tableNames)
 }
