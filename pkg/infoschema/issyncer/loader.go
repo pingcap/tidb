@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
@@ -96,16 +97,19 @@ type Loader struct {
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
+	// loadDBFilter once set, `loader` will only load databases when this predict returns "true".
+	loadDBFilter func(dbName ast.CIStr) bool
 }
 
-func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn) *Loader {
+func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, loadDBFilter func(dbName ast.CIStr) bool) *Loader {
 	mode := LoadModeAuto
 	return &Loader{
-		mode:      mode,
-		store:     store,
-		infoCache: infoCache,
-		deferFn:   deferFn,
-		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
+		mode:         mode,
+		store:        store,
+		infoCache:    infoCache,
+		deferFn:      deferFn,
+		loadDBFilter: loadDBFilter,
+		logger:       logutil.BgLogger().With(zap.Stringer("mode", mode)),
 	}
 }
 
@@ -289,6 +293,24 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 }
 
 func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+	if l.loadDBFilter != nil {
+		// Always accept newly created schema as we cannot access its name in this context.
+		// Always accept `CREATE PLACEMENT POLICY`: its `schemaID` is ID of this poilcy but not zero.
+		if diff.Type == model.ActionCreateSchema || diff.Type == model.ActionCreatePlacementPolicy {
+			l.logger.Warn("Load DB filter was ignored.", zap.Int64("diff", diff.Version), zap.Stringer("type", diff.Type))
+			return false
+		}
+		// Always accept db unrelated DDLs.
+		if diff.SchemaID == 0 {
+			return false
+		}
+
+		is := l.infoCache.GetLatest()
+		schema, ok := is.SchemaByID(diff.SchemaID)
+		selected := ok && l.loadDBFilter(schema.Name)
+		return !selected
+	}
+
 	if !l.crossKS {
 		return false
 	}
@@ -353,6 +375,7 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
 		if l.skipLoadingDiff(diff) {
+			l.logger.Warn("Skip load a schema diff due to configuration.", zap.Any("diff", diff), zap.Int64("version", diff.Version))
 			// we still need to set the schema version even if we skip loading
 			// the diff to reflect where the I_S has been synced to.
 			builder.SetSchemaVersion(diff.Version)
@@ -412,6 +435,18 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
+	} else if l.loadDBFilter != nil {
+		// only load system databases
+		allSchemas = make([]*model.DBInfo, 0, 6)
+		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
+			if l.loadDBFilter(dbInfo.Name) {
+				allSchemas = append(allSchemas, dbInfo)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		allSchemas, err = m.ListDatabases()
 		if err != nil {
