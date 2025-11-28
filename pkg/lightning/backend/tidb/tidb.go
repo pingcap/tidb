@@ -696,6 +696,11 @@ func (*tidbBackend) ShouldPostProcess() bool {
 	return true
 }
 
+func (*tidbBackend) PostProcess(context.Context) error {
+	// TiDB backend doesn't need post-processing for TiCI index upload.
+	return nil
+}
+
 func (*tidbBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
 	return nil
 }

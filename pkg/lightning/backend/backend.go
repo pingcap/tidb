@@ -199,6 +199,10 @@ type Backend interface {
 	// performed for this backend. Post-processing includes checksum and analyze.
 	ShouldPostProcess() bool
 
+	// PostProcess performs post-processing tasks after all engines are imported.
+	// This is called after all ImportEngine operations are completed.
+	PostProcess(ctx context.Context) error
+
 	OpenEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
 
 	CloseEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
