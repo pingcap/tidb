@@ -189,6 +189,71 @@ func (ctx *EvalContext) Sctx() sessionctx.Context {
 	return ctx.sctx
 }
 
+// UnwrapInternalSctx returns the underlying internal session context as `any`.
+//
+// It is designed for callers that only have an `exprctx.EvalContext` (possibly wrapped) but need to reach the
+// original `sessionctx.Context`. We intentionally return `any` to avoid forcing low-level packages (e.g. exprctx)
+// to depend on `sessionctx` and form import cycles.
+func (ctx *EvalContext) UnwrapInternalSctx() any {
+	return ctx.sctx
+}
+
+// maxUnwrapDepth is the maximum number of wrapper layers to unwrap when searching for the
+// underlying sessionctx.Context. This limit prevents infinite loops in case of circular
+// references between wrappers (e.g., A → B → A). In normal usage, wrapper depth should
+// be much smaller than this value.
+const maxUnwrapDepth = 8
+
+// UnwrapInternalSctx unwraps an EvalContext (possibly wrapped) into the underlying sessionctx.Context.
+// It returns nil if the EvalContext is not session-backed.
+func UnwrapInternalSctx(evalCtx exprctx.EvalContext) sessionctx.Context {
+	if evalCtx == nil {
+		return nil
+	}
+
+	if ctx, ok := evalCtx.(*EvalContext); ok {
+		return ctx.sctx
+	}
+
+	type internalSctxUnwrapper interface {
+		UnwrapInternalSctx() any
+	}
+	if u, ok := evalCtx.(internalSctxUnwrapper); ok {
+		if sctx, ok := u.UnwrapInternalSctx().(sessionctx.Context); ok {
+			return sctx
+		}
+	}
+
+	// Fallback for older wrappers that only expose UnwrapEvalContext.
+	// We limit iterations to maxUnwrapDepth to guard against indirect circular references
+	// (e.g., A → B → C → A) that the simple `next == evalCtx` check cannot detect.
+	type unwrapEvalContext interface {
+		UnwrapEvalContext() exprctx.EvalContext
+	}
+	for range maxUnwrapDepth {
+		u, ok := evalCtx.(unwrapEvalContext)
+		if !ok {
+			break
+		}
+		next := u.UnwrapEvalContext()
+		if next == nil || next == evalCtx {
+			break
+		}
+		evalCtx = next
+
+		if ctx, ok := evalCtx.(*EvalContext); ok {
+			return ctx.sctx
+		}
+		if u, ok := evalCtx.(internalSctxUnwrapper); ok {
+			if sctx, ok := u.UnwrapInternalSctx().(sessionctx.Context); ok {
+				return sctx
+			}
+		}
+	}
+
+	return nil
+}
+
 // CtxID returns the context id.
 func (ctx *EvalContext) CtxID() uint64 {
 	return ctx.sctx.GetSessionVars().StmtCtx.CtxID()

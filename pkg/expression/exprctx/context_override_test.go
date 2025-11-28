@@ -83,3 +83,71 @@ func TestCtxWithHandleTruncateErrLevel(t *testing.T) {
 		require.Same(t, newCtx, newCtx2)
 	}
 }
+
+func TestWithHandleTruncateErrLevel(t *testing.T) {
+	for _, level := range []errctx.Level{errctx.LevelWarn, errctx.LevelIgnore, errctx.LevelError} {
+		originalFlags := types.DefaultStmtFlags
+		originalLoc := time.FixedZone("tz1", 3600*2)
+		originalLevelMap := errctx.LevelMap{errctx.ErrGroupTruncate: errctx.LevelError}
+
+		var expectedFlags types.Flags
+		expectedLevelMap := originalLevelMap
+		expectedLevelMap[errctx.ErrGroupTruncate] = level
+		switch level {
+		case errctx.LevelError:
+			// Make sure the override has something to change.
+			originalFlags = originalFlags.WithTruncateAsWarning(true)
+			expectedFlags = originalFlags.WithTruncateAsWarning(false)
+		case errctx.LevelWarn:
+			expectedFlags = originalFlags.WithTruncateAsWarning(true)
+		case errctx.LevelIgnore:
+			expectedFlags = originalFlags.WithIgnoreTruncateErr(true)
+		default:
+			require.FailNow(t, "unexpected level")
+		}
+
+		evalCtx := exprstatic.NewEvalContext(
+			exprstatic.WithTypeFlags(originalFlags),
+			exprstatic.WithLocation(originalLoc),
+			exprstatic.WithErrLevelMap(originalLevelMap),
+		)
+		ctx := exprstatic.NewExprContext(
+			exprstatic.WithEvalCtx(evalCtx),
+			exprstatic.WithConnectionID(1234),
+		)
+
+		// override should take effect
+		newCtx := exprctx.WithHandleTruncateErrLevel(ctx, level)
+		// WithHandleTruncateErrLevel should preserve StaticConvertibleExprContext when possible.
+		staticConvertibleNewCtx, ok := newCtx.(exprctx.StaticConvertibleExprContext)
+		require.True(t, ok)
+		newEvalCtx := newCtx.GetEvalCtx()
+		_, ok = newEvalCtx.(exprctx.StaticConvertibleEvalContext)
+		require.True(t, ok)
+		newTypeCtx, newErrCtx := newEvalCtx.TypeCtx(), newEvalCtx.ErrCtx()
+		require.Equal(t, expectedFlags, newTypeCtx.Flags())
+		require.Equal(t, expectedLevelMap, newErrCtx.LevelMap())
+		staticEvalCtx := staticConvertibleNewCtx.GetStaticConvertibleEvalContext()
+		staticTypeCtx, staticErrCtx := staticEvalCtx.TypeCtx(), staticEvalCtx.ErrCtx()
+		require.Equal(t, expectedFlags, staticTypeCtx.Flags())
+		require.Equal(t, expectedLevelMap, staticErrCtx.LevelMap())
+
+		// other fields should not change
+		require.Equal(t, originalLoc, newTypeCtx.Location())
+		require.Equal(t, originalLoc, newEvalCtx.Location())
+		require.Equal(t, uint64(1234), newCtx.ConnectionID())
+
+		// old ctx should not change
+		require.Same(t, evalCtx, ctx.GetEvalCtx())
+		oldTypeCtx := evalCtx.TypeCtx()
+		oldErrCtx := evalCtx.ErrCtx()
+		require.Equal(t, originalFlags, oldTypeCtx.Flags())
+		require.Equal(t, originalLevelMap, oldErrCtx.LevelMap())
+		require.Same(t, originalLoc, evalCtx.Location())
+		require.Equal(t, uint64(1234), ctx.ConnectionID())
+
+		// not create new ctx case
+		newCtx2 := exprctx.WithHandleTruncateErrLevel(newCtx, level)
+		require.Same(t, newCtx, newCtx2)
+	}
+}

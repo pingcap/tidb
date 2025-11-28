@@ -6149,9 +6149,23 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 		return errors.New("cte.seedPlan cannot be nil")
 	}
 
+	origCtx := b.ctx
+	buildSubPlan := b.build
+	// MySQL evaluates a recursive CTE by writing rows into an internal worktable, so truncation is handled like INSERT.
+	// In strict SQL mode, build the seed/recursive sub-plans with a strict ExprCtx only.
+	if v.RecurPlan != nil && origCtx.GetSessionVars().SQLMode.HasStrictMode() {
+		buildCtx := makeCTEStrictTruncateErrSessionCtx(origCtx)
+		buildSubPlan = func(plan base.Plan) exec.Executor {
+			prevCtx := b.ctx
+			b.ctx = buildCtx
+			defer func() { b.ctx = prevCtx }()
+			return b.build(plan)
+		}
+	}
+
 	// Build seed part.
 	corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
-	seedExec := b.build(v.SeedPlan)
+	seedExec := buildSubPlan(v.SeedPlan)
 	if b.err != nil {
 		return b.err
 	}
@@ -6187,7 +6201,7 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 	// Build recursive part.
 	var recursiveExec exec.Executor
 	if v.RecurPlan != nil {
-		recursiveExec = b.build(v.RecurPlan)
+		recursiveExec = buildSubPlan(v.RecurPlan)
 		if b.err != nil {
 			return b.err
 		}
@@ -6208,7 +6222,7 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 	}
 
 	producer := &cteProducer{
-		ctx:             b.ctx,
+		ctx:             origCtx,
 		seedExec:        seedExec,
 		recursiveExec:   recursiveExec,
 		resTbl:          resTbl,
