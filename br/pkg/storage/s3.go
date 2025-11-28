@@ -398,8 +398,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	if region == "" {
 		region = defaultRegion
 	}
-	configOpts = append(configOpts, config.WithRegion(region))
-	configOpts = append(configOpts, config.WithLogger(pingcapLogger{}))
+	configOpts = append(configOpts,
+		config.WithRegion(region),
+		config.WithLogger(pingcapLogger{}),
+		config.WithClientLogMode(aws.LogRequest|aws.LogRetries|aws.LogResponse),
+		config.WithLogConfigurationWarnings(true),
+	)
 
 	// Configure custom retryer
 	if opts.S3Retryer.MaxAttempts() > 0 {
