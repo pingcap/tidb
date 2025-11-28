@@ -267,7 +267,7 @@ func (p *WorkerPool[T, R]) GetResultChan() <-chan R {
 	return p.resChan
 }
 
-// Tune tunes the pool to the specified number of workers.
+// TunePoolSize tunes the pool to the specified number of workers.
 // wait: whether to wait for all workers to close when reducing workers count.
 // this method can only be called after Start.
 func (p *WorkerPool[T, R]) TunePoolSize(numWorkers int32, wait bool) {
@@ -320,7 +320,7 @@ func (p *WorkerPool[T, R]) LastTunerTs() time.Time {
 	return p.lastTuneTs.Load()
 }
 
-// Cap returns the capacity of the pool.
+// GetPoolSize returns the capacity of the pool.
 func (p *WorkerPool[T, R]) GetPoolSize() int32 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
