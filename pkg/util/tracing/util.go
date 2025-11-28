@@ -128,12 +128,6 @@ func GetSink(ctx context.Context) any {
 // ExtractTraceID returns the trace identifier from ctx if present.
 // It delegates to client-go's TraceIDFromContext implementation.
 func ExtractTraceID(ctx context.Context) []byte {
-	return extractTraceID(ctx)
-}
-
-// extractTraceID returns the trace identifier from ctx if present.
-// It delegates to client-go's TraceIDFromContext implementation.
-func extractTraceID(ctx context.Context) []byte {
 	return clienttrace.TraceIDFromContext(ctx)
 }
 
