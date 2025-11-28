@@ -559,7 +559,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
 		IndexId:          p.Index.ID,
-		Columns:          pkgutil.ColumnsToProto(columns, p.Table.PKIsHandle, true, false /*IndexScan doesn't support TiFlash*/),
+		Columns:          pkgutil.ColumnsToProto(columns, p.Table.PKIsHandle, true, false /* Doesn't support IndexScan on TiFlash for now */),
 		Desc:             p.Desc,
 		PrimaryColumnIds: pkColIDs,
 	}
