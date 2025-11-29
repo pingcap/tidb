@@ -151,7 +151,7 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 	}
 	b, err2 := storage.ParseBackendFromURL(cloudStorageURL, nil)
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
 	if b.GetS3() == nil && b.GetGcs() == nil {

@@ -42,7 +42,11 @@ go_test(
     embed = [":storage"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 23,
+=======
+    shard_count = 25,
+>>>>>>> fe769f51543 (dxf: include context info in the stored error (#61289))
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
