@@ -110,7 +110,7 @@ func setupStandAlongInnerServer(bundle *mvcc.DBBundle, safePoint *tikv.SafePoint
 
 	store.StartDeadlockDetection(false)
 
-	return tikv.NewServer(rm, store, innerServer), nil
+	return tikv.NewServer(rm, pdClient, store, innerServer), nil
 }
 
 func createDB(subPath string, safePoint *tikv.SafePoint, conf *config.Engine) (*badger.DB, error) {

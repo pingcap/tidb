@@ -122,7 +122,7 @@ func NewTestStore(dbPrefix string, logPrefix string, t *testing.T) *TestStore {
 	require.NoError(t, err)
 	pdClient := NewMockPD(rm)
 	store := NewMVCCStore(&config.DefaultConf, dbBundle, dbPath, safePoint, writer, pdClient)
-	svr := NewServer(nil, store, nil)
+	svr := NewServer(nil, nil, store, nil)
 
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
