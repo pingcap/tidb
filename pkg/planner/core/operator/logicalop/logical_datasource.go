@@ -173,9 +173,12 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 		return nil, dual, nil
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
-	err := ds.analyzeTiCIIndex(ds.SCtx().HasFTSFunc())
-	if err != nil {
-		return nil, nil, err
+	if len(ds.PushedDownConds) > 0 {
+		// Where there're some predicates, try to build tici index.
+		err := ds.analyzeTiCIIndex(ds.SCtx().HasFTSFunc())
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	// Removing the unused TiCI indexes is done later. Because we will not enter
 	// the predicate push down when the table doesn't have any filter.
@@ -610,14 +613,24 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 	hasUnmatchedFTSOverAllIdx := hasFTSFunc
 	matchedIndexIsHinted := false
 	for _, path := range ds.AllPossibleAccessPaths {
+		// Not tici index, skip it.
 		if path.Index == nil || !path.Index.IsTiCIIndex() {
 			continue
 		}
+		// Has FTS function, but the index doesn't support FTS search.
 		if hasFTSFunc && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
 			continue
 		}
-		if !hasFTSFunc && (path.Index.HybridInfo == nil || len(path.Index.HybridInfo.Inverted) == 0) {
-			continue
+		if !hasFTSFunc {
+			// If there'no fts function, predicates are free to choose normal tikv index.
+			// So if there is any hint, we should skip the non-hinted indexes.
+			if ds.HasForceHints && !path.Forced {
+				continue
+			}
+			// If this index doesn't have inverted index, it can't support normal predicates.
+			if path.Index.HybridInfo == nil || len(path.Index.HybridInfo.Inverted) == 0 {
+				continue
+			}
 		}
 		if matchedIndexIsHinted && !path.Forced {
 			// If we have found a hinted index matched before, we should skip
