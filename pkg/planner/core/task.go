@@ -1327,7 +1327,7 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 				return attachPlan2Task(newGlobalTopN, rootTask)
 			}
 		} else {
-			if !copTask.IndexPlanFinished {
+			if !copTask.IndexPlanFinished && copTask.IndexPlan != nil {
 				indexScanPlan := copTask.IndexPlan
 				for len(indexScanPlan.Children()) > 0 {
 					indexScanPlan = indexScanPlan.Children()[0]

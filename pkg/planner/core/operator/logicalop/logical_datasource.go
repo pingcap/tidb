@@ -608,32 +608,20 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 	tmpMatchedExprSet := intset.NewFastIntSet()
 	matchedExprSetForChosenIndex := intset.NewFastIntSet()
 	hasUnmatchedFTSOverAllIdx := hasFTSFunc
-	// If there's no FTS functions, but there are hinted paths, we should only keep the hinted ones.
-	if !hasFTSFunc || !expression.ContainsFullTextSearchFn(ds.AllConds...) {
-		hasHintedPath := false
-		for _, path := range ds.AllPossibleAccessPaths {
-			if path.Forced {
-				hasHintedPath = true
-				break
-			}
-		}
-		if hasHintedPath {
-			ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
-				return !path.Forced
-			})
-			ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-				return !path.Forced
-			})
-		}
-	}
+	matchedIndexIsHinted := false
 	for _, path := range ds.AllPossibleAccessPaths {
-		if path.Index == nil || (path.Index.FullTextInfo == nil && path.Index.HybridInfo == nil) {
+		if path.Index == nil || !path.Index.IsTiCIIndex() {
 			continue
 		}
 		if hasFTSFunc && (path.Index.FullTextInfo == nil || (path.Index.HybridInfo != nil && len(path.Index.HybridInfo.FullText) == 0)) {
 			continue
 		}
 		if !hasFTSFunc && (path.Index.HybridInfo == nil || len(path.Index.HybridInfo.Inverted) == 0) {
+			continue
+		}
+		if matchedIndexIsHinted && !path.Forced {
+			// If we have found a hinted index matched before, we should skip
+			// the non-hinted indexes later.
 			continue
 		}
 		ftsCols := intset.NewFastIntSet()
@@ -678,9 +666,13 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 			continue
 		}
 		hasUnmatchedFTSOverAllIdx = false
-		if tmpMatchedExprSet.Len() > matchedExprSetForChosenIndex.Len() {
+		// We have filterer out (!path.Forced && matchedIndexIsHinted) case before.
+		// So after we check the (path.Forced && !matchedIndexIsHinted) case, the implicit case is:
+		// !path.Forced && !matchedIndexIsHinted or path.Forced && matchedIndexIsHinted
+		if (path.Forced && !matchedIndexIsHinted) || tmpMatchedExprSet.Len() > matchedExprSetForChosenIndex.Len() {
 			matchedExprSetForChosenIndex.CopyFrom(tmpMatchedExprSet)
 			matchedIdx = path.Index
+			matchedIndexIsHinted = path.Forced
 		}
 	}
 
@@ -693,7 +685,7 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 		// If no FTS function is found, we should remove all the TiCI index
 		// paths from PossibleAccessPaths.
 		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-			return path.Index != nil && (path.Index.FullTextInfo != nil || path.Index.HybridInfo != nil)
+			return path.Index != nil && path.Index.IsTiCIIndex()
 		})
 		return nil
 	}
@@ -766,11 +758,11 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 // It also checks whether all hinted indexes is pruned, and raises a warning if so.
 func (ds *DataSource) CleanUnusedTiCIIndexes() {
 	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.FullTextInfo != nil && len(path.AccessConds) == 0
+		return path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0
 	})
 	origLen := len(ds.PossibleAccessPaths)
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.FullTextInfo != nil && len(path.AccessConds) == 0
+		return path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0
 	})
 	nowLen := len(ds.PossibleAccessPaths)
 	stillHasHintedIndex := false

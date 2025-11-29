@@ -682,7 +682,7 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
 	return utilfuncp.GetPlanCostVer24PhysicalIndexScan(p, taskType, option, args...)
 }
 
-// TryToPassTiCITopN checks whether the TopN can be embeded into TiCI index scan.
+// TryToPassTiCITopN checks whether the TopN can be embedded into TiCI index scan.
 func (p *PhysicalIndexScan) TryToPassTiCITopN(topN *PhysicalTopN) {
 	hybridSearchInfo := p.Index.HybridInfo
 	if hybridSearchInfo != nil && hybridSearchInfo.Sort != nil {
