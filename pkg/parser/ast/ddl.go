@@ -2623,6 +2623,13 @@ const (
 	TableOptionStatsColsChoice = TableOptionType(StatsOptionColsChoice)
 	TableOptionStatsColList    = TableOptionType(StatsOptionColList)
 	TableOptionStatsSampleRate = TableOptionType(StatsOptionSampleRate)
+	TableOptionAutoextendSize  = iota
+	TableOptionPageChecksum
+	TableOptionPageCompressed
+	TableOptionPageCompressionLevel
+	TableOptionTransactional
+	TableOptionIetfQuotes
+	TableOptionSequence
 )
 
 // RowFormat types
@@ -2976,6 +2983,57 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("TTL_JOB_INTERVAL ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionAutoextendSize:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("AUTOEXTEND_SIZE ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue) // e.g. '4M'
+			return nil
+		})
+
+	// MariaDB specific options
+	case TableOptionPageChecksum:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("PAGE_CHECKSUM ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+			return nil
+		})
+	case TableOptionPageCompressed:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("PAGE_COMPRESSED ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+			return nil
+		})
+	case TableOptionPageCompressionLevel:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("PAGE_COMPRESSION_LEVEL ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+			return nil
+		})
+	case TableOptionTransactional:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("TRANSACTIONAL ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+			return nil
+		})
+	case TableOptionIetfQuotes:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("IETF_QUOTES ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+			return nil
+		})
+	case TableOptionSequence:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("SEQUENCE ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
 			return nil
 		})
 	default:
