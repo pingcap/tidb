@@ -119,7 +119,6 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/disk",
-        "//pkg/util/hack",
         "//pkg/util/memory",
         "//pkg/util/mock",
         "//pkg/util/sqlkiller",
