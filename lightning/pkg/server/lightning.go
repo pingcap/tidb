@@ -94,6 +94,7 @@ type Lightning struct {
 	cancelLock sync.Mutex
 	curTask    *config.Config
 	cancel     context.CancelFunc // for per task context, which maybe different from lightning context
+	importer   LightningImporter
 
 	taskCanceled bool
 }
@@ -248,8 +249,8 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.Handle("/tasks/", httpHandleWrapper(handleTasks.ServeHTTP))
 	mux.HandleFunc("/progress/task", httpHandleWrapper(handleProgressTask))
 	mux.HandleFunc("/progress/table", httpHandleWrapper(handleProgressTable))
-	mux.HandleFunc("/pause", httpHandleWrapper(handlePause))
-	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
+	mux.HandleFunc("/pause", httpHandleWrapper(l.handlePause))
+	mux.HandleFunc("/resume", httpHandleWrapper(l.handleResume))
 	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
 
 	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
@@ -462,6 +463,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		cancel()
 		l.cancelLock.Lock()
 		l.cancel = nil
+		l.importer = nil
 		l.cancelLock.Unlock()
 		web.BroadcastEndTask(err)
 	}()
@@ -543,6 +545,10 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		o.logger.Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
 	}
+
+	l.cancelLock.Lock()
+	l.importer = procedure
+	l.cancelLock.Unlock()
 
 	failpoint.Inject("orphanWriterGoRoutine", func() {
 		// don't exit too quickly to expose panic
@@ -932,7 +938,7 @@ func handleProgressTable(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func handlePause(w http.ResponseWriter, req *http.Request) {
+func (l *Lightning) handlePause(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	switch req.Method {
@@ -942,8 +948,21 @@ func handlePause(w http.ResponseWriter, req *http.Request) {
 
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		importer.DeliverPauser.Pause()
-		log.L().Info("progress paused")
+		l.cancelLock.Lock()
+		imp := l.importer
+		l.cancelLock.Unlock()
+
+		if imp != nil {
+			if err := imp.Pause(req.Context()); err != nil {
+				log.L().Error("failed to pause", zap.Error(err))
+				writeJSONError(w, http.StatusInternalServerError, "failed to pause", err)
+				return
+			}
+			log.L().Info("progress paused")
+		} else {
+			importer.DeliverPauser.Pause()
+			log.L().Info("progress paused")
+		}
 		_, _ = w.Write([]byte("{}"))
 
 	default:
@@ -952,14 +971,27 @@ func handlePause(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func handleResume(w http.ResponseWriter, req *http.Request) {
+func (l *Lightning) handleResume(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	switch req.Method {
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		importer.DeliverPauser.Resume()
-		log.L().Info("progress resumed")
+		l.cancelLock.Lock()
+		imp := l.importer
+		l.cancelLock.Unlock()
+
+		if imp != nil {
+			if err := imp.Resume(req.Context()); err != nil {
+				log.L().Error("failed to resume", zap.Error(err))
+				writeJSONError(w, http.StatusInternalServerError, "failed to resume", err)
+				return
+			}
+			log.L().Info("progress resumed")
+		} else {
+			importer.DeliverPauser.Resume()
+			log.L().Info("progress resumed")
+		}
 		_, _ = w.Write([]byte("{}"))
 
 	default:
@@ -1166,6 +1198,10 @@ func parsePrivateKey(keyPath string) (*ecdsa.PrivateKey, error) {
 type LightningImporter interface {
 	// Run starts the import process.
 	Run(ctx context.Context) error
+	// Pause pauses the import process.
+	Pause(ctx context.Context) error
+	// Resume resumes the import process.
+	Resume(ctx context.Context) error
 	// Close closes the importer and releases resources.
 	Close()
 }

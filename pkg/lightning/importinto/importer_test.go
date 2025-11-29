@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/pkg/importsdk"
@@ -285,4 +286,156 @@ func TestImporter_NewImporter_InvalidCheckpointDriver(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown checkpoint driver")
+}
+
+func TestImporter_Pause(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCPMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockSDK := mock.NewMockSDK(ctrl)
+	mockOrchestrator := mockimport.NewMockJobOrchestrator(ctrl)
+
+	cfg := config.NewConfig()
+	cfg.Checkpoint.Enable = true
+
+	mockCPMgr.EXPECT().Initialize(gomock.Any()).Return(nil)
+	mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
+
+	importer, err := importinto.NewImporter(context.Background(), cfg, nil,
+		importinto.WithBackendSDK(mockSDK),
+		importinto.WithCheckpointManager(mockCPMgr),
+		importinto.WithOrchestrator(mockOrchestrator),
+	)
+	require.NoError(t, err)
+
+	mockOrchestrator.EXPECT().Cancel(gomock.Any()).Return(nil)
+
+	err = importer.Pause(context.Background())
+	require.NoError(t, err)
+}
+
+func TestImporter_Resume(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCPMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockSDK := mock.NewMockSDK(ctrl)
+	mockOrchestrator := mockimport.NewMockJobOrchestrator(ctrl)
+
+	cfg := config.NewConfig()
+	cfg.Checkpoint.Enable = true
+
+	mockCPMgr.EXPECT().Initialize(gomock.Any()).Return(nil)
+	mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
+
+	importer, err := importinto.NewImporter(context.Background(), cfg, nil,
+		importinto.WithBackendSDK(mockSDK),
+		importinto.WithCheckpointManager(mockCPMgr),
+		importinto.WithOrchestrator(mockOrchestrator),
+	)
+	require.NoError(t, err)
+
+	// Resume just signals the channel, doesn't call Run anymore
+	err = importer.Resume(context.Background())
+	require.NoError(t, err)
+}
+
+func TestImporter_PauseResumeLoop(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSDK := mock.NewMockSDK(ctrl)
+	mockCPMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockOrchestrator := mockimport.NewMockJobOrchestrator(ctrl)
+
+	cfg := config.NewConfig()
+	cfg.App.CheckRequirements = true
+	cfg.Checkpoint.Enable = true
+	cfg.Checkpoint.KeepAfterSuccess = config.CheckpointRemove
+
+	tables := []*importsdk.TableMeta{
+		{Database: "db", Table: "t1"},
+	}
+
+	mockCPMgr.EXPECT().Initialize(gomock.Any()).Return(nil)
+	mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
+
+	importer, err := importinto.NewImporter(context.Background(), cfg, nil,
+		importinto.WithBackendSDK(mockSDK),
+		importinto.WithCheckpointManager(mockCPMgr),
+		importinto.WithOrchestrator(mockOrchestrator),
+	)
+	require.NoError(t, err)
+
+	// First run: Pause
+	mockSDK.EXPECT().CreateSchemasAndTables(gomock.Any()).Return(nil)
+	mockSDK.EXPECT().GetTableMetas(gomock.Any()).Return(tables, nil)
+	mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
+	mockOrchestrator.EXPECT().SubmitAndWait(gomock.Any(), tables).DoAndReturn(func(ctx context.Context, _ any) error {
+		mockOrchestrator.EXPECT().Cancel(gomock.Any()).Return(nil)
+		importer.Pause(ctx)
+		return context.Canceled
+	})
+
+	// Second run: Success
+	mockSDK.EXPECT().CreateSchemasAndTables(gomock.Any()).Return(nil)
+	mockSDK.EXPECT().GetTableMetas(gomock.Any()).Return(tables, nil)
+	mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
+	mockOrchestrator.EXPECT().SubmitAndWait(gomock.Any(), tables).Return(nil)
+	mockCPMgr.EXPECT().Remove(gomock.Any(), "all", "all").Return(nil)
+
+	errCh := make(chan error)
+	go func() {
+		errCh <- importer.Run(context.Background())
+	}()
+
+	// Wait for pause
+	time.Sleep(100 * time.Millisecond)
+
+	// Resume
+	importer.Resume(context.Background())
+
+	err = <-errCh
+	require.NoError(t, err)
+}
+
+func TestImporter_Run_Cancel(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSDK := mock.NewMockSDK(ctrl)
+	mockCPMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockOrchestrator := mockimport.NewMockJobOrchestrator(ctrl)
+
+	cfg := config.NewConfig()
+	cfg.App.CheckRequirements = true
+	cfg.Checkpoint.Enable = true
+
+	tables := []*importsdk.TableMeta{
+		{Database: "db", Table: "t1"},
+	}
+
+	mockCPMgr.EXPECT().Initialize(gomock.Any()).Return(nil)
+	mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
+
+	importer, err := importinto.NewImporter(context.Background(), cfg, nil,
+		importinto.WithBackendSDK(mockSDK),
+		importinto.WithCheckpointManager(mockCPMgr),
+		importinto.WithOrchestrator(mockOrchestrator),
+	)
+	require.NoError(t, err)
+
+	mockSDK.EXPECT().CreateSchemasAndTables(gomock.Any()).Return(nil)
+	mockSDK.EXPECT().GetTableMetas(gomock.Any()).Return(tables, nil)
+	mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil) // Precheck
+
+	// Simulate context cancellation during SubmitAndWait
+	mockOrchestrator.EXPECT().SubmitAndWait(gomock.Any(), tables).Return(context.Canceled)
+
+	// Expect Cancel to be called
+	mockOrchestrator.EXPECT().Cancel(gomock.Any()).Return(nil)
+
+	err = importer.Run(context.Background())
+	require.ErrorIs(t, err, context.Canceled)
 }

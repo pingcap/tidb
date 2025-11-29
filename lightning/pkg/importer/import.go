@@ -542,6 +542,18 @@ func (rc *Controller) Close() {
 	}
 }
 
+// Pause pauses the import process.
+func (rc *Controller) Pause(_ context.Context) error {
+	rc.pauser.Pause()
+	return nil
+}
+
+// Resume resumes the import process.
+func (rc *Controller) Resume(_ context.Context) error {
+	rc.pauser.Resume()
+	return nil
+}
+
 // Run starts the restore task.
 func (rc *Controller) Run(ctx context.Context) error {
 	failpoint.Inject("beforeRun", func() {})

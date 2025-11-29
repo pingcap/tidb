@@ -29,6 +29,7 @@ import (
 // JobOrchestrator orchestrates the submission and monitoring of import jobs.
 type JobOrchestrator interface {
 	SubmitAndWait(ctx context.Context, tables []*importsdk.TableMeta) error
+	Cancel(ctx context.Context) error
 }
 
 // DefaultJobOrchestrator is the default implementation of JobOrchestrator.
@@ -38,6 +39,10 @@ type DefaultJobOrchestrator struct {
 	monitor           JobMonitor
 	submitConcurrency int
 	logger            log.Logger
+	sdk               importsdk.SDK
+
+	mu         sync.Mutex
+	activeJobs []*ImportJob
 }
 
 // OrchestratorConfig configures the job orchestrator.
@@ -73,6 +78,7 @@ func NewJobOrchestrator(cfg OrchestratorConfig) JobOrchestrator {
 		monitor:           monitor,
 		submitConcurrency: submitConcurrency,
 		logger:            cfg.Logger,
+		sdk:               cfg.SDK,
 	}
 }
 
@@ -89,10 +95,55 @@ func (o *DefaultJobOrchestrator) SubmitAndWait(ctx context.Context, tables []*im
 		return nil
 	}
 
+	o.mu.Lock()
+	o.activeJobs = jobs
+	o.mu.Unlock()
+
 	o.logger.Info("all jobs submitted", zap.Int("count", len(jobs)))
 
 	// Phase 2: Wait for all jobs to complete (delegated to monitor)
 	return o.monitor.WaitForJobs(ctx, jobs)
+}
+
+// Cancel cancels all active jobs.
+func (o *DefaultJobOrchestrator) Cancel(ctx context.Context) error {
+	o.mu.Lock()
+	jobs := o.activeJobs
+	o.mu.Unlock()
+
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	o.logger.Info("cancelling all active jobs", zap.Int("count", len(jobs)))
+
+	// Get current status of all jobs in the group to avoid cancelling finished jobs
+	groupKey := jobs[0].GroupKey
+	statuses, err := o.sdk.GetJobsByGroup(ctx, groupKey)
+	if err != nil {
+		o.logger.Warn("failed to get group jobs status, will try to cancel all jobs", zap.Error(err))
+	}
+
+	finishedMap := make(map[int64]bool)
+	for _, s := range statuses {
+		if s.IsCompleted() {
+			finishedMap[s.JobID] = true
+		}
+	}
+
+	var firstErr error
+	for _, job := range jobs {
+		if finishedMap[job.JobID] {
+			continue
+		}
+		if err := o.sdk.CancelJob(ctx, job.JobID); err != nil {
+			o.logger.Warn("failed to cancel job", zap.Int64("jobID", job.JobID), zap.Error(err))
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }
 
 func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*importsdk.TableMeta) ([]*ImportJob, error) {

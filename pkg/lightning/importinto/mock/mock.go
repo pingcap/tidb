@@ -330,6 +330,20 @@ func (m *MockJobOrchestrator) ISGOMOCK() struct{} {
 	return struct{}{}
 }
 
+// Cancel mocks base method.
+func (m *MockJobOrchestrator) Cancel(arg0 context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Cancel", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Cancel indicates an expected call of Cancel.
+func (mr *MockJobOrchestratorMockRecorder) Cancel(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockJobOrchestrator)(nil).Cancel), arg0)
+}
+
 // SubmitAndWait mocks base method.
 func (m *MockJobOrchestrator) SubmitAndWait(arg0 context.Context, arg1 []*importsdk.TableMeta) error {
 	m.ctrl.T.Helper()

@@ -171,3 +171,65 @@ func TestJobOrchestrator_SubmitAndWait(t *testing.T) {
 		})
 	}
 }
+
+func TestJobOrchestrator_Cancel(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
+	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockMonitor := mockimport.NewMockJobMonitor(ctrl)
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+
+	logger := log.L()
+
+	orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
+		Submitter:         mockSubmitter,
+		CheckpointMgr:     mockCpMgr,
+		SDK:               mockSDK,
+		Monitor:           mockMonitor,
+		SubmitConcurrency: 2,
+		PollInterval:      time.Millisecond,
+		Logger:            logger,
+	})
+
+	// Setup active jobs
+	tables := []*importsdk.TableMeta{
+		{Database: "db", Table: "t1"},
+		{Database: "db", Table: "t2"},
+	}
+
+	mockCpMgr.EXPECT().Get("db", "t1").Return(nil, nil)
+	mockSubmitter.EXPECT().SubmitTable(gomock.Any(), gomock.Any()).Return(&importinto.ImportJob{
+		JobID:     1,
+		TableMeta: &importsdk.TableMeta{Database: "db", Table: "t1"},
+		GroupKey:  "group1",
+	}, nil)
+	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+
+	mockCpMgr.EXPECT().Get("db", "t2").Return(nil, nil)
+	mockSubmitter.EXPECT().SubmitTable(gomock.Any(), gomock.Any()).Return(&importinto.ImportJob{
+		JobID:     2,
+		TableMeta: &importsdk.TableMeta{Database: "db", Table: "t2"},
+		GroupKey:  "group1",
+	}, nil)
+	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+
+	mockMonitor.EXPECT().WaitForJobs(gomock.Any(), gomock.Any()).Return(nil)
+
+	err := orchestrator.SubmitAndWait(context.Background(), tables)
+	require.NoError(t, err)
+
+	// Now call Cancel
+	// Expect GetJobsByGroup
+	mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "group1").Return([]*importsdk.JobStatus{
+		{JobID: 1, Status: "finished"},
+		{JobID: 2, Status: "running"},
+	}, nil)
+
+	// Expect CancelJob only for job 2
+	mockSDK.EXPECT().CancelJob(gomock.Any(), int64(2)).Return(nil)
+
+	err = orchestrator.Cancel(context.Background())
+	require.NoError(t, err)
+}
