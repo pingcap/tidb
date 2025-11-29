@@ -21,7 +21,19 @@ explain format='plan_tree' select * from tt where a+1 = 5 and b=3;
 id	task	access object	operator info
 Projection	root		planner__core__plan.tt.a, planner__core__plan.tt.b
 └─IndexLookUp	root		
-  ├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:k2(`a` + 1, b)	range:[5 3,5 3], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:k1(`a` + 1, b)	range:[5 3,5 3], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format='plan_tree' select * from tt where a+1 = 5 and b=3;
+id	task	access object	operator info
+Projection	root		planner__core__plan.tt.a, planner__core__plan.tt.b
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:k1(`a` + 1, b)	range:[5 3,5 3], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format='plan_tree' select * from tt where a+1 = 5 and b=3;
+id	task	access object	operator info
+Projection	root		planner__core__plan.tt.a, planner__core__plan.tt.b
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:k1(`a` + 1, b)	range:[5 3,5 3], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:tt	keep order:false, stats:pseudo
 explain format='plan_tree' select * from tt where a+1 = 5 and b=3;
 id	task	access object	operator info
@@ -46,18 +58,6 @@ id	task	access object	operator info
 Projection	root		planner__core__plan.tt.a, planner__core__plan.tt.b
 └─IndexLookUp	root		
   ├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:k2(`a` + 1, b)	range:[5 3,5 3], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format='plan_tree' select * from tt where a+1 = 5 and b=3;
-id	task	access object	operator info
-Projection	root		planner__core__plan.tt.a, planner__core__plan.tt.b
-└─IndexLookUp	root		
-  ├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:k1(`a` + 1, b)	range:[5 3,5 3], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format='plan_tree' select * from tt where a+1 = 5 and b=3;
-id	task	access object	operator info
-Projection	root		planner__core__plan.tt.a, planner__core__plan.tt.b
-└─IndexLookUp	root		
-  ├─IndexRangeScan(Build)	cop[tikv]	table:tt, index:k1(`a` + 1, b)	range:[5 3,5 3], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:tt	keep order:false, stats:pseudo
 explain format='plan_tree' select * from tt where a+1 = 5 and b=3;
 id	task	access object	operator info
