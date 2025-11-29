@@ -65,6 +65,8 @@ type BatchPointGetExec struct {
 	lock           bool
 	waitTime       int64
 	inited         uint32
+	commitTSOffset int
+	commitTSs      []uint64
 	values         [][]byte
 	index          int
 	rowDecoder     *rowcodec.ChunkDecoder
@@ -217,7 +219,11 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
+		commitTS := uint64(0)
+		if e.commitTSOffset >= 0 {
+			commitTS = e.commitTSs[e.index]
+		}
+		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, commitTS, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -239,7 +245,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string]kv.ValueEntry
 	var indexKeys []kv.Key
 	var err error
-	batchGetter := e.batchGetter
 	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
 		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
 		var cancel context.CancelFunc
@@ -300,7 +305,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
-		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
+		handleVals, err = e.batchGet(ctx, toFetchIndexKeys)
 		if err != nil {
 			return err
 		}
@@ -426,7 +431,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 	}
 	// Fetch all values.
-	values, err = batchGetter.BatchGet(ctx, keys)
+	values, err = e.batchGet(ctx, keys)
 	if err != nil {
 		return err
 	}
@@ -436,6 +441,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
 	e.values = make([][]byte, 0, len(values))
+	e.commitTSOffset = -1
+	for i, col := range e.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			e.commitTSs = make([]uint64, 0, len(values))
+			e.commitTSOffset = i
+		}
+	}
 	for i, key := range keys {
 		val := values[string(key)]
 		if val.IsValueEmpty() {
@@ -462,6 +474,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			continue
 		}
 		e.values = append(e.values, val.Value)
+		if e.commitTSOffset >= 0 {
+			e.commitTSs = append(e.commitTSs, val.CommitTS)
+		}
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
@@ -482,6 +497,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	e.handles = handles
 	return nil
+}
+
+func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (map[string]kv.ValueEntry, error) {
+	if e.commitTSOffset >= 0 {
+		return e.batchGetter.BatchGet(ctx, keys, kv.WithReturnCommitTS())
+	}
+	return e.batchGetter.BatchGet(ctx, keys)
 }
 
 // LockKeys locks the keys for pessimistic transaction.

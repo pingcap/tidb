@@ -182,7 +182,7 @@ func TestDecodeRowWithHandle(t *testing.T) {
 			// decode to chunk.
 			cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
 			chk := chunk.New(fts, 1, 1)
-			err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(handleValue), chk)
+			err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(handleValue), chk)
 			require.NoError(t, err)
 
 			chkRow := chk.GetRow(0)
@@ -234,7 +234,7 @@ func TestEncodeKindNullDatum(t *testing.T) {
 	cols := []rowcodec.ColInfo{{ID: 1, Ft: ft}, {ID: 2, Ft: ft}}
 	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
 	chk := chunk.New(fts, 1, 1)
-	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
+	err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 
 	chkRow := chk.GetRow(0)
@@ -266,7 +266,7 @@ func TestDecodeDecimalFspNotMatch(t *testing.T) {
 	})
 	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
 	chk := chunk.New(fts, 1, 1)
-	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
+	err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 
 	chkRow := chk.GetRow(0)
@@ -526,7 +526,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 			// decode to chunk.
 			cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
 			chk := chunk.New(fts, 1, 1)
-			err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
+			err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
 			require.NoError(t, err)
 
 			chkRow := chk.GetRow(0)
@@ -644,7 +644,7 @@ func TestNilAndDefault(t *testing.T) {
 	// decode to chunk.
 	chk := chunk.New(fts, 1, 1)
 	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, ddf, time.UTC)
-	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
+	err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 
 	chkRow := chk.GetRow(0)
@@ -660,7 +660,7 @@ func TestNilAndDefault(t *testing.T) {
 
 	chk = chunk.New(fts, 1, 1)
 	cDecoder = rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
-	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
+	err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 
 	chkRow = chk.GetRow(0)
@@ -826,7 +826,7 @@ func TestOldRowCodec(t *testing.T) {
 	}
 	rd := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.Local)
 	chk := chunk.NewChunkWithCapacity(tps, 1)
-	err = rd.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
+	err = rd.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 	row := chk.GetRow(0)
 	for i := range 3 {
