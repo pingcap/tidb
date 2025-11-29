@@ -1,0 +1,201 @@
+[
+  {
+    "Name": "TestDecorrelateLimitOptimization",
+    "Cases": [
+      {
+        "SQL": "EXPLAIN format = 'plan_tree'  SELECT e.name, e.salary , ( select salary FROM employees e2 WHERE e2.id = e.id LIMIT 1 OFFSET 0 ) AS avg_dept_salary FROM employees e WHERE e.dept_id > 1",
+        "Plan": [
+          "MergeJoin root  left outer join, left side:TableReader, left key:test.employees.id, right key:test.employees.id",
+          "├─TableReader(Build) root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  gt(test.employees.dept_id, 1)",
+          "    └─TableFullScan cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary , ( select salary FROM employees e2 WHERE e2.id = e.id LIMIT 1 OFFSET 1 ) AS avg_dept_salary FROM employees e WHERE e.dept_id > 1",
+        "Plan": [
+          "Projection root  test.employees.name, test.employees.salary, test.employees.salary",
+          "└─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  gt(test.employees.dept_id, 1)",
+          "  │   └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit(Probe) root  offset:1, count:1",
+          "    └─TableReader root  data:Limit",
+          "      └─Limit cop[tikv]  offset:0, count:2",
+          "        └─TableRangeScan cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, ( SELECT e2.salary FROM employees e2 WHERE e2.dept_id = e.dept_id LIMIT 1 OFFSET 0) AS avg_dept_salary FROM employees e WHERE e.dept_id = 1",
+        "Plan": [
+          "Projection root  test.employees.name, test.employees.salary, test.employees.salary",
+          "└─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  eq(test.employees.dept_id, 1)",
+          "  │   └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit(Probe) root  offset:0, count:1",
+          "    └─TableReader root  data:Limit",
+          "      └─Limit cop[tikv]  offset:0, count:1",
+          "        └─Selection cop[tikv]  eq(test.employees.dept_id, test.employees.dept_id)",
+          "          └─TableFullScan cop[tikv] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.id, e.name, e.salary, (SELECT en.note FROM employees e2 JOIN employee_notes en ON en.employee_id = e2.id WHERE e2.id = e.id ORDER BY en.created_at DESC LIMIT 1) AS latest_note FROM employees e",
+        "Plan": [
+          "Apply root  CARTESIAN left outer join, left side:TableReader",
+          "├─TableReader(Build) root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
+          "└─TopN(Probe) root  test.employee_notes.created_at:desc, offset:0, count:1",
+          "  └─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.employees.id, inner key:test.employee_notes.employee_id, equal cond:eq(test.employees.id, test.employee_notes.employee_id)",
+          "    ├─TableReader(Build) root  data:TableRangeScan",
+          "    │ └─TableRangeScan cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo",
+          "    └─IndexLookUp(Probe) root  ",
+          "      ├─Selection(Build) cop[tikv]  eq(test.employee_notes.employee_id, test.employees.id), not(isnull(test.employee_notes.employee_id))",
+          "      │ └─IndexRangeScan cop[tikv] table:en, index:idx_employee_id(employee_id) range: decided by [eq(test.employee_notes.employee_id, test.employees.id)], keep order:false, stats:pseudo",
+          "      └─TableRowIDScan(Probe) cop[tikv] table:en keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,(SELECT en.note FROM employees e2 JOIN employee_notes en ON en.employee_id = e2.id LEFT JOIN employees e3 ON e3.id = e2.dept_id WHERE e2.id = e.id LIMIT 1) AS note_multi_join FROM employees e",
+        "Plan": [
+          "Projection root  test.employees.name, test.employees.salary, test.employee_notes.note",
+          "└─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit(Probe) root  offset:0, count:1",
+          "    └─IndexJoin root  inner join, inner:TableReader, outer key:test.employee_notes.employee_id, inner key:test.employees.id, equal cond:eq(test.employee_notes.employee_id, test.employees.id)",
+          "      ├─IndexLookUp(Build) root  ",
+          "      │ ├─Selection(Build) cop[tikv]  eq(test.employee_notes.employee_id, test.employees.id)",
+          "      │ │ └─IndexFullScan cop[tikv] table:en, index:idx_employee_id(employee_id) keep order:false, stats:pseudo",
+          "      │ └─TableRowIDScan(Probe) cop[tikv] table:en keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) root  data:Selection",
+          "        └─Selection cop[tikv]  eq(test.employees.id, test.employees.id)",
+          "          └─TableRangeScan cop[tikv] table:e2 range: decided by [test.employee_notes.employee_id], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 INNER JOIN employee_notes en ON en.employee_id = e2.id WHERE e2.id = e.id LIMIT 1) AS salary_inner_join FROM employees e",
+        "Plan": [
+          "Projection root  test.employees.name, test.employees.salary, test.employees.salary",
+          "└─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit(Probe) root  offset:0, count:1",
+          "    └─IndexJoin root  inner join, inner:TableReader, outer key:test.employee_notes.employee_id, inner key:test.employees.id, equal cond:eq(test.employee_notes.employee_id, test.employees.id)",
+          "      ├─IndexReader(Build) root  index:Selection",
+          "      │ └─Selection cop[tikv]  eq(test.employee_notes.employee_id, test.employees.id)",
+          "      │   └─IndexFullScan cop[tikv] table:en, index:idx_employee_id(employee_id) keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) root  data:Selection",
+          "        └─Selection cop[tikv]  eq(test.employees.id, test.employees.id)",
+          "          └─TableRangeScan cop[tikv] table:e2 range: decided by [test.employee_notes.employee_id], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT AVG(e2.salary)  FROM employees e2  WHERE e2.id = e.id  GROUP BY e2.dept_id  HAVING AVG(e2.salary) > 1000  LIMIT 1) AS avg_salary_having FROM employees e",
+        "Plan": [
+          "MergeJoin root  left outer join, left side:TableReader, left key:test.employees.id, right key:test.employees.id",
+          "├─Projection(Build) root  cast(test.employees.salary, decimal(14,6) BINARY)->Column#16, test.employees.id",
+          "│ └─TableReader root  data:Selection",
+          "│   └─Selection cop[tikv]  gt(cast(test.employees.salary, decimal(14,6) BINARY), 1000)",
+          "│     └─TableFullScan cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT count(e2.dept_id)  FROM employees e2  WHERE e2.id = e.id limit 1) AS distinct_dept_id FROM employees e",
+        "Plan": [
+          "Projection root  test.employees.name, test.employees.salary, if(isnull(test.employees.dept_id), 0, 1)->Column#16",
+          "└─MergeJoin root  left outer join, left side:TableReader, left key:test.employees.id, right key:test.employees.id",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "  └─TableReader(Probe) root  data:TableFullScan",
+          "    └─TableFullScan cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 WHERE e2.id = e.id AND e2.dept_id IN (     SELECT dept_id     FROM employees e3     WHERE e3.id = e.id     LIMIT 1 ) LIMIT 1) AS salary_nested FROM employees e",
+        "Plan": [
+          "Projection root  test.employees.name, test.employees.salary, test.employees.salary",
+          "└─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Limit(Probe) root  offset:0, count:1",
+          "    └─HashJoin root  inner join, equal:[eq(test.employees.dept_id, test.employees.dept_id)]",
+          "      ├─HashAgg(Build) root  group by:test.employees.dept_id, funcs:firstrow(test.employees.dept_id)->test.employees.dept_id",
+          "      │ └─Selection root  not(isnull(test.employees.dept_id))",
+          "      │   └─Limit root  offset:0, count:1",
+          "      │     └─TableReader root  data:Limit",
+          "      │       └─Limit cop[tikv]  offset:0, count:1",
+          "      │         └─TableRangeScan cop[tikv] table:e3 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) root  data:Selection",
+          "        └─Selection cop[tikv]  not(isnull(test.employees.dept_id))",
+          "          └─TableRangeScan cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 WHERE e2.id = e.id AND EXISTS (     SELECT 1     FROM employee_notes en     WHERE en.employee_id = e2.id ) LIMIT 1) AS salary_exists FROM employees e",
+        "Plan": [
+          "MergeJoin root  left outer join, left side:TableReader, left key:test.employees.id, right key:test.employees.id",
+          "├─MergeJoin(Build) root  semi join, left side:TableReader, left key:test.employees.id, right key:test.employee_notes.employee_id",
+          "│ ├─IndexReader(Build) root  index:IndexFullScan",
+          "│ │ └─IndexFullScan cop[tikv] table:en, index:idx_employee_id(employee_id) keep order:true, stats:pseudo",
+          "│ └─TableReader(Probe) root  data:TableFullScan",
+          "│   └─TableFullScan cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT e2.salary  FROM employees e2  WHERE e2.id = e.id  ORDER BY e2.dept_id, e2.salary DESC  LIMIT 1) AS salary_order_multi FROM employees e",
+        "Plan": [
+          "MergeJoin root  left outer join, left side:TableReader, left key:test.employees.id, right key:test.employees.id",
+          "├─TableReader(Build) root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:e2 keep order:true, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:e keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,  (SELECT DISTINCT e2.dept_id   FROM employees e2   WHERE e2.id = e.id   LIMIT 1) AS distinct_dept_id FROM employees e",
+        "Plan": [
+          "Projection root  test.employees.name, test.employees.salary, test.employees.dept_id",
+          "└─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─HashAgg(Probe) root  group by:test.employees.dept_id, funcs:firstrow(test.employees.dept_id)->test.employees.dept_id",
+          "    └─TableReader root  data:TableRangeScan",
+          "      └─TableRangeScan cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT ROW_NUMBER() OVER (ORDER BY e2.salary DESC)  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS row_num FROM employees e",
+        "Plan": [
+          "Projection root  test.employees.name, test.employees.salary, Column#17",
+          "└─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─Window(Probe) root  row_number()->Column#17 over(order by test.employees.salary desc rows between current row and current row)",
+          "    └─Sort root  test.employees.salary:desc",
+          "      └─TableReader root  data:TableRangeScan",
+          "        └─TableRangeScan cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT DISTINCT e2.dept_id  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS distinct_dept_id FROM employees e",
+        "Plan": [
+          "Projection root  test.employees.name, test.employees.salary, test.employees.dept_id",
+          "└─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:e keep order:false, stats:pseudo",
+          "  └─HashAgg(Probe) root  group by:test.employees.dept_id, funcs:firstrow(test.employees.dept_id)->test.employees.dept_id",
+          "    └─TableReader root  data:TableRangeScan",
+          "      └─TableRangeScan cop[tikv] table:e2 range: decided by [eq(test.employees.id, test.employees.id)], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]
