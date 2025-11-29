@@ -1238,6 +1238,8 @@ func estimateCompressionRatio(
 
 const estimationPerType = 256
 
+// compressionEstimator estimates compression ratio for different compression types.
+// It uses harmonic mean to get the average compression ratio.
 type compressionEstimator struct {
 	mu      sync.Mutex
 	records map[mydump.Compression][]float64
@@ -1298,9 +1300,8 @@ func (r *compressionEstimator) estimate(
 		r.records[compressTp] = append(r.records[compressTp], compressRatio)
 	}
 	if len(r.records[compressTp]) >= estimationPerType {
-		avg := getHarmonicMean(r.records[compressTp])
-		r.ratio.Store(compressTp, avg)
-		return avg
+		compressRatio = getHarmonicMean(r.records[compressTp])
+		r.ratio.Store(compressTp, compressRatio)
 	}
 	return compressRatio
 }
