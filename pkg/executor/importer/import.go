@@ -1300,6 +1300,7 @@ func (r *compressionEstimator) estimate(
 		r.records[compressTp] = append(r.records[compressTp], compressRatio)
 	}
 	if len(r.records[compressTp]) >= estimationPerType {
+		// Using harmonic mean can better handle outlier values.
 		compressRatio = getHarmonicMean(r.records[compressTp])
 		r.ratio.Store(compressTp, compressRatio)
 	}
