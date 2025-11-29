@@ -1236,7 +1236,7 @@ func estimateCompressionRatio(
 	return compressionRatio, nil
 }
 
-const estimationPerType = 256
+const estimationPerType = 1024
 
 // compressionEstimator estimates compression ratio for different compression types.
 // It uses harmonic mean to get the average compression ratio.
