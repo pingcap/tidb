@@ -82,10 +82,21 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 			}
 
 			var peers []*metapb.Peer
+			var regionID uint64
 			// in unit test, we may not have the real peers
 			if job.region != nil && job.region.Region != nil {
 				peers = job.region.Region.GetPeers()
+				regionID = job.region.Region.GetId()
 			}
+
+			// Log job received from channel to track all jobs
+			tidblogutil.Logger(ctx).Info("[DXF DEBUG] region job received from jobInCh",
+				logutil.Key("startKey", job.keyRange.Start),
+				logutil.Key("endKey", job.keyRange.End),
+				zap.Uint64("regionID", regionID),
+				zap.Int("retryCount", job.retryCount),
+				zap.Stringer("stage", job.stage))
+
 			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 			err := w.runJob(ctx, job)
@@ -147,6 +158,18 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 // If retryable error occurs, it will return nil and caller should check the stage
 // of the regionJob to determine what to do with it.
 func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error {
+	// Log job execution start to track all region jobs
+	var regionID uint64
+	if job.region != nil && job.region.Region != nil {
+		regionID = job.region.Region.GetId()
+	}
+	tidblogutil.Logger(ctx).Info("[DXF DEBUG] region job runJob start",
+		logutil.Key("startKey", job.keyRange.Start),
+		logutil.Key("endKey", job.keyRange.End),
+		zap.Uint64("regionID", regionID),
+		zap.Int("retryCount", job.retryCount),
+		zap.Stringer("stage", job.stage))
+
 	if err := w.preRunJobFn(ctx, job); err != nil {
 		return err
 	}
@@ -154,6 +177,13 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 	for {
 		// the job might in wrote stage if it comes from retry
 		if job.stage == regionScanned {
+			// Log before calling write function
+			tidblogutil.Logger(ctx).Info("[DXF DEBUG] region job calling write function",
+				logutil.Key("startKey", job.keyRange.Start),
+				logutil.Key("endKey", job.keyRange.End),
+				zap.Uint64("regionID", regionID),
+				zap.Int("retryCount", job.retryCount))
+
 			// writes the data to TiKV and mark this job as wrote stage.
 			// we don't need to do cleanup for the pairs written to TiKV if encounters
 			// an error, TiKV will take the responsibility to do so.
@@ -179,6 +209,10 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				return nil
 			}
 			if res.emptyJob {
+				tidblogutil.Logger(ctx).Info("[DXF DEBUG] region job write: empty job result",
+					logutil.Key("startKey", job.keyRange.Start),
+					logutil.Key("endKey", job.keyRange.End),
+					zap.Uint64("regionID", regionID))
 				job.convertStageTo(ingested)
 			} else {
 				job.writeResult = res
@@ -285,11 +319,33 @@ func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error
 
 // we don't need to limit write speed as we write to tikv-worker.
 func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
-	firstKey, _, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
+	tidblogutil.Logger(ctx).Info("[DXF DEBUG] region job write function called",
+		logutil.Key("startKey", job.keyRange.Start),
+		logutil.Key("endKey", job.keyRange.End),
+		zap.Uint64("regionID", job.region.Region.GetId()),
+		zap.Int("retryCount", job.retryCount))
+
+	firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
 	if err != nil {
+		tidblogutil.Logger(ctx).Error("[DXF DEBUG] region job write: GetFirstAndLastKey failed",
+			logutil.Key("startKey", job.keyRange.Start),
+			logutil.Key("endKey", job.keyRange.End),
+			zap.Uint64("regionID", job.region.Region.GetId()),
+			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	if firstKey == nil {
+		// Log empty job case with details - this happens when keyRange doesn't overlap with data
+		tidblogutil.Logger(ctx).Info("[DXF DEBUG] region job write: empty job (firstKey is nil, no data in keyRange)",
+			logutil.Key("startKey", job.keyRange.Start),
+			logutil.Key("endKey", job.keyRange.End),
+			zap.Uint64("regionID", job.region.Region.GetId()),
+			zap.String("lastKey", func() string {
+				if lastKey != nil {
+					return hex.EncodeToString(lastKey)
+				}
+				return "nil"
+			}()))
 		return &tikvWriteResult{emptyJob: true}, nil
 	}
 
@@ -406,13 +462,13 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 		Region:    job.region,
 		WriteResp: job.writeResult.nextGenWriteResp,
 	}
-	
+
 	// Get imported count before ingest
 	var beforeImportedCount int64
 	if externalData, ok := job.ingestData.(*external.MemoryIngestData); ok {
 		_, beforeImportedCount = externalData.ImportedStatistics()
 	}
-	
+
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {
 		tidblogutil.Logger(ctx).Warn("[DXF DEBUG] region job ingest failed",
@@ -428,13 +484,13 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 			zap.Error(err))
 		return err
 	}
-	
+
 	// Get imported count after ingest (before Finish)
 	var afterImportedCount int64
 	if externalData, ok := job.ingestData.(*external.MemoryIngestData); ok {
 		_, afterImportedCount = externalData.ImportedStatistics()
 	}
-	
+
 	tidblogutil.Logger(ctx).Info("[DXF DEBUG] region job ingest success",
 		logutil.Key("startKey", job.keyRange.Start),
 		logutil.Key("endKey", job.keyRange.End),

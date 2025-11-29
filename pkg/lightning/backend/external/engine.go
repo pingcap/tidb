@@ -676,6 +676,21 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 			return -1, -1
 		}
 		lastKeyIdx = len(m.kvs) - 1 - i
+
+		// Log potential data loss issue when upperBound is too restrictive
+		if lastKeyIdx < len(m.kvs)-1 {
+			actualLastKey := hex.EncodeToString(m.kvs[len(m.kvs)-1].Key)
+			upperBoundStr := hex.EncodeToString(upperBound)
+			logutil.BgLogger().Warn("[DXF DEBUG] potential data loss in firstAndLastKeyIndex",
+				zap.Int("totalKVs", len(m.kvs)),
+				zap.Int("firstKeyIdx", firstKeyIdx),
+				zap.Int("lastKeyIdx", lastKeyIdx),
+				zap.Int("expectedLastIdx", len(m.kvs)-1),
+				zap.Int("missingKVCount", len(m.kvs)-1-lastKeyIdx),
+				zap.String("upperBound", upperBoundStr),
+				zap.String("actualLastKey", actualLastKey),
+				zap.String("lastKeyInRange", hex.EncodeToString(m.kvs[lastKeyIdx].Key)))
+		}
 	}
 	return firstKeyIdx, lastKeyIdx
 }
