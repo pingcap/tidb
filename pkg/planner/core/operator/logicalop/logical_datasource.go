@@ -678,7 +678,7 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 
 	// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
 	if hasUnmatchedFTSOverAllIdx {
-		return errors.New("Full text search can only be used with a matching fulltext index")
+		return errors.New("Full text search can only be used with a matching fulltext index or you write it in a wrong way")
 	}
 
 	if matchedIdx == nil {
