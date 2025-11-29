@@ -26,7 +26,6 @@ import (
 type MockBackend struct {
 	ctrl     *gomock.Controller
 	recorder *MockBackendMockRecorder
-	isgomock struct{}
 }
 
 // MockBackendMockRecorder is the mock recorder for MockBackend.
@@ -46,18 +45,23 @@ func (m *MockBackend) EXPECT() *MockBackendMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockBackend) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // CleanupEngine mocks base method.
-func (m *MockBackend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (m *MockBackend) CleanupEngine(arg0 context.Context, arg1 uuid.UUID) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CleanupEngine", ctx, engineUUID)
+	ret := m.ctrl.Call(m, "CleanupEngine", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CleanupEngine indicates an expected call of CleanupEngine.
-func (mr *MockBackendMockRecorder) CleanupEngine(ctx, engineUUID any) *gomock.Call {
+func (mr *MockBackendMockRecorder) CleanupEngine(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupEngine", reflect.TypeOf((*MockBackend)(nil).CleanupEngine), ctx, engineUUID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupEngine", reflect.TypeOf((*MockBackend)(nil).CleanupEngine), arg0, arg1)
 }
 
 // Close mocks base method.
@@ -73,88 +77,102 @@ func (mr *MockBackendMockRecorder) Close() *gomock.Call {
 }
 
 // CloseEngine mocks base method.
-func (m *MockBackend) CloseEngine(ctx context.Context, config *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (m *MockBackend) CloseEngine(arg0 context.Context, arg1 *backend.EngineConfig, arg2 uuid.UUID) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CloseEngine", ctx, config, engineUUID)
+	ret := m.ctrl.Call(m, "CloseEngine", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CloseEngine indicates an expected call of CloseEngine.
-func (mr *MockBackendMockRecorder) CloseEngine(ctx, config, engineUUID any) *gomock.Call {
+func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloseEngine", reflect.TypeOf((*MockBackend)(nil).CloseEngine), ctx, config, engineUUID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloseEngine", reflect.TypeOf((*MockBackend)(nil).CloseEngine), arg0, arg1, arg2)
 }
 
 // FlushAllEngines mocks base method.
-func (m *MockBackend) FlushAllEngines(ctx context.Context) error {
+func (m *MockBackend) FlushAllEngines(arg0 context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FlushAllEngines", ctx)
+	ret := m.ctrl.Call(m, "FlushAllEngines", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // FlushAllEngines indicates an expected call of FlushAllEngines.
-func (mr *MockBackendMockRecorder) FlushAllEngines(ctx any) *gomock.Call {
+func (mr *MockBackendMockRecorder) FlushAllEngines(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushAllEngines", reflect.TypeOf((*MockBackend)(nil).FlushAllEngines), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushAllEngines", reflect.TypeOf((*MockBackend)(nil).FlushAllEngines), arg0)
 }
 
 // FlushEngine mocks base method.
-func (m *MockBackend) FlushEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (m *MockBackend) FlushEngine(arg0 context.Context, arg1 uuid.UUID) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FlushEngine", ctx, engineUUID)
+	ret := m.ctrl.Call(m, "FlushEngine", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // FlushEngine indicates an expected call of FlushEngine.
-func (mr *MockBackendMockRecorder) FlushEngine(ctx, engineUUID any) *gomock.Call {
+func (mr *MockBackendMockRecorder) FlushEngine(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushEngine", reflect.TypeOf((*MockBackend)(nil).FlushEngine), ctx, engineUUID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushEngine", reflect.TypeOf((*MockBackend)(nil).FlushEngine), arg0, arg1)
 }
 
 // ImportEngine mocks base method.
-func (m *MockBackend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, engineID int32, regionSplitSize, regionSplitKeys int64) error {
+func (m *MockBackend) ImportEngine(arg0 context.Context, arg1 uuid.UUID, arg2 int32, arg3, arg4 int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImportEngine", ctx, engineUUID, engineID, regionSplitSize, regionSplitKeys)
+	ret := m.ctrl.Call(m, "ImportEngine", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ImportEngine indicates an expected call of ImportEngine.
-func (mr *MockBackendMockRecorder) ImportEngine(ctx, engineUUID, engineID, regionSplitSize, regionSplitKeys any) *gomock.Call {
+func (mr *MockBackendMockRecorder) ImportEngine(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportEngine", reflect.TypeOf((*MockBackend)(nil).ImportEngine), ctx, engineUUID, engineID, regionSplitSize, regionSplitKeys)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportEngine", reflect.TypeOf((*MockBackend)(nil).ImportEngine), arg0, arg1, arg2, arg3, arg4)
 }
 
 // LocalWriter mocks base method.
-func (m *MockBackend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+func (m *MockBackend) LocalWriter(arg0 context.Context, arg1 *backend.LocalWriterConfig, arg2 uuid.UUID) (backend.EngineWriter, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "LocalWriter", ctx, cfg, engineUUID)
+	ret := m.ctrl.Call(m, "LocalWriter", arg0, arg1, arg2)
 	ret0, _ := ret[0].(backend.EngineWriter)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // LocalWriter indicates an expected call of LocalWriter.
-func (mr *MockBackendMockRecorder) LocalWriter(ctx, cfg, engineUUID any) *gomock.Call {
+func (mr *MockBackendMockRecorder) LocalWriter(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LocalWriter", reflect.TypeOf((*MockBackend)(nil).LocalWriter), ctx, cfg, engineUUID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LocalWriter", reflect.TypeOf((*MockBackend)(nil).LocalWriter), arg0, arg1, arg2)
 }
 
 // OpenEngine mocks base method.
-func (m *MockBackend) OpenEngine(ctx context.Context, config *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (m *MockBackend) OpenEngine(arg0 context.Context, arg1 *backend.EngineConfig, arg2 uuid.UUID) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "OpenEngine", ctx, config, engineUUID)
+	ret := m.ctrl.Call(m, "OpenEngine", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // OpenEngine indicates an expected call of OpenEngine.
-func (mr *MockBackendMockRecorder) OpenEngine(ctx, config, engineUUID any) *gomock.Call {
+func (mr *MockBackendMockRecorder) OpenEngine(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OpenEngine", reflect.TypeOf((*MockBackend)(nil).OpenEngine), ctx, config, engineUUID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OpenEngine", reflect.TypeOf((*MockBackend)(nil).OpenEngine), arg0, arg1, arg2)
+}
+
+// PostProcess mocks base method.
+func (m *MockBackend) PostProcess(arg0 context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PostProcess", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PostProcess indicates an expected call of PostProcess.
+func (mr *MockBackendMockRecorder) PostProcess(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PostProcess", reflect.TypeOf((*MockBackend)(nil).PostProcess), arg0)
 }
 
 // RetryImportDelay mocks base method.
@@ -189,7 +207,6 @@ func (mr *MockBackendMockRecorder) ShouldPostProcess() *gomock.Call {
 type MockEngineWriter struct {
 	ctrl     *gomock.Controller
 	recorder *MockEngineWriterMockRecorder
-	isgomock struct{}
 }
 
 // MockEngineWriterMockRecorder is the mock recorder for MockEngineWriter.
@@ -209,33 +226,38 @@ func (m *MockEngineWriter) EXPECT() *MockEngineWriterMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockEngineWriter) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // AppendRows mocks base method.
-func (m *MockEngineWriter) AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
+func (m *MockEngineWriter) AppendRows(arg0 context.Context, arg1 []string, arg2 encode.Rows) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AppendRows", ctx, columnNames, rows)
+	ret := m.ctrl.Call(m, "AppendRows", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AppendRows indicates an expected call of AppendRows.
-func (mr *MockEngineWriterMockRecorder) AppendRows(ctx, columnNames, rows any) *gomock.Call {
+func (mr *MockEngineWriterMockRecorder) AppendRows(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRows", reflect.TypeOf((*MockEngineWriter)(nil).AppendRows), ctx, columnNames, rows)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRows", reflect.TypeOf((*MockEngineWriter)(nil).AppendRows), arg0, arg1, arg2)
 }
 
 // Close mocks base method.
-func (m *MockEngineWriter) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
+func (m *MockEngineWriter) Close(arg0 context.Context) (common.ChunkFlushStatus, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Close", ctx)
+	ret := m.ctrl.Call(m, "Close", arg0)
 	ret0, _ := ret[0].(common.ChunkFlushStatus)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Close indicates an expected call of Close.
-func (mr *MockEngineWriterMockRecorder) Close(ctx any) *gomock.Call {
+func (mr *MockEngineWriterMockRecorder) Close(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockEngineWriter)(nil).Close), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockEngineWriter)(nil).Close), arg0)
 }
 
 // IsSynced mocks base method.
@@ -256,7 +278,6 @@ func (mr *MockEngineWriterMockRecorder) IsSynced() *gomock.Call {
 type MockTargetInfoGetter struct {
 	ctrl     *gomock.Controller
 	recorder *MockTargetInfoGetterMockRecorder
-	isgomock struct{}
 }
 
 // MockTargetInfoGetterMockRecorder is the mock recorder for MockTargetInfoGetter.
@@ -276,39 +297,44 @@ func (m *MockTargetInfoGetter) EXPECT() *MockTargetInfoGetterMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockTargetInfoGetter) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // CheckRequirements mocks base method.
-func (m *MockTargetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
+func (m *MockTargetInfoGetter) CheckRequirements(arg0 context.Context, arg1 *backend.CheckCtx) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckRequirements", ctx, checkCtx)
+	ret := m.ctrl.Call(m, "CheckRequirements", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CheckRequirements indicates an expected call of CheckRequirements.
-func (mr *MockTargetInfoGetterMockRecorder) CheckRequirements(ctx, checkCtx any) *gomock.Call {
+func (mr *MockTargetInfoGetterMockRecorder) CheckRequirements(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockTargetInfoGetter)(nil).CheckRequirements), ctx, checkCtx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockTargetInfoGetter)(nil).CheckRequirements), arg0, arg1)
 }
 
 // FetchRemoteDBModels mocks base method.
-func (m *MockTargetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+func (m *MockTargetInfoGetter) FetchRemoteDBModels(arg0 context.Context) ([]*model.DBInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchRemoteDBModels", ctx)
+	ret := m.ctrl.Call(m, "FetchRemoteDBModels", arg0)
 	ret0, _ := ret[0].([]*model.DBInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FetchRemoteDBModels indicates an expected call of FetchRemoteDBModels.
-func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteDBModels(ctx any) *gomock.Call {
+func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteDBModels(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteDBModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteDBModels), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteDBModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteDBModels), arg0)
 }
 
 // FetchRemoteTableModels mocks base method.
-func (m *MockTargetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string, tableNames []string) (map[string]*model.TableInfo, error) {
+func (m *MockTargetInfoGetter) FetchRemoteTableModels(arg0 context.Context, arg1 string, arg2 []string) (map[string]*model.TableInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchRemoteTableModels", ctx, schemaName, tableNames)
+	ret := m.ctrl.Call(m, "FetchRemoteTableModels", arg0, arg1, arg2)
 	ret0, _ := ret[0].(map[string]*model.TableInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
