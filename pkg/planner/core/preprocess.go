@@ -1499,6 +1499,9 @@ var mysqlValidTableEngineNames = map[string]struct{}{
 	"myisam":     {},
 	"ndb":        {},
 	"heap":       {},
+	"aria":       {}, // https://mariadb.com/docs/server/server-usage/storage-engines/aria/aria-storage-engine
+	"myrocks":    {}, // https://mariadb.com/docs/server/server-usage/storage-engines/myrocks
+	"tokudb":     {}, // https://mariadb.com/docs/server/server-usage/storage-engines/legacy-storage-engines/tokudb
 }
 
 func checkTableEngine(engineName string) error {
