@@ -418,7 +418,7 @@ func TestPopulateChunks(t *testing.T) {
 		ti.LoadDataController.Close()
 		ti.Backend().CloseEngineMgr()
 	}()
-	require.NoError(t, ti.InitDataFiles(ctx))
+	require.NoError(t, ti.InitDataFiles(ctx, true))
 	engines, err := ti.PopulateChunks(ctx)
 	require.NoError(t, err)
 	require.Len(t, engines, 3)

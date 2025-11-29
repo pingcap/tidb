@@ -312,7 +312,7 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 			return nil, err2
 		}
 		defer controller.Close()
-		if err2 = controller.InitDataFiles(pCtx.Ctx); err2 != nil {
+		if err2 = controller.InitDataFiles(pCtx.Ctx, true); err2 != nil {
 			return nil, err2
 		}
 
