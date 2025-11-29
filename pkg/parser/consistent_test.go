@@ -50,13 +50,13 @@ func TestKeywordConsistent(t *testing.T) {
 	requires.Equal(t, keywordCount-len(windowFuncTokenMap), len(tokenMap)-len(aliases))
 
 	unreservedCollectionDef := extractKeywordsFromCollectionDef(content, "\nUnReservedKeyword:")
-	requires.Equal(t, unreservedCollectionDef, unreservedKeywords)
+	requires.Equal(t, unreservedCollectionDef, unreservedKeywords, "UnReservedKeyword")
 
 	notKeywordTokensCollectionDef := extractKeywordsFromCollectionDef(content, "\nNotKeywordToken:")
-	requires.Equal(t, notKeywordTokensCollectionDef, notKeywordTokens)
+	requires.Equal(t, notKeywordTokensCollectionDef, notKeywordTokens, "NotKeywordToken")
 
 	tidbKeywordsCollectionDef := extractKeywordsFromCollectionDef(content, "\nTiDBKeyword:")
-	requires.Equal(t, tidbKeywordsCollectionDef, tidbKeywords)
+	requires.Equal(t, tidbKeywordsCollectionDef, tidbKeywords, "TiDBKeyword")
 }
 
 func extractMiddle(str, startMarker, endMarker string) string {
