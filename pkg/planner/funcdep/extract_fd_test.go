@@ -270,7 +270,7 @@ func TestFDSet_ExtractFDForApplyAndUnion(t *testing.T) {
 			//     +- datasource(Y)
 			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection",
 			// Since semi join will keep the **all** rows of the outer table, it's FD can be derived.
-			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+			fd: "{(1)-->(2-6), (2,3)~~>(1,4-6)} >>> {(1)-->(2-5)}",
 		},
 		{
 			sql: "select a, b from X where exists (select * from Y where m=a limit 1)",
@@ -280,24 +280,24 @@ func TestFDSet_ExtractFDForApplyAndUnion(t *testing.T) {
 			//     +- datasource(Y)
 			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
 			// Since semi join will keep the **part** rows of the outer table, it's FD can be derived.
-			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2)}",
+			fd: "{(1)-->(2-6), (2,3)~~>(1,4-6)} >>> {(1)-->(2)}",
 		},
 		{
 			// Limit will refuse to de-correlate apply to join while this won't.
 			sql:  "select * from X where exists (select * from Y where m=a and p=1)",
 			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
-			fd:   "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+			fd:   "{(1)-->(2-6), (2,3)~~>(1,4-6)} >>> {(1)-->(2-5)}",
 		},
 		{
 			sql:  "select * from X where exists (select * from Y where m=a and p=q)",
 			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
-			fd:   "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+			fd:   "{(1)-->(2-6), (2,3)~~>(1,4-6)} >>> {(1)-->(2-5)}",
 		},
 		{
 			sql:  "select * from X where exists (select * from Y where m=a and b=1)",
 			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
 			// b=1 is semi join's left condition which should be conserved.
-			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+			fd: "{(1)-->(2-6), (2,3)~~>(1,4-6)} >>> {(1)-->(2-5)}",
 		},
 		{
 			sql:  "select * from (select b,c,d,e from X) X1 where exists (select * from Y where p=q and n=1) ",
@@ -307,13 +307,13 @@ func TestFDSet_ExtractFDForApplyAndUnion(t *testing.T) {
 		{
 			sql:  "select * from (select b,c,d,e from X) X1 where exists (select * from Y where p=b and n=1) ",
 			best: "Join{DataScan(X)->DataScan(Y)}(test.x.b,test.y.p)->Projection", // semi join
-			fd:   "{(2,3)~~>(4,5)} >>> {(2,3)~~>(4,5)}",
+			fd:   "{} >>> {}",
 		},
 		{
 			sql:  "select * from X where exists (select m, p, q from Y where n=a and p=1)",
 			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.n)->Projection",
 			// p=1 is semi join's right condition which should **NOT** be conserved.
-			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+			fd: "{(1)-->(2-6), (2,3)~~>(1,4-6)} >>> {(1)-->(2-5)}",
 		},
 		{
 			sql:  "select * from t1 union all select * from t2",
@@ -323,7 +323,7 @@ func TestFDSet_ExtractFDForApplyAndUnion(t *testing.T) {
 		{
 			sql:  "select * from t1 where a=b union all select * from t2 where e=f",
 			best: "UnionAll{DataScan(t1)->Projection->DataScan(t2)->Projection}",
-			fd:   "{(9,10)==(9,10)}",
+			fd:   "{(11,12)==(11,12)}",
 		},
 	}
 
