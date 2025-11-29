@@ -1251,6 +1251,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
 	hasTiCIIndex := false
+	ticiIndexPaths := make([]*util.AccessPath, 0, len(publicPaths))
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
@@ -1287,19 +1288,13 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				publicPaths = append(publicPaths, path)
 				continue
 			}
-			hasTiCIIndex = hasTiCIIndex || index.IsTiCIIndex()
 			path := &util.AccessPath{Index: index}
 			publicPaths = append(publicPaths, path)
-		}
-	}
-	var ticiIndexPaths []*util.AccessPath
-	if hasTiCIIndex {
-		// FTS_MATCH_XXX can only be executed in TiCI engine.
-		// So we need to store it here and try to add it later if the USE_INDEX hint delete any of them.
-		// The removal of the unhinted TiCI index paths will be done after we dicide the availability of each index.
-		ticiIndexPaths = make([]*util.AccessPath, 0, len(publicPaths))
-		for _, path := range publicPaths {
-			if path.Index != nil && path.Index.IsTiCIIndex() {
+			if index.IsTiCIIndex() {
+				hasTiCIIndex = true
+				// FTS_MATCH_XXX can only be executed in TiCI engine.
+				// So we need to store it here and try to add it later if the USE_INDEX hint delete any of them.
+				// The removal of the unhinted TiCI index paths will be done after we dicide the availability of each index.
 				ticiIndexPaths = append(ticiIndexPaths, path)
 			}
 		}
