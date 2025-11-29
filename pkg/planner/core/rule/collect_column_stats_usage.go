@@ -17,6 +17,7 @@ package rule
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -59,6 +60,12 @@ type columnStatsUsageCollector struct {
 
 	// operatorNum is the number of operators in the logical plan.
 	operatorNum uint64
+
+	// orderingColumns tracks columns that require ordered access (sorts and MIN/MAX) to propagate to DataSource
+	orderingColumns []*expression.Column
+
+	// joinColumns tracks columns used in join conditions that should be propagated down to DataSource
+	joinColumns []*expression.Column
 }
 
 func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageCollector {
@@ -161,6 +168,87 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	}
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
+
+	// Store join columns in the DataSource first if they belong to this DataSource
+	// Join columns come from EqualConditions and OtherConditions of joins
+	joinColSet := make(map[int64]struct{})
+	if len(c.joinColumns) > 0 && ds.Schema() != nil {
+		for _, joinCol := range c.joinColumns {
+			if joinCol != nil && ds.Schema().Contains(joinCol) {
+				if _, exists := joinColSet[joinCol.UniqueID]; !exists {
+					ds.JoinColumns = append(ds.JoinColumns, joinCol)
+					joinColSet[joinCol.UniqueID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// Store WHERE columns directly in the DataSource
+	// We need to check both PushedDownConds and AllConds because:
+	// - PushedDownConds contains conditions that can be pushed to storage
+	// - AllConds contains all WHERE conditions, including OR conditions that might not be pushed down
+	//   but still reference columns that are relevant for index selection
+	// We need to extract only local WHERE conditions (those that reference only this table's columns)
+	// A column can appear in both local WHERE and join predicates - e.g., "WHERE t1.a = t2.a AND t1.a = 5"
+	whereColSet := make(map[int64]struct{})
+	allConds := make(map[string]struct{})
+	// First, process PushedDownConds
+	for _, cond := range ds.PushedDownConds {
+		condCols := expression.ExtractColumns(cond)
+		allLocal := true
+		for _, col := range condCols {
+			if !ds.Schema().Contains(col) {
+				allLocal = false
+				break
+			}
+		}
+		if allLocal {
+			for _, col := range condCols {
+				if _, exists := whereColSet[col.UniqueID]; !exists {
+					ds.WhereColumns = append(ds.WhereColumns, col)
+					whereColSet[col.UniqueID] = struct{}{}
+				}
+			}
+		}
+		// Track which conditions we've already processed
+		allConds[string(cond.HashCode())] = struct{}{}
+	}
+	// Also process AllConds to catch OR conditions and other conditions that weren't pushed down
+	for _, cond := range ds.AllConds {
+		// Skip if we already processed this condition
+		if _, exists := allConds[string(cond.HashCode())]; exists {
+			continue
+		}
+		condCols := expression.ExtractColumns(cond)
+		allLocal := true
+		for _, col := range condCols {
+			if !ds.Schema().Contains(col) {
+				allLocal = false
+				break
+			}
+		}
+		if allLocal {
+			for _, col := range condCols {
+				if _, exists := whereColSet[col.UniqueID]; !exists {
+					ds.WhereColumns = append(ds.WhereColumns, col)
+					whereColSet[col.UniqueID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// Store ordering columns (sort + MIN/MAX/FIRST_VALUE) in the DataSource if they belong to this DataSource
+	if len(c.orderingColumns) > 0 && ds.Schema() != nil {
+		orderingColSet := make(map[int64]struct{})
+		for _, orderingCol := range c.orderingColumns {
+			if orderingCol != nil && ds.Schema().Contains(orderingCol) {
+				if _, exists := orderingColSet[orderingCol.UniqueID]; !exists {
+					ds.OrderingColumns = append(ds.OrderingColumns, orderingCol)
+					orderingColSet[orderingCol.UniqueID] = struct{}{}
+				}
+			}
+		}
+	}
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.LogicalJoin) {
@@ -205,9 +293,100 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expression.Column, lp base.LogicalPlan) {
 	// derive the new current op's new asked column groups accordingly.
 	curColGroups := lp.ExtractColGroups(askedColGroups)
+
+	// Save the current state of orderingColumns and joinColumns to restore after visiting children.
+	// This prevents columns from different branches of the plan tree from contaminating each other.
+	savedOrderingColumns := c.orderingColumns
+	savedJoinColumns := make([]*expression.Column, len(c.joinColumns))
+	copy(savedJoinColumns, c.joinColumns)
+
+	switch x := lp.(type) {
+	case *logicalop.LogicalSort:
+		// Extract and store ordering columns to propagate to DataSource
+		sortExprs := make([]expression.Expression, 0, len(x.ByItems))
+		for _, item := range x.ByItems {
+			sortExprs = append(sortExprs, item.Expr)
+		}
+		c.orderingColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
+	case *logicalop.LogicalTopN:
+		// Extract and store ordering columns to propagate to DataSource
+		sortExprs := make([]expression.Expression, 0, len(x.ByItems))
+		for _, item := range x.ByItems {
+			sortExprs = append(sortExprs, item.Expr)
+		}
+		c.orderingColumns = expression.ExtractColumnsFromExpressions(sortExprs, nil)
+	case *logicalop.LogicalWindow:
+		// Extract ordering columns from window ORDER BY clause
+		if len(x.OrderBy) > 0 {
+			orderExprs := make([]expression.Expression, 0, len(x.OrderBy))
+			for _, item := range x.OrderBy {
+				orderExprs = append(orderExprs, item.Col)
+			}
+			c.orderingColumns = expression.ExtractColumnsFromExpressions(orderExprs, nil)
+		}
+	case *logicalop.LogicalJoin:
+		// Extract and accumulate join columns to propagate to DataSource
+		// Note: LeftConditions and RightConditions are not join conditions between tables,
+		// they are filters on individual tables, so we only extract from EqualConditions and OtherConditions
+		// We accumulate (append) rather than replace to capture join columns from parent joins
+		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+		for _, cond := range x.EqualConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		for _, cond := range x.OtherConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
+		// Append new join columns to existing ones to accumulate from parent joins
+		c.joinColumns = append(c.joinColumns, newJoinCols...)
+	case *logicalop.LogicalApply:
+		// Extract and accumulate join columns to propagate to DataSource
+		// We accumulate (append) rather than replace to capture join columns from parent joins
+		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+		for _, cond := range x.EqualConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		for _, cond := range x.OtherConditions {
+			joinExprs = append(joinExprs, cond)
+		}
+		newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
+		// Append new join columns to existing ones to accumulate from parent joins
+		c.joinColumns = append(c.joinColumns, newJoinCols...)
+	}
+
 	for _, child := range lp.Children() {
 		// passing the new asked column groups down.
 		c.collectFromPlan(curColGroups, child)
+		// Restore the state after visiting each child to prevent cross-contamination between siblings.
+		// For joinColumns, we restore to the value we had when entering this node (savedJoinColumns),
+		// which includes join columns from parent joins. Then we re-apply this node's join columns
+		// so that the next sibling sees the same accumulated join columns.
+		c.orderingColumns = savedOrderingColumns
+		c.joinColumns = make([]*expression.Column, len(savedJoinColumns))
+		copy(c.joinColumns, savedJoinColumns)
+		// Re-apply this node's join columns if it's a join
+		switch x := lp.(type) {
+		case *logicalop.LogicalJoin:
+			joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+			for _, cond := range x.EqualConditions {
+				joinExprs = append(joinExprs, cond)
+			}
+			for _, cond := range x.OtherConditions {
+				joinExprs = append(joinExprs, cond)
+			}
+			newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
+			c.joinColumns = append(c.joinColumns, newJoinCols...)
+		case *logicalop.LogicalApply:
+			joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
+			for _, cond := range x.EqualConditions {
+				joinExprs = append(joinExprs, cond)
+			}
+			for _, cond := range x.OtherConditions {
+				joinExprs = append(joinExprs, cond)
+			}
+			newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
+			c.joinColumns = append(c.joinColumns, newJoinCols...)
+		}
 	}
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
@@ -233,6 +412,14 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		c.addPredicateColumnsFromExpressions(x.GroupByItems, false)
 		// Schema change from children to self.
 		schema := x.Schema()
+		// Extract columns from MIN/MAX/FIRST_VALUE aggregates - these can benefit from ordered indexes
+		// Do this before visiting children so the ordering columns are available to DataSource nodes below
+		for _, aggFunc := range x.AggFuncs {
+			if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncFirstRow {
+				minMaxCols := expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)
+				c.orderingColumns = append(c.orderingColumns, minMaxCols...)
+			}
+		}
 		for i, aggFunc := range x.AggFuncs {
 			c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
 		}
@@ -262,11 +449,13 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
+		// Note: Ordering columns already extracted above before visiting children
 	case *logicalop.LogicalTopN:
 		// Assume statistics of all the columns in ByItems are needed.
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
+		// Note: Ordering columns already extracted above before visiting children
 	case *logicalop.LogicalUnionAll:
 		c.collectPredicateColumnsForUnionAll(x)
 	case *logicalop.LogicalPartitionUnionAll:

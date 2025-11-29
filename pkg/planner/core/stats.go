@@ -130,6 +130,8 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
+	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
+	// Fill index paths for all paths
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -343,15 +345,22 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		path.CountAfterAccess = 1
 		return nil
 	}
+	lenAccessConds := len(path.AccessConds)
 	var remainedConds []expression.Expression
 	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.SCtx().GetRangerCtx(), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
 	path.TableFilters = append(path.TableFilters, remainedConds...)
 	if err != nil {
 		return err
 	}
-	var countEst statistics.RowEstimate
-	countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
-	path.CountAfterAccess = countEst.Est
+	// Optimization: If there are no AccessConds, the ranges will be full range and the count will be the full table count.
+	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
+	if lenAccessConds == 0 {
+		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	} else {
+		var countEst statistics.RowEstimate
+		countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
+		path.CountAfterAccess = countEst.Est
+	}
 	if !isIm {
 		// Check if we need to apply a lower bound to CountAfterAccess
 		adjustCountAfterAccess(ds, path)
@@ -593,6 +602,8 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
+			// Reevaluate path.IsSingleScan because it may have been set incorrectly
+			// in the pruning logic.
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3
