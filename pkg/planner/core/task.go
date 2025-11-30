@@ -661,14 +661,9 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 			t = cop.ConvertToRootTask(p.SCtx())
 		}
 		if len(cop.IdxMergePartPlans) == 0 {
-			// If we want to attach the Limit to the cop task side, then:
-			// - there should be no filters calculated at TiDB side.
-			// - One of the following condition should be satisfied:
-			//   - The data don't need to return in index order -> we can attach it to index side or table side.
-			//   - The index side is not finished yet -> we can attach it to index side.
-			//   - There's no index side -> we can attach it to table side.
-			//   - It's not TiCI cop -> Do it usually.
-			if (!cop.KeepOrder || !cop.IndexPlanFinished || cop.IndexPlan == nil || cop.GetStoreType() != kv.TiCI) && len(cop.RootTaskConds) == 0 {
+			// For double read which requires order being kept, the limit cannot be pushed down to the table side,
+			// because handles would be reordered before being sent to table scan.
+			if (!cop.KeepOrder || !cop.IndexPlanFinished || cop.IndexPlan == nil) && len(cop.RootTaskConds) == 0 {
 				// When limit is pushed down, we should remove its offset.
 				newCount := p.Offset + p.Count
 				childProfile := cop.Plan().StatsInfo()
