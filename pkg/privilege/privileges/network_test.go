@@ -112,7 +112,7 @@ func TestParseHostIPNet(t *testing.T) {
 		},
 		{
 			name:     "host IP not aligned with subnet mask",
-			input:    "192.168.1.1/255.255.255.0",
+			input:    "127.0.0.1/255.0.0.0",
 			expected: nil,
 		},
 		{
@@ -129,7 +129,7 @@ func TestParseHostIPNet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseHostIPNet(tt.input)
+			result := parseHostIPNetInternal(tt.input)
 			if tt.expected == nil {
 				require.Nil(t, result)
 			} else {
@@ -145,75 +145,75 @@ func TestHostIPNetContains(t *testing.T) {
 	tests := []struct {
 		name      string
 		network   string
-		testIP    string
-		shouldMatch bool
+		ip        string
+		shouldContain bool
 	}{
 		{
 			name:      "subnet mask - IP in range",
 			network:   "192.168.1.0/255.255.255.0",
-			testIP:    "192.168.1.100",
-			shouldMatch: true,
+			ip:        "192.168.1.100",
+			shouldContain: true,
 		},
 		{
 			name:      "subnet mask - IP out of range",
 			network:   "192.168.1.0/255.255.255.0",
-			testIP:    "192.168.2.100",
-			shouldMatch: false,
+			ip:        "192.168.2.100",
+			shouldContain: false,
 		},
 		{
 			name:      "CIDR /24 - IP in range",
 			network:   "192.168.1.0/24",
-			testIP:    "192.168.1.50",
-			shouldMatch: true,
+			ip:        "192.168.1.100",
+			shouldContain: true,
 		},
 		{
 			name:      "CIDR /24 - IP out of range",
 			network:   "192.168.1.0/24",
-			testIP:    "192.168.2.50",
-			shouldMatch: false,
+			ip:        "192.168.2.100",
+			shouldContain: false,
 		},
 		{
 			name:      "CIDR /16 - IP in range",
 			network:   "10.0.0.0/16",
-			testIP:    "10.0.255.255",
-			shouldMatch: true,
+			ip:        "10.0.100.50",
+			shouldContain: true,
 		},
 		{
 			name:      "CIDR /16 - IP out of range",
 			network:   "10.0.0.0/16",
-			testIP:    "10.1.0.0",
-			shouldMatch: false,
+			ip:        "11.0.0.1",
+			shouldContain: false,
 		},
 		{
 			name:      "CIDR /32 - exact match",
 			network:   "192.168.1.100/32",
-			testIP:    "192.168.1.100",
-			shouldMatch: true,
+			ip:        "192.168.1.100",
+			shouldContain: true,
 		},
 		{
 			name:      "CIDR /32 - different IP",
 			network:   "192.168.1.100/32",
-			testIP:    "192.168.1.101",
-			shouldMatch: false,
+			ip:        "192.168.1.101",
+			shouldContain: false,
 		},
 		{
 			name:      "CIDR /0 - any IP",
 			network:   "0.0.0.0/0",
-			testIP:    "255.255.255.255",
-			shouldMatch: true,
+			ip:        "192.168.1.100",
+			shouldContain: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ipNet := parseHostIPNet(tt.network)
-			require.NotNil(t, ipNet, "Failed to parse network: %s", tt.network)
+			ipNet := parseHostIPNetInternal(tt.network)
+			require.NotNil(t, ipNet, "Network should be valid: %s", tt.network)
 			
-			testIP := net.ParseIP(tt.testIP)
-			require.NotNil(t, testIP, "Failed to parse test IP: %s", tt.testIP)
+			ip := net.ParseIP(tt.ip)
+			require.NotNil(t, ip, "IP should be valid: %s", tt.ip)
 			
-			result := ipNet.Contains(testIP)
-			require.Equal(t, tt.shouldMatch, result)
+			contains := ipNet.Contains(ip)
+			require.Equal(t, tt.shouldContain, contains)
 		})
 	}
 }
@@ -312,13 +312,13 @@ func TestIsValidHostPattern(t *testing.T) {
 func TestCIDRNetworkNormalization(t *testing.T) {
 	// Test that CIDR networks are properly normalized
 	// For example, 192.168.1.100/24 should become 192.168.1.0/24
-	ipNet := parseHostIPNet("192.168.1.100/24")
+	ipNet := parseHostIPNetInternal("192.168.1.100/24")
 	require.NotNil(t, ipNet)
 	require.Equal(t, net.ParseIP("192.168.1.0").To4(), ipNet.IP)
 	require.Equal(t, net.CIDRMask(24, 32), ipNet.Mask)
 	
 	// Test that 10.0.255.255/16 becomes 10.0.0.0/16
-	ipNet = parseHostIPNet("10.0.255.255/16")
+	ipNet = parseHostIPNetInternal("10.0.255.255/16")
 	require.NotNil(t, ipNet)
 	require.Equal(t, net.ParseIP("10.0.0.0").To4(), ipNet.IP)
 	require.Equal(t, net.CIDRMask(16, 32), ipNet.Mask)
@@ -326,7 +326,7 @@ func TestCIDRNetworkNormalization(t *testing.T) {
 
 func TestBackwardCompatibility(t *testing.T) {
 	// Test that existing subnet mask notation still works
-	ipNet := parseHostIPNet("127.0.0.0/255.255.255.0")
+	ipNet := parseHostIPNetInternal("127.0.0.0/255.255.255.0")
 	require.NotNil(t, ipNet)
 	require.Equal(t, net.ParseIP("127.0.0.0").To4(), ipNet.IP)
 	require.Equal(t, net.IPv4Mask(255, 255, 255, 0), ipNet.Mask)

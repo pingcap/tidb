@@ -20,10 +20,8 @@ import (
 	"strings"
 )
 
-// parseHostIPNet parses an IPv4 address and its subnet mask (e.g. `127.0.0.0/255.255.255.0`),
-// or CIDR notation (e.g. `127.0.0.0/24`), return the `IPNet` struct which represent the IP range info.
-// `IPNet` is used to check if a giving IP (e.g. `127.0.0.1`) is in its IP range by call `IPNet.Contains(ip)`.
-func parseHostIPNet(s string) *net.IPNet {
+// parseHostIPNetInternal is the internal implementation that supports both CIDR and subnet mask notation.
+func parseHostIPNetInternal(s string) *net.IPNet {
 	i := strings.IndexByte(s, '/')
 	if i < 0 {
 		return nil
@@ -77,6 +75,15 @@ func parseHostIPNet(s string) *net.IPNet {
 	}
 }
 
+// ParseHostIPNet parses an IPv4 address and its subnet mask (e.g. `127.0.0.0/255.255.255.0`),
+// return the `IPNet` struct which represent the IP range info (e.g. `127.0.0.1 ~ 127.0.0.255`).
+// `IPNet` is used to check if a giving IP (e.g. `127.0.0.1`) is in its IP range by call `IPNet.Contains(ip)`.
+// This function supports both CIDR notation and subnet mask notation.
+// Examples: "192.168.1.0/24" (CIDR) or "192.168.1.0/255.255.255.0" (subnet mask)
+func ParseHostIPNet(s string) *net.IPNet {
+	return parseHostIPNetInternal(s)
+}
+
 // IsValidHostPattern checks if the host pattern is valid for user creation.
 // It supports wildcards (%), exact hosts, CIDR notation, and subnet mask notation.
 func IsValidHostPattern(host string) bool {
@@ -86,7 +93,7 @@ func IsValidHostPattern(host string) bool {
 	
 	// Check for CIDR or subnet mask notation
 	if strings.Contains(host, "/") {
-		return parseHostIPNet(host) != nil
+		return parseHostIPNetInternal(host) != nil
 	}
 	
 	// Check for wildcard pattern

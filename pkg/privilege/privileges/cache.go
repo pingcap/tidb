@@ -938,8 +938,15 @@ func loadTable(exec sqlexec.SQLExecutor, sql string,
 	}
 }
 
-// parseHostIPNet is defined in network.go and supports both CIDR notation and subnet mask notation.
+// parseHostIPNet parses an IPv4 address and its subnet mask (e.g. `127.0.0.0/255.255.255.0`),
+// return the `IPNet` struct which represent the IP range info (e.g. `127.0.0.1 ~ 127.0.0.255`).
+// `IPNet` is used to check if a giving IP (e.g. `127.0.0.1`) is in its IP range by call `IPNet.Contains(ip)`.
+// This function now supports both CIDR notation and subnet mask notation.
 // Examples: "192.168.1.0/24" (CIDR) or "192.168.1.0/255.255.255.0" (subnet mask)
+func parseHostIPNet(s string) *net.IPNet {
+	// Call the enhanced implementation from network.go
+	return ParseHostIPNet(s)
+}
 
 func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *resolve.ResultField) {
 	switch f.ColumnAsName.L {
