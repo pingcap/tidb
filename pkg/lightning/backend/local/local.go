@@ -1132,8 +1132,11 @@ func (local *Backend) generateAndSendJob(
 						}
 						return err
 					}
+					// reference the job to prevent the job from being GCed before being put into jobToWorkerCh.
 					for _, job := range jobs {
 						job.ref(jobWg)
+					}
+					for _, job := range jobs {
 						select {
 						case <-egCtx.Done():
 							// this job is not put into jobToWorkerCh
@@ -1276,6 +1279,35 @@ func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
 	return ext
 }
 
+// verifyImportedStatistics verifies the imported statistics for external engines.
+// It checks if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used (which are not yet implemented),
+// and verifies that the imported length matches the expected length.
+func verifyImportedStatistics(e engineapi.Engine, importedLength int64) error {
+	// Check if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used.
+	// These options are not yet implemented for local backend, so we skip
+	// the statistics verification and return an error to remind future
+	// implementers to add support for this check.
+	if extEngine, ok := e.(*external.Engine); ok {
+		failpoint.Inject("skipOnDuplicateKeyCheck", func(_ failpoint.Value) {
+			failpoint.Return(nil)
+		})
+		onDup := extEngine.GetOnDup()
+		if onDup == engineapi.OnDuplicateKeyRecord || onDup == engineapi.OnDuplicateKeyRemove {
+			return errors.Errorf("OnDuplicateKeyRecord and OnDuplicateKeyRemove are not yet implemented for local backend. " +
+				"When implementing these options, please also implement the statistics verification for them.")
+		}
+
+		// Verify the imported statistics after import.
+		// For external engine, use the total number of KVs loaded in LoadIngestData
+		// (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
+		expectedLength := extEngine.GetTotalLoadedKVsCount()
+		if importedLength != expectedLength {
+			return errors.Errorf("imported length mismatch, expected %d, got %d", expectedLength, importedLength)
+		}
+	}
+	return nil
+}
+
 // ImportEngine imports an engine to TiKV.
 func (local *Backend) ImportEngine(
 	ctx context.Context,
@@ -1391,6 +1423,11 @@ func (local *Backend) ImportEngine(
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
+
+		if err := verifyImportedStatistics(e, importedLength); err != nil {
+			return err
+		}
+
 		tidblogutil.Logger(ctx).Info("import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),
