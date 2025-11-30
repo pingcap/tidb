@@ -938,35 +938,8 @@ func loadTable(exec sqlexec.SQLExecutor, sql string,
 	}
 }
 
-// parseHostIPNet parses an IPv4 address and its subnet mask (e.g. `127.0.0.0/255.255.255.0`),
-// return the `IPNet` struct which represent the IP range info (e.g. `127.0.0.1 ~ 127.0.0.255`).
-// `IPNet` is used to check if a giving IP (e.g. `127.0.0.1`) is in its IP range by call `IPNet.Contains(ip)`.
-func parseHostIPNet(s string) *net.IPNet {
-	i := strings.IndexByte(s, '/')
-	if i < 0 {
-		return nil
-	}
-	hostIP := net.ParseIP(s[:i]).To4()
-	if hostIP == nil {
-		return nil
-	}
-	maskIP := net.ParseIP(s[i+1:]).To4()
-	if maskIP == nil {
-		return nil
-	}
-	mask := net.IPv4Mask(maskIP[0], maskIP[1], maskIP[2], maskIP[3])
-	// We must ensure that: <host_ip> & <netmask> == <host_ip>
-	// e.g. `127.0.0.1/255.0.0.0` is an illegal string,
-	// because `127.0.0.1` & `255.0.0.0` == `127.0.0.0`, but != `127.0.0.1`
-	// see https://dev.mysql.com/doc/refman/5.7/en/account-names.html
-	if !hostIP.Equal(hostIP.Mask(mask)) {
-		return nil
-	}
-	return &net.IPNet{
-		IP:   hostIP,
-		Mask: mask,
-	}
-}
+// parseHostIPNet is defined in network.go and supports both CIDR notation and subnet mask notation.
+// Examples: "192.168.1.0/24" (CIDR) or "192.168.1.0/255.255.255.0" (subnet mask)
 
 func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *resolve.ResultField) {
 	switch f.ColumnAsName.L {
