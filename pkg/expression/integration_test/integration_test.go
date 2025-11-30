@@ -628,7 +628,7 @@ func TestVectorExplainTruncate(t *testing.T) {
 		VEC_COSINE_DISTANCE(c, '[11111111111,11111111111.23456789,3.1,5.12456]'),
 		VEC_COSINE_DISTANCE(c, '[-11111111111,-11111111111.23456789,-3.1,-5.12456]')
 	FROM t;`).Check(testkit.Rows(
-		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#3, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#4, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#5`,
+		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#4, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#5, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#6`,
 		`└─TableReader 10000.00 root  data:TableFullScan`,
 		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
 	))
