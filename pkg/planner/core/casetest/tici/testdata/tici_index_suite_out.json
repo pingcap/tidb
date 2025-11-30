@@ -314,7 +314,7 @@
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 10, keep order:false, stats:pseudo",
           "  └─TopN(Probe) 10.00 cop[tikv]  test.t4.i, test.t4.ts:desc, offset:0, count:10",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
@@ -325,7 +325,7 @@
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts, offset:5, count:10",
           "└─IndexLookUp 15.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 15, keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
           "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts, offset:0, count:15",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
@@ -336,7 +336,7 @@
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, offset:5, count:10",
           "└─IndexLookUp 15.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 15, keep order:false, stats:pseudo",
           "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts:desc, offset:0, count:15",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
@@ -347,7 +347,7 @@
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:ge(test.t4.d, 2025-11-01 00:00:00.000000), in(test.t4.i, 1, 2, 3), le(test.t4.d, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:ge(test.t4.d, 2025-11-01 00:00:00.000000), in(test.t4.i, 1, 2, 3), le(test.t4.d, 2025-11-30 00:00:00.000000), topK: 10, keep order:false, stats:pseudo",
           "  └─TopN(Probe) 10.00 cop[tikv]  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:10",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
@@ -358,7 +358,7 @@
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 10, keep order:false, stats:pseudo",
           "  └─TopN(Probe) 10.00 cop[tikv]  test.t4.i, test.t4.ts:desc, offset:0, count:10",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],

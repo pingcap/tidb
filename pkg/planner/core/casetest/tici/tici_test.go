@@ -71,7 +71,7 @@ func TestTiCISearchExplain(t *testing.T) {
 		},
 		"sort": {
 			"columns": ["i", "ts", "d"],
-			"orders": ["asc", "desc", "asc"]
+			"order": ["asc", "desc", "asc"]
 		}
 	}'`)
 
@@ -126,7 +126,7 @@ func TestTiCIWithIndexHintCases(t *testing.T) {
 		},
 		"sort": {
 			"columns": ["i", "ts", "d"],
-			"orders": ["asc", "desc", "asc"]
+			"order": ["asc", "desc", "asc"]
 		}
 	}'`)
 	dom := domain.GetDomain(tk.Session())
