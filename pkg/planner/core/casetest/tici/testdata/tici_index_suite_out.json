@@ -290,6 +290,16 @@
         "Warn": null
       },
       {
+        "SQL": "explain format='brief' select * from t4 where i > 1 and ts < '2025-11-30 00:00:00' limit 10 offset 15",
+        "Plan": [
+          "IndexLookUp 10.00 root  limit embedded(offset:15, count:10)",
+          "├─Limit(Build) 2.50 cop[tici]  offset:0, count:25",
+          "│ └─IndexRangeScan 2.50 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:gt(test.t4.i, 1), lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 2.50 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i",
         "Plan": [
           "Sort 10000.00 root  test.t4.i",
@@ -435,32 +445,6 @@
           "└─TableRangeScan 3333.33 cop[tikv] table:t2 range:(10,+inf], keep order:true, stats:pseudo"
         ],
         "Warn": null
-      }
-    ]
-  },
-  {
-    "Name": "TestTiCIWithIndexHintCases",
-    "Cases": [
-      {
-        "SQL": "explain format='brief' select * from t1 use index(idx_title)",
-        "Plan": [
-          "TableReader 10000.00 root  data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "[planner:3126]Hint USE_INDEX is ignored as conflicting/duplicated."
-        ]
-      },
-      {
-        "SQL": "explain format='brief' select * from t1 use index(idx_field) where fts_match_word('hello', title)",
-        "Plan": [
-          "IndexLookUp 1000.00 root  ",
-          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "[planner:3126]Hint USE_INDEX is ignored as conflicting/duplicated."
-        ]
       }
     ]
   }
