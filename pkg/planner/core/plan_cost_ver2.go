@@ -142,12 +142,10 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexScanCostFactor)
-	// Add a small tie-breaker cost based on the last digit of the index ID to differentiate identical indexes.
-	// Using ID % 10 / 100 provides 10 unique values (0.00 to 0.09) while keeping the tie-breaker small enough
-	// to only matter when costs are otherwise identical. This works correctly regardless of ID size since
-	// modulo 10 always returns 0-9, whether the ID is 1 or 1e15.
+	// Add a small/arbitrary tie-breaker cost based on the last digit of the index ID to differentiate
+	// identical indexes. Dividing by 1000000 ensures the tie-breaker has low impact on the total cost.
 	if p.Index != nil {
-		tieBreakerValue := float64(p.Index.ID%10) / 100.0
+		tieBreakerValue := float64(p.Index.ID%10) / 1000000.0
 		tieBreakerCost := costusage.NewCostVer2(option, scanFactor, tieBreakerValue,
 			func() string { return fmt.Sprintf("index-id-tiebreaker(%v%%10/100)", p.Index.ID%10) })
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, tieBreakerCost)
