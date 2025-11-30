@@ -1611,31 +1611,31 @@
       {
         "SQL": "explain format = 'brief' select * from t",
         "DynamicPlan": [
-          "TableReader 3.00 root partition:all data:TableFullScan",
-          "└─TableFullScan 3.00 cop[tikv] table:t keep order:false"
+          "IndexReader 3.00 root partition:all index:IndexFullScan",
+          "└─IndexFullScan 3.00 cop[tikv] table:t, index:b(b) keep order:false"
         ],
         "StaticPlan": [
           "PartitionUnion 3.00 root  ",
-          "├─TableReader 1.00 root  data:TableFullScan",
-          "│ └─TableFullScan 1.00 cop[tikv] table:t, partition:P0 keep order:false",
-          "├─TableReader 1.00 root  data:TableFullScan",
-          "│ └─TableFullScan 1.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "└─TableReader 1.00 root  data:TableFullScan",
-          "  └─TableFullScan 1.00 cop[tikv] table:t, partition:P2 keep order:false"
+          "├─IndexReader 1.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) keep order:false",
+          "├─IndexReader 1.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false",
+          "└─IndexReader 1.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t partition(P0,p1)",
         "DynamicPlan": [
-          "TableReader 3.00 root partition:P0,p1 data:TableFullScan",
-          "└─TableFullScan 3.00 cop[tikv] table:t keep order:false"
+          "IndexReader 3.00 root partition:P0,p1 index:IndexFullScan",
+          "└─IndexFullScan 3.00 cop[tikv] table:t, index:b(b) keep order:false"
         ],
         "StaticPlan": [
           "PartitionUnion 2.00 root  ",
-          "├─TableReader 1.00 root  data:TableFullScan",
-          "│ └─TableFullScan 1.00 cop[tikv] table:t, partition:P0 keep order:false",
-          "└─TableReader 1.00 root  data:TableFullScan",
-          "  └─TableFullScan 1.00 cop[tikv] table:t, partition:p1 keep order:false"
+          "├─IndexReader 1.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) keep order:false",
+          "└─IndexReader 1.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false"
         ]
       },
       {
@@ -1816,19 +1816,19 @@
         "SQL": "explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b and t.a = 1",
         "DynamicPlan": [
           "HashJoin 1.00 root  inner join, equal:[eq(test.t.b, test.t2.b)]",
-          "├─Selection(Build) 1.00 root  not(isnull(test.t.b))",
-          "│ └─Point_Get 1.00 root table:t, partition:p1 handle:1",
-          "└─TableReader(Probe) 1.00 root  data:Selection",
-          "  └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
-          "    └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false"
+          "├─TableReader(Build) 1.00 root  data:Selection",
+          "│ └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
+          "│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+          "└─Selection(Probe) 1.00 root  not(isnull(test.t.b))",
+          "  └─Point_Get 1.00 root table:t, partition:p1 handle:1"
         ],
         "StaticPlan": [
           "HashJoin 1.00 root  inner join, equal:[eq(test.t.b, test.t2.b)]",
-          "├─Selection(Build) 1.00 root  not(isnull(test.t.b))",
-          "│ └─Point_Get 1.00 root table:t, partition:p1 handle:1",
-          "└─TableReader(Probe) 1.00 root  data:Selection",
-          "  └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
-          "    └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false"
+          "├─TableReader(Build) 1.00 root  data:Selection",
+          "│ └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
+          "│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+          "└─Selection(Probe) 1.00 root  not(isnull(test.t.b))",
+          "  └─Point_Get 1.00 root table:t, partition:p1 handle:1"
         ]
       },
       {

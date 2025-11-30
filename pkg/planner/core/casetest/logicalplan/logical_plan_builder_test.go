@@ -43,7 +43,7 @@ WHERE EXISTS
                RIGHT JOIN mysql_3 a2
                WHERE t1.col_pk_date IS NULL
                GROUP BY a1.col_pk_char)) )`).Check(testkit.Rows("TableDual 0.00 root  rows:0",
-			"ScalarSubQuery N/A root  Output: ScalarQueryCol#25, ScalarQueryCol#26, ScalarQueryCol#27, ScalarQueryCol#28, ScalarQueryCol#29, ScalarQueryCol#30",
+			"ScalarSubQuery N/A root  Output: ScalarQueryCol#29, ScalarQueryCol#30, ScalarQueryCol#31, ScalarQueryCol#32, ScalarQueryCol#33, ScalarQueryCol#34, ScalarQueryCol#35",
 			"└─HashJoin 8000.00 root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.mysql_3.col_pk_char, test.mysql_3.col_pk_char)]",
 			"  ├─HashAgg(Build) 1.00 root  group by:test.mysql_3.col_pk_char, funcs:firstrow(test.mysql_3.col_pk_char)->test.mysql_3.col_pk_char",
 			"  │ └─TableDual 0.00 root  rows:0",
