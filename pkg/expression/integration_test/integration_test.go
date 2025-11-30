@@ -640,21 +640,21 @@ func TestVectorConstantExplain(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t(c VECTOR);")
 	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') FROM t;`).Check(testkit.Rows(
-		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
 		"└─TableReader 10000.00 root  data:TableFullScan",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
-		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
 		"└─TableReader 10000.00 root  data:TableFullScan",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`EXPLAIN format = 'brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
-		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─TopN 10.00 root  Column#4, offset:0, count:10",
+		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"└─TopN 10.00 root  Column#5, offset:0, count:10",
 		"  └─TableReader 10.00 root  data:TopN",
-		"    └─TopN 10.00 cop[tikv]  Column#4, offset:0, count:10",
-		"      └─Projection 10.00 cop[tikv]  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"    └─TopN 10.00 cop[tikv]  Column#5, offset:0, count:10",
+		"      └─Projection 10.00 cop[tikv]  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#5",
 		"        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
@@ -684,7 +684,7 @@ func TestVectorConstantExplain(t *testing.T) {
 	fmt.Println(planTree)
 	fmt.Println("++++")
 	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
-	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3`))
+	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#4`))
 	require.True(t, strings.Contains(planTree, `	└─TableReader_6    	root     	10000  	data:TableFullScan_5`))
 	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_5	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
