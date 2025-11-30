@@ -26,11 +26,14 @@ type SDKOption func(*SDKConfig)
 // SDKConfig is the configuration for the SDK
 type SDKConfig struct {
 	// Loader options
-	concurrency    int
-	sqlMode        mysql.SQLMode
-	fileRouteRules []*config.FileRouteRule
-	filter         []string
-	charset        string
+	concurrency      int
+	sqlMode          mysql.SQLMode
+	fileRouteRules   []*config.FileRouteRule
+	routes           config.Routes
+	filter           []string
+	charset          string
+	maxScanFiles     *int
+	skipInvalidFiles bool
 
 	// General options
 	logger log.Logger
@@ -75,10 +78,17 @@ func WithFilter(filter []string) SDKOption {
 	}
 }
 
-// WithFileRouters specifies custom file routing rules
-func WithFileRouters(routers []*config.FileRouteRule) SDKOption {
-	return func(cfg *SDKConfig) {
-		cfg.fileRouteRules = routers
+// WithFileRouters sets the file routing rules.
+func WithFileRouters(rules []*config.FileRouteRule) SDKOption {
+	return func(c *SDKConfig) {
+		c.fileRouteRules = rules
+	}
+}
+
+// WithRoutes sets the table routing rules.
+func WithRoutes(routes config.Routes) SDKOption {
+	return func(c *SDKConfig) {
+		c.routes = routes
 	}
 }
 
@@ -88,5 +98,21 @@ func WithCharset(cs string) SDKOption {
 		if cs != "" {
 			cfg.charset = cs
 		}
+	}
+}
+
+// WithMaxScanFiles specifies custom file scan limitation
+func WithMaxScanFiles(limit int) SDKOption {
+	return func(cfg *SDKConfig) {
+		if limit > 0 {
+			cfg.maxScanFiles = &limit
+		}
+	}
+}
+
+// WithSkipInvalidFiles specifies whether sdk need raise error on found invalid files
+func WithSkipInvalidFiles(skip bool) SDKOption {
+	return func(cfg *SDKConfig) {
+		cfg.skipInvalidFiles = skip
 	}
 }

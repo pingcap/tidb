@@ -34,6 +34,7 @@ type DefaultJobMonitor struct {
 	sdk          importsdk.SDK
 	cpMgr        CheckpointManager
 	pollInterval time.Duration
+	logInterval  time.Duration
 	logger       log.Logger
 }
 
@@ -42,12 +43,14 @@ func NewJobMonitor(
 	sdk importsdk.SDK,
 	cpMgr CheckpointManager,
 	pollInterval time.Duration,
+	logInterval time.Duration,
 	logger log.Logger,
 ) JobMonitor {
 	return &DefaultJobMonitor{
 		sdk:          sdk,
 		cpMgr:        cpMgr,
 		pollInterval: pollInterval,
+		logInterval:  logInterval,
 		logger:       logger,
 	}
 }
@@ -72,12 +75,34 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 	ticker := time.NewTicker(m.pollInterval)
 	defer ticker.Stop()
 
+	logTicker := time.NewTicker(m.logInterval)
+	defer logTicker.Stop()
+
 	m.logger.Info("waiting for all jobs to complete", zap.Int("totalJobs", len(jobs)), zap.String("groupKey", groupKey))
+
+	var (
+		runningCnt        int
+		pendingCnt        int
+		completedCnt      int
+		failedCnt         int
+		cancelledCnt      int
+		totalImportedRows int64
+	)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-logTicker.C:
+			m.logger.Info("job group progress",
+				zap.Int("total", len(jobs)),
+				zap.Int("pending", pendingCnt),
+				zap.Int("running", runningCnt),
+				zap.Int("completed", completedCnt),
+				zap.Int("failed", failedCnt),
+				zap.Int("cancelled", cancelledCnt),
+				zap.Int64("importedRows", totalImportedRows),
+			)
 		case <-ticker.C:
 			// Get detailed status for each job
 			statuses, err := m.sdk.GetJobsByGroup(ctx, groupKey)
@@ -86,13 +111,13 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 				continue
 			}
 
-			var (
-				runningCnt   int
-				pendingCnt   int
-				completedCnt int
-				failedCnt    int
-				cancelledCnt int
-			)
+			// Reset counters
+			runningCnt = 0
+			pendingCnt = 0
+			completedCnt = 0
+			failedCnt = 0
+			cancelledCnt = 0
+			totalImportedRows = 0
 
 			// Process each job status
 			for _, status := range statuses {
@@ -100,6 +125,8 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 				if !ok {
 					continue
 				}
+
+				totalImportedRows += status.ImportedRows
 
 				// Count stats for tracked jobs
 				switch {
@@ -134,15 +161,6 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 					m.logJobCompletion(job, status, &firstError)
 				}
 			}
-
-			m.logger.Info("job group progress",
-				zap.Int("total", len(jobs)),
-				zap.Int("pending", pendingCnt),
-				zap.Int("running", runningCnt),
-				zap.Int("completed", completedCnt),
-				zap.Int("failed", failedCnt),
-				zap.Int("cancelled", cancelledCnt),
-			)
 
 			// Fast-fail: if any job failed, cancel all and return error immediately
 			if failedCnt > 0 {
@@ -218,8 +236,5 @@ func (m *DefaultJobMonitor) recordCompletion(ctx context.Context, job *ImportJob
 		return fmt.Errorf("update checkpoint: %w", err)
 	}
 
-	if checkpoint.Status == CheckpointStatusFailed {
-		return fmt.Errorf("import job failed: %s", status.ResultMessage)
-	}
 	return nil
 }

@@ -60,7 +60,7 @@ const (
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
 	// BackendImportInto is a constant for choosing the "ImportInto" backend in the configuration.
-	BackendImportInto = "importinto"
+	BackendImportInto = "import-into"
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -354,6 +354,12 @@ func (l *Lightning) adjust(i *TikvImporter) {
 			l.IndexConcurrency = l.RegionConcurrency
 		}
 	case BackendImportInto:
+		if len(l.MetaSchemaName) == 0 {
+			l.MetaSchemaName = defaultMetaSchemaName
+		}
+		if l.TableConcurrency == 0 {
+			l.TableConcurrency = l.RegionConcurrency
+		}
 	case BackendLocal:
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = defaultIndexConcurrency

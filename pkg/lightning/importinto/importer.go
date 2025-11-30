@@ -89,7 +89,15 @@ func NewImporter(
 	}
 
 	if imp.sdk == nil {
-		sdk, err := importsdk.NewImportSDK(ctx, cfg.Mydumper.SourceDir, db)
+		sdkOpts := []importsdk.SDKOption{
+			importsdk.WithSQLMode(cfg.TiDB.SQLMode),
+			importsdk.WithFilter(cfg.Mydumper.Filter),
+			importsdk.WithFileRouters(cfg.Mydumper.FileRouters),
+			importsdk.WithRoutes(cfg.Routes),
+			importsdk.WithCharset(cfg.Mydumper.CharacterSet),
+			importsdk.WithLogger(imp.logger),
+		}
+		sdk, err := importsdk.NewImportSDK(ctx, cfg.Mydumper.SourceDir, db, sdkOpts...)
 		if err != nil {
 			return nil, err
 		}
@@ -129,6 +137,7 @@ func (i *Importer) buildOrchestrator() JobOrchestrator {
 		SDK:               i.sdk,
 		SubmitConcurrency: i.cfg.App.TableConcurrency,
 		PollInterval:      2 * time.Second,
+		LogInterval:       i.cfg.Cron.LogProgress.Duration,
 		Logger:            i.logger.With(zap.String("component", "orchestrator")),
 	})
 }

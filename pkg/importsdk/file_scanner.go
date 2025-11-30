@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 )
@@ -29,6 +30,7 @@ import (
 // FileScanner defines the interface for scanning files
 type FileScanner interface {
 	CreateSchemasAndTables(ctx context.Context) error
+	CreateSchemaAndTableByName(ctx context.Context, schema, table string) error
 	GetTableMetas(ctx context.Context) ([]*TableMeta, error)
 	GetTableMetaByName(ctx context.Context, db, table string) (*TableMeta, error)
 	GetTotalSize(ctx context.Context) int64
@@ -61,11 +63,19 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 		FileRouters:      cfg.fileRouteRules,
 		DefaultFileRules: len(cfg.fileRouteRules) == 0,
 		CharacterSet:     cfg.charset,
+		Routes:           cfg.routes,
 	}
 
-	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store)
+	var loaderOptions []mydump.MDLoaderSetupOption
+	if cfg.maxScanFiles != nil && *cfg.maxScanFiles > 0 {
+		loaderOptions = append(loaderOptions, mydump.WithMaxScanFiles(*cfg.maxScanFiles))
+	}
+
+	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to create MyDump loader (source=%s, charset=%s, filter=%v). Please check dump layout and router rules", sourcePath, cfg.charset, cfg.filter)
+		if loader == nil || !errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
+			return nil, errors.Annotatef(err, "failed to create MyDump loader (source=%s, charset=%s, filter=%v). Please check dump layout and router rules", sourcePath, cfg.charset, cfg.filter)
+		}
 	}
 
 	return &fileScanner{
@@ -101,6 +111,46 @@ func (s *fileScanner) CreateSchemasAndTables(ctx context.Context) error {
 	return nil
 }
 
+// CreateSchemaAndTableByName creates specific table and database schema from source
+func (s *fileScanner) CreateSchemaAndTableByName(ctx context.Context, schema, table string) error {
+	dbMetas := s.loader.GetDatabases()
+	// Find the specific table
+	for _, dbMeta := range dbMetas {
+		if dbMeta.Name != schema {
+			continue
+		}
+
+		for _, tblMeta := range dbMeta.Tables {
+			if tblMeta.Name != table {
+				continue
+			}
+
+			importer := mydump.NewSchemaImporter(
+				s.logger,
+				s.config.sqlMode,
+				s.db,
+				s.store,
+				s.config.concurrency,
+			)
+
+			err := importer.Run(ctx, []*mydump.MDDatabaseMeta{{
+				Name:       dbMeta.Name,
+				SchemaFile: dbMeta.SchemaFile,
+				Tables:     []*mydump.MDTableMeta{tblMeta},
+			}})
+			if err != nil {
+				return errors.Annotatef(err, "creating schema and table failed (source=%s, concurrency=%d, schema=%s, table=%s)", s.sourcePath, s.config.concurrency, schema, table)
+			}
+
+			return nil
+		}
+
+		return errors.Annotatef(ErrTableNotFound, "schema=%s, table=%s", schema, table)
+	}
+
+	return errors.Annotatef(ErrSchemaNotFound, "schema=%s", schema)
+}
+
 func (s *fileScanner) GetTableMetas(context.Context) ([]*TableMeta, error) {
 	dbMetas := s.loader.GetDatabases()
 	allFiles := s.loader.GetAllFiles()
@@ -109,8 +159,12 @@ func (s *fileScanner) GetTableMetas(context.Context) ([]*TableMeta, error) {
 		for _, tblMeta := range dbMeta.Tables {
 			tableMeta, err := s.buildTableMeta(dbMeta, tblMeta, allFiles)
 			if err != nil {
-				return nil, errors.Wrapf(err, "failed to build metadata for table %s.%s",
+				retErr := errors.Wrapf(err, "failed to build metadata for table %s.%s",
 					dbMeta.Name, tblMeta.Name)
+				if s.config.skipInvalidFiles {
+					continue
+				}
+				return nil, retErr
 			}
 			results = append(results, tableMeta)
 		}

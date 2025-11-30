@@ -53,6 +53,7 @@ type OrchestratorConfig struct {
 	Monitor           JobMonitor
 	SubmitConcurrency int
 	PollInterval      time.Duration
+	LogInterval       time.Duration
 	Logger            log.Logger
 }
 
@@ -66,10 +67,14 @@ func NewJobOrchestrator(cfg OrchestratorConfig) JobOrchestrator {
 	if pollInterval == 0 {
 		pollInterval = 2 * time.Second
 	}
+	logInterval := cfg.LogInterval
+	if logInterval == 0 {
+		logInterval = 5 * time.Minute // Default to 5 minutes
+	}
 
 	monitor := cfg.Monitor
 	if monitor == nil {
-		monitor = NewJobMonitor(cfg.SDK, cfg.CheckpointMgr, pollInterval, cfg.Logger)
+		monitor = NewJobMonitor(cfg.SDK, cfg.CheckpointMgr, pollInterval, logInterval, cfg.Logger)
 	}
 
 	return &DefaultJobOrchestrator{

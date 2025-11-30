@@ -59,6 +59,20 @@ func (mr *MockFileScannerMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockFileScanner)(nil).Close))
 }
 
+// CreateSchemaAndTableByName mocks base method.
+func (m *MockFileScanner) CreateSchemaAndTableByName(arg0 context.Context, arg1, arg2 string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateSchemaAndTableByName", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateSchemaAndTableByName indicates an expected call of CreateSchemaAndTableByName.
+func (mr *MockFileScannerMockRecorder) CreateSchemaAndTableByName(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemaAndTableByName", reflect.TypeOf((*MockFileScanner)(nil).CreateSchemaAndTableByName), arg0, arg1, arg2)
+}
+
 // CreateSchemasAndTables mocks base method.
 func (m *MockFileScanner) CreateSchemasAndTables(arg0 context.Context) error {
 	m.ctrl.T.Helper()
@@ -316,6 +330,20 @@ func (m *MockSDK) Close() error {
 func (mr *MockSDKMockRecorder) Close() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockSDK)(nil).Close))
+}
+
+// CreateSchemaAndTableByName mocks base method.
+func (m *MockSDK) CreateSchemaAndTableByName(arg0 context.Context, arg1, arg2 string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateSchemaAndTableByName", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateSchemaAndTableByName indicates an expected call of CreateSchemaAndTableByName.
+func (mr *MockSDKMockRecorder) CreateSchemaAndTableByName(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemaAndTableByName", reflect.TypeOf((*MockSDK)(nil).CreateSchemaAndTableByName), arg0, arg1, arg2)
 }
 
 // CreateSchemasAndTables mocks base method.

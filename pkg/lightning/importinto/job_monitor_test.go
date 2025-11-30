@@ -37,7 +37,7 @@ func TestJobMonitor_WaitForJobs(t *testing.T) {
 	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
 	logger := log.L()
 
-	monitor := importinto.NewJobMonitor(mockSDK, mockCpMgr, time.Millisecond, logger)
+	monitor := importinto.NewJobMonitor(mockSDK, mockCpMgr, time.Millisecond, time.Hour, logger)
 
 	tests := []struct {
 		name    string
