@@ -122,7 +122,8 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) limit 1",
         "Plan": [
           "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─IndexRangeScan(Build) 0.10 cop[tici] table:t1, index:idx_title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─Limit(Build) 0.10 cop[tici]  offset:0, count:1",
+          "│ └─IndexRangeScan 0.10 cop[tici] table:t1, index:idx_title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 0.10 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -179,8 +180,9 @@
         "SQL": "explain format='brief' select /*+ LIMIT_TO_COP() */ a from t3 where fts_match_word('hello', title) limit 1",
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─IndexReader 0.10 root  index:IndexRangeScan",
-          "  └─IndexRangeScan 0.10 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "└─IndexReader 0.10 root  index:Limit",
+          "  └─Limit 0.10 cop[tici]  offset:0, count:1",
+          "    └─IndexRangeScan 0.10 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
@@ -433,6 +435,32 @@
           "└─TableRangeScan 3333.33 cop[tikv] table:t2 range:(10,+inf], keep order:true, stats:pseudo"
         ],
         "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestTiCIWithIndexHintCases",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select * from t1 use index(idx_title)",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:3126]Hint USE_INDEX is ignored as conflicting/duplicated."
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 use index(idx_field) where fts_match_word('hello', title)",
+        "Plan": [
+          "IndexLookUp 1000.00 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:3126]Hint USE_INDEX is ignored as conflicting/duplicated."
+        ]
       }
     ]
   }

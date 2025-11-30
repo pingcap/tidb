@@ -51,5 +51,12 @@
       "explain format='brief' select count(*) from t2 use index(primary) where i > 10",
       "explain format='brief' select /*+ order_index(t2, primary) */ * from t2 where i > 10 order by i"
     ]
+  },
+  {
+    "name": "TestTiCIWithIndexHintCases",
+    "cases": [
+      "explain format='brief' select * from t1 use index(idx_title)",
+      "explain format='brief' select * from t1 use index(idx_field) where fts_match_word('hello', title)"
+    ]
   }
 ]

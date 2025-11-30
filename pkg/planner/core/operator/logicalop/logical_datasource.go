@@ -179,6 +179,8 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 		if err != nil {
 			return nil, nil, err
 		}
+		// Removing the unused TiCI indexes is done later. Because we will not enter
+		// the predicate push down when the table doesn't have any filter.
 	}
 	// Removing the unused TiCI indexes is done later. Because we will not enter
 	// the predicate push down when the table doesn't have any filter.
