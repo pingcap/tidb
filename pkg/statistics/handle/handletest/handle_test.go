@@ -748,43 +748,43 @@ func TestPartitionPruneModeSessionVariable(t *testing.T) {
 					partition p1 values less than (22))`)
 
 	tk1.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
-		"TableReader 10000.00 root partition:all data:TableFullScan",
-		"└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"IndexReader 10000.00 root partition:all index:IndexFullScan",
+		"└─IndexFullScan 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
 	))
 	tk2.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
 		"PartitionUnion 20000.00 root  ",
-		"├─TableReader 10000.00 root  data:TableFullScan",
-		"│ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-		"└─TableReader 10000.00 root  data:TableFullScan",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
+		"├─IndexReader 10000.00 root  index:IndexFullScan",
+		"│ └─IndexFullScan 10000.00 cop[tikv] table:t, partition:p0, index:a(a) keep order:false, stats:pseudo",
+		"└─IndexReader 10000.00 root  index:IndexFullScan",
+		"  └─IndexFullScan 10000.00 cop[tikv] table:t, partition:p1, index:a(a) keep order:false, stats:pseudo",
 	))
 
 	tk1.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
 	tk1.MustExec(`analyze table t with 1 topn, 2 buckets`)
 	tk1.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
-		"TableReader 5.00 root partition:all data:TableFullScan",
-		"└─TableFullScan 5.00 cop[tikv] table:t keep order:false",
+		"IndexReader 5.00 root partition:all index:IndexFullScan",
+		"└─IndexFullScan 5.00 cop[tikv] table:t, index:a(a) keep order:false",
 	))
 	tk2.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
 		"PartitionUnion 5.00 root  ",
-		"├─TableReader 3.00 root  data:TableFullScan",
-		"│ └─TableFullScan 3.00 cop[tikv] table:t, partition:p0 keep order:false",
-		"└─TableReader 2.00 root  data:TableFullScan",
-		"  └─TableFullScan 2.00 cop[tikv] table:t, partition:p1 keep order:false",
+		"├─IndexReader 3.00 root  index:IndexFullScan",
+		"│ └─IndexFullScan 3.00 cop[tikv] table:t, partition:p0, index:a(a) keep order:false",
+		"└─IndexReader 2.00 root  index:IndexFullScan",
+		"  └─IndexFullScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) keep order:false",
 	))
 
 	tk1.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Static) + "'")
 	tk1.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
 		"PartitionUnion 5.00 root  ",
-		"├─TableReader 3.00 root  data:TableFullScan",
-		"│ └─TableFullScan 3.00 cop[tikv] table:t, partition:p0 keep order:false",
-		"└─TableReader 2.00 root  data:TableFullScan",
-		"  └─TableFullScan 2.00 cop[tikv] table:t, partition:p1 keep order:false",
+		"├─IndexReader 3.00 root  index:IndexFullScan",
+		"│ └─IndexFullScan 3.00 cop[tikv] table:t, partition:p0, index:a(a) keep order:false",
+		"└─IndexReader 2.00 root  index:IndexFullScan",
+		"  └─IndexFullScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) keep order:false",
 	))
 	tk2.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk2.MustQuery("explain format = 'brief' select * from t").Check(testkit.Rows(
-		"TableReader 5.00 root partition:all data:TableFullScan",
-		"└─TableFullScan 5.00 cop[tikv] table:t keep order:false",
+		"IndexReader 5.00 root partition:all index:IndexFullScan",
+		"└─IndexFullScan 5.00 cop[tikv] table:t, index:a(a) keep order:false",
 	))
 }
 
