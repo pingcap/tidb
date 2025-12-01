@@ -145,7 +145,7 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	// Add a small tie-breaker cost based on the last digit of the index ID to differentiate identical indexes.
 	// This cost is intentionally not included in the trace output.
 	if p.Index != nil {
-		tieBreakerValue := float64(p.Index.ID%10) / 1000.0
+		tieBreakerValue := float64(p.Index.ID%10) / 1000000.0
 		p.PlanCostVer2 = costusage.AddCostWithoutTrace(p.PlanCostVer2, tieBreakerValue)
 	}
 	return p.PlanCostVer2, nil
