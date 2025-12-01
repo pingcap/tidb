@@ -1364,6 +1364,11 @@ func (local *Backend) ImportEngine(
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
+		// Verify the imported statistics after import.
+		if importedSize != lfTotalSize {
+			return errors.Errorf("imported count mismatch, imported %d, expected %d", importedSize, lfTotalSize)
+		}
+
 		tidblogutil.Logger(ctx).Info("import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),

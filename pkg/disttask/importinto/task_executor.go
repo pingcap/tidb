@@ -596,7 +596,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			JobKeys:       jobKeys,
 			SplitKeys:     sm.RangeSplitKeys,
 			TotalFileSize: int64(sm.TotalKVSize),
-			TotalKVCount:  0,
+			TotalKVCount:  int64(sm.TotalKVCnt),
 			CheckHotspot:  false,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 		},

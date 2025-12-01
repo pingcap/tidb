@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -152,6 +153,7 @@ type Engine struct {
 	memLimit        int
 	onDup           engineapi.OnDuplicateKey
 	filePrefix      string
+	removedDupCnt   int
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
 	recordedDupCnt  int
 	recordedDupSize int64
@@ -388,6 +390,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 			}
 		} else if e.onDup == engineapi.OnDuplicateKeyRemove {
 			deduplicatedKVs, _, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, false)
+			e.removedDupCnt += len(dups)
 		}
 		deduplicateDur = time.Since(start)
 	}
@@ -723,6 +726,8 @@ func (m *MemoryIngestData) GetTS() uint64 {
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
+	// Make sure data is not released.
+	intest.Assert(len(m.kvs) > 0)
 }
 
 // DecRef implements IngestData.DecRef.

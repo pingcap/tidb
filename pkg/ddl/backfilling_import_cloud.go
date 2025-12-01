@@ -141,7 +141,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			JobKeys:       jobKeys,
 			SplitKeys:     sm.RangeSplitKeys,
 			TotalFileSize: int64(all.TotalKVSize),
-			TotalKVCount:  0,
+			TotalKVCount:  int64(all.TotalKVCnt),
 			CheckHotspot:  true,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnDup:         engineapi.OnDuplicateKeyError,
