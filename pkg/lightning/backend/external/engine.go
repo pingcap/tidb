@@ -153,7 +153,6 @@ type Engine struct {
 	memLimit        int
 	onDup           engineapi.OnDuplicateKey
 	filePrefix      string
-	removedDupCnt   int
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
 	recordedDupCnt  int
 	recordedDupSize int64
@@ -390,7 +389,6 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 			}
 		} else if e.onDup == engineapi.OnDuplicateKeyRemove {
 			deduplicatedKVs, _, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, false)
-			e.removedDupCnt += len(dups)
 		}
 		deduplicateDur = time.Since(start)
 	}
@@ -551,6 +549,11 @@ func (e *Engine) ConflictInfo() engineapi.ConflictInfo {
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return "external"
+}
+
+// GetOnDup returns the OnDuplicateKey action for this engine.
+func (e *Engine) GetOnDup() engineapi.OnDuplicateKey {
+	return e.onDup
 }
 
 // GetKeyRange implements common.Engine.

@@ -1363,6 +1363,18 @@ func (local *Backend) ImportEngine(
 
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
+		// Check if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used.
+		// These options are not yet implemented for local backend, so we skip
+		// the statistics verification and return an error to remind future
+		// implementers to add support for this check.
+		if extEngine, ok := e.(*external.Engine); ok {
+			onDup := extEngine.GetOnDup()
+			if onDup == engineapi.OnDuplicateKeyRecord || onDup == engineapi.OnDuplicateKeyRemove {
+				return errors.Errorf("OnDuplicateKeyRecord and OnDuplicateKeyRemove are not yet implemented for local backend. " +
+					"When implementing these options, please also implement the statistics verification for them.")
+			}
+		}
+
 		importedSize, importedLength := e.ImportedStatistics()
 		// Verify the imported statistics after import.
 		if importedSize != lfTotalSize {
