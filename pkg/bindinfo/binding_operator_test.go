@@ -680,7 +680,7 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 	}
 	for _, test := range tests {
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)
-		n, _, digest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		_, n, digest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		require.Equalf(t, test.normalized, n, "sql: %s", test.sql)
 		require.Equalf(t, test.digest, digest, "sql: %s", test.sql)
 	}
