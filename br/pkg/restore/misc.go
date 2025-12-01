@@ -64,13 +64,13 @@ type LogRestoreTableIDsBlocklistFile struct {
 	// RestoreCommitTs records the timestamp after PITR restore done. Only the later PITR restore from the log backup of the cluster,
 	// whose BackupTS is not less than it, can ignore the restore table IDs blocklist recorded in the file.
 	RestoreCommitTs uint64 `protobuf:"varint,1,opt,name=restore_commit_ts,proto3"`
-	// RestoreStartTs records the user-specified restore start timestamp. PITR operations restoring to an earlier time can ignore this blocklist.
+	// RestoreStartTs records the restore start timestamp. PITR operations restoring to an earlier time can ignore this blocklist.
 	RestoreStartTs uint64 `protobuf:"varint,7,opt,name=restore_start_ts,proto3"`
 	// RewriteTs records the rewritten timestamp of the meta kvs in this PITR restore.
 	RewriteTs uint64 `protobuf:"varint,6,opt,name=rewrite_ts,proto3"`
-	// TableIds records the downstream table IDs created by this PITR restore.
+	// TableIds records the blocklist of the cluster running the log backup task.
 	TableIds []int64 `protobuf:"varint,3,rep,packed,name=table_ids,proto3"`
-	// DbIds records the downstream database IDs created by this PITR restore.
+	// DbIds records the blocklist of the downstream database IDs created by this PITR restore.
 	DbIds []int64 `protobuf:"varint,5,rep,packed,name=db_ids,proto3"`
 	// Checksum records the checksum of other fields.
 	Checksum []byte `protobuf:"bytes,4,opt,name=checksum,proto3"`
@@ -221,10 +221,7 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, restoreStartTs uint64) bool {
 		// Skip if this restore's commit time is after our start time
 		// or the restored time is before last restore start time.
-		if startTs >= restoreCommitTs || restoredTs < restoreStartTs {
-			return true
-		}
-		return false
+		return startTs >= restoreCommitTs || restoredTs < restoreStartTs
 	}, func(_ context.Context, _ string, restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64) error {
 		for _, tableId := range tableIds {
 			if tracker.ContainsTableId(tableId) || tracker.ContainsPartitionId(tableId) {
