@@ -5301,7 +5301,7 @@ func pruneAndBuildColPositionInfoForDelete(
 			}
 			continue
 		}
-		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned)
+		err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -5345,7 +5345,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	colPosInfo *physicalop.TblColPosInfo,
 	prePrunedCount int,
 	nonPrunedSet *bitset.BitSet,
-) (int, error) {
+) error {
 	// Columns can be seen by DELETE are the deletable columns.
 	deletableCols := t.DeletableCols()
 	deletableIdxs := t.DeletableIndices()
@@ -5365,7 +5365,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	for _, idx := range deletableIdxs {
 		for _, col := range idx.Meta().Columns {
 			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.L {
-				return 0, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
+				return plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
 			}
 			fixedPos[col.Offset] = 0
 		}
@@ -5412,7 +5412,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	colPosInfo.End = colPosInfo.Start + tblLen - pruned
 	colPosInfo.IndexesRowLayout = indexColMap
 
-	return prePrunedCount + pruned, nil
+	return nil
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (base.Plan, error) {
