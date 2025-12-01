@@ -430,7 +430,7 @@
           "└─IndexReader 1.00 root  index:StreamAgg",
           "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
           "    └─Selection 373.08 cop[tikv]  lt(test.t1.b1, 5), or(gt(test.t1.a1, 1), and(eq(test.t1.a1, 1), gt(test.t1.b1, 10))), or(lt(test.t1.a1, 2), and(eq(test.t1.a1, 2), lt(test.t1.b1, 20)))",
-          "      └─IndexRangeScan 466.35 cop[tikv] table:t1, index:pkx(a1, b1) range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "      └─IndexRangeScan 466.35 cop[tikv] table:t1, index:pkx(a1, b1) range:[1,2], keep order:false, stats:pseudo"
         ],
         "Result": [
           "14"

@@ -21,7 +21,7 @@ Projection	root		expression__vitess_hash.t.id
 └─Sort	root		expression__vitess_hash.t.id
   └─Projection	root		expression__vitess_hash.t.id, rightshift(vitess_hash(expression__vitess_hash.t.customer_id), 56)
     └─IndexLookUp	root		
-      ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	range:[224,224], [225,225], keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	range:[224,225], keep order:false, stats:pseudo
       └─Selection(Probe)	cop[tikv]		ge(expression__vitess_hash.t.id, 2), le(expression__vitess_hash.t.id, 5)
         └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select hex(vitess_hash(1123)) from t;
