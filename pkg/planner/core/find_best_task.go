@@ -2222,6 +2222,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 		}
 		cop.tablePlan = ts
+		cop.indexLookUpPushDown = candidate.path.IsIndexLookUpPushDown
 	}
 	task = cop
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
