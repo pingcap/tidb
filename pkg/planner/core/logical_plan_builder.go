@@ -784,9 +784,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		lNameMap := make(map[string]int, len(lNames))
 		rNameMap := make(map[string]int, len(rNames))
 		for _, name := range lNames {
-			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" ||
-				name.ColName.L == "_tidb_commit_ts" {
+			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
+			if name.ColName.L == model.ExtraHandleName.L ||
+				name.ColName.L == model.ExtraCommitTSName.L {
 				continue
 			}
 			// record left map
@@ -797,9 +797,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 			}
 		}
 		for _, name := range rNames {
-			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" ||
-				name.ColName.L == "_tidb_commit_ts" {
+			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
+			if name.ColName.L == model.ExtraHandleName.L ||
+				name.ColName.L == model.ExtraCommitTSName.L {
 				continue
 			}
 			// record right map
@@ -827,9 +827,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	// Find out all the common columns and put them ahead.
 	commonLen := 0
 	for i, lName := range lNames {
-		// Natural join should ignore _tidb_rowid
-		if lName.ColName.L == "_tidb_rowid" ||
-			lName.ColName.L == "_tidb_commit_ts" {
+		// Natural join should ignore _tidb_rowid and _tidb_commit_ts
+		if lName.ColName.L == model.ExtraHandleName.L ||
+			lName.ColName.L == model.ExtraCommitTSName.L {
 			continue
 		}
 		for j := commonLen; j < len(rNames); j++ {
@@ -5256,7 +5256,6 @@ func pruneAndBuildColPositionInfoForDelete(
 	// Use a very relax check for foreign key cascades and checks.
 	// If there's one table containing foreign keys, all of the tables would not do pruning.
 	// It should be strict in the future or just support pruning column when there is foreign key.
-	//if !hasFK {
 	nonPruned := bitset.New(uint(len(names)))
 	nonPruned.SetAll()
 	// find _tidb_commit_ts in names and clear the index in nonPruned
@@ -5266,7 +5265,6 @@ func pruneAndBuildColPositionInfoForDelete(
 			continue
 		}
 	}
-	//}
 	cols2PosInfos := make(physicalop.TblColPosInfoSlice, 0, len(tblID2Handle))
 	for tid, handleCols := range tblID2Handle {
 		for _, handleCol := range handleCols {
@@ -5964,12 +5962,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		return nil, err
 	}
 	preProjNames := p.OutputNames()[:oldLen]
-	//for i := len(preProjNames) - 1; i >= 0; i-- {
-	//	if preProjNames[i].ColName.L == "_tidb_commit_ts" {
-	//		preProjNames = slices.Delete(preProjNames, i, i+1)
-	//		oldLen--
-	//	}
-	//}
 	if del.IsMultiTable {
 		// tblID2TableName is the table map value is an array which contains table aliases.
 		// Table ID may not be unique for deleting multiple tables, for statements like
@@ -6024,13 +6016,13 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 
 	// resolve indices for handle columns in del.TblColPosInfos
-	for i, colPosInfo := range del.TblColPosInfos {
-		resolvedHandleCols, err := colPosInfo.HandleCols.ResolveIndices(del.SelectPlan.Schema())
-		if err != nil {
-			return nil, err
-		}
-		del.TblColPosInfos[i].HandleCols = resolvedHandleCols
-	}
+	//for i, colPosInfo := range del.TblColPosInfos {
+	//	resolvedHandleCols, err := colPosInfo.HandleCols.ResolveIndices(del.SelectPlan.Schema())
+	//	if err != nil {
+	//		return nil, err
+	//	}
+	//	del.TblColPosInfos[i].HandleCols = resolvedHandleCols
+	//}
 
 	return del, err
 }
