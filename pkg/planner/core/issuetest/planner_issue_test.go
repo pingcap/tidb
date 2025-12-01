@@ -337,3 +337,28 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
+
+func TestIssue56615(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE test_table (id INT PRIMARY KEY,value1 INT,value2 INT);")
+	tk.MustExec(`CREATE GLOBAL BINDING FOR
+SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id
+USING
+SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id;
+`)
+	tk.MustQuery(`SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id;
+`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select original_sql from mysql.bind_info`).Check(testkit.Rows(
+		"builtin_pseudo_sql_for_bind_lock",
+		"SELECT `t1`.`id`,IFNULL(`t1`.`value1`, 0) AS `value1`,IFNULL(`t2`.`value2`, 0) AS `value2` FROM `test`.`test_table` AS `t1` JOIN `test`.`test_table` AS `t2` ON `t1`.`id` = `t2`.`id`",
+	))
+}

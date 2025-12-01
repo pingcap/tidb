@@ -343,11 +343,15 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 			continue
 		}
 		originSQL := cols[0]
+		originSQL = strings.Replace(originSQL, "`ifnull` (", "ifnull(", -1)
+		originSQL = strings.Replace(originSQL, "`count` (", "count(", -1)
 		bindingSQL := cols[1]
 		enabled := cols[3]
 		newNormalizedSQL := parser.NormalizeForBinding(originSQL, true)
+		newNormalizedSQL = strings.Replace(newNormalizedSQL, "`ifnull` (", "ifnull(", -1)
+		newNormalizedSQL = strings.Replace(newNormalizedSQL, "`count` (", "count(", -1)
 		if strings.Compare(enabled, "enabled") == 0 {
-			sql := fmt.Sprintf("CREATE %s BINDING FOR %s USING %s", func() string {
+			sql := fmt.Sprintf("CREATE %s BINDING FOR %s USING %s;", func() string {
 				if isSession {
 					return "SESSION"
 				}
