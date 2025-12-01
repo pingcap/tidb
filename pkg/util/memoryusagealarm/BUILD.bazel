@@ -26,7 +26,6 @@ go_test(
     race = "on",
     deps = [
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/memory",
         "@com_github_stretchr_testify//assert",

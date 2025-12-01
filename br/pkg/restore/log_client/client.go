@@ -86,6 +86,7 @@ const rawKVBatchCount = 64
 // session count for repairing ingest indexes. Currently only one TiDB node executes adding index jobs
 // at the same time and the add-index job concurrency is about min(10, `TiDB CPUs / 4`).
 const defaultRepairIndexSessionCount uint = 10
+
 // LogRestoreManager is a comprehensive wrapper that encapsulates all logic related to log restoration,
 // including concurrency management, checkpoint handling, and file importing for efficient log processing.
 type LogRestoreManager struct {
@@ -496,7 +497,7 @@ func closeSessions(sessions []glue.Session) {
 // Init create db connection and domain for storage.
 func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
 	var err error
-	rc.se, err = createSession(ctx, g, store)
+	rc.unsafeSession, err = createSession(ctx, g, store)
 	if err != nil {
 		return errors.Trace(err)
 	}

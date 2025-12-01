@@ -26,6 +26,7 @@ go_library(
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/util",
         "//pkg/util/sqlexec",

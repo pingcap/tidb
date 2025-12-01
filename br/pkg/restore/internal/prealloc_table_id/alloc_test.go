@@ -14,7 +14,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -152,10 +152,10 @@ func TestAllocator(t *testing.T) {
 		for _, id := range c.tableIDs {
 			table := metautil.Table{
 				DB: &model.DBInfo{
-					Name: ast.NewCIStr("test"),
+					Name: pmodel.NewCIStr("test"),
 				},
 				Info: &model.TableInfo{
-					Name:      ast.NewCIStr(fmt.Sprintf("t%d", id)),
+					Name:      pmodel.NewCIStr(fmt.Sprintf("t%d", id)),
 					ID:        id,
 					Partition: &model.PartitionInfo{},
 				},

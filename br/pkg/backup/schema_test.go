@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -235,7 +234,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, vardef.DefChecksumTableConcurrency, skipChecksum, updateCh)
+		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.NoError(t, err)
 	err = metaWriter.FlushBackupMeta(ctx)
 	require.NoError(t, err)
@@ -263,7 +262,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	es2 := GetRandomStorage(t)
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter2, nil, m.Storage, statsHandle, math.MaxUint64, nil, 1, vardef.DefChecksumTableConcurrency, skipChecksum, updateCh)
+		ctx, metaWriter2, nil, m.Storage, statsHandle, math.MaxUint64, nil, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
 	require.NoError(t, err)
@@ -307,7 +306,7 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
 	err = backupSchemas.BackupSchemas(ctx, metaWriter2, nil, m.Storage, nil,
-		math.MaxUint64, nil, 1, vardef.DefChecksumTableConcurrency, true, updateCh)
+		math.MaxUint64, nil, 1, variable.DefChecksumTableConcurrency, true, updateCh)
 	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
 	require.NoError(t, err)
