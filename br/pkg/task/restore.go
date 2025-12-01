@@ -912,52 +912,33 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return
 		}
 
-		// Extract downstream IDs from tableMappingManager instead of upstream IDs from tracker
-		downstreamTableIds := make([]int64, 0, len(cfg.PiTRTableTracker.TableIdToDBIds)+len(cfg.PiTRTableTracker.PartitionIds))
-		downstreamDbIds := make([]int64, 0, len(cfg.PiTRTableTracker.DBIds))
+		// Extract downstream IDs from tableMappingManager
+		// ApplyFilterToDBReplaceMap has already filtered the DBReplaceMap based on PiTRTableTracker,
+		// so we can directly iterate through it and collect non-filtered IDs
+		var downstreamTableIds []int64
+		var downstreamDbIds []int64
 
 		if cfg.tableMappingManager != nil {
-			// Convert upstream table IDs to downstream table IDs
-			for upstreamTableId := range cfg.PiTRTableTracker.TableIdToDBIds {
-				found := false
-				for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
-					if tableReplace, exists := dbReplace.TableMap[upstreamTableId]; exists && !tableReplace.FilteredOut {
-						downstreamTableIds = append(downstreamTableIds, tableReplace.TableID)
-						found = true
-						break
-					}
+			// Iterate through DBReplaceMap which has already been filtered by ApplyFilterToDBReplaceMap
+			for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
+				if dbReplace.FilteredOut {
+					continue
 				}
-				if !found {
-					log.Warn("failed to find downstream ID for upstream table ID", zap.Int64("upstreamTableId", upstreamTableId))
-				}
-			}
+				// Collect downstream DB ID
+				downstreamDbIds = append(downstreamDbIds, dbReplace.DbID)
 
-			// Convert upstream partition IDs to downstream partition IDs
-			for upstreamPartitionId := range cfg.PiTRTableTracker.PartitionIds {
-				found := false
-				for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
-					for _, tableReplace := range dbReplace.TableMap {
-						if downstreamId, exists := tableReplace.PartitionMap[upstreamPartitionId]; exists {
-							downstreamTableIds = append(downstreamTableIds, downstreamId)
-							found = true
-							break
-						}
+				// Iterate through tables in this database
+				for _, tableReplace := range dbReplace.TableMap {
+					if tableReplace.FilteredOut {
+						continue
 					}
-					if found {
-						break
-					}
-				}
-				if !found {
-					log.Warn("failed to find downstream ID for upstream partition ID", zap.Int64("upstreamPartitionId", upstreamPartitionId))
-				}
-			}
+					// Collect downstream table ID
+					downstreamTableIds = append(downstreamTableIds, tableReplace.TableID)
 
-			// Convert upstream DB IDs to downstream DB IDs
-			for upstreamDbId := range cfg.PiTRTableTracker.DBIds {
-				if dbReplace, exists := cfg.tableMappingManager.DBReplaceMap[upstreamDbId]; exists && !dbReplace.FilteredOut {
-					downstreamDbIds = append(downstreamDbIds, dbReplace.DbID)
-				} else {
-					log.Warn("failed to find downstream ID for upstream DB ID", zap.Int64("upstreamDbId", upstreamDbId))
+					// Collect all partition IDs for this table
+					for _, downstreamPartitionId := range tableReplace.PartitionMap {
+						downstreamTableIds = append(downstreamTableIds, downstreamPartitionId)
+					}
 				}
 			}
 		} else {
