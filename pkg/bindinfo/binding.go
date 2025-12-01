@@ -196,7 +196,7 @@ func noDBDigestFromBinding(binding *Binding) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_,_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, "", true)
+	_, _, bindingNoDBDigest := NormalizeStmtForBinding(stmt, "", true)
 	return bindingNoDBDigest, nil
 }
 
