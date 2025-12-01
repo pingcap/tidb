@@ -388,7 +388,7 @@ func TestGCBindRecord(t *testing.T) {
 	tk.MustExec("create global binding for select * from t where a = 1 using select * from t use index(a) where a = 1")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
+	require.Equal(t, "SELECT * FROM `test`.`t` WHERE `a` = 1", rows[0][0])
 	require.Equal(t, bindinfo.StatusEnabled, rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
 		bindinfo.StatusEnabled,
