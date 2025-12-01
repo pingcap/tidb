@@ -5252,19 +5252,6 @@ func pruneAndBuildColPositionInfoForDelete(
 	tblID2Table map[int64]table.Table,
 	hasFK bool,
 ) (physicalop.TblColPosInfoSlice, *bitset.BitSet, error) {
-	// If there is foreign key, we can't prune the columns.
-	// Use a very relax check for foreign key cascades and checks.
-	// If there's one table containing foreign keys, all of the tables would not do pruning.
-	// It should be strict in the future or just support pruning column when there is foreign key.
-	nonPruned := bitset.New(uint(len(names)))
-	nonPruned.SetAll()
-	// find _tidb_commit_ts in names and clear the index in nonPruned
-	for i, name := range names {
-		if name.ColName.L == model.ExtraCommitTSName.L {
-			nonPruned.Clear(uint(i))
-			continue
-		}
-	}
 	cols2PosInfos := make(physicalop.TblColPosInfoSlice, 0, len(tblID2Handle))
 	for tid, handleCols := range tblID2Handle {
 		for _, handleCol := range handleCols {
@@ -5279,6 +5266,19 @@ func pruneAndBuildColPositionInfoForDelete(
 	slices.SortFunc(cols2PosInfos, func(a, b physicalop.TblColPosInfo) int {
 		return a.Cmp(b)
 	})
+
+	nonPruned := bitset.New(uint(len(names)))
+	nonPruned.SetAll()
+	// Always prune the `_tidb_commit_ts` column.
+	for i, name := range names {
+		if name.ColName.L == model.ExtraCommitTSName.L {
+			nonPruned.Clear(uint(i))
+			continue
+		}
+	}
+	// prunedColCnt records how many columns in `names` have been pruned before the current table (before the current
+	// TblColPosInfo.Start). To avoid repeatedly counting the pruned columns, we use nextCheckIdx to record
+	// the next position to check.
 	var prunedColCnt, nextCheckIdx int
 	var err error
 	for i := range cols2PosInfos {
@@ -5294,6 +5294,10 @@ func pruneAndBuildColPositionInfoForDelete(
 		tblInfo := tbl.Meta()
 		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
 		// nonPrunedSet will be nil if it's a point get or has foreign keys.
+		// If there is foreign key, we can't prune the columns.
+		// Use a very relax check for foreign key cascades and checks.
+		// If there's one table containing foreign keys, all of the tables would not do pruning.
+		// It should be strict in the future or just support pruning column when there is foreign key.
 		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
 			if err != nil {
