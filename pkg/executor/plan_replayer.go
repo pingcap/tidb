@@ -357,7 +357,7 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 			_, err = ctx.GetSQLExecutor().Execute(c, sql)
 			if err != nil {
 				logutil.BgLogger().Warn("load bindings failed", zap.Error(err), zap.String("sql", sql))
-				continue
+				return err
 			}
 		}
 	}

@@ -765,7 +765,7 @@ func TestErrorBind(t *testing.T) {
 	_, _, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
 	binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
-	require.Equal(t, "select * from `test` . `t` where `i` > ?", binding.OriginalSQL)
+	require.Equal(t, "SELECT * FROM `test`.`t` WHERE `i` > 99", binding.OriginalSQL)
 	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100", binding.BindSQL)
 	require.Equal(t, "test", binding.Db)
 	require.Equal(t, bindinfo.StatusEnabled, binding.Status)
