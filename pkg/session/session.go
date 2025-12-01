@@ -2651,16 +2651,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
-		// Generate trace ID for point-get path (same as runStmt does)
-		prevTraceID := s.sessionVars.PrevTraceID
-		startTS := s.sessionVars.TxnCtx.StartTS
-		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
-		traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
-		ctx = trace.ContextWithTraceID(ctx, traceID)
-		s.currentCtx = ctx
-
-		// Store trace ID for next statement
-		s.sessionVars.PrevTraceID = traceID
+		ctx, prevTraceID := resetStmtTraceID(ctx, s)
 
 		// Emit stmt.start trace event (simplified for point-get fast path)
 		if traceevent.IsEnabled(traceevent.StmtLifecycle) {
@@ -2824,21 +2815,9 @@ func (s stmtLabelAlias) stmtLabelDumpTriggerCheck(config *traceevent.DumpTrigger
 	return config.UserCommand.StmtLabel == s.label
 }
 
-// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
-	failpoint.Inject("assertTxnManagerInRunStmt", func() {
-		sessiontxn.RecordAssert(se, "assertTxnManagerInRunStmt", true)
-		if stmt, ok := s.(*executor.ExecStmt); ok {
-			sessiontxn.AssertTxnManagerInfoSchema(se, stmt.InfoSchema)
-		}
-	})
-
-	r, ctx := tracing.StartRegionEx(ctx, "session.runStmt")
-	defer r.End()
-	if r.Span != nil {
-		r.Span.LogKV("sql", s.Text())
-	}
-
+// resetStmtTraceID generates a new trace ID for the current statement,
+// injects it into the session context for cross-statement correlation, and returns the previous trace ID.
+func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte) {
 	// Capture previous trace ID from session variables (for statement chaining)
 	// We store it in session variables instead of context because the context
 	// is recreated for each statement and doesn't persist across executions
@@ -2854,6 +2833,26 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	se.currentCtx = ctx
 	// Store trace ID for next statement
 	se.sessionVars.PrevTraceID = traceID
+
+	return ctx, prevTraceID
+}
+
+// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
+func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
+	failpoint.Inject("assertTxnManagerInRunStmt", func() {
+		sessiontxn.RecordAssert(se, "assertTxnManagerInRunStmt", true)
+		if stmt, ok := s.(*executor.ExecStmt); ok {
+			sessiontxn.AssertTxnManagerInfoSchema(se, stmt.InfoSchema)
+		}
+	})
+
+	r, ctx := tracing.StartRegionEx(ctx, "session.runStmt")
+	defer r.End()
+	if r.Span != nil {
+		r.Span.LogKV("sql", s.Text())
+	}
+
+	ctx, prevTraceID := resetStmtTraceID(ctx, se)
 	stmtCtx := se.sessionVars.StmtCtx
 	sqlDigest, _ := stmtCtx.SQLDigest()
 	// Make sure StmtType is filled even if succ is false.
