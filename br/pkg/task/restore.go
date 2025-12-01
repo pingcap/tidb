@@ -942,7 +942,9 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 				}
 			}
 		} else {
-			log.Warn("tableMappingManager is nil, blocklist will contain no IDs")
+			log.Error("tableMappingManager is nil, blocklist will contain no IDs")
+			restoreErr = errors.New("tableMappingManager is nil")
+			return
 		}
 
 		restoreStartTs := cfg.RestoreStartTS
