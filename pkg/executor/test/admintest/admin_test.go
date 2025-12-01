@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2297,4 +2298,86 @@ func TestFastAdminCheckWithError(t *testing.T) {
 		key idx6(c1), key idx7(c1), key idx8(c1), key idx9(c1), key idx10(c1))
 	`)
 	tk.MustExecToErr("admin check table admin_test")
+}
+
+func TestAdminCheckTableWithEnumAndPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test 1: Table with enum column and unique index
+	// This scenario can generate PointGet plan
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (id int primary key, status enum('active', 'inactive', 'pending'), unique key uk_status(status))")
+	tk.MustExec("insert into admin_test values (1, 'active'), (2, 'inactive'), (3, 'pending')")
+
+	// Verify that a query with unique index on enum column generates PointGet plan
+	rows := tk.MustQuery("explain select * from admin_test use index(uk_status) where status = 'active'").Rows()
+	hasPointGet := false
+	for _, row := range rows {
+		planType := fmt.Sprintf("%v", row[0])
+		if strings.Contains(planType, "Point_Get") || strings.Contains(planType, "PointGet") {
+			hasPointGet = true
+			break
+		}
+	}
+	// This verifies that the scenario actually generates PointGet plan
+	require.True(t, hasPointGet, "Expected PointGet plan for unique index query on enum column")
+
+	// Fast check mode - this is where verifyIndexSideQuery is called
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+	// This should pass with the fix (would fail without fix when running with --tags=intest)
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_status")
+
+	// Regular check mode - for comparison
+	tk.MustExec("set tidb_enable_fast_table_check = 0")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_status")
+
+	// Test 2: Table with unique index (can also generate PointGet)
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (id int primary key, name varchar(50), unique key uk_name(name))")
+	tk.MustExec("insert into admin_test values (1, 'alice'), (2, 'bob'), (3, 'charlie')")
+
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_name")
+
+	tk.MustExec("set tidb_enable_fast_table_check = 0")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_name")
+
+	// Test 3: Composite unique index with enum (can generate BatchPointGet)
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (id int, type enum('A', 'B', 'C'), value int, unique key uk_composite(id, type))")
+	tk.MustExec("insert into admin_test values (1, 'A', 100), (2, 'B', 200), (3, 'C', 300)")
+
+	// Verify that a query with composite unique index can generate BatchPointGet plan
+	rows = tk.MustQuery("explain select * from admin_test use index(uk_composite) where id in (1, 2) and type = 'A'").Rows()
+	hasBatchPointGet := false
+	for _, row := range rows {
+		planType := fmt.Sprintf("%v", row[0])
+		if strings.Contains(planType, "Batch_Point_Get") || strings.Contains(planType, "BatchPointGet") {
+			hasBatchPointGet = true
+			break
+		}
+	}
+	// This verifies that the scenario can generate BatchPointGet plan
+	// Note: optimizer may choose different plans depending on data, so we don't require.True here
+	// The important thing is that IF BatchPointGet is used, it should be recognized
+	if hasBatchPointGet {
+		t.Logf("BatchPointGet plan detected for composite unique index query")
+	}
+
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_composite")
+
+	tk.MustExec("set tidb_enable_fast_table_check = 0")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_composite")
+
+	// Clean up
+	tk.MustExec("set tidb_enable_fast_table_check = default")
 }
