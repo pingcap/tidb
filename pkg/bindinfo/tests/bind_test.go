@@ -390,7 +390,7 @@ func TestGCBindRecord(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "SELECT * FROM `test`.`t` WHERE `a` = 1", rows[0][0])
 	require.Equal(t, bindinfo.StatusEnabled, rows[0][3])
-	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'SELECT * FROM `test`.`t` WHERE `a` = 1'").Check(testkit.Rows(
 		bindinfo.StatusEnabled,
 	))
 
@@ -399,20 +399,20 @@ func TestGCBindRecord(t *testing.T) {
 	require.NoError(t, h.GCBinding())
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
+	require.Equal(t, "SELECT * FROM `test`.`t` WHERE `a` = 1", rows[0][0])
 	require.Equal(t, bindinfo.StatusEnabled, rows[0][3])
-	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'SELECT * FROM `test`.`t` WHERE `a` = 1'").Check(testkit.Rows(
 		bindinfo.StatusEnabled,
 	))
 
 	tk.MustExec("drop global binding for select * from t where a = 1")
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
-	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'SELECT * FROM `test`.`t` WHERE `a` = 1'").Check(testkit.Rows(
 		"deleted",
 	))
 	require.NoError(t, h.GCBinding())
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
-	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'SELECT * FROM `test`.`t` WHERE `a` = 1'").Check(testkit.Rows())
 }
 
 func TestBindSQLDigest(t *testing.T) {
