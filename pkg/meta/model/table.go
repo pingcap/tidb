@@ -93,7 +93,7 @@ var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
 
-// ExtraCommitTSName is the name of ExtraRowChecksum Column.
+// ExtraCommitTSName is the name of ExtraCommitTSID Column.
 var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
 
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.

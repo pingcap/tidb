@@ -314,7 +314,7 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	return colInfo
 }
 
-// NewExtraCommitTSColInfo xxx
+// NewExtraCommitTSColInfo mocks a column info for extra commit ts column.
 func NewExtraCommitTSColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
 		ID:   ExtraCommitTSID,
