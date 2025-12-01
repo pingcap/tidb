@@ -37,7 +37,7 @@ func ContainsFullTextSearchFn(exprs ...Expression) bool {
 	for _, expr := range exprs {
 		switch x := expr.(type) {
 		case *ScalarFunction:
-			if x.FuncName.L == ast.FTSMatchWord {
+			if _, ok := FTSFuncMap[x.FuncName.L]; ok {
 				return true
 			}
 			for _, arg := range x.GetArgs() {
@@ -50,30 +50,51 @@ func ContainsFullTextSearchFn(exprs ...Expression) bool {
 	return false
 }
 
-// ExprOnlyContainsLogicOpAndFTS checks whether the expression contains only logical operators
-// and FullTextSearch functions. It does not allow any other functions or expressions.
-func ExprOnlyContainsLogicOpAndFTS(expr Expression) bool {
+// ExprCoveredByOneTiCIIndex checks whether the given expr is fully covered by one a TiCI index.
+// A TiCI index accepts the
+func ExprCoveredByOneTiCIIndex(
+	expr Expression,
+	ftsColIDs *intset.FastIntSet,
+	invertedIndexesColIDs *intset.FastIntSet,
+) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		// TiDB's FTS functions return float value for potential BM25 score cases.
-		// So there'll be a IS TRUE wrapped to convert the float to boolean.
-		switch x.FuncName.L {
-		case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.IsTruthWithNull:
-			for _, arg := range x.GetArgs() {
-				if !ExprOnlyContainsLogicOpAndFTS(arg) {
+		if _, ok := FTSFuncMap[x.FuncName.L]; ok {
+			for i := 1; i < len(x.GetArgs()); i++ {
+				arg := x.GetArgs()[i].(*Column)
+				if !ftsColIDs.Has(int(arg.ID)) {
 					return false
 				}
 			}
 			return true
-		default:
-			if _, ok := FTSFuncMap[x.FuncName.L]; ok {
-				return true
+		}
+		switch x.FuncName.L {
+		case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.IsTruthWithNull:
+			for _, arg := range x.GetArgs() {
+				covered := ExprCoveredByOneTiCIIndex(arg, ftsColIDs, invertedIndexesColIDs)
+				if !covered {
+					return false
+				}
 			}
+		case ast.GE, ast.GT, ast.LE, ast.LT, ast.EQ, ast.NE, ast.In:
+			lhsCol, lhsIsCol := x.GetArgs()[0].(*Column)
+			rhsCol, rhsIsCol := x.GetArgs()[1].(*Column)
+			_, lhsIsConst := x.GetArgs()[0].(*Constant)
+			_, rhsIsConst := x.GetArgs()[1].(*Constant)
+			if lhsIsCol && rhsIsConst {
+				return invertedIndexesColIDs.Has(int(lhsCol.ID))
+			}
+			if rhsIsCol && lhsIsConst {
+				return invertedIndexesColIDs.Has(int(rhsCol.ID))
+			}
+			return false
+		default:
+			return false
 		}
 	default:
-		return false
+		return true
 	}
-	return false
+	return true
 }
 
 // CollectColumnIDForFTS collects column IDs from a complex FullTextSearch expression.
