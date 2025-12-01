@@ -5279,18 +5279,17 @@ func pruneAndBuildColPositionInfoForDelete(
 	slices.SortFunc(cols2PosInfos, func(a, b physicalop.TblColPosInfo) int {
 		return a.Cmp(b)
 	})
-	prunedColCnt := 0
-	if len(cols2PosInfos) > 0 {
-		firstStart := cols2PosInfos[0].Start
-		for i := range firstStart {
-			if !nonPruned.Test(uint(i)) {
-				prunedColCnt++
-			}
-		}
-	}
+	var prunedColCnt, nextCheckIdx int
 	var err error
 	for i := range cols2PosInfos {
 		cols2PosInfo := &cols2PosInfos[i]
+		for j := nextCheckIdx; j < cols2PosInfo.Start; j++ {
+			if !nonPruned.Test(uint(j)) {
+				prunedColCnt++
+			}
+		}
+		nextCheckIdx = cols2PosInfo.Start
+
 		tbl := tblID2Table[cols2PosInfo.TblID]
 		tblInfo := tbl.Meta()
 		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
@@ -5300,14 +5299,12 @@ func pruneAndBuildColPositionInfoForDelete(
 			if err != nil {
 				return nil, nil, err
 			}
-			prunedColCnt++
 			continue
 		}
 		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned)
 		if err != nil {
 			return nil, nil, err
 		}
-		prunedColCnt++
 	}
 	return cols2PosInfos, nonPruned, nil
 }
