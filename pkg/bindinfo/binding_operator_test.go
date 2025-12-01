@@ -296,7 +296,7 @@ var testSQLs = []struct {
 		createSQL:   "binding for select * from t where i>100 using select * from t use index(index_t) where i>100",
 		overlaySQL:  "binding for select * from t where i>99 using select * from t use index(index_t) where i>99",
 		querySQL:    "select * from t where i          >      30.0",
-		originSQL:   "select * from `test` . `t` where `i` > ?",
+		originSQL:   "SELECT * FROM `test`.`t` WHERE `i` > 99",
 		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99",
 		dropSQL:     "binding for select * from t where i>100",
 		memoryUsage: float64(167),
