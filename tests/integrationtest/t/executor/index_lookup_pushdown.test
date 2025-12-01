@@ -1,6 +1,6 @@
 drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
 create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
-create table t2(a int, b int, c int, d int, primary key(a, b) CLUSTERED, index i(c));
+create table t2(a varchar(32), b int, c int, d int, e int, primary key(a, b) CLUSTERED, index i(c), unique index u(e)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 create table t3 (
     id int primary key,
     a int,
@@ -76,9 +76,42 @@ insert into t6 values (511, 10), (412, 20), (313, 30), (214, 40), (115, 50);
 explain select /*+ index_lookup_pushdown(t6, primary) */ * from t6;
 select /*+ index_lookup_pushdown(t6, primary) */ * from t6;
 
-# Test index lookup push down restrictions
-## Common handle not supported
+## test for common handle
+insert into t2 values
+    ('a', 1, 9010, 100, 90),
+    ('A', 2, 8020, 200, 80),
+    ('a', 3, 7030, 300, 70),
+    ('b', 1, 6040, 400, 60),
+    ('B', 2, 5050, 500, 50),
+    ('b', 3, 4060, 600, 40),
+    ('c', 1, 3070, 700, 30),
+    ('C', 2, 2080, 800, 20),
+    ('c', 3, 1090, 900, 10);
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+explain select /*+ index_lookup_pushdown(t2, u) */ * from t2;
+select /*+ index_lookup_pushdown(t2, u) */ * from t2;
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 order by a desc, b desc limit 4;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2 order by a desc, b desc limit 4;
+
+## test common handle with primary key prefix column
+create table t22(a varchar(32), b int, c int, d int, e int, primary key(a(2), b) CLUSTERED, index i(c)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert into t22 values
+    ('abc', 1, 9010, 100, 90),
+    ('Abc', 2, 8020, 200, 80),
+    ('abc', 3, 7030, 300, 70),
+    ('bcd', 1, 6040, 400, 60),
+    ('Bcd', 2, 5050, 500, 50),
+    ('bcd', 3, 4060, 600, 40),
+    ('cde', 1, 3070, 700, 30),
+    ('Cde', 2, 2080, 800, 20),
+    ('cde', 3, 1090, 900, 10);
+explain select /*+ index_lookup_pushdown(t22, i) */ * from t22 where c > 2000 limit 5;
+select /*+ index_lookup_pushdown(t22, i) */ * from t22 where c > 2000 limit 5;
+
+# Test index lookup push down restrictions
 ## Keep order not supported
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > 'a' order by a asc;
 ## partition table not supported
