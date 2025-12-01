@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -380,16 +379,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		}
 		totalCount.Add(count)
 	}
-	allowZeroEst := fixcontrol.GetBoolWithDefault(
-		sctx.GetSessionVars().GetOptimizerFixControlMap(),
-		fixcontrol.Fix47400,
-		false,
-	)
-	minCount := float64(1)
-	if allowZeroEst {
-		minCount = 0
-	}
-	totalCount.Clamp(minCount, float64(realtimeRowCount))
+	totalCount.Clamp(1.0, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
