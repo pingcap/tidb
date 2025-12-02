@@ -1078,3 +1078,64 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	require.Equal(t, analyzed, true)
 	require.Equal(t, columnInfo[0].Name.L, "c1")
 }
+
+func TestTurnOffAutoAnalyze(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	statstestutil.HandleNextDDLEventWithTxn(h)
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
+	isEmpty, err := pq.IsEmpty()
+	require.NoError(t, err)
+	require.False(t, isEmpty)
+	job, err := pq.Peek()
+	require.NoError(t, err)
+	require.Equal(t, tableInfo.ID, job.GetTableID())
+
+	// Truncate table.
+	testKit.MustExec("truncate table t")
+
+	// Find the truncate table partition event.
+	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
+
+	// Disable the auto analyze.
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze = 0;")
+
+	// Handle the truncate table event.
+	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
+	require.NoError(t, err)
+
+	sctx := testKit.Session().(sessionctx.Context)
+	// Handle the truncate table event in priority queue.
+	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, truncateTableEvent))
+
+	// Because the auto analyze is turned off, the priority queue should be closed properly.
+	_, err = pq.IsEmpty()
+	require.ErrorContains(t, err, "priority queue not initialized")
+
+	// The priority queue can be re-initialized after turning on the auto analyze.
+	// We manually mock it here.
+	require.NoError(t, pq.Initialize(ctx))
+	isEmpty, err = pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+}

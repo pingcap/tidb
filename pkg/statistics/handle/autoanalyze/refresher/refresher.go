@@ -244,6 +244,12 @@ func (r *Refresher) RequeueMustRetryJobsForTest() {
 	r.jobs.RequeueMustRetryJobs()
 }
 
+// IsQueueInitializedForTest returns whether the priority queue is initialized.
+// Only used in the test.
+func (r *Refresher) IsQueueInitializedForTest() bool {
+	return r.jobs.IsInitialized()
+}
+
 // Len returns the length of the analysis job queue.
 func (r *Refresher) Len() int {
 	l, err := r.jobs.Len()
