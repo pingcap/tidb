@@ -1377,8 +1377,8 @@ func (local *Backend) ImportEngine(
 
 		importedSize, importedLength := e.ImportedStatistics()
 		// Verify the imported statistics after import.
-		if importedSize != lfTotalSize {
-			return errors.Errorf("imported count mismatch, imported %d, expected %d", importedSize, lfTotalSize)
+		if importedLength != lfLength {
+			return errors.Errorf("imported length mismatch, expected %d, got %d", lfLength, importedLength)
 		}
 
 		tidblogutil.Logger(ctx).Info("import engine success",
