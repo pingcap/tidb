@@ -37,6 +37,14 @@ import (
 
 // HandleDDLEvent handles DDL events for the priority queue.
 func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) (err error) {
+	// Check if auto analyze is enabled.
+	if !vardef.RunAutoAnalyze.Load() {
+		// Close the priority queue if auto analyze is disabled.
+		// Otherwise, the priority queue may remain in an unknown state. We need to ensure that the next time auto analyze is enabled,
+		// the priority queue can be re-initialized properly.
+		pq.Close()
+		return nil
+	}
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	// If the priority queue is not initialized, we should retry later.
