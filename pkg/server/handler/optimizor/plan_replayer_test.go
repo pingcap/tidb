@@ -704,8 +704,8 @@ JOIN test_table t2 ON t1.id = t2.id;
 	require.True(t, rows.Next(), "unexpected data")
 	err = rows.Scan(&count)
 	require.NoError(t, err)
-	// because we truncated bind_info before loading, so it is without builtin_pseudo_sql_for_bind_lock
-	// It is only for test.test_table puhs
+	// because we truncated bind_info before loading, so it is without builtin_pseudo_sql_for_bind_lock.
+	// It is only for test.test_table.
 	require.Equal(t, int64(1), count)
 }
 
