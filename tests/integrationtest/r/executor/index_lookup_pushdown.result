@@ -6,11 +6,6 @@ id int primary key,
 a int,
 b int,
 index a(a)
-)
-PARTITION BY RANGE (id) (
-PARTITION p0 VALUES LESS THAN (1000),
-PARTITION p1 VALUES LESS THAN (2000),
-PARTITION p2 VALUES LESS THAN MAXVALUE
 );
 create table t4(id int primary key, a int, b int, index a(a));
 alter table t4 cache;
@@ -66,10 +61,10 @@ Projection_7	4.00	root		executor__index_lookup_pushdown.t1.id, executor__index_l
   └─IndexLookUp_18	4.00	root		
     ├─Limit_19(Build)	4.00	cop[tikv]		offset:0, count:4
     │ └─Selection_20	4.00	cop[tikv]		ne(executor__index_lookup_pushdown.t1.c, 500)
-    │   └─LocalIndexLookUp_22	6.01	cop[tikv]		index handle offsets:[2]
-    │     ├─Selection_15(Build)	6.01	cop[tikv]		lt(executor__index_lookup_pushdown.t1.b, 90)
-    │     │ └─IndexRangeScan_13	18.08	cop[tikv]	table:t1, index:i(a, b)	range:[-inf,"8"), keep order:false, stats:pseudo
-    │     └─TableRowIDScan_21(Probe)	6.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    │   └─LocalIndexLookUp_22	16.99	cop[tikv]		index handle offsets:[2]
+    │     ├─Selection_15(Build)	16.99	cop[tikv]		lt(executor__index_lookup_pushdown.t1.b, 90)
+    │     │ └─IndexRangeScan_13	51.13	cop[tikv]	table:t1, index:i(a, b)	range:[-inf,"8"), keep order:false, stats:pseudo
+    │     └─TableRowIDScan_21(Probe)	16.99	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─Limit_17(Probe)	0.00	cop[tikv]		offset:0, count:4
       └─Selection_16	0.00	cop[tikv]		ne(executor__index_lookup_pushdown.t1.c, 500)
         └─TableRowIDScan_14	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -263,8 +258,8 @@ id	estRows	task	access object	operator info
 IndexLookUp_17	3.00	root		limit embedded(offset:0, count:3)
 ├─LocalIndexLookUp_19(Build)	3.00	cop[tikv]		index handle offsets:[]
 │ ├─Limit_16(Build)	3.00	cop[tikv]		offset:0, count:3
-│ │ └─Selection_15	3.00	cop[tikv]		lt(executor__index_lookup_pushdown.t2.a, "c"), lt(executor__index_lookup_pushdown.t2.b, 3)
-│ │   └─IndexFullScan_13	27.16	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
+│ │ └─Selection_15	14.01	cop[tikv]		lt(executor__index_lookup_pushdown.t2.a, "c"), lt(executor__index_lookup_pushdown.t2.b, 3)
+│ │   └─IndexFullScan_13	126.89	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
 │ └─TableRowIDScan_18(Probe)	3.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
@@ -320,13 +315,6 @@ IndexLookUp_18	3333.33	root
 └─TableRowIDScan_17(Probe)	3333.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.
-explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 where id < 100 and a = 1;
-id	estRows	task	access object	operator info
-TableReader_8	1.00	root	partition:p0	data:Selection_7
-└─Selection_7	1.00	cop[tikv]		eq(executor__index_lookup_pushdown.t3.a, 1)
-  └─TableRangeScan_6	3333.33	cop[tikv]	table:t3	range:[-inf,100), keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported
 explain select /*+ index_lookup_pushdown(t4, a) */ * from t4 where a < 100;
 id	estRows	task	access object	operator info
 UnionScan_7	3323.33	root		lt(executor__index_lookup_pushdown.t4.a, 100)
@@ -469,16 +457,17 @@ TableReader_8	10.00	root		data:Selection_7
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, multi-valued index is not supported
+set @@tidb_replica_read='learner';
 insert into t3 values(1, 2, 3);
 explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
 id	estRows	task	access object	operator info
-IndexLookUp_7	10000.00	root	partition:all	
+IndexLookUp_7	10000.00	root		
 ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:t3, index:a(a)	keep order:false, stats:pseudo
 └─TableRowIDScan_6(Probe)	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
 select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
 id	a	b
 1	2	3
 Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, partition table is not supported
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported

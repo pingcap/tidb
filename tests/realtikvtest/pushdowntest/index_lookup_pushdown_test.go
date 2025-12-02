@@ -105,10 +105,13 @@ func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, 
 	}
 
 	// check in analyze the index is lookup locally
-	message = fmt.Sprintf("%s, %s", message, analyzeResult.String())
-	localIndexLookUpIndex := -1
+	message = fmt.Sprintf("%s\n%s\n%s", message, analyzeSQL, analyzeResult.String())
 	analyzeVerified := false
+	localIndexLookUpIndex := -1
+	totalIndexScanCnt := -1
+	localIndexLookUpRowCnt := -1
 	analyzeRows := analyzeResult.Rows()
+	metTableRowIDScan := false
 	for i, row := range analyzeRows {
 		if strings.Contains(row[0].(string), "LocalIndexLookUp") {
 			localIndexLookUpIndex = i
@@ -116,15 +119,28 @@ func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, 
 		}
 
 		if strings.Contains(row[0].(string), "TableRowIDScan") && strings.Contains(row[3].(string), "cop[tikv]") {
-			localLookUpRowCnt, err := strconv.Atoi(row[2].(string))
-			require.NoError(t, err, message)
-			if len(actual) > 0 {
-				require.Greater(t, localLookUpRowCnt, 0, message)
+			var err error
+			if !metTableRowIDScan {
+				localIndexLookUpRowCnt, err = strconv.Atoi(row[2].(string))
+				require.NoError(t, err, message)
+				require.GreaterOrEqual(t, localIndexLookUpRowCnt, 0)
+				// check actRows for LocalIndexLookUp
+				require.Equal(t, analyzeRows[localIndexLookUpIndex][2], row[2], message)
+				// get index scan row count
+				totalIndexScanCnt, err = strconv.Atoi(analyzeRows[localIndexLookUpIndex+1][2].(string))
+				require.NoError(t, err, message)
+				require.GreaterOrEqual(t, totalIndexScanCnt, localIndexLookUpRowCnt)
+				metTableRowIDScan = true
+				continue
 			}
-			// check actRows for left child of LocalIndexLookUp
-			require.Equal(t, analyzeRows[localIndexLookUpIndex+1][2], row[2], message)
-			// check actRows for LocalIndexLookUp
-			require.Equal(t, analyzeRows[localIndexLookUpIndex][2], row[2], message)
+
+			tidbIndexLookUpRowCnt, err := strconv.Atoi(row[2].(string))
+			require.NoError(t, err, message)
+			if limit < 0 {
+				require.Equal(t, totalIndexScanCnt, localIndexLookUpRowCnt+tidbIndexLookUpRowCnt, message)
+			} else {
+				require.LessOrEqual(t, localIndexLookUpRowCnt+tidbIndexLookUpRowCnt, totalIndexScanCnt, message)
+			}
 			analyzeVerified = true
 			break
 		}
@@ -277,10 +293,10 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 		v := &IndexLookUpPushDownRunVerifier{
 			T:           t,
 			tk:          tk,
-			tableName:   fmt.Sprintf("t_common_handle_prefix_primary_index"),
+			tableName:   "t_common_handle_prefix_primary_index",
 			indexName:   "idx_a",
 			primaryRows: []int{0, 1},
-			msg:         fmt.Sprintf("case: t_common_handle_prefix_primary_index"),
+			msg:         "case: t_common_handle_prefix_primary_index",
 		}
 		prepareTable(v, false, "utf8mb4", "utf8mb4_general_ci", "id1(3), id2")
 		v.RunSelectWithCheck("1", 0, -1)
@@ -289,12 +305,96 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 		v = &IndexLookUpPushDownRunVerifier{
 			T:           t,
 			tk:          tk,
-			tableName:   fmt.Sprintf("t_common_handle_two_int_pk"),
+			tableName:   "t_common_handle_two_int_pk",
 			indexName:   "idx_a",
 			primaryRows: []int{0, 1},
-			msg:         fmt.Sprintf("case: t_common_handle_two_int_pk"),
+			msg:         "case: t_common_handle_two_int_pk",
 		}
 		prepareTable(v, false, "utf8mb4", "utf8mb4_general_ci", "b, id2")
+		v.RunSelectWithCheck("1", 0, -1)
+	}
+}
+
+func TestRealTiKVPartitionIndexLookUpPushDown(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// int handle
+	tk.MustExec("create table tp1 (\n" +
+		"    a varchar(32),\n" +
+		"    b int,\n" +
+		"    c int,\n" +
+		"    d int,\n" +
+		"    primary key(b) CLUSTERED,\n" +
+		"    index c(c)\n" +
+		")\n" +
+		"PARTITION BY RANGE (b) (\n" +
+		"    PARTITION p0 VALUES LESS THAN (100),\n" +
+		"    PARTITION p1 VALUES LESS THAN (200),\n" +
+		"    PARTITION p2 VALUES LESS THAN (300),\n" +
+		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
+		")")
+
+	// common handle
+	tk.MustExec("create table tp2 (\n" +
+		"    a varchar(32),\n" +
+		"    b int,\n" +
+		"    c int,\n" +
+		"    d int,\n" +
+		"    primary key(a, b) CLUSTERED,\n" +
+		"    index c(c)\n" +
+		")\n" +
+		"PARTITION BY RANGE COLUMNS (a) (\n" +
+		"    PARTITION p0 VALUES LESS THAN ('c'),\n" +
+		"    PARTITION p1 VALUES LESS THAN ('e'),\n" +
+		"    PARTITION p2 VALUES LESS THAN ('g'),\n" +
+		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
+		")")
+
+	// extra handle
+	tk.MustExec("create table tp3 (\n" +
+		"    a varchar(32),\n" +
+		"    b int,\n" +
+		"    c int,\n" +
+		"    d int,\n" +
+		"    primary key(a, b) NONCLUSTERED,\n" +
+		"    index c(c)\n" +
+		")\n" +
+		"PARTITION BY RANGE COLUMNS (a) (\n" +
+		"    PARTITION p0 VALUES LESS THAN ('c'),\n" +
+		"    PARTITION p1 VALUES LESS THAN ('e'),\n" +
+		"    PARTITION p2 VALUES LESS THAN ('g'),\n" +
+		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
+		")")
+
+	tableNames := []string{"tp1", "tp2", "tp3"}
+	// prepare data
+	for _, tableName := range tableNames {
+		tk.MustExec("insert into " + tableName + " values " +
+			"('a', 10, 1, 100), " +
+			"('b', 20, 2, 200), " +
+			"('c', 110, 3, 300), " +
+			"('d', 120, 4, 400), " +
+			"('e', 210, 5, 500), " +
+			"('f', 220, 6, 600), " +
+			"('g', 330, 5, 700), " +
+			"('h', 340, 5, 800), " +
+			"('i', 450, 5, 900), " +
+			"('j', 550, 6, 1000) ",
+		)
+
+		v := &IndexLookUpPushDownRunVerifier{
+			T:           t,
+			tk:          tk,
+			tableName:   tableName,
+			indexName:   "c",
+			primaryRows: []int{0, 1},
+			msg:         tableName,
+		}
+
+		if tableName == "tp1" {
+			v.primaryRows = []int{1}
+		}
 		v.RunSelectWithCheck("1", 0, -1)
 	}
 }
