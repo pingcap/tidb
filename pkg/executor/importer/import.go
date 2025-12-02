@@ -1236,7 +1236,7 @@ func estimateCompressionRatio(
 	return compressionRatio, nil
 }
 
-const estimationPerType = 1024
+const compressionSampleCount = 256
 
 // compressionEstimator estimates compression ratio for different compression types.
 // It uses harmonic mean to get the average compression ratio.
@@ -1296,10 +1296,10 @@ func (r *compressionEstimator) estimate(
 	if r.records[compressTp] == nil {
 		r.records[compressTp] = make([]float64, 0, 256)
 	}
-	if len(r.records[compressTp]) < estimationPerType {
+	if len(r.records[compressTp]) < compressionSampleCount {
 		r.records[compressTp] = append(r.records[compressTp], compressRatio)
 	}
-	if len(r.records[compressTp]) >= estimationPerType {
+	if len(r.records[compressTp]) >= compressionSampleCount {
 		// Using harmonic mean can better handle outlier values.
 		compressRatio = getHarmonicMean(r.records[compressTp])
 		r.ratio.Store(compressTp, compressRatio)
