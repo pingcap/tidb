@@ -451,10 +451,6 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 		}
 		ingest.ForceSyncFlagForTest.Store(true)
 
-		tk.Session().Close()
-		tk = testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a bigint primary key, b bigint)")
 		for i := 0; i < 2000; i++ {

@@ -86,10 +86,10 @@ func (b *mppExecBuilder) buildMPPTableScanWithReader(pb *tipb.TableScan, reader 
 		startTS:     b.dagCtx.startTS,
 		kvRanges:    ranges,
 		dbReader:    reader,
-		//counts:      b.counts,
-		//ndvs:        b.ndvs,
-		desc:   pb.Desc,
-		paging: b.paging,
+		counts:      b.counts,
+		ndvs:        b.ndvs,
+		desc:        pb.Desc,
+		paging:      b.paging,
 	}
 	if b.dagCtx != nil {
 		ts.lockStore = b.dagCtx.lockStore
@@ -241,6 +241,7 @@ func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExe
 				},
 			},
 		},
+		keyspaceID:          b.dagCtx.keyspaceID,
 		indexHandleOffsets:  pb.IndexHandleOffsets,
 		tblScanPB:           tblScanPB,
 		isCommonHandle:      false,
@@ -654,6 +655,9 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 		dbReader:  dbReader,
 		startTS:   req.StartTs,
 		keyRanges: req.Ranges,
+	}
+	if reqCtx := req.Context; reqCtx != nil {
+		dagCtx.keyspaceID = reqCtx.KeyspaceId
 	}
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	builder := mppExecBuilder{

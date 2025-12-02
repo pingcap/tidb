@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -767,9 +766,6 @@ func TestBuildProjectionForIndexJoinPanic(t *testing.T) {
 }
 
 func TestIndexLookUpPushDownExec(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("IndexLookUp push down is not supported temporarily in nextgen")
-	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
