@@ -2030,55 +2030,6 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	return eg.Wait()
 }
 
-type LogFilesIterWithSplitHelper struct {
-	iter   LogIter
-	helper *split.LogSplitHelper
-	buffer []*LogDataFileInfo
-	next   int
-}
-
-const SplitFilesBufferSize = 4096
-
-func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) LogIter {
-	return &LogFilesIterWithSplitHelper{
-		iter:   iter,
-		helper: split.NewLogSplitHelper(rules, client, splitSize, splitKeys),
-		buffer: nil,
-		next:   0,
-	}
-}
-
-func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.IterResult[*LogDataFileInfo] {
-	if splitIter.next >= len(splitIter.buffer) {
-		splitIter.buffer = make([]*LogDataFileInfo, 0, SplitFilesBufferSize)
-		for r := splitIter.iter.TryNext(ctx); !r.Finished; r = splitIter.iter.TryNext(ctx) {
-			if r.Err != nil {
-				return r
-			}
-			f := r.Item
-			splitIter.helper.Merge(f.DataFileInfo)
-			splitIter.buffer = append(splitIter.buffer, f)
-			if len(splitIter.buffer) >= SplitFilesBufferSize {
-				break
-			}
-		}
-		splitIter.next = 0
-		if len(splitIter.buffer) == 0 {
-			return iter.Done[*LogDataFileInfo]()
-		}
-		log.Info("start to split the regions")
-		startTime := time.Now()
-		if err := splitIter.helper.Split(ctx); err != nil {
-			return iter.Throw[*LogDataFileInfo](errors.Trace(err))
-		}
-		log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
-	}
-
-	res := iter.Emit(splitIter.buffer[splitIter.next])
-	splitIter.next += 1
-	return res
-}
-
 func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key, value []byte, originTs uint64) error {
 	err := utils.WithRetry(ctx, func() error {
 		return client.Put(ctx, key, value, originTs)

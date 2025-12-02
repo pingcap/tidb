@@ -232,7 +232,7 @@ func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		if !strings.HasSuffix(path, ".meta") {
 			return nil
 		}
-		newPath := stream.FilterPathByTs(path, rc.shiftStartTS, rc.restoreTS)
+		newPath := stream.FilterPathByTs(path, lm.shiftStartTS, lm.restoreTS)
 		if len(newPath) > 0 {
 			names = append(names, newPath)
 		}
