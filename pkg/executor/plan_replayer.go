@@ -366,7 +366,7 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 					return err
 				}
 			} else {
-				stmtNode, err := ctx.GetRestrictedSQLExecutor().ParseWithParams(c, `INSERT INTO mysql.bind_info(
+				stmtNode, err := ctx.GetRestrictedSQLExecutor().ParseWithParams(c, `INSERT IGNORE INTO mysql.bind_info(
  original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest
 ) VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`, cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9], cols[10])
 				if err != nil {
