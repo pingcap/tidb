@@ -132,3 +132,8 @@ type isRetryingCtx struct{}
 
 // IsRetryingCtxKey indicates whether the current execution is a retry.
 var IsRetryingCtxKey = isRetryingCtx{}
+
+type prepareStmtIDCtxKeyType struct{}
+
+// PrepareStmtIDCtxKey indicates the prepared statement ID.
+var PrepareStmtIDCtxKey = prepareStmtIDCtxKeyType{}
