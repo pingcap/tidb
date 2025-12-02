@@ -705,8 +705,11 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return 0, err
 	}
+	// Use `$.read_row_count` to represent the read row count in subtask summary, because for some tasks (e.g. add partial
+	// index), the `read_row_count` can be greater than the `row_count`. However, it only represents how many rows have been read.
+	// We cannot suggest whether the task has been finished because these rows might haven't been processed and written yet.
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select
-    	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
+    	cast(sum(json_extract(summary, '$.read_row_count')) as signed) as row_count
 		from (
 			select summary from mysql.tidb_background_subtask where task_key = %? and step = %?
 			union all

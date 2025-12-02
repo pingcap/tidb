@@ -293,7 +293,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			}
 		}
 		if p.collector != nil {
-			p.collector.Accepted(delta)
+			p.collector.Accepted(delta, int64(rowCount))
 		}
 
 		if metrics != nil {

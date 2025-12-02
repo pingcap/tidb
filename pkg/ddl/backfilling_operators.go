@@ -255,9 +255,6 @@ type IndexRecordChunk struct {
 	Err   error
 	Done  bool
 
-	// tableScanRowCount is the number of rows scanned by the corresponding TableScanTask.
-	// If the index is a partial index, the number of rows in the Chunk may be less than tableScanRowCount.
-	tableScanRowCount int64
 	// conditionPushed records whether the index condition has been pushed down. If it's true, the ingest worker
 	// can skip running the checker in TiDB side.
 	conditionPushed bool
@@ -457,7 +454,6 @@ func NewTableScanOperator(
 				srcChkPool:    srcChkPool,
 				cpOp:          cpOp,
 				hintBatchSize: hintBatchSize,
-				totalCount:    totalCount,
 				reorgMeta:     reorgMeta,
 				collector:     collector,
 			}
@@ -487,7 +483,6 @@ type tableScanWorker struct {
 	cpOp          ingest.CheckpointOperator
 	reorgMeta     *model.DDLReorgMeta
 	hintBatchSize int
-	totalCount    *atomic.Int64
 	collector     execute.Collector
 }
 
@@ -529,8 +524,9 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
 	var (
-		idxResults  []IndexRecordChunk
-		execDetails kvutil.ExecDetails
+		idxResults             []IndexRecordChunk
+		idxReadSizeCheckpoints []int64
+		execDetails            kvutil.ExecDetails
 	)
 	var scanCtx context.Context = w.ctx
 	if scanCtx.Value(kvutil.ExecDetailsKey) == nil {
@@ -570,23 +566,30 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal)
-			execDetails = kvutil.ExecDetails{}
 
+			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, conditionPushed: conditionPushed})
+
+			// The `tableScanRowCount-lastTableScanRowCount` is not accurate because the internal cop request will read more rows than a single
+			// chunk. We still store the approximate value for progress reporting.
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed})
+			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal, tableScanRowCount-lastTableScanRowCount)
+			execDetails = kvutil.ExecDetails{}
+			idxReadSizeCheckpoints = append(idxReadSizeCheckpoints, tableScanRowCount-lastTableScanRowCount)
+
 			lastTableScanRowCount = tableScanRowCount
 		}
 		return rs.Close()
 	})
 
+	// At this step, all rows have been scanned successfully. However, we still update the checkpoint according to the scanned rows corresponding to
+	// each Chunk, instead of jumping the count from 0 to total scanned rows to represent the progress smoothly.
 	for i, idxResult := range idxResults {
 		sender(idxResult)
 		if w.cpOp != nil {
 			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
+			w.cpOp.UpdateChunk(task.ID, int(idxReadSizeCheckpoints[i]), done)
 		}
-		w.totalCount.Add(idxResult.tableScanRowCount)
+		failpoint.InjectCall("afterSendChunk", idxReadSizeCheckpoints[i])
 	}
 
 	return err
@@ -803,20 +806,19 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 		return err
 	}
 	// TODO: find a place to display the added count
-	_, bytes, err := w.WriteChunk(&ck)
+	count, bytes, err := w.WriteChunk(&ck)
 	if err != nil {
 		return err
 	}
-	w.collector.Processed(int64(bytes), ck.tableScanRowCount)
-	scannedCount := ck.tableScanRowCount
-	if scannedCount == 0 {
+	w.collector.Processed(int64(bytes), int64(ck.Chunk.NumRows()))
+	if count == 0 {
 		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
 		return nil
 	}
 	if w.totalCount != nil {
-		w.totalCount.Add(scannedCount)
+		w.totalCount.Add(int64(count))
 	}
-	result.RowCnt = int(ck.tableScanRowCount)
+	result.RowCnt = count
 	if ResultCounterForTest != nil {
 		ResultCounterForTest.Add(1)
 	}

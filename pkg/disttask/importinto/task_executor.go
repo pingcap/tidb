@@ -172,8 +172,9 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 }
 
 // Accepted implements Collector.Accepted interface.
-func (s *importStepExecutor) Accepted(bytes int64) {
+func (s *importStepExecutor) Accepted(bytes, rows int64) {
 	s.summary.Bytes.Add(bytes)
+	s.summary.ReadRowCnt.Add(rows)
 }
 
 // Processed implements Collector.Processed interface.

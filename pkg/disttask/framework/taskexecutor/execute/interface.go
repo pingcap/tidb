@@ -101,6 +101,8 @@ type SubtaskSummary struct {
 	Bytes atomic.Int64 `json:"bytes,omitempty"`
 	// ReadBytes is the number of bytes that read from the source.
 	ReadBytes atomic.Int64 `json:"read_bytes,omitempty"`
+	// ReadRowCnt is the number of rows that read from the source.
+	ReadRowCnt atomic.Int64 `json:"read_row_count,omitempty"`
 	// GetReqCnt is the number of get requests to the external storage.
 	// Note: Import-into also do GET on the source data bucket, but that's not
 	// recorded.
@@ -183,6 +185,7 @@ func (s *SubtaskSummary) UpdateTime() time.Time {
 
 // Reset resets the summary to zero values and clears history data.
 func (s *SubtaskSummary) Reset() {
+	s.ReadRowCnt.Store(0)
 	s.RowCnt.Store(0)
 	s.Bytes.Store(0)
 	s.ReadBytes.Store(0)
@@ -197,7 +200,7 @@ type Collector interface {
 	// Accepted is used collects metrics.
 	// The difference between Accepted and Processed is that Accepted is called
 	// when the data is accepted to be processed.
-	Accepted(bytes int64)
+	Accepted(bytes, rows int64)
 	// Processed is used collects metrics.
 	// `bytes` is the number of bytes processed, and `rows` is the number of rows processed.
 	// The meaning of `bytes` may vary by scenario, for example:
@@ -210,7 +213,7 @@ type Collector interface {
 type NoopCollector struct{}
 
 // Accepted implements Collector.Accepted
-func (*NoopCollector) Accepted(_ int64) {}
+func (*NoopCollector) Accepted(_, _ int64) {}
 
 // Processed implements Collector.Processed
 func (*NoopCollector) Processed(_, _ int64) {}
@@ -218,14 +221,16 @@ func (*NoopCollector) Processed(_, _ int64) {}
 // TestCollector is an implementation used for test.
 type TestCollector struct {
 	NoopCollector
-	ReadBytes atomic.Int64
-	Bytes     atomic.Int64
-	Rows      atomic.Int64
+	ReadBytes  atomic.Int64
+	ReadRowCnt atomic.Int64
+	Bytes      atomic.Int64
+	Rows       atomic.Int64
 }
 
 // Accepted implements Collector.Accepted
-func (c *TestCollector) Accepted(bytes int64) {
+func (c *TestCollector) Accepted(bytes, rows int64) {
 	c.ReadBytes.Add(bytes)
+	c.ReadRowCnt.Add(rows)
 }
 
 // Processed implements Collector.Processed

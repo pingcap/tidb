@@ -653,7 +653,7 @@ func TestSubTaskTable(t *testing.T) {
 	rowCount, err := sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), rowCount)
-	require.NoError(t, sm.UpdateSubtaskSummary(ctx, subtaskID, &execute.SubtaskSummary{RowCnt: *atomic.NewInt64(100)}))
+	require.NoError(t, sm.UpdateSubtaskSummary(ctx, subtaskID, &execute.SubtaskSummary{ReadRowCnt: *atomic.NewInt64(100)}))
 	rowCount, err = sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.EqualValues(t, 100, rowCount)
