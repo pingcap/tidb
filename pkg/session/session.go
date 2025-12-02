@@ -2536,6 +2536,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 	execStmt := &ast.ExecuteStmt{
 		BinaryArgs: params,
 		PrepStmt:   stmt,
+		PrepStmtId: stmtID,
 	}
 	return s.ExecuteStmt(ctx, execStmt)
 }
