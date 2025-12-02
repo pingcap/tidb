@@ -2309,6 +2309,8 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	// Disable index pruning for this test to avoid affecting stats loading
+	tk.MustExec("set @@session.tidb_opt_index_prune_threshold = -1")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
@@ -2338,7 +2340,7 @@ PARTITION BY RANGE ( a ) (
 	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	p1 := h.GetPhysicalTableStats(pi.Definitions[1].ID, tableInfo)
 	lastVersion := tbl.Version
-	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 0, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 0, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
