@@ -337,9 +337,13 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 		return nil
 	}
 	bindings := strings.Split(buf.String(), "\n")
+	// The original SQL in our bind info is actually normalized SQL, which cannot be executed directly. This is
+	// especially true for function names that are not defined as keywords, such as count and ifnull. These will be
+	// treated as strings and used to calculate the digest. Therefore, the original SQL cannot be directly used to
+	// construct the create binding. As a result, we have to resort to a more underlying method to write the binding.
 	for _, binding := range bindings {
 		cols := strings.Split(binding, "\t")
-		if len(cols) < 3 {
+		if len(cols) < 11 {
 			continue
 		}
 		originSQL := cols[0]
