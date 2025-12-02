@@ -324,6 +324,114 @@ func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_2(t *testing.T) {
 	require.Equal(t, emptyCount, 2)
 }
 
+func TestRestoreMetaKvFilesWithBatchMethod_with_write_size(t *testing.T) {
+	// Test case: when write CF files contribute to batch size calculation,
+	// the batch should be split based on the combined size of default and write CF files.
+	// This tests the logic that accumulates write CF file sizes when calculating batch boundaries.
+	defaultFiles := []*backuppb.DataFileInfo{
+		{
+			Path:   "d1",
+			MinTs:  100,
+			MaxTs:  120,
+			Length: 100,
+		},
+		{
+			Path:   "d2",
+			MinTs:  110,
+			MaxTs:  130,
+			Length: 100,
+		},
+		{
+			Path:   "d3",
+			MinTs:  131,
+			MaxTs:  150,
+			Length: 100,
+		},
+	}
+
+	// The write files have large sizes that should trigger batch splitting
+	// when combined with default file sizes.
+	writeFiles := []*backuppb.DataFileInfo{
+		{
+			Path:   "w1",
+			MinTs:  90, // MinTs < first default file's MinTs, so it will be added to initial batch
+			MaxTs:  95,
+			Length: logclient.MetaKVBatchSize - 50, // Large size that will contribute to batch
+		},
+		{
+			Path:   "w2",
+			MinTs:  100,
+			MaxTs:  110,
+			Length: 100,
+		},
+		{
+			Path:   "w3",
+			MinTs:  135,
+			MaxTs:  140,
+			Length: 100,
+		},
+	}
+
+	batchCount := 0
+	result := make(map[int][]*backuppb.DataFileInfo)
+	resultCF := make(map[int]string)
+
+	mockProcessor := &mockBatchProcessor{
+		processFunc: func(ctx context.Context,
+			files []*backuppb.DataFileInfo,
+			entries []*logclient.KvEntryWithTS,
+			filterTS uint64,
+			cf string) ([]*logclient.KvEntryWithTS, error) {
+			result[batchCount] = files
+			resultCF[batchCount] = cf
+			batchCount++
+			return nil, nil
+		},
+	}
+
+	err := logclient.LoadAndProcessMetaKVFilesInBatch(
+		context.Background(),
+		defaultFiles,
+		writeFiles,
+		mockProcessor,
+	)
+	require.Nil(t, err)
+
+	// Expected behavior:
+	// 1. First default file (d1) starts with batchSize = d1.Length + w1.Length = 100 + (MetaKVBatchSize - 50)
+	//    which is already close to MetaKVBatchSize.
+	// 2. When processing d2, batchSize + d2.Length > MetaKVBatchSize, so a new batch is triggered.
+	// 3. The batching should be:
+	//    - Batch 0: default CF [d1, d2]
+	//    - Batch 1: write CF [w1, w2] (files with MinTs < d2.MinTs=110, so w1 and w2)
+	//    - Batch 2: default CF [d3] (last batch)
+	//    - Batch 3: write CF [w3] (last batch)
+	require.Equal(t, 4, len(result), "expected 4 batches: %#v")
+
+	// First batch should be default CF with d1
+	require.Equal(t, consts.DefaultCF, resultCF[0])
+	require.Equal(t, 2, len(result[0]))
+	require.Equal(t, "d1", result[0][0].Path)
+	require.Equal(t, "d2", result[0][1].Path)
+
+	// Second batch should be write CF with w1 (and possibly w2 depending on filterTs logic)
+	require.Equal(t, consts.WriteCF, resultCF[1])
+	// w1.MinTs=90 < filterTs=110, w2.MinTs=100 < filterTs=110
+	require.Equal(t, 2, len(result[1]))
+	require.Equal(t, "w1", result[1][0].Path)
+	require.Equal(t, "w2", result[1][1].Path)
+
+	// Third batch should be remaining default CF files
+	require.Equal(t, consts.DefaultCF, resultCF[2])
+	require.Equal(t, 1, len(result[2]))
+	require.Equal(t, "d3", result[2][0].Path)
+
+	// Fourth batch should be remaining write CF files
+	require.Equal(t, consts.WriteCF, resultCF[3])
+	require.Equal(t, 1, len(result[3]))
+	require.Equal(t, "w3", result[3][0].Path)
+}
+
 func TestRestoreMetaKVFilesWithBatchMethod_with_entries(t *testing.T) {
 	filesDefault := []*backuppb.DataFileInfo{
 		{
