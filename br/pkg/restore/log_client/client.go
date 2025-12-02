@@ -939,10 +939,13 @@ func (rc *LogClient) RestoreKVFiles(
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
 
+					maxTs, minTs := uint64(0), uint64(math.MaxUint64)
 					if err == nil {
 						filenames := make([]string, 0, len(files))
 						for _, f := range files {
-							filenames = append(filenames, f.Path+", ")
+							maxTs = max(f.MaxTs, maxTs)
+							minTs = min(f.MinTs, minTs)
+							filenames = append(filenames, f.Path)
 							if rc.logRestoreManager.checkpointRunner != nil {
 								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.logRestoreManager.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
@@ -951,6 +954,7 @@ func (rc *LogClient) RestoreKVFiles(
 							}
 						}
 						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+							zap.Uint64("min-ts", minTs), zap.Uint64("max-ts", maxTs), zap.String("cf", files[0].Cf),
 							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 
 						metrics.KVApplyBatchDuration.Observe(time.Since(fileStart).Seconds())
@@ -1129,6 +1133,7 @@ func LoadAndProcessMetaKVFilesInBatch(
 		batchSize  uint64 = 0
 		defaultIdx int    = 0
 		writeIdx   int    = 0
+		toWriteIdx int    = 0
 
 		defaultKvEntries = make([]*KvEntryWithTS, 0)
 		writeKvEntries   = make([]*KvEntryWithTS, 0)
@@ -1144,9 +1149,18 @@ func LoadAndProcessMetaKVFilesInBatch(
 				rangeMin = min(rangeMin, f.MinTs)
 				rangeMax = max(rangeMax, f.MaxTs)
 				batchSize += f.Length
+				for ; toWriteIdx < len(writeFiles); toWriteIdx++ {
+					batchSize += writeFiles[toWriteIdx].Length
+					if writeFiles[toWriteIdx].MinTs >= f.MinTs {
+						break
+					}
+				}
 			} else {
 				// Either f.MinTS > rangeMax or f.MinTs is the filterTs we need.
 				// So it is ok to pass f.MinTs as filterTs.
+				logutil.CL(ctx).Info("Meta KV restore batch: default CF.",
+					zap.Int("from-idx", defaultIdx), zap.Int("to-idx", i), zap.Uint64("range-min-ts", rangeMin),
+					zap.Uint64("range-max-ts", rangeMax), zap.Uint64("total-batch-size", batchSize))
 				defaultKvEntries, err = processor.ProcessBatch(ctx, defaultFiles[defaultIdx:i], defaultKvEntries, f.MinTs, consts.DefaultCF)
 				if err != nil {
 					return errors.Trace(err)
@@ -1158,12 +1172,14 @@ func LoadAndProcessMetaKVFilesInBatch(
 				batchSize = uint64(len(defaultKvEntries)*kvSize) + f.Length
 
 				// restore writeCF kv to f.MinTs
-				var toWriteIdx int
-				for toWriteIdx = writeIdx; toWriteIdx < len(writeFiles); toWriteIdx++ {
+				for ; toWriteIdx < len(writeFiles); toWriteIdx++ {
 					if writeFiles[toWriteIdx].MinTs >= f.MinTs {
 						break
 					}
 				}
+				logutil.CL(ctx).Info("Meta KV restore batch: write CF.",
+					zap.Int("from-idx", writeIdx), zap.Int("to-idx", toWriteIdx), zap.Uint64("range-min-ts", rangeMin),
+					zap.Uint64("range-max-ts", rangeMax))
 				writeKvEntries, err = processor.ProcessBatch(ctx, writeFiles[writeIdx:toWriteIdx], writeKvEntries, f.MinTs, consts.WriteCF)
 				if err != nil {
 					return errors.Trace(err)
@@ -1176,10 +1192,14 @@ func LoadAndProcessMetaKVFilesInBatch(
 	// restore the left meta kv files and entries
 	// Notice: restoreBatch needs to realize the parameter `files` and `kvEntries` might be empty
 	// Assert: defaultIdx <= len(defaultFiles) && writeIdx <= len(writeFiles)
+	logutil.CL(ctx).Info("Meta KV restore batch: last default CF.",
+		zap.Int("from-idx", defaultIdx), zap.Uint64("range-min-ts", rangeMin), zap.Uint64("range-max-ts", rangeMax))
 	_, err = processor.ProcessBatch(ctx, defaultFiles[defaultIdx:], defaultKvEntries, math.MaxUint64, consts.DefaultCF)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.CL(ctx).Info("Meta KV restore batch: last write CF.",
+		zap.Int("from-idx", writeIdx), zap.Uint64("range-min-ts", rangeMin), zap.Uint64("range-max-ts", rangeMax))
 	_, err = processor.ProcessBatch(ctx, writeFiles[writeIdx:], writeKvEntries, math.MaxUint64, consts.WriteCF)
 	if err != nil {
 		return errors.Trace(err)
