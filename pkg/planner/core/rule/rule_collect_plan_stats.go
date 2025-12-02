@@ -222,6 +222,7 @@ func (c *CollectPredicateColumnsPoint) collectAndPruneDataSources(plan base.Logi
 // pruneIndexesForDataSource prunes indexes for a single DataSource if needed.
 func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]map[int64]struct{}) {
 	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
+	// Early return if pruning is disabled (threshold < 0)
 	if threshold < 0 {
 		return
 	}
