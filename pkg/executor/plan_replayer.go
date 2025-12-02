@@ -362,14 +362,6 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 			}
 		}
 	}
-	if !isSession {
-		c := context.Background()
-		_, err = ctx.GetSQLExecutor().Execute(c, "admin reload bindings")
-		if err != nil {
-			logutil.BgLogger().Warn("reload global bindings failed", zap.Error(err))
-			return err
-		}
-	}
 	return nil
 }
 
