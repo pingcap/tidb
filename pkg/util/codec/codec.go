@@ -425,14 +425,14 @@ const (
 )
 
 // PreAllocForSerializedKeyBuffer estimates key length
-func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte, memoryUsagePerRow *[]int64) error {
+func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte, memoryUsagePerRow []int64) ([]int64, error) {
 	rowNum := len(usedRows)
-	if cap((*memoryUsagePerRow)) < rowNum {
-		(*memoryUsagePerRow) = make([]int64, rowNum)
+	if cap(memoryUsagePerRow) < rowNum {
+		memoryUsagePerRow = make([]int64, rowNum)
 	} else {
-		(*memoryUsagePerRow) = (*memoryUsagePerRow)[:rowNum]
+		memoryUsagePerRow = memoryUsagePerRow[:rowNum]
 		for i := range rowNum {
-			(*memoryUsagePerRow)[i] = 0
+			memoryUsagePerRow[i] = 0
 		}
 	}
 
@@ -447,12 +447,12 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 
 		switch tps[i].GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			for j := range *memoryUsagePerRow {
-				(*memoryUsagePerRow)[j] += size.SizeOfByte + 8
+			for j := range memoryUsagePerRow {
+				memoryUsagePerRow[j] += size.SizeOfByte + 8
 			}
 		case mysql.TypeFloat, mysql.TypeDouble:
-			for j := range *memoryUsagePerRow {
-				(*memoryUsagePerRow)[j] += int64(sizeFloat64)
+			for j := range memoryUsagePerRow {
+				memoryUsagePerRow[j] += int64(sizeFloat64)
 			}
 		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			collator := collate.GetCollator(tps[i].GetCollate())
@@ -466,15 +466,15 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 					strLen += int64(sizeUint32)
 				}
 
-				(*memoryUsagePerRow)[j] += strLen
+				memoryUsagePerRow[j] += strLen
 			}
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			for j := range *memoryUsagePerRow {
-				(*memoryUsagePerRow)[j] += int64(sizeUint64)
+			for j := range memoryUsagePerRow {
+				memoryUsagePerRow[j] += int64(sizeUint64)
 			}
 		case mysql.TypeDuration:
-			for j := range *memoryUsagePerRow {
-				(*memoryUsagePerRow)[j] += 8
+			for j := range memoryUsagePerRow {
+				memoryUsagePerRow[j] += 8
 			}
 		case mysql.TypeNewDecimal:
 			ds := column.Decimals()
@@ -488,14 +488,14 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				// Buffer length for all decimal in one column should be same
 				b, err := ds[physicalRowindex].ToHashKey()
 				if err != nil {
-					return err
+					return memoryUsagePerRow, err
 				}
 
 				if serializeModes[i] == KeepVarColumnLength {
 					elemLen += int64(sizeUint8)
 				}
 				elemLen += int64(len(b))
-				(*memoryUsagePerRow)[j] += elemLen
+				memoryUsagePerRow[j] += elemLen
 			}
 		case mysql.TypeEnum:
 			if mysql.HasEnumSetAsIntFlag(tps[i].GetFlag()) {
@@ -505,8 +505,8 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				}
 				elemLen += int64(sizeUint64)
 
-				for j := range *memoryUsagePerRow {
-					(*memoryUsagePerRow)[j] += elemLen
+				for j := range memoryUsagePerRow {
+					memoryUsagePerRow[j] += elemLen
 				}
 			} else {
 				sizeByteNum := int64(0)
@@ -526,7 +526,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 						str = enum.Name
 					}
 
-					(*memoryUsagePerRow)[j] += sizeByteNum + int64(len(str)*collator.MaxLenOneByte())
+					memoryUsagePerRow[j] += sizeByteNum + int64(len(str)*collator.MaxLenOneByte())
 				}
 			}
 		case mysql.TypeSet:
@@ -543,10 +543,10 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 
 				s, err := types.ParseSetValue(tps[i].GetElems(), column.GetSet(physicalRowindex).Value)
 				if err != nil {
-					return err
+					return memoryUsagePerRow, err
 				}
 
-				(*memoryUsagePerRow)[j] += sizeByteNum + int64(len(s.Name)*collator.MaxLenOneByte())
+				memoryUsagePerRow[j] += sizeByteNum + int64(len(s.Name)*collator.MaxLenOneByte())
 			}
 		case mysql.TypeBit:
 			signFlagLen := int64(0)
@@ -558,7 +558,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 					continue
 				}
 
-				(*memoryUsagePerRow)[j] += signFlagLen + int64(sizeUint64)
+				memoryUsagePerRow[j] += signFlagLen + int64(sizeUint64)
 			}
 		case mysql.TypeJSON:
 			sizeByteNum := int64(0)
@@ -571,26 +571,26 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 					continue
 				}
 
-				(*memoryUsagePerRow)[j] += sizeByteNum + column.GetJSON(physicalRowindex).CalculateHashValueSize()
+				memoryUsagePerRow[j] += sizeByteNum + column.GetJSON(physicalRowindex).CalculateHashValueSize()
 			}
 		case mysql.TypeNull:
 		default:
-			return errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
+			return memoryUsagePerRow, errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
 		}
 	}
 
 	totalMemUsage := int64(0)
-	for _, usage := range *memoryUsagePerRow {
+	for _, usage := range memoryUsagePerRow {
 		totalMemUsage += usage
 	}
 	continuousMem := make([]byte, totalMemUsage)
 	start := int64(0)
 	for i := range serializedKeysVectorBuffer {
-		rowLen := (*memoryUsagePerRow)[i]
+		rowLen := memoryUsagePerRow[i]
 		serializedKeysVectorBuffer[i] = continuousMem[start : start : start+rowLen]
 		start += rowLen
 	}
-	return nil
+	return memoryUsagePerRow, nil
 }
 
 // SerializeKeys is used in join

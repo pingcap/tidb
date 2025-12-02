@@ -161,7 +161,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 
-	err = codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer, &(b.memoryUsagePerRowBuffer))
+	b.memoryUsagePerRowBuffer, err = codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer, b.memoryUsagePerRowBuffer)
 	if err != nil {
 		return err
 	}
