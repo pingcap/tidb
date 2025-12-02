@@ -1245,6 +1245,7 @@ func (a *ExecStmt) logAudit() {
 			cmdBin := byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))
 			cmd := mysql.Command2Str[cmdBin]
 			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
+			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, a.retryCount > 0 || sessVars.RetryInfo.Retrying)
 			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
 			}
