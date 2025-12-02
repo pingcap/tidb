@@ -508,7 +508,7 @@ func CalculateLenDeltaAppendCellFromRawData(dst *Column, rowData unsafe.Pointer,
 func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset int) int {
 	if dst.isFixed() {
 		elemLen := len(dst.elemBuf)
-		if intest.InTest && (len(dst.data) + elemLen > cap(dst.data)) {
+		if intest.InTest && (len(dst.data)+elemLen > cap(dst.data)) {
 			panic("fail to reserve enough memory for dst.data")
 		}
 		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset), elemLen)...)
@@ -516,9 +516,9 @@ func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset in
 	} else {
 		elemLen := *(*uint32)(unsafe.Add(rowData, currentOffset))
 		if intest.InTest {
-			if len(dst.data) + int(elemLen) > cap(dst.data) {
+			if len(dst.data)+int(elemLen) > cap(dst.data) {
 				panic("fail to reserve enough memory for dst.data")
-			} else if len(dst.offsets) + 1 > cap(dst.offsets) {
+			} else if len(dst.offsets)+1 > cap(dst.offsets) {
 				panic("fail to reserve enough memory for dst.offsets")
 			}
 		}
