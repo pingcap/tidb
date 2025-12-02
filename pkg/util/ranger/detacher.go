@@ -1035,7 +1035,6 @@ func DetachCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions [
 // detachCondAndBuildRange detaches the index filters from table filters and uses them to build ranges.
 func detachCondAndBuildRange(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64, convertToSortKey bool, mergeConsecutive bool) (*DetachRangeResult, error) {
-
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
