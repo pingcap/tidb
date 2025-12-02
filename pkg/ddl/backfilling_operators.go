@@ -816,6 +816,8 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 	}
 	w.rowCntListener.Written(int(ck.tableScanRowCount))
 	if rs.Added == 0 {
+		// Mark empty chunks as finished so checkpoint progress can advance.
+		w.backendCtx.FinishChunk(ck.ID, 0)
 		return nil
 	}
 	err = w.backendCtx.IngestIfQuotaExceeded(w.ctx, ck.ID, rs.Added)
@@ -860,10 +862,6 @@ func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResul
 		return result, err
 	}
 	scannedCount := rs.tableScanRowCount
-	if scannedCount == 0 {
-		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", rs.ID))
-		return result, nil
-	}
 	if w.totalCount != nil {
 		w.totalCount.Add(scannedCount)
 	}
