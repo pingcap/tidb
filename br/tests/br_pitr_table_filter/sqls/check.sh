@@ -6,6 +6,8 @@ table_must_exist() {
     local table_name="$1"
     local schema=$(echo $table_name | cut -d. -f1)
     local table=$(echo $table_name | cut -d. -f2)
+
+    echo "check table must exist: $table_name"
     
     # Method 1: information_schema.TABLES check
     run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table'"
@@ -39,6 +41,8 @@ table_must_not_exist() {
     local table_name="$1"
     local schema=$(echo $table_name | cut -d. -f1)
     local table=$(echo $table_name | cut -d. -f2)
+
+    echo "check table must not exist: $table_name"
     
     # Method 1: information_schema.TABLES check
     run_sql "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table'"
@@ -64,12 +68,14 @@ table_must_not_exist() {
 }
 
 column_must_exist() {
+    echo "check column must exist: $1 ($2)"
     run_sql "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)' AND COLUMN_NAME = '$2'"
     check_contains "COUNT(*): 1"
     run_sql "SELECT $2 FROM $1 LIMIT 0"
 }
 
 column_must_not_exist() {
+    echo "check column must not exist: $1 ($2)"
     run_sql "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)' AND COLUMN_NAME = '$2'"
     check_contains "COUNT(*): 0"
     if run_sql "SELECT $2 FROM $1 LIMIT 0" 2>/dev/null; then
@@ -84,6 +90,8 @@ index_must_exist() {
     local schema=$(echo $table_name | cut -d. -f1)
     local table=$(echo $table_name | cut -d. -f2)
     
+    echo "check index must exist: $1 ($2)"
+
     # Method 1: information_schema.STATISTICS check
     run_sql "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND INDEX_NAME = '$index_name'"
     check_contains "COUNT(*): 1"
@@ -109,6 +117,7 @@ index_must_exist() {
 }
 
 index_must_not_exist() {
+    echo "index must not exist: $1 ($2)"
     run_sql "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$(echo $1 | cut -d. -f1)' AND TABLE_NAME = '$(echo $1 | cut -d. -f2)' AND INDEX_NAME = '$2'"
     check_contains "COUNT(*): 0"
     if run_sql "SHOW INDEX FROM $1 WHERE Key_name = '$2'" 2>/dev/null | grep -q "$2"; then
@@ -121,6 +130,8 @@ index_must_not_exist() {
 schema_must_exist() {
     local schema_name="$1"
     
+    echo "schema must exist: $1"
+
     # Method 1: information_schema.SCHEMATA check
     run_sql "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$schema_name'"
     check_contains "SCHEMA_NAME: $schema_name"
@@ -140,6 +151,7 @@ schema_must_exist() {
 }
 
 schema_must_not_exist() {
+    echo "schema must not exist: $1"
     run_sql "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$1'"
     check_contains "COUNT(*): 0"
     if run_sql "USE $1" 2>/dev/null; then
@@ -149,6 +161,7 @@ schema_must_not_exist() {
 }
 
 check_create_table_contains() {
+    echo "show create table $1"
     run_sql "SHOW CREATE TABLE $1"
     check_contains "$2"
 }
@@ -158,6 +171,8 @@ view_must_exist() {
     local schema=$(echo $view_name | cut -d. -f1)
     local view=$(echo $view_name | cut -d. -f2)
     
+    echo "check view must exist: $1"
+
     # Method 1: information_schema.VIEWS check
     run_sql "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$view'"
     check_contains "COUNT(*): 1"
@@ -184,6 +199,8 @@ view_must_not_exist() {
     local view_name="$1"
     local schema=$(echo $view_name | cut -d. -f1)
     local view=$(echo $view_name | cut -d. -f2)
+
+    echo "check view must not exist: $1"
     
     # Method 1: information_schema.VIEWS check
     run_sql "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$view'"
@@ -210,6 +227,8 @@ sequence_must_exist() {
     local schema="$1"
     local sequence="$2"
     
+    echo "check sequence must exist: $1 ($2)"
+
     # Method 1: information_schema.SEQUENCES check
     run_sql "SELECT SEQUENCE_NAME FROM information_schema.SEQUENCES WHERE SEQUENCE_SCHEMA = '$schema' AND SEQUENCE_NAME = '$sequence'"
     check_contains "SEQUENCE_NAME: $sequence"
@@ -223,6 +242,8 @@ sequence_must_exist() {
 }
 
 sequence_must_not_exist() {
+    echo "check sequence must not exist: $1 ($2)"
+
     run_sql "SELECT COUNT(*) FROM information_schema.SEQUENCES WHERE SEQUENCE_SCHEMA = '$1' AND SEQUENCE_NAME = '$2'"
     check_contains "COUNT(*): 0"
     if run_sql "SHOW CREATE SEQUENCE $1.$2" 2>/dev/null; then
@@ -236,6 +257,8 @@ foreign_key_must_exist() {
     local table="$2"  
     local constraint_name="$3"
     
+    echo "check foreign key must exist: $1 ($2)"
+
     # Method 1: information_schema.TABLE_CONSTRAINTS check
     run_sql "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = '$constraint_name'"
     check_contains "CONSTRAINT_NAME: $constraint_name"
@@ -254,6 +277,7 @@ foreign_key_must_exist() {
 }
 
 foreign_key_must_not_exist() {
+    echo "check foreign key must not exist: $1 ($2)"
     run_sql "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = '$3'"
     check_contains "COUNT(*): 0"
     run_sql "SHOW CREATE TABLE $1.$2"
@@ -264,6 +288,9 @@ check_constraint_must_exist() {
     local schema_name="$1"
     local table_name="$2"
     local constraint_name="$3"
+
+    echo "check constraint must exist: $1.$2 ($3)"
+
     run_sql "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = '$schema_name' AND CONSTRAINT_NAME = '$constraint_name'"
     check_contains "COUNT(*): 1"
     run_sql "SHOW CREATE TABLE $schema_name.$table_name"
@@ -274,6 +301,9 @@ check_constraint_must_not_exist() {
     local schema_name="$1"
     local table_name="$2"
     local constraint_name="$3"
+
+    echo "check constraint must not exist: $1.$2 ($3)"
+
     run_sql "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = '$schema_name' AND CONSTRAINT_NAME = '$constraint_name'"
     check_contains "COUNT(*): 0"
     run_sql "SHOW CREATE TABLE $schema_name.$table_name"
@@ -285,6 +315,8 @@ partition_must_exist() {
     local table="$2"
     local partition="$3"
     
+    echo "check partition must exist: $1.$2 ($3)"
+
     # Method 1: information_schema.PARTITIONS check
     run_sql "SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND PARTITION_NAME = '$partition'"
     check_contains "PARTITION_NAME: $partition"
@@ -304,6 +336,8 @@ partition_must_exist() {
 }
 
 partition_must_not_exist() {
+    echo "check partition must not exist: $1.$2 ($3)"
+
     run_sql "SELECT COUNT(*) FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND PARTITION_NAME = '$3'"
     check_contains "COUNT(*): 0"
     run_sql "SHOW CREATE TABLE $1.$2"
@@ -311,6 +345,8 @@ partition_must_not_exist() {
 }
 
 check_table_default_value() {
+    echo "check table default must exist: $1.$2 ($3)"
+
     run_sql "SELECT COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2' AND COLUMN_NAME = '$3'"
     check_contains "COLUMN_DEFAULT: $4"
     run_sql "SHOW CREATE TABLE $1.$2"
@@ -318,6 +354,8 @@ check_table_default_value() {
 }
 
 check_table_charset() {
+    echo "check table charset: $1.$2 ($3)"
+
     run_sql "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2'"
     check_contains "$3"
     run_sql "SHOW CREATE TABLE $1.$2"
@@ -327,6 +365,9 @@ check_table_charset() {
 check_schema_charset() {
     local schema_name="$1"
     local expected_collation="$2"
+
+    echo "check schema charset: $1 ($2)"
+
     run_sql "SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$schema_name'"
     check_contains "$expected_collation"
     run_sql "SHOW CREATE DATABASE $schema_name"
@@ -338,6 +379,9 @@ check_index_visibility() {
     local table="$2"
     local index="$3"
     local visibility="$4"
+
+    echo "check index visibility: $1.$2 ($3: $4)"
+
     run_sql "SELECT IS_VISIBLE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '$schema' AND TABLE_NAME = '$table' AND INDEX_NAME = '$index'"
     check_contains "IS_VISIBLE: $visibility"
     run_sql "SHOW INDEX FROM $schema.$table WHERE Key_name = '$index'"
@@ -349,11 +393,15 @@ check_index_visibility() {
 }
 
 check_tiflash_replica_count() {
+    echo "check tifalsh replica count: $1.$2 ($3)"
+
     run_sql "SELECT REPLICA_COUNT FROM INFORMATION_SCHEMA.TIFLASH_REPLICA WHERE TABLE_SCHEMA = '$1' AND TABLE_NAME = '$2'"
     check_contains "REPLICA_COUNT: $3"
 }
 
 row_must_exist() {
+    echo "check row must exist: $1.$2"
+
     run_sql "SELECT COUNT(*) FROM $1 WHERE $2"
     check_contains "COUNT(*): 1"
     run_sql "SELECT * FROM $1 WHERE $2 LIMIT 1"
@@ -361,21 +409,29 @@ row_must_exist() {
 }
 
 row_must_not_exist() {
+    echo "check row must not exist: $1.$2"
+
     run_sql "select count(*) from $1 where $2"
     check_contains "count(*): 0"
 }
 
 check_table_stats_options() {
+    echo "check table stats_options: $1.$2"
+
     run_sql "SHOW CREATE TABLE $1"
     check_contains "$2"
 }
 
 check_table_ttl() {
+    echo "check table ttl: $1"
+
     run_sql "SHOW CREATE TABLE $1"
     check_contains "TTL="
 }
 
 check_table_no_ttl() {
+    echo "check table no ttl: $1"
+
     run_sql "SHOW CREATE TABLE $1"
     check_not_contains "TTL="
 }
@@ -383,6 +439,8 @@ check_table_no_ttl() {
 check_table_cache_status() {
     local table_name="$1"
     local expected_status="$2"
+    echo "check table cache status: $1: $2"
+
     run_sql "SHOW CREATE TABLE $table_name"
     if [ "$expected_status" = "ENABLE" ]; then
         check_contains "CACHED ON"
@@ -504,6 +562,38 @@ row_must_exist "test_snapshot_db_rename_2.t_renames_c" "id = 3"
 row_must_exist "test_log_db_rename_2.t_renames_aa" "id = 1"
 row_must_exist "test_log_db_rename_1.t_renames_a" "id = 2"
 row_must_exist "test_log_db_rename_2.t_renames_c" "id = 3"
+
+# ActionRenameTable back
+table_must_exist "test_snapshot_db_rename_3.t_parent"
+table_must_exist "test_snapshot_db_rename_3.t_child_filtered_in"
+table_must_exist "test_snapshot_db_rename_3.t_child_filtered_out"
+table_must_exist "test_snapshot_db_rename_3.t_parts_filtered_in"
+table_must_exist "test_snapshot_db_rename_3.t_parts_filtered_out"
+table_must_exist "test_log_db_rename_3.t_parent"
+table_must_exist "test_log_db_rename_3.t_child_filtered_in"
+table_must_exist "test_log_db_rename_3.t_child_filtered_out"
+table_must_exist "test_log_db_rename_3.t_parts_filtered_in"
+table_must_exist "test_log_db_rename_3.t_parts_filtered_out"
+row_must_exist "test_snapshot_db_rename_3.t_parent" "id = 10"
+row_must_exist "test_snapshot_db_rename_3.t_parent" "id = 20"
+row_must_exist "test_snapshot_db_rename_3.t_child_filtered_in" "id = 10"
+row_must_exist "test_snapshot_db_rename_3.t_child_filtered_in" "id = 20"
+row_must_exist "test_snapshot_db_rename_3.t_child_filtered_out" "id = 10"
+row_must_exist "test_snapshot_db_rename_3.t_child_filtered_out" "id = 20"
+row_must_exist "test_snapshot_db_rename_3.t_parts_filtered_in" "id = 10"
+row_must_exist "test_snapshot_db_rename_3.t_parts_filtered_in" "id = 210"
+row_must_exist "test_snapshot_db_rename_3.t_parts_filtered_out" "id = 10"
+row_must_exist "test_snapshot_db_rename_3.t_parts_filtered_out" "id = 210"
+row_must_exist "test_log_db_rename_3.t_parent" "id = 10"
+row_must_exist "test_log_db_rename_3.t_parent" "id = 20"
+row_must_exist "test_log_db_rename_3.t_child_filtered_in" "id = 10"
+row_must_exist "test_log_db_rename_3.t_child_filtered_in" "id = 20"
+row_must_exist "test_log_db_rename_3.t_child_filtered_out" "id = 10"
+row_must_exist "test_log_db_rename_3.t_child_filtered_out" "id = 20"
+row_must_exist "test_log_db_rename_3.t_parts_filtered_in" "id = 10"
+row_must_exist "test_log_db_rename_3.t_parts_filtered_in" "id = 210"
+row_must_exist "test_log_db_rename_3.t_parts_filtered_out" "id = 10"
+row_must_exist "test_log_db_rename_3.t_parts_filtered_out" "id = 210"
 
 # ActionModifyTableComment
 check_create_table_contains "test_snapshot_db_create.t_modify_comment" "after modify comment"
@@ -627,6 +717,12 @@ row_must_exist "test_snapshot_db_exchange_partition_1.t_exchange_partition" "id 
 row_must_exist "test_snapshot_db_exchange_partition_2.t_non_partitioned_table" "id = 105"
 row_must_exist "test_log_db_exchange_partition_1.t_exchange_partition" "id = 115"
 row_must_exist "test_log_db_exchange_partition_2.t_non_partitioned_table" "id = 105"
+
+# ActionExchangeTablePartition back
+row_must_exist "test_snapshot_db_exchange_partition_3.t_exchange_partition" "id = 105"
+row_must_exist "test_snapshot_db_exchange_partition_3.t_non_partitioned_table" "id = 115"
+row_must_exist "test_log_db_exchange_partition_3.t_exchange_partition" "id = 105"
+row_must_exist "test_log_db_exchange_partition_3.t_non_partitioned_table" "id = 115"
 
 # ActionReorganizePartition
 check_create_table_contains "test_snapshot_db_create.t_reorganize_partition" "pnew"
