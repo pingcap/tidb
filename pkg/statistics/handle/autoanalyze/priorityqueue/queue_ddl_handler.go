@@ -40,8 +40,9 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 	// Check if auto analyze is enabled.
 	if !vardef.RunAutoAnalyze.Load() {
 		// Close the priority queue if auto analyze is disabled.
-		// Otherwise, the priority queue may remain in an unknown state. We need to ensure that the next time auto analyze is enabled,
-		// the priority queue can be re-initialized properly.
+		// This ensures proper cleanup of the DDL notifier (mysql.tidb_ddl_notifier) and prevents the queue from remaining
+		// in an unknown state. When auto analyze is re-enabled, the priority queue can be properly re-initialized.
+		// NOTE: It is safe to call Close multiple times and it will get the lock internally.
 		pq.Close()
 		return nil
 	}
