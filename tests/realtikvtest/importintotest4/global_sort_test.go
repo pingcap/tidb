@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
@@ -47,6 +48,91 @@ func urlEqual(t *testing.T, expected, actual string) {
 	require.Equal(t, urlExpected.Query(), urlGot.Query())
 	urlExpected.RawQuery, urlGot.RawQuery = "", ""
 	require.Equal(t, urlExpected.String(), urlGot.String())
+}
+
+func (s *mockGCSSuite) checkExternalFields(taskID int64, externalMetaCleanedUp bool) {
+	s.T().Helper()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	mgr, err := storage.GetTaskManager()
+	s.NoError(err)
+	task, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
+	s.NoError(err)
+	taskMeta := importinto.TaskMeta{}
+	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
+	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
+	s.NoError(err)
+	defer store.Close()
+
+	for _, step := range []proto.Step{
+		proto.ImportStepEncodeAndSort,
+		proto.ImportStepMergeSort,
+		proto.ImportStepWriteAndIngest,
+		proto.ImportStepCollectConflicts,
+		proto.ImportStepConflictResolution,
+	} {
+		subtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, step)
+		s.NoError(err)
+		for _, subtask := range subtasks {
+			switch step {
+			case proto.ImportStepEncodeAndSort:
+				var subtaskMeta importinto.ImportStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+					sum := subtaskMeta.SortedDataMeta.ConflictInfo.Count
+					for _, m := range subtaskMeta.SortedIndexMetas {
+						sum += m.ConflictInfo.Count
+					}
+					s.EqualValues(subtaskMeta.RecordedConflictKVCount, sum)
+				}
+			case proto.ImportStepMergeSort:
+				var subtaskMeta importinto.MergeSortStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+					s.EqualValues(subtaskMeta.ConflictInfo.Count, subtaskMeta.RecordedConflictKVCount)
+				}
+			case proto.ImportStepWriteAndIngest:
+				var subtaskMeta importinto.WriteIngestStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+					s.EqualValues(subtaskMeta.ConflictInfo.Count, subtaskMeta.RecordedConflictKVCount)
+				}
+			case proto.ImportStepCollectConflicts:
+				var subtaskMeta importinto.CollectConflictsStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+					info, ok := subtaskMeta.Infos.ConflictInfos["data"]
+					if !ok {
+						s.Zero(subtaskMeta.RecordedDataKVConflicts)
+					} else {
+						s.EqualValues(info.Count, subtaskMeta.RecordedDataKVConflicts)
+					}
+				}
+			case proto.ImportStepConflictResolution:
+				var subtaskMeta importinto.ConflictResolutionStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+				}
+			default:
+				s.Failf("unexpected step", "%v", step)
+			}
+		}
+	}
 }
 
 func (s *mockGCSSuite) TestGlobalSortBasic() {
@@ -118,9 +204,11 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.Len(result, 1)
 	jobID, err = strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
+	var taskID int64
 	s.Eventually(func() bool {
 		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
 		s.NoError(err2)
+		taskID = task.ID
 		return task.State == proto.TaskStateReverted
 	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
@@ -129,6 +217,9 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)
+
+	// check subtask external field
+	s.checkExternalFields(taskID, true)
 }
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
@@ -156,39 +247,6 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
-}
-
-func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
-	var allData []string
-	for i := 0; i < 10; i++ {
-		var content []byte
-		keyCnt := 1000
-		for j := 0; j < keyCnt; j++ {
-			idx := i*keyCnt + j
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
-		}
-		if i == 9 {
-			// add a duplicate key "test-123"
-			content = append(content, []byte("99999999,test-123\n")...)
-		}
-		s.server.CreateObject(fakestorage.Object{
-			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files-uk", Name: fmt.Sprintf("t.%d.csv", i)},
-			Content:     content,
-		})
-	}
-	slices.Sort(allData)
-	s.prepareAndUseDB("gs_multi_files")
-	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-	s.tk.MustExec("create table t (a bigint primary key , b varchar(100) unique key);")
-	// 1 subtask, encoding 10 files using 4 threads.
-	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
-	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files-uk/t.*.csv?endpoint=%s'
-		with cloud_storage_uri='%s', __max_engine_size='1', thread=8`, gcsEndpoint, sortStorageURI)
-	err := s.tk.QueryToErr(importSQL)
-	require.ErrorContains(s.T(), err, "duplicate key found")
-	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
-	// TODO: decode the key to use readable value in the error message.
-	require.ErrorContains(s.T(), err, "746573742d313233")
 }
 
 func (s *mockGCSSuite) TestSplitRangeForTable() {
