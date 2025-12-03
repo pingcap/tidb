@@ -3604,7 +3604,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	for i := range ses {
 		ses[i].GetSessionVars().InRestrictedSQL = true
 	}
-	// ses[0].GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
 	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
