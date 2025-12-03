@@ -44,9 +44,9 @@ func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	i, rLen := 0, 0
 	r := rune(0)
 	for i < len(str) {
-		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('锟�') and size 1.
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('閿燂拷') and size 1.
 		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
-		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '锟�'.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '閿燂拷'.
 		r, rLen = utf8.DecodeRuneInString(str[i:])
 		invalid := r == utf8.RuneError && rLen == 1
 		if invalid {

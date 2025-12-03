@@ -47,9 +47,9 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 		if an == 0 {
 			if as == 0 {
 				for an == 0 && ai < len(a) {
-					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('锟�') and size 1.
+					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
 					// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
-					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '锟�'.
+					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
 					ar, arLen = utf8.DecodeRuneInString(a[ai:])
 					invalid := ar == utf8.RuneError && arLen == 1
 					if invalid {
@@ -67,9 +67,9 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 		if bn == 0 {
 			if bs == 0 {
 				for bn == 0 && bi < len(b) {
-					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('锟�') and size 1.
+					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
 					// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
-					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '锟�'.
+					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
 					br, brLen = utf8.DecodeRuneInString(b[bi:])
 					invalid := br == utf8.RuneError && brLen == 1
 					if invalid {
@@ -147,3 +147,9 @@ func (uc *unicodeCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 func (uc *unicodeCICollator) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
 }
+
+// MaxLenOneByte implement Collator interface.
+func (uc *unicodeCICollator) MaxLenOneByte() int {
+	return 2
+}
+
