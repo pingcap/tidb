@@ -383,6 +383,23 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 		if sr.AfterTableRewrittenFn != nil {
 			sr.AfterTableRewrittenFn(true, &model.TableInfo{ID: newTableID})
 		}
+	} else if result.Put {
+		// handle the rename/exchange partition back case:
+		// 1.a. RENAME TABLE test.t1 TO test2.t1;
+		// 1.b. RENAME TABLE test2.t1 TO test.t1;
+		// 2.a. ALTER TABLE test.t_exchange_partition EXCHANGE PARTITION p_to_be_exchanged WITH TABLE test.t_non_partitioned_table;
+		// 2.b. ALTER TABLE test.t_exchange_partition EXCHANGE PARTITION p_to_be_exchanged WITH TABLE test.t_non_partitioned_table;
+		// NOTE: the table test.t1 and test.t_non_partitioned_table(id=t_non_partitioned_table) needs to remove the record from deleted
+		//       tables to make sure they are refreshed meta after database.
+		// NOTE: the table test2.t1 and test.t_non_partitioned_table(id=p_to_be_exchanged) will be filtered out so its metakv will not
+		//       be restored. Therefore no need to record them into deleted tables to refresh them.
+		if m, ok := sr.deletedTables[dbID]; ok {
+			if _, ok := m[oldTableID]; ok {
+				log.Info("remove item from deleted tables because deleted table is created again",
+					zap.Int64("upstream db id", dbID), zap.Int64("upstream table id", oldTableID))
+				delete(m, oldTableID)
+			}
+		}
 	}
 
 	return &kv.Entry{Key: newKey, Value: result.NewValue}, nil
@@ -458,6 +475,7 @@ func (sr *SchemasReplace) rewriteEntryForAutoRandomTableIDKey(e *kv.Entry, cf st
 
 type rewriteResult struct {
 	Deleted  bool
+	Put      bool
 	NewValue []byte
 }
 
@@ -472,6 +490,7 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 		return rewriteResult{
 			NewValue: newValue,
 			Deleted:  false,
+			Put:      false,
 		}, nil
 	case consts.WriteCF:
 		rawWriteCFValue := new(RawWriteCFValue)
@@ -483,17 +502,20 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 			return rewriteResult{
 				NewValue: value,
 				Deleted:  true,
+				Put:      false,
 			}, nil
 		}
 		if rawWriteCFValue.IsRollback() {
 			return rewriteResult{
 				NewValue: value,
 				Deleted:  false,
+				Put:      false,
 			}, nil
 		}
 		if !rawWriteCFValue.HasShortValue() {
 			return rewriteResult{
 				NewValue: value,
+				Put:      true,
 			}, nil
 		}
 
@@ -506,7 +528,7 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 		}
 
 		rawWriteCFValue.UpdateShortValue(shortValue)
-		return rewriteResult{NewValue: rawWriteCFValue.EncodeTo()}, nil
+		return rewriteResult{NewValue: rawWriteCFValue.EncodeTo(), Put: true}, nil
 	default:
 		panic(fmt.Sprintf("not support cf:%s", cf))
 	}
