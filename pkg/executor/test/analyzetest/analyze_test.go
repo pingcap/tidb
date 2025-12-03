@@ -722,7 +722,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	}()
 	tk.MustExec("analyze table t with 1 topn, 2 buckets")
 	is := dom.InfoSchema()
-	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
+	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -759,7 +759,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	lastVersion = tbl.Version
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 3, len(col0.Buckets))
-	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
+	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	col1 = tbl.GetCol(tableInfo.Columns[1].ID)
 	require.Equal(t, 1, len(col1.TopN.TopN))
@@ -2212,11 +2212,6 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	tk.MustExec("set global tidb_persist_analyze_options = true")
 
 	tk.MustExec("use test")
-	// Disable index pruning FIRST to avoid affecting stats loading
-	tk.MustExec("set @@session.tidb_opt_index_prune_threshold = -1")
-	// Verify it was set correctly
-	thresholdResult := tk.MustQuery("select @@session.tidb_opt_index_prune_threshold").Rows()[0][0]
-	require.Equal(t, "-1", thresholdResult, "threshold should be set to -1")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
@@ -2243,27 +2238,15 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table only sets table options and gen globalStats
 	tk.MustExec("analyze table t columns a,c with 1 topn, 3 buckets")
-	// Wait for stats to be loaded via the lease mechanism
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
-	// Query to trigger stats loading for columns b and c (a is not in WHERE, so won't be auto-loaded)
-	tk.MustQuery("select * from t where a > 0 and b > 1 and c > 1")
+	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	// Refresh again after loading
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.NotNil(t, tbl, "table stats should not be nil")
 	lastVersion := tbl.Version
 	// both globalStats and partition stats generated and options saved for column a,c
-	col0 := tbl.GetCol(tableInfo.Columns[0].ID)
-	require.NotNil(t, col0, "column 0 stats should not be nil after analyze")
-	require.Equal(t, 3, len(col0.Buckets))
-	require.NotNil(t, col0.TopN, "column 0 TopN should not be nil")
-	require.Equal(t, 1, len(col0.TopN.TopN))
-	col2 := tbl.GetCol(tableInfo.Columns[2].ID)
-	require.NotNil(t, col2, "column 2 stats should not be nil after analyze")
-	require.Equal(t, 3, len(col2.Buckets))
-	require.NotNil(t, col2.TopN, "column 2 TopN should not be nil")
-	require.Equal(t, 1, len(col2.TopN.TopN))
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 0, len(rs.Rows()))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[1].ID, 10))
@@ -2326,8 +2309,6 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
-	// Disable index pruning to avoid affecting stats loading
-	tk.MustExec("set @@session.tidb_opt_index_prune_threshold = -1")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
@@ -2357,7 +2338,7 @@ PARTITION BY RANGE ( a ) (
 	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	p1 := h.GetPhysicalTableStats(pi.Definitions[1].ID, tableInfo)
 	lastVersion := tbl.Version
-	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 0, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 0, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
