@@ -16,6 +16,7 @@ package addindextest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,10 +30,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+=======
+>>>>>>> ed8b869a601 (globalsort: write sorted kv meta to external storage (#59966))
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -44,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -67,17 +72,29 @@ func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 		fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 }
 
-func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
+func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) {
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
 	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	prefix := strconv.Itoa(int(jobID))
-	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	for _, id := range []int64{jobID, taskID} {
+		prefix := strconv.Itoa(int(id))
+		dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+		require.NoError(t, err)
+		require.Greater(t, jobID, int64(0))
+		require.Equal(t, 0, len(dataFiles))
+		require.Equal(t, 0, len(statFiles))
+	}
+}
+
+func checkFileExist(t *testing.T, sortStorageURI string, prefix string) {
+	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	require.Greater(t, jobID, int64(0))
-	require.Equal(t, 0, len(dataFiles))
-	require.Equal(t, 0, len(statFiles))
+	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	require.NoError(t, err)
+	dataFiles, _, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	require.NoError(t, err)
+	require.Greater(t, len(dataFiles), 0)
 }
 
 func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
@@ -87,6 +104,25 @@ func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 	require.Contains(t, rs[0][12], "ingest")
 	require.Contains(t, rs[0][12], "cloud")
 	require.Equal(t, rs[0][7], strconv.Itoa(count))
+}
+
+func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
+	// fetch subtask meta from tk, and check fields with `external:"true"` tag
+	rs := tk.MustQuery("select meta from mysql.tidb_background_subtask").Rows()
+	for _, r := range rs {
+		var subtaskMeta ddl.BackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+		testutils.AssertExternalField(t, &subtaskMeta)
+	}
+}
+
+func getTaskID(t *testing.T, tk *testkit.TestKit) int64 {
+	rs := tk.MustQuery("select id from mysql.tidb_global_task").Rows()
+	require.Len(t, rs, 1)
+	// convert string to int64
+	id, err := strconv.ParseInt(rs[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	return id
 }
 
 func TestGlobalSortBasic(t *testing.T) {
@@ -135,12 +171,21 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	tk.MustExec("alter table t add index idx(a);")
 	checkDataAndShowJobs(t, tk, size)
+<<<<<<< HEAD
 	<-scheduler.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
+=======
+	checkExternalFields(t, tk)
+	taskID := getTaskID(t, tk)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
+	<-ch
+	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+>>>>>>> ed8b869a601 (globalsort: write sorted kv meta to external storage (#59966))
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
 	checkDataAndShowJobs(t, tk, size)
+<<<<<<< HEAD
 	<-scheduler.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
@@ -148,6 +193,23 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkDataAndShowJobs(t, tk, size)
 	<-scheduler.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
+=======
+	checkExternalFields(t, tk)
+	taskID = getTaskID(t, tk)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
+	<-ch
+	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+
+	tk.MustExec("alter table t add unique index idx2(a);")
+	checkDataAndShowJobs(t, tk, size)
+	checkExternalFields(t, tk)
+	taskID = getTaskID(t, tk)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
+	<-ch
+	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+>>>>>>> ed8b869a601 (globalsort: write sorted kv meta to external storage (#59966))
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
