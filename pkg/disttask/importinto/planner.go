@@ -116,6 +116,12 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
+<<<<<<< HEAD
+=======
+		if err := p.writeExternalPlanMeta(planCtx, specs); err != nil {
+			return nil, err
+		}
+>>>>>>> f6f5703e432 (importinto: fix error not returned when writing external meta (#60350))
 
 		addSpecs(specs)
 	case proto.ImportStepMergeSort:
@@ -123,6 +129,12 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
+<<<<<<< HEAD
+=======
+		if err := p.writeExternalPlanMeta(planCtx, specs); err != nil {
+			return nil, err
+		}
+>>>>>>> f6f5703e432 (importinto: fix error not returned when writing external meta (#60350))
 
 		addSpecs(specs)
 	case proto.ImportStepWriteAndIngest:
@@ -130,6 +142,12 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
+<<<<<<< HEAD
+=======
+		if err := p.writeExternalPlanMeta(planCtx, specs); err != nil {
+			return nil, err
+		}
+>>>>>>> f6f5703e432 (importinto: fix error not returned when writing external meta (#60350))
 
 		addSpecs(specs)
 	case proto.ImportStepPostProcess:
