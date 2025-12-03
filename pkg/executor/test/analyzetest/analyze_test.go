@@ -2332,7 +2332,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition under static mode with options
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
@@ -2357,7 +2357,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table in dynamic mode will ignore partition-level options and use default
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2381,7 +2381,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode with specified options with old partition-level options
 	tk.MustExec("analyze table t columns b,d with 2 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2401,7 +2401,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode without options with old table-level & partition-level options
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2411,7 +2411,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode with specified options with old table-level & partition-level options
 	tk.MustExec("analyze table t with 1 topn")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
