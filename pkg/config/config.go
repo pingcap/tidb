@@ -352,11 +352,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
-<<<<<<< HEAD
-=======
-		ZoneLabel:             c.Labels["zone"],
 		EnableAsyncBatchGet:   c.Performance.EnableAsyncBatchGet,
->>>>>>> d6153b2cc87 (*: bump client-go to enable async-batch-get (#62294))
 	}
 }
 
@@ -1034,13 +1030,8 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
-<<<<<<< HEAD
 		ConcurrentlyInitStats:             true,
-=======
-		// Deprecated: Stats are always initialized concurrently.
-		ConcurrentlyInitStats: true,
-		EnableAsyncBatchGet:   true,
->>>>>>> d6153b2cc87 (*: bump client-go to enable async-batch-get (#62294))
+		EnableAsyncBatchGet:               true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
