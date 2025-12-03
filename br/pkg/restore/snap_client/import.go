@@ -398,6 +398,7 @@ func (importer *SnapFileImporter) Import(
 		regionInfos, errScanRegion := split.PaginateScanRegion(
 			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
 		if errScanRegion != nil {
+			logutil.CL(ctx).Warn("failed to scan regions", zap.Error(errScanRegion))
 			return errors.Trace(errScanRegion)
 		}
 
