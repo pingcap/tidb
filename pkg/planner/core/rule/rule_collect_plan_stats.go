@@ -82,7 +82,13 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	// indexes, which are indexes on virtual columns, have statistics. We don't waste the resource here now.
 	dependingVirtualCols := CollectDependingVirtualCols(tblID2TblInfo, histNeededColumns)
 
-	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo, keptIndexIDs)
+	// Only pass keptIndexIDs if pruning actually occurred (map is not empty)
+	// If keptIndexIDs is empty, pass nil to collectSyncIndices to indicate no pruning occurred
+	var keptIndexIDsForCollection map[int64]map[int64]struct{}
+	if len(keptIndexIDs) > 0 {
+		keptIndexIDsForCollection = keptIndexIDs
+	}
+	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo, keptIndexIDsForCollection)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	// TODO: this part should be removed once we don't support the static pruning mode.
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
