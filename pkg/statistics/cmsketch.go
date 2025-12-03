@@ -684,7 +684,7 @@ func (c *TopN) convert(d []byte) []byte {
 	case types.KindUint64:
 		return convertFromIntToUInt(d)
 	default:
-		// Signed/unsigned convertion is the only case we may meet.
+		// Signed/unsigned conversion is the only case we may meet.
 		return d
 	}
 }
