@@ -517,6 +517,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
 	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	sc.RelatedTableIDs = make(map[int64]struct{})
 	return sc
 }
 
