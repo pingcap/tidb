@@ -78,13 +78,22 @@ func TestPlanReplayerInternalQuery(t *testing.T) {
 		lines := strings.Split(slowLogStr, "\n")
 
 		for i, line := range lines {
-			if strings.Contains(line, "plan_replayer_task") && strings.Contains(strings.ToLower(line), "select") {
+			if strings.Contains(line, "select sql_digest, plan_digest from mysql.plan_replayer_task") && strings.Contains(strings.ToLower(line), "select") {
+				t.Logf("Found matching line at index %d", i)
 				// Found the SELECT query, look for Is_internal field
-				for j := i + 1; j < len(lines) && j < i+30; j++ {
+				// Find the start of this slow log entry: go backward until we find a line not starting with '#'
+				startIdx := i - 1
+				for startIdx > 0 && strings.HasPrefix(lines[startIdx], "#") {
+					startIdx--
+				}
+				// Now startIdx points to the line before the first '#' line (the SQL query line)
+				// Search for Is_internal field from startIdx+1 to i+10
+				for j := startIdx + 1; j < len(lines) && j <= i; j++ {
+					t.Logf("Line %d: %s", j, lines[j])
 					if strings.HasPrefix(lines[j], "# Is_internal:") {
 						isInternal := strings.TrimSpace(strings.TrimPrefix(lines[j], "# Is_internal:"))
 						require.Equal(t, "true", isInternal, "plan_replayer query should be marked as internal in slow log")
-						break
+						// break
 					}
 				}
 				break
