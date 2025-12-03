@@ -17,11 +17,22 @@ package kvconflicts
 import (
 	"maps"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
+)
+
+const (
+	// we use this size as a hint to the map size for the conflict rows which is
+	// from index KV conflict and ingested to downstream.
+	// as conflict row might generate more than one conflict KV, and its data KV
+	// might not be ingested to downstream, so we choose a small value for its init
+	// size.
+	initMapSizeForConflictedRows = 128
+	handleMapEntryShallowSize    = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
 )
 
 type handleFilter struct {
@@ -60,7 +71,7 @@ func NewBoundedHandleSet(logger *zap.Logger, sharedSize *atomic.Int64, limit int
 
 // Add adds a handle to the set.
 func (s *BoundedHandleSet) Add(handle tidbkv.Handle) {
-	if s.BowFromIndeeded() {
+	if s.BoundExceeded() {
 		return
 	}
 
@@ -100,6 +111,6 @@ func (s *BoundedHandleSet) Merge(other *BoundedHandleSet) {
 // BoundExceeded checks whether the size limit is exceeded.
 func (s *BoundedHandleSet) BoundExceeded() bool {
 	limit := s.sizeLimit
-	failpoint.Call(_curpkg_("trySaveHandledRowFromIndex"), &limit)
+	failpoint.InjectCall("trySaveHandledRowFromIndex", &limit)
 	return s.sharedSize.Load() >= limit
 }
