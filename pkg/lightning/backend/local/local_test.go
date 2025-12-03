@@ -2550,6 +2550,7 @@ type refCountIngestData struct {
 }
 
 func (r *refCountIngestData) IncRef() {
+	time.Sleep(10 * time.Millisecond) // simulate some delay
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.refCount++
