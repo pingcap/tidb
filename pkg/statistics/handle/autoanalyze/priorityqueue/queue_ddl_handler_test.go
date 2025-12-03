@@ -1114,7 +1114,7 @@ func TestTurnOffAutoAnalyze(t *testing.T) {
 	// Truncate table.
 	testKit.MustExec("truncate table t")
 
-	// Find the truncate table partition event.
+	// Find the truncate table event.
 	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
 
 	// Disable the auto analyze.
