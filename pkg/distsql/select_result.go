@@ -28,7 +28,6 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	dcontext "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -50,10 +49,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-)
-
-var (
-	errQueryInterrupted = dbterror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
 )
 
 var (
@@ -448,7 +443,7 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime()); err != nil {
+				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime(), false); err != nil {
 					return err
 				}
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
@@ -607,7 +602,7 @@ func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.Runti
 	FillDummySummariesForTiFlashTasks(runtimeStatsColl, storeType, allPlanIDs, recordedPlanIDs)
 }
 
-func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration, forUnconsumedStats bool) (err error) {
 	callee := copStats.CalleeAddress
 	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
 		return
@@ -676,7 +671,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
 			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
 			// not trigger an error log in this case.
-			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+			if !forUnconsumedStats && !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
 				logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
 					zap.Int("expected", len(r.copPlanIDs)),
 					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
@@ -739,7 +734,7 @@ func (r *selectResult) close() error {
 		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
 			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
 			for _, copStats := range unconsumedCopStats {
-				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
+				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
 			}
 		}

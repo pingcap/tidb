@@ -402,6 +402,7 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 }
 
 func TestIsCancelledErr(t *testing.T) {
+	require.False(t, scheduler.IsCancelledErr(nil))
 	require.False(t, scheduler.IsCancelledErr(errors.New("some err")))
 	require.False(t, scheduler.IsCancelledErr(context.Canceled))
 	require.True(t, scheduler.IsCancelledErr(errors.New("cancelled by user")))

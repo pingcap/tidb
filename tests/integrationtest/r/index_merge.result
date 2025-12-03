@@ -335,6 +335,7 @@ c1	c2	c3
 3	3	6
 4	4	8
 5	5	10
+drop global binding for select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 ///// CREATE TABLE/VIEW
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
@@ -473,8 +474,8 @@ c1	c2	c3
 ///// MEMORY Table
 explain format = 'plan_tree' select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#119)->Column#120
-└─StreamAgg	root		funcs:count(1)->Column#119
+StreamAgg	root		funcs:count(Column#121)->Column#122
+└─StreamAgg	root		funcs:count(1)->Column#121
   └─MemTableScan	root	table:STATEMENTS_SUMMARY	
 show warnings;
 Level	Code	Message

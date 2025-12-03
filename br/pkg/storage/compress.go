@@ -9,6 +9,7 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 )
 
 type withCompression struct {
@@ -38,6 +39,7 @@ func (w *withCompression) Create(ctx context.Context, name string, o *WriterOpti
 	if bw, ok := writer.(*bufferedWriter); ok {
 		writer = bw.writer
 	}
+	// the external storage will do access recording, so no need to pass it again.
 	compressedWriter := newBufferedWriter(writer, hardcodedS3ChunkSize, w.compressType, nil)
 	return compressedWriter, nil
 }
@@ -148,13 +150,15 @@ func (c *compressReader) GetFileSize() (int64, error) {
 }
 
 type flushStorageWriter struct {
-	writer  io.Writer
-	flusher flusher
-	closer  io.Closer
+	writer    io.Writer
+	flusher   flusher
+	closer    io.Closer
+	accessRec *recording.AccessStats
 }
 
 func (w *flushStorageWriter) Write(_ context.Context, data []byte) (int, error) {
 	n, err := w.writer.Write(data)
+	w.accessRec.RecWrite(n)
 	return n, errors.Trace(err)
 }
 
@@ -166,10 +170,11 @@ func (w *flushStorageWriter) Close(_ context.Context) error {
 	return w.closer.Close()
 }
 
-func newFlushStorageWriter(writer io.Writer, flusher2 flusher, closer io.Closer) *flushStorageWriter {
+func newFlushStorageWriter(writer io.Writer, flusher2 flusher, closer io.Closer, accessRec *recording.AccessStats) *flushStorageWriter {
 	return &flushStorageWriter{
-		writer:  writer,
-		flusher: flusher2,
-		closer:  closer,
+		writer:    writer,
+		flusher:   flusher2,
+		closer:    closer,
+		accessRec: accessRec,
 	}
 }

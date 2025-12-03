@@ -229,7 +229,6 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		"mergeID",
 		1000,
 		func(summary *WriterSummary) { onefile = summary.MultipleFilesStats[0].Filenames[0] },
-		dummyOnReaderCloseFunc,
 		collector,
 		true,
 		engineapi.OnDuplicateKeyIgnore,
@@ -239,7 +238,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	require.EqualValues(t, kvCount, collector.Rows.Load())
 	require.EqualValues(t, kvSize, collector.Bytes.Load())
 
-	kvs := make([]kvPair, 0, kvCount)
+	kvs := make([]KVPair, 0, kvCount)
 
 	kvReader, err := NewKVReader(ctx, onefile[0], memStore, 0, 100)
 	require.NoError(t, err)
@@ -250,7 +249,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		copy(clonedKey, key)
 		clonedVal := make([]byte, len(value))
 		copy(clonedVal, value)
-		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
+		kvs = append(kvs, KVPair{Key: clonedKey, Value: clonedVal})
 	}
 	_, _, err = kvReader.nextKV()
 	require.ErrorIs(t, err, io.EOF)
@@ -333,7 +332,6 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		"mergeID",
 		1000,
 		onClose,
-		dummyOnReaderCloseFunc,
 		nil,
 		true,
 		engineapi.OnDuplicateKeyIgnore,
@@ -466,4 +464,92 @@ func TestOnefileWriterDupError(t *testing.T) {
 	err := writer.WriteRow(ctx, kvs[kvCnt-1].Key, kvs[kvCnt-1].Val)
 	require.Error(t, err)
 	require.True(t, common.ErrFoundDuplicateKeys.Equal(err))
+}
+
+func TestOneFileWriterOnDupRemove(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+	var summary *WriterSummary
+	doGetWriter := func(store storage.ExternalStorage, builder *WriterBuilder) *OneFileWriter {
+		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove)
+		writer := builder.BuildOneFile(store, "/onefile", "0")
+		writer.InitPartSizeAndLogger(ctx, 1024)
+		return writer
+	}
+
+	t.Run("all duplicated", func(t *testing.T) {
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		for i := 0; i < 5; i++ {
+			require.NoError(t, writer.WriteRow(ctx, []byte("1111"), []byte("vvvv")))
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, dbkv.Key(nil), summary.Min)
+		require.EqualValues(t, dbkv.Key(nil), summary.Max)
+		require.EqualValues(t, 0, summary.TotalCnt)
+		require.EqualValues(t, 0, summary.TotalSize)
+		require.Empty(t, summary.MultipleFilesStats)
+		require.EqualValues(t, 0, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
+
+	t.Run("with different duplicated kv, first kv not duplicated", func(t *testing.T) {
+		// each KV will take 24 bytes, so we flush every 10 KVs
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		input := []struct {
+			pair *KVPair
+			cnt  int
+		}{
+			{pair: &KVPair{Key: []byte("1111"), Value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("2222"), Value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("6666"), Value: []byte("vvvv")}, cnt: 3},
+			{pair: &KVPair{Key: []byte("7777"), Value: []byte("vvvv")}, cnt: 5},
+		}
+		for _, p := range input {
+			for i := 0; i < p.cnt; i++ {
+				require.NoError(t, writer.WriteRow(ctx, p.pair.Key, p.pair.Value))
+			}
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, []byte("1111"), summary.Min)
+		require.EqualValues(t, []byte("2222"), summary.Max)
+		require.EqualValues(t, 2, summary.TotalCnt)
+		require.EqualValues(t, 16, summary.TotalSize)
+		require.EqualValues(t, 0, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
+
+	t.Run("with different duplicated kv, first kv duplicated", func(t *testing.T) {
+		// each KV will take 24 bytes, so we flush every 10 KVs
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		input := []struct {
+			pair *KVPair
+			cnt  int
+		}{
+			{pair: &KVPair{Key: []byte("1111"), Value: []byte("vvvv")}, cnt: 5},
+			{pair: &KVPair{Key: []byte("2222"), Value: []byte("vvvv")}, cnt: 3},
+			{pair: &KVPair{Key: []byte("3333"), Value: []byte("vvvv")}, cnt: 4},
+			{pair: &KVPair{Key: []byte("4444"), Value: []byte("vvvv")}, cnt: 4},
+			{pair: &KVPair{Key: []byte("5555"), Value: []byte("vvvv")}, cnt: 2},
+			{pair: &KVPair{Key: []byte("6666"), Value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("7777"), Value: []byte("vvvv")}, cnt: 1},
+		}
+		for _, p := range input {
+			for i := 0; i < p.cnt; i++ {
+				require.NoError(t, writer.WriteRow(ctx, p.pair.Key, p.pair.Value))
+			}
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, []byte("6666"), summary.Min)
+		require.EqualValues(t, []byte("7777"), summary.Max)
+		require.EqualValues(t, 2, summary.TotalCnt)
+		require.EqualValues(t, 16, summary.TotalSize)
+		require.Len(t, summary.MultipleFilesStats, 1)
+		require.Len(t, summary.MultipleFilesStats[0].Filenames, 1)
+		require.EqualValues(t, 0, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
 }

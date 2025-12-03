@@ -18,6 +18,7 @@ go_library(
         "backfilling_dist_scheduler.go",
         "backfilling_import_cloud.go",
         "backfilling_merge_sort.go",
+        "backfilling_merge_temp.go",
         "backfilling_operators.go",
         "backfilling_read_index.go",
         "backfilling_txn_executor.go",
@@ -76,6 +77,7 @@ go_library(
     ],
     deps = [
         "//br/pkg/storage",
+        "//br/pkg/storage/recording",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
@@ -93,6 +95,7 @@ go_library(
         "//pkg/ddl/util",
         "//pkg/distsql",
         "//pkg/distsql/context",
+        "//pkg/disttask/framework/dxfmetric",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/metering",
         "//pkg/disttask/framework/proto",
@@ -191,6 +194,7 @@ go_library(
         "//pkg/util/timeutil",
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
+        "//pkg/util/traceevent",
         "//pkg/util/tracing",
         "@com_github_coreos_go_semver//semver",
         "@com_github_docker_go_units//:go-units",
@@ -217,6 +221,7 @@ go_library(
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 
@@ -342,6 +347,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/resourcemanager/pool/workerpool",
         "//pkg/server",
         "//pkg/session",
         "//pkg/session/sessionapi",

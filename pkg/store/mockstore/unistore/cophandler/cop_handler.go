@@ -111,6 +111,7 @@ func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstor
 
 type dagContext struct {
 	*evalContext
+	keyspaceID    uint32
 	dbReader      *dbreader.DBReader
 	lockStore     *lockstore.MemStore
 	resolvedLocks []uint64
@@ -121,27 +122,40 @@ type dagContext struct {
 
 // ExecutorListsToTree converts a list of executors to a tree.
 func ExecutorListsToTree(exec []*tipb.Executor) *tipb.Executor {
-	i := len(exec) - 1
-	rootExec := exec[i]
-	for i--; 0 <= i; i-- {
-		switch exec[i+1].Tp {
+	appendChild := func(parent *tipb.Executor, child *tipb.Executor) {
+		switch parent.Tp {
 		case tipb.ExecType_TypeAggregation:
-			exec[i+1].Aggregation.Child = exec[i]
+			parent.Aggregation.Child = child
 		case tipb.ExecType_TypeProjection:
-			exec[i+1].Projection.Child = exec[i]
+			parent.Projection.Child = child
 		case tipb.ExecType_TypeTopN:
-			exec[i+1].TopN.Child = exec[i]
+			parent.TopN.Child = child
 		case tipb.ExecType_TypeLimit:
-			exec[i+1].Limit.Child = exec[i]
+			parent.Limit.Child = child
 		case tipb.ExecType_TypeSelection:
-			exec[i+1].Selection.Child = exec[i]
+			parent.Selection.Child = child
 		case tipb.ExecType_TypeStreamAgg:
-			exec[i+1].Aggregation.Child = exec[i]
+			parent.Aggregation.Child = child
+		case tipb.ExecType_TypeIndexLookUp:
+			parent.IndexLookup.Children = append(parent.IndexLookup.Children, child)
 		default:
 			panic("unsupported dag executor type")
 		}
 	}
-	return rootExec
+
+	for i := range len(exec) - 1 {
+		child := exec[i]
+		parentIdx := i + 1
+		if child.ParentIdx != nil {
+			parentIdx = int(*child.ParentIdx)
+		}
+		if parentIdx <= i || parentIdx >= len(exec) {
+			panic(fmt.Sprintf("invalid parentIdx: %d, for index: %d", parentIdx, i))
+		}
+		appendChild(exec[parentIdx], child)
+	}
+
+	return exec[len(exec)-1]
 }
 
 // handleCopDAGRequest handles coprocessor DAG request using MPP executors.
@@ -173,7 +187,7 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		return resp
 	}
 
-	exec, chunks, lastRange, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq, req.PagingSize)
+	exec, chunks, intermediateOutput, lastRange, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq, req.PagingSize)
 
 	sc := dagCtx.sctx.GetSessionVars().StmtCtx
 	if err != nil {
@@ -182,12 +196,12 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 			resp.OtherError = err.Error()
 			return resp
 		}
-		return genRespWithMPPExec(nil, lastRange, nil, nil, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
+		return genRespWithMPPExec(nil, nil, lastRange, nil, nil, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
 	}
-	return genRespWithMPPExec(chunks, lastRange, counts, ndvs, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
+	return genRespWithMPPExec(chunks, intermediateOutput, lastRange, counts, ndvs, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
 }
 
-func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (mppExec, []tipb.Chunk, *coprocessor.KeyRange, []int64, []int64, error) {
+func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (mppExec, []tipb.Chunk, []*tipb.IntermediateOutput, *coprocessor.KeyRange, []int64, []int64, error) {
 	rootExec := dagReq.RootExecutor
 	if rootExec == nil {
 		rootExec = ExecutorListsToTree(dagReq.Executors)
@@ -199,6 +213,7 @@ func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingS
 		counts = make([]int64, len(dagCtx.keyRanges))
 		ndvs = make([]int64, len(dagCtx.keyRanges))
 	}
+
 	builder := &mppExecBuilder{
 		sctx:     dagCtx.sctx,
 		dbReader: dagCtx.dbReader,
@@ -216,17 +231,18 @@ func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingS
 	}
 	exec, err := builder.buildMPPExecutor(rootExec)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
-	chunks, err := mppExecute(exec, dagCtx, dagReq, pagingSize)
+
+	chunks, intermediateOutputs, err := mppExecute(exec, dagCtx, dagReq, pagingSize)
 	if lastRange != nil && len(lastRange.Start) == 0 && len(lastRange.End) == 0 {
 		// When should this happen, something is wrong?
 		lastRange = nil
 	}
-	return exec, chunks, lastRange, counts, ndvs, err
+	return exec, chunks, intermediateOutputs, lastRange, counts, ndvs, err
 }
 
-func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (chunks []tipb.Chunk, err error) {
+func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (chunks []tipb.Chunk, intermediateOutputs []*tipb.IntermediateOutput, err error) {
 	err = exec.open()
 	defer func() {
 		err := exec.stop()
@@ -238,47 +254,104 @@ func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest, pagin
 		return
 	}
 
+	var intermediateOutputExecutors []mppExec
+	if channels := dagReq.GetIntermediateOutputChannels(); len(channels) > 0 {
+		intermediateOutputs = make([]*tipb.IntermediateOutput, len(channels))
+		intermediateOutputExecutors = make([]mppExec, len(channels))
+		allExecs := flattenMppExec(exec, nil)
+		for i, ch := range channels {
+			intermediateOutputs[i] = &tipb.IntermediateOutput{
+				EncodeType: dagReq.EncodeType,
+			}
+			intermediateOutputExecutors[i] = allExecs[ch.ExecutorIdx]
+		}
+	}
+
 	var totalRows uint64
 	var chk *chunk.Chunk
 	fields := exec.getFieldTypes()
 	for {
 		chk, err = exec.next()
-		if err != nil || chk == nil || chk.NumRows() == 0 {
+		if err != nil {
 			return
 		}
 
-		switch dagReq.EncodeType {
-		case tipb.EncodeType_TypeDefault:
-			chunks, err = useDefaultEncoding(chk, dagCtx, dagReq, fields, chunks)
-		case tipb.EncodeType_TypeChunk:
-			chunks = useChunkEncoding(chk, dagReq, fields, chunks)
+		curRowCnt := 0
+		if chk != nil && chk.NumRows() > 0 {
+			curRowCnt += chk.NumRows()
+			chunks, err = encodeChunk(dagCtx.sctx.GetSessionVars().StmtCtx, dagReq.EncodeType, fields, dagReq.OutputOffsets, chk, chunks)
+			if err != nil {
+				return
+			}
+		}
+
+		for i, e := range intermediateOutputExecutors {
+			intermediateChunks := e.takeIntermediateResults()
+			if len(intermediateChunks) == 0 {
+				continue
+			}
+			for _, iChk := range intermediateChunks {
+				curRowCnt += iChk.NumRows()
+				output := intermediateOutputs[i]
+				channel := dagReq.GetIntermediateOutputChannels()[i]
+				output.Chunks, err = encodeChunk(
+					dagCtx.sctx.GetSessionVars().StmtCtx,
+					output.EncodeType,
+					e.getIntermediateFieldTypes(),
+					channel.OutputOffsets,
+					iChk,
+					output.Chunks,
+				)
+
+				if err != nil {
+					return
+				}
+			}
+		}
+
+		if curRowCnt == 0 {
+			return
+		}
+		totalRows += uint64(curRowCnt)
+		if dagReq.EncodeType == tipb.EncodeType_TypeChunk {
 			if pagingSize > 0 {
-				totalRows += uint64(chk.NumRows())
 				if totalRows > pagingSize {
 					return
 				}
 			}
-		default:
-			err = fmt.Errorf("unsupported DAG request encode type %s", dagReq.EncodeType)
-		}
-		if err != nil {
-			return
 		}
 	}
 }
 
-func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRequest,
-	fields []*types.FieldType, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
+func encodeChunk(
+	sc *stmtctx.StatementContext,
+	encodeType tipb.EncodeType,
+	fields []*types.FieldType,
+	outputOffsets []uint32,
+	chk *chunk.Chunk,
+	chunks []tipb.Chunk,
+) ([]tipb.Chunk, error) {
+	switch encodeType {
+	case tipb.EncodeType_TypeDefault:
+		return useDefaultEncoding(chk, sc, fields, outputOffsets, chunks)
+	case tipb.EncodeType_TypeChunk:
+		return useChunkEncoding(chk, fields, outputOffsets, chunks), nil
+	default:
+		return nil, fmt.Errorf("unsupported DAG request encode type %s", encodeType)
+	}
+}
+
+func useDefaultEncoding(chk *chunk.Chunk, sc *stmtctx.StatementContext,
+	fields []*types.FieldType, outputOffsets []uint32, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
 	var buf []byte
 	var datums []types.Datum
 	var err error
 	numRows := chk.NumRows()
-	sc := dagCtx.sctx.GetSessionVars().StmtCtx
 	errCtx := sc.ErrCtx()
 	for i := range numRows {
 		datums = datums[:0]
-		if dagReq.OutputOffsets != nil {
-			for _, j := range dagReq.OutputOffsets {
+		if outputOffsets != nil {
+			for _, j := range outputOffsets {
 				datums = append(datums, chk.GetRow(i).GetDatum(int(j), fields[j]))
 			}
 		} else {
@@ -296,12 +369,12 @@ func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRe
 	return chunks, nil
 }
 
-func useChunkEncoding(chk *chunk.Chunk, dagReq *tipb.DAGRequest, fields []*types.FieldType, chunks []tipb.Chunk) []tipb.Chunk {
-	if dagReq.OutputOffsets != nil {
-		offsets := make([]int, len(dagReq.OutputOffsets))
-		newFields := make([]*types.FieldType, len(dagReq.OutputOffsets))
-		for i := range dagReq.OutputOffsets {
-			offset := dagReq.OutputOffsets[i]
+func useChunkEncoding(chk *chunk.Chunk, fields []*types.FieldType, outputOffsets []uint32, chunks []tipb.Chunk) []tipb.Chunk {
+	if outputOffsets != nil {
+		offsets := make([]int, len(outputOffsets))
+		newFields := make([]*types.FieldType, len(outputOffsets))
+		for i := range outputOffsets {
+			offset := outputOffsets[i]
 			offsets[i] = int(offset)
 			newFields[i] = fields[offset]
 		}
@@ -361,6 +434,9 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		keyRanges:     req.Ranges,
 		startTS:       req.StartTs,
 		resolvedLocks: req.Context.ResolvedLocks,
+	}
+	if reqCtx := req.Context; reqCtx != nil {
+		ctx.keyspaceID = reqCtx.KeyspaceId
 	}
 	return ctx, dagReq, err
 }
@@ -503,29 +579,39 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []contextutil.SQLWarn, dur time.Duration) *coprocessor.Response {
+func flattenMppExec(exec mppExec, execs []mppExec) []mppExec {
+	if execs == nil {
+		execs = make([]mppExec, 0, 3)
+	}
+	for _, child := range exec.getChildren() {
+		execs = flattenMppExec(child, execs)
+	}
+	execs = append(execs, exec)
+	return execs
+}
+
+func genRespWithMPPExec(chunks []tipb.Chunk, intermediateOutput []*tipb.IntermediateOutput, lastRange *coprocessor.KeyRange, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []contextutil.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{
 		Range: lastRange,
 	}
 	selResp := &tipb.SelectResponse{
-		Error:        toPBError(err),
-		Chunks:       chunks,
-		OutputCounts: counts,
-		Ndvs:         ndvs,
-		EncodeType:   dagReq.EncodeType,
+		Error:               toPBError(err),
+		Chunks:              chunks,
+		OutputCounts:        counts,
+		IntermediateOutputs: intermediateOutput,
+		Ndvs:                ndvs,
+		EncodeType:          dagReq.EncodeType,
 	}
 	executors := dagReq.Executors
+	mppExecs := flattenMppExec(exec, make([]mppExec, 0, len(executors)))
 	if dagReq.GetCollectExecutionSummaries() {
 		// for simplicity, we assume all executors to be spending the same amount of time as the request
 		timeProcessed := uint64(dur / time.Nanosecond)
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(executors))
-		e := exec
 		for i := len(executors) - 1; 0 <= i; i-- {
+			e := mppExecs[i]
 			execSummary[i] = e.buildSummary()
 			execSummary[i].TimeProcessedNs = &timeProcessed
-			if i != 0 {
-				e = exec.child()
-			}
 		}
 		selResp.ExecutionSummaries = execSummary
 	}

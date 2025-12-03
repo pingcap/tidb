@@ -26,7 +26,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -152,11 +151,6 @@ func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) (bas
 	return p.self, nil
 }
 
-// FindBestTask implements LogicalPlan.<3rd> interface.
-func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty) (bestTask base.Task, err error) {
-	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop)
-}
-
 // BuildKeyInfo implements LogicalPlan.<4th> interface.
 func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Schema) {
 	childMaxOneRow := make([]bool, len(p.children))
@@ -262,11 +256,6 @@ func (*BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expressi
 // PreparePossibleProperties implements LogicalPlan.<13th> interface.
 func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	return nil
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan.<14th> interface.
-func (*BaseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	panic("baseLogicalPlan.ExhaustPhysicalPlans() should never be called.")
 }
 
 // ExtractCorrelatedCols implements LogicalPlan.<15th> interface.

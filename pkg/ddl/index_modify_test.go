@@ -375,6 +375,111 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 	tk.MustExec("admin check table gcai_table")
 }
 
+func TestAnalyzeStuck(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_add_index_stuck")
+	tk.MustExec("create table t_add_index_stuck (c1 int, c2 int, c3 int)")
+
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t_add_index_stuck values (?, ?, ?)", i, i, i)
+	}
+
+	oldCumulativeTimeout := ddl.DefaultCumulativeTimeout
+	defer func() {
+		ddl.DefaultCumulativeTimeout = oldCumulativeTimeout
+	}()
+	ddl.DefaultCumulativeTimeout = 2 * time.Second
+
+	// enable failpoint to simulate analyze stuck
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		time.Sleep(ddl.DefaultCumulativeTimeout + 10*time.Second)
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := tk.Session().Execute(context.Background(), "alter table t_add_index_stuck add index c3_index(c3)")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10*time.Second + time.Minute):
+		t.Fatalf("add index did not finish in expected time")
+	}
+
+	tbl := external.GetTableByName(t, tk, "test", "t_add_index_stuck")
+	var found bool
+	for _, idx := range tbl.Indices() {
+		if strings.EqualFold(idx.Meta().Name.L, "c3_index") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
+
+	// verify analyze eventually executes successfully by checking stats_meta
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show stats_meta where table_name = 't_add_index_stuck'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+
+	go func() {
+		_, err := tk.Session().Execute(context.Background(), "alter table t_add_index_stuck modify column c2 bigint")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10*time.Second + time.Minute):
+		t.Fatalf("modify column did not finish in expected time")
+	}
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show stats_meta where table_name = 't_add_index_stuck'").Rows()
+		return len(rows) > 0
+	}, time.Minute, 200*time.Millisecond)
+}
+
+func TestAnalyzeOwnerResignNoReRun(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
+	tk.MustExec("drop table if exists t_analyze_owner_resign")
+	tk.MustExec("create table t_analyze_owner_resign (c1 int, c2 int, key(c2))")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t_analyze_owner_resign values (?, ?)", i, i)
+	}
+
+	var callCount int32
+	var resignedFlag int32
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		atomic.AddInt32(&callCount, 1)
+	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/analyzeTableDone", func(job *model.Job) {
+		if atomic.CompareAndSwapInt32(&resignedFlag, 0, 1) {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			// Simulate write-conflict on ddl job table.
+			updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+			updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+		}
+	})
+
+	_, err := tk.Session().Execute(context.Background(), "alter table t_analyze_owner_resign add index idx_c2(c2)")
+	require.NoError(t, err)
+	require.Equal(t, int32(1), atomic.LoadInt32(&callCount), "analyze should not be re-run after owner resigns")
+}
+
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
 func TestAddPrimaryKeyRollback1(t *testing.T) {
 	idxName := "PRIMARY"
@@ -1089,6 +1194,9 @@ func TestAddIndexWithDupIndex(t *testing.T) {
 }
 
 func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1148,7 +1256,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	// add index
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
 	tk.MustExec("create table t(a int NOT NULL DEFAULT 10, b int, index idx_b(b))")
 	for i := range 50 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
@@ -1268,7 +1376,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	require.Equal(t, idColStatsVer, idColStatsVer2)
 
 	// modify column for partitioned table.
-	tk.MustGetErrMsg("ALTER TABLE pt modify column id varchar(10)", "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.MustExec("ALTER TABLE pt modify column id varchar(10)")
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1( id int, a int, b int, index idx(id, a));")
@@ -1849,6 +1957,9 @@ func TestAddColumnarIndexRollback(t *testing.T) {
 }
 
 func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)

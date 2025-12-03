@@ -26,6 +26,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	. "github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -39,6 +40,10 @@ type s3Suite struct {
 }
 
 func createS3Suite(t *testing.T) *s3Suite {
+	return createS3SuiteWithRec(t, nil)
+}
+
+func createS3SuiteWithRec(t *testing.T, accessRec *recording.AccessStats) *s3Suite {
 	s := new(s3Suite)
 	s.controller = gomock.NewController(t)
 	s.s3 = mock.NewMockS3API(s.controller)
@@ -52,6 +57,7 @@ func createS3Suite(t *testing.T) *s3Suite {
 			Sse:          "sse",
 			StorageClass: "sc",
 		},
+		accessRec,
 	)
 
 	t.Cleanup(func() {
@@ -472,7 +478,8 @@ func TestS3Range(t *testing.T) {
 // TestWriteNoError ensures the WriteFile API issues a PutObject request and wait
 // until the object is available in the S3 bucket.
 func TestWriteNoError(t *testing.T) {
-	s := createS3Suite(t)
+	accessRec := &recording.AccessStats{}
+	s := createS3SuiteWithRec(t, accessRec)
 	ctx := aws.BackgroundContext()
 
 	putCall := s.s3.EXPECT().
@@ -499,10 +506,13 @@ func TestWriteNoError(t *testing.T) {
 
 	err := s.storage.WriteFile(ctx, "file", []byte("test"))
 	require.NoError(t, err)
+	// since we are using mock, requests are not recorded.
+	CheckAccessStats(t, accessRec, 0, 0, 0, 4)
 }
 
 func TestMultiUploadErrorNotOverwritten(t *testing.T) {
-	s := createS3Suite(t)
+	accessRec := &recording.AccessStats{}
+	s := createS3SuiteWithRec(t, accessRec)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -517,12 +527,14 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 5*1024*1024+6716, n)
 	require.ErrorContains(t, w.Close(ctx), "mock error")
+	CheckAccessStats(t, accessRec, 0, 0, 0, 5*1024*1024+6716)
 }
 
 // TestReadNoError ensures the ReadFile API issues a GetObject request and correctly
 // read the entire body.
 func TestReadNoError(t *testing.T) {
-	s := createS3Suite(t)
+	accessRec := &recording.AccessStats{}
+	s := createS3SuiteWithRec(t, accessRec)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -538,6 +550,8 @@ func TestReadNoError(t *testing.T) {
 	content, err := s.storage.ReadFile(ctx, "file")
 	require.NoError(t, err)
 	require.Equal(t, []byte("test"), content)
+	// since we are using mock, requests are not recorded.
+	CheckAccessStats(t, accessRec, 0, 0, 4, 0)
 }
 
 // TestFileExistsNoError ensures the FileExists API issues a HeadObject request
@@ -663,7 +677,8 @@ func TestFileExistsError(t *testing.T) {
 
 // TestOpenAsBufio checks that we can open a file for reading via bufio.
 func TestOpenAsBufio(t *testing.T) {
-	s := createS3Suite(t)
+	accessRec := &recording.AccessStats{}
+	s := createS3SuiteWithRec(t, accessRec)
 	ctx := aws.BackgroundContext()
 
 	s.s3.EXPECT().
@@ -686,6 +701,8 @@ func TestOpenAsBufio(t *testing.T) {
 	content, err = bufReader.ReadString('\n')
 	require.EqualError(t, err, "EOF")
 	require.Equal(t, "content", content)
+	// since we are using mock, requests are not recorded.
+	CheckAccessStats(t, accessRec, 0, 0, 18, 0)
 }
 
 // alphabetReader is used in TestOpenReadSlowly. This Reader produces a single
@@ -1248,6 +1265,7 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 			Sse:          "sse",
 			StorageClass: "sc",
 		},
+		nil,
 	)
 	defer controller.Finish()
 	ctx := aws.BackgroundContext()

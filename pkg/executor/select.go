@@ -1012,6 +1012,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if err != nil {
 			return err
 		}
+		sc.MemSensitive = true
 		_, isAnalyze = prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
 	} else if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		isAnalyze = true
@@ -1020,6 +1021,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
 		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+		sc.MemSensitive = true
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
@@ -1105,12 +1107,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
+		sc.MemSensitive = true
 		ResetUpdateStmtCtx(sc, stmt, vars)
 		errLevels = sc.ErrLevels()
 	case *ast.DeleteStmt:
+		sc.MemSensitive = true
 		ResetDeleteStmtCtx(sc, stmt, vars)
 		errLevels = sc.ErrLevels()
 	case *ast.InsertStmt:
+		sc.MemSensitive = true
 		sc.InInsertStmt = true
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
@@ -1141,15 +1146,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode))
 
 	case *ast.LoadDataStmt:
+		sc.MemSensitive = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 	case *ast.ImportIntoStmt:
+		sc.MemSensitive = true
 		inImportInto = true
 		sc.SetTypeFlags(util.GetTypeFlagsForImportInto(sc.TypeFlags(), vars.SQLMode))
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
-
+		sc.MemSensitive = true
 		// Return warning for truncate error in selection.
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
@@ -1162,6 +1169,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
+		sc.MemSensitive = true
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).
