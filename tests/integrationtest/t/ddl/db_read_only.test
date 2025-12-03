@@ -38,66 +38,66 @@ select * from information_schema.schemata_extensions;
 alter schema db_read_only read only 1;
 
 # alter database
--- error 3809
+-- error 3989
 alter database db_read_only charset gbk;
--- error 3809
+-- error 3989
 alter database db_read_only collate utf8mb4_roman_ci;
 create placement policy p1 followers=4;
--- error 3809
+-- error 3989
 alter database db_read_only placement policy p1;
--- error 3809
+-- error 3989
 alter database db_read_only set tiflash replica 1;
--- error 3809
+-- error 3989
 drop database db_read_only;
 
 # create table
--- error 3809
+-- error 3989
 create table t1(c1 int);
--- error 3809
+-- error 3989
 create table t2 like t;
--- error 3809
+-- error 3989
 create table pt (a int, b int) partition by hash(a) partitions 4;
--- error 3809
+-- error 3989
 create temporary table t1(a int);
--- error 3809
+-- error 3989
 create global temporary table t1(a int) on commit delete rows;
 
 # alter table
--- error 3809
+-- error 3989
 alter table t add column cc int not null;
--- error 3809
+-- error 3989
 alter table t add index (a);
--- error 3809
+-- error 3989
 create index c1 on t(a);
--- error 3809
+-- error 3989
 alter table t alter index b invisible;
--- error 3809
+-- error 3989
 alter table t change column c c varchar(10);
--- error 3809
+-- error 3989
 alter table t drop column c;
--- error 3809
+-- error 3989
 alter table t drop index b;
--- error 3809
+-- error 3989
 drop index b on t;
--- error 3809
+-- error 3989
 alter table t modify column c varchar(10);
--- error 3809
+-- error 3989
 alter table t rename index b to b_1;
--- error 3809
+-- error 3989
 alter table t drop foreign key fk_a;
--- error 3809
+-- error 3989
 alter table t add foreign key fk_a1(b) references s(a);
--- error 3809
+-- error 3989
 alter table t add foreign key fk_a2(b) references db_read_only_1.s(a);
--- error 3809
+-- error 3989
 alter table t partition by hash(a) partitions 4;
--- error 3809
+-- error 3989
 alter table members drop partition p1990;
--- error 3809
+-- error 3989
 alter table members truncate partition p1980;
--- error 3809
+-- error 3989
 alter table members add partition (partition `p1990to2010` values less than (2010));
--- error 3809
+-- error 3989
 alter table members reorganize partition `p1990to2010` into
 (partition p1990 values less than (2000),
  partition p2000 values less than (2010),
@@ -106,40 +106,40 @@ alter table members reorganize partition `p1990to2010` into
  partition pMax values less than (maxvalue));
 
 # rename table
--- error 3809
+-- error 3989
 rename table t to t_old;
 # db_read_only is read only
--- error 3809
+-- error 3989
 rename table db_read_only.t to db_read_only_1.t;
 # db_read_only_1 is read only
 alter schema db_read_only read only 0;
 alter schema db_read_only_1 read only 1;
--- error 3809
+-- error 3989
 rename table db_read_only.t to db_read_only_1.t;
 alter schema db_read_only read only 1;
 
 # truncate/drop table and view, load data, import, create/replace view, alter table auto_increment
--- error 3809
+-- error 3989
 truncate table t;
--- error 3809
+-- error 3989
 truncate table temp;
--- error 3809
+-- error 3989
 drop table t;
--- error 3809
+-- error 3989
 drop table temp;
--- error 3809
+-- error 3989
 drop table temp_global;
--- error 3809
+-- error 3989
 drop view v1;
--- error 3809
+-- error 3989
 load data local infile '' into table t;
--- error 3809
+-- error 3989
 import into t from '';
--- error 3809
+-- error 3989
 create view v as select * from t;
--- error 3809
+-- error 3989
 create or replace view v as select * from t;
--- error 3809
+-- error 3989
 alter table t auto_increment = 10000;
 
 # DDL can be executed in read-only mode
@@ -187,110 +187,110 @@ alter schema db1 read only 1;
 use db1;
 
 # insert
--- error 3809
+-- error 3989
 insert into t1 values(1, 1);
--- error 3809
+-- error 3989
 insert into t1 select * from t2;
 insert into db2.t1 select * from t1; # pass
--- error 3809
+-- error 3989
 insert into t1 table t2;
--- error 3809
+-- error 3989
 insert into t1 set a=1;
--- error 3809
+-- error 3989
 insert into temp values (1);
 
 # replace
--- error 3809
+-- error 3989
 replace into t1 values (1, 2);
--- error 3809
+-- error 3989
 replace into t1 table t2;
--- error 3809
+-- error 3989
 replace t1 set a = default;
--- error 3809
+-- error 3989
 replace into temp values (1);
 
 # delete
--- error 3809
+-- error 3989
 delete from t1;
--- error 3809
+-- error 3989
 delete from temp where a = 1;
--- error 3809
+-- error 3989
 delete t1, t2 from t1, t2;
--- error 3809
+-- error 3989
 delete db1.t1, db2.t2 from db1.t1, db2.t2;
--- error 3809
+-- error 3989
 delete t1,t2,t3 from t1, t2, t3 where t3.a < 5 and t1.a = 3;
--- error 3809
+-- error 3989
 delete t2 from t1, t2;
 delete db2.t2 from db1.t1, db2.t2;
--- error 3809
+-- error 3989
 delete db1.t1 from db1.t1, db2.t2;
--- error 3809
+-- error 3989
 delete t1 from t1, t1 as t2 where t1.b = t2.b and t1.a > t2.a;
--- error 3809
+-- error 3989
 delete from t1,t2,t3 using t1,t2,t3 where t3.a = 1;
--- error 3809
+-- error 3989
 delete from t1,db2.t2,db2.t3 using t1,db2.t2,db2.t3 where db2.t3.a = 1;
--- error 3809
+-- error 3989
 delete from t2,t3 using t1,t2,t3 where t1.a = 1;
--- error 3809
+-- error 3989
 delete from t2,db2.t3 using t1,t2,db2.t3 where t1.a = 1;
--- error 3809
+-- error 3989
 with cte as (select * from t1) delete from t2 where t2.a in (select a from cte);
 
 # update
--- error 3809
+-- error 3989
 update t1 set a = a + 1;
--- error 3809
+-- error 3989
 update temp set a = 1;
--- error 3809
+-- error 3989
 update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
--- error 3809
+-- error 3989
 update t1 join db2.t2 set t1.a=1 where t1.b=db2.t2.b;
 analyze table t1; #pass
--- error 3809
+-- error 3989
 with cte as (select * from t1) update t2 set a = 1 where t2.a in (select a from cte);
 
 # modify columns with foreign key
--- error 3809
+-- error 3989
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete restrict;
--- error 3809
+-- error 3989
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update restrict;
--- error 3809
+-- error 3989
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete cascade;
--- error 3809
+-- error 3989
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update cascade;
--- error 3809
+-- error 3989
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete set null;
--- error 3809
+-- error 3989
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update set null;
--- error 3809
+-- error 3989
 
 # for update / for share + tidb_enable_shared_lock_promotion
--- error 3809
+-- error 3989
 select * from t1 for update;
--- error 3809
+-- error 3989
 select * from t1 for update of t1 nowait;
--- error 3809
+-- error 3989
 select * from t1 for update of t1 wait 5;
--- error 3809
+-- error 3989
 select * from t1 join t2 on t1.a= t2.a for update;
--- error 3809
+-- error 3989
 select t1.a from t1 join t2 on t1.a= t2.a for update;
--- error 3809
+-- error 3989
 table t1 for update;
 set @@session.tidb_enable_shared_lock_promotion = 1;
--- error 3809
+-- error 3989
 select * from t1 for share;
--- error 3809
+-- error 3989
 select * from t1 for share nowait;
--- error 3809
+-- error 3989
 select * from t1 join t2 on t1.a= t2.a for share;
--- error 3809
+-- error 3989
 select t1.a from t1 join t2 on t1.a= t2.a for share;
--- error 3809
+-- error 3989
 table t1 for share;
--- error 3809
+-- error 3989
 select * from temp for update;
 
 # select should be ok
@@ -299,13 +299,13 @@ select * from t1 join t2 on t1.a= t2.a;
 table t1;
 
 # fk, schema of child table is read only
--- error 3809
+-- error 3989
 delete from db2.parent_0;
--- error 3809
+-- error 3989
 update db2.parent_1 set id_0 = 10;
--- error 3809
+-- error 3989
 delete from db2.parent_2;
--- error 3809
+-- error 3989
 update db2.parent_3 set id_3 = 10;
 
 # finish test
@@ -331,10 +331,10 @@ set @a = 1;
 set @b = 2;
 alter schema read_only read only 1;
 
--- error 3809
+-- error 3989
 prepare stmt from 'insert into t1 values(?, ?)';  # different from mysql, mysql allows prepare in read only mode
 -- error 8113
-execute stmt_insert using @a, @b; # error 3809 is wrapped by prepare/execute as 8113
+execute stmt_insert using @a, @b; # error 3989 is wrapped by prepare/execute as 8113
 -- error 8113
 execute stmt_update using @b, @a;
 -- error 8113
@@ -406,27 +406,27 @@ SET tidb_enable_non_prepared_plan_cache = OFF;
 ## test create binding in read only mode
 alter schema read_only read only 1;
 create binding for select * from t1 where b = 1 using select /*+ use_index(t1, idx_b) */ * from t1 where b = 1;
--- error 3809
+-- error 3989
 create binding for update t1 set b = 2 where a = 1 using update /*+ use_index(t1, idx_b) */ t1 set b = 2 where a = 1;
--- error 3809
+-- error 3989
 create binding for delete from t1 where a = 1 using delete /*+ use_index(t1, idx_b) */ from t1 where a = 1;
 
 ## test explain/explain analyze in read only mode
--- error 3809
+-- error 3989
 explain select * from t1 where b = 1 for update;
--- error 3809
+-- error 3989
 explain insert into t1 values(1, 2);
--- error 3809
+-- error 3989
 explain update t1 set b = 2 where a = 1;
--- error 3809
+-- error 3989
 explain delete from t1 where a = 1;
--- error 3809
+-- error 3989
 explain analyze select * from t1 where b = 1 for update;
--- error 3809
+-- error 3989
 explain analyze insert into t1 values(1, 2);
--- error 3809
+-- error 3989
 explain analyze update t1 set b = 2 where a = 1;
--- error 3809
+-- error 3989
 explain analyze delete from t1 where a = 1;
 
 alter schema read_only read only 0;

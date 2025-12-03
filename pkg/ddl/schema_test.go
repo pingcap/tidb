@@ -578,7 +578,7 @@ func TestSchemaReadOnlyAffectAllUsers(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("create user '%s'@'%%'", tc.user))
 		tk.MustExec(fmt.Sprintf("grant %s on *.* to '%s'@'%%'", tc.priv, tc.user))
 		require.NoError(t, se.Auth(&auth.UserIdentity{Username: tc.user, Hostname: "%"}, nil, nil, nil))
-		tk.MustGetErrMsg("insert into test.t values (1)", "[schema:3809]Schema 'test' is in read only mode.")
+		tk.MustGetErrMsg("insert into test.t values (1)", "[schema:3989]Schema 'test' is in read only mode.")
 	}
 	tk.MustExec("alter database test read only = 0")
 	for _, tc := range tcs {
@@ -691,7 +691,7 @@ func TestReadOnlyInMiddleState(t *testing.T) {
 	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr("test_db"))
 	require.True(t, ok)
 	require.True(t, dbInfo.ReadOnly)
-	tk3.MustGetErrMsg("insert into test_db.t values (1)", "[schema:3809]Schema 'test_db' is in read only mode.")
+	tk3.MustGetErrMsg("insert into test_db.t values (1)", "[schema:3989]Schema 'test_db' is in read only mode.")
 	tk1.MustExec("commit")
 	wg.Wait()
 }

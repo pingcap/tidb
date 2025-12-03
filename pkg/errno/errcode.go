@@ -920,7 +920,6 @@ const (
 	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
-	ErrSchemaInReadOnlyMode                                  = 3809
 	ErrNonBooleanExprForCheckConstraint                      = 3812
 	ErrColumnCheckConstraintReferencesOtherColumn            = 3813
 	ErrCheckConstraintNamedFunctionIsNotAllowed              = 3814
@@ -944,6 +943,7 @@ const (
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
 	ErrDependentByCheckConstraint                            = 3959
 	ErrJSONInBooleanContext                                  = 3986
+	ErrSchemaInReadOnlyMode                                  = 3989
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
