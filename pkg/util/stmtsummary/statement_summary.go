@@ -228,12 +228,9 @@ type stmtSummaryByDigestElement struct {
 
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
-<<<<<<< HEAD
-=======
 
 	storageKV  bool // query read from TiKV
 	storageMPP bool // query read from TiFlash
->>>>>>> a53894aae09 (slowlog, stmtsummary: include the storage engine(s) a query read from (#61737))
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -934,23 +931,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
 	// request-units
-<<<<<<< HEAD
 	ssElement.StmtRUSummary.Add(sei.RUDetail)
-=======
-	ssStats.StmtRUSummary.Add(sei.RUDetail)
 
-	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
-	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
-}
-
-func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {
-	ssElement.Lock()
-	defer ssElement.Unlock()
-
-	// refreshInterval may change anytime, update endTime ASAP.
-	ssElement.endTime = ssElement.beginTime + intervalSeconds
-	ssElement.stmtSummaryStats.add(sei, warningCount, affectedRows)
->>>>>>> a53894aae09 (slowlog, stmtsummary: include the storage engine(s) a query read from (#61737))
+	ssElement.storageKV = sei.StmtCtx.IsTiKV.Load()
+	ssElement.storageMPP = sei.StmtCtx.IsTiFlash.Load()
 }
 
 // Truncate SQL to maxSQLLength.

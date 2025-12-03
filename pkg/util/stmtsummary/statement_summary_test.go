@@ -82,7 +82,6 @@ func TestAddStatement(t *testing.T) {
 	samplePlan, _, _ := stmtExecInfo1.LazyInfo.GetEncodedPlan()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement := stmtSummaryByDigestElement{
-<<<<<<< HEAD
 		beginTime:            now + 60,
 		endTime:              now + 1860,
 		sampleSQL:            stmtExecInfo1.LazyInfo.GetOriginalSQL(),
@@ -146,90 +145,10 @@ func TestAddStatement(t *testing.T) {
 			MaxWRU:            stmtExecInfo1.RUDetail.WRU(),
 			SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
 			MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
-=======
-		beginTime: now + 60,
-		endTime:   now + 1860,
-		stmtSummaryStats: stmtSummaryStats{
-			sampleSQL:            stmtExecInfo1.LazyInfo.GetOriginalSQL(),
-			samplePlan:           samplePlan,
-			indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
-			execCount:            1,
-			sumLatency:           stmtExecInfo1.TotalLatency,
-			maxLatency:           stmtExecInfo1.TotalLatency,
-			minLatency:           stmtExecInfo1.TotalLatency,
-			sumParseLatency:      stmtExecInfo1.ParseLatency,
-			maxParseLatency:      stmtExecInfo1.ParseLatency,
-			sumCompileLatency:    stmtExecInfo1.CompileLatency,
-			maxCompileLatency:    stmtExecInfo1.CompileLatency,
-			sumNumCopTasks:       int64(stmtExecInfo1.CopTasks.NumCopTasks),
-			sumCopProcessTime:    stmtExecInfo1.CopTasks.TotProcessTime,
-			maxCopProcessTime:    stmtExecInfo1.CopTasks.MaxProcessTime,
-			maxCopProcessAddress: stmtExecInfo1.CopTasks.MaxProcessAddress,
-			sumCopWaitTime:       stmtExecInfo1.CopTasks.TotWaitTime,
-			maxCopWaitTime:       stmtExecInfo1.CopTasks.MaxWaitTime,
-			maxCopWaitAddress:    stmtExecInfo1.CopTasks.MaxWaitAddress,
-			sumProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
-			maxProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
-			sumWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
-			maxWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
-			sumBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
-			maxBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
-			sumTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
-			maxTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
-			sumProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
-			maxProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
-			sumGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
-			maxGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
-			sumPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
-			maxPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
-			sumCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
-			maxCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
-			sumLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
-			maxLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
-			sumCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
-			maxCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
-			sumResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
-			maxResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
-			sumWriteKeys:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys),
-			maxWriteKeys:         stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
-			sumWriteSize:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteSize),
-			maxWriteSize:         stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
-			sumPrewriteRegionNum: int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum),
-			maxPrewriteRegionNum: stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
-			sumTxnRetry:          int64(stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry),
-			maxTxnRetry:          stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
-			backoffTypes:         make(map[string]int),
-			sumMem:               stmtExecInfo1.MemMax,
-			maxMem:               stmtExecInfo1.MemMax,
-			sumDisk:              stmtExecInfo1.DiskMax,
-			maxDisk:              stmtExecInfo1.DiskMax,
-			sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
-			firstSeen:            stmtExecInfo1.StartTime,
-			lastSeen:             stmtExecInfo1.StartTime,
-			StmtRUSummary: StmtRUSummary{
-				SumRRU:            stmtExecInfo1.RUDetail.RRU(),
-				MaxRRU:            stmtExecInfo1.RUDetail.RRU(),
-				SumWRU:            stmtExecInfo1.RUDetail.WRU(),
-				MaxWRU:            stmtExecInfo1.RUDetail.WRU(),
-				SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
-				MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
-			},
-			resourceGroupName: stmtExecInfo1.ResourceGroupName,
-			StmtNetworkTrafficSummary: StmtNetworkTrafficSummary{
-				UnpackedBytesSentTiKVTotal:            stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVTotal,
-				UnpackedBytesReceivedTiKVTotal:        stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVTotal,
-				UnpackedBytesSentTiKVCrossZone:        stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVCrossZone,
-				UnpackedBytesReceivedTiKVCrossZone:    stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVCrossZone,
-				UnpackedBytesSentTiFlashTotal:         stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPTotal,
-				UnpackedBytesReceivedTiFlashTotal:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPTotal,
-				UnpackedBytesSentTiFlashCrossZone:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPCrossZone,
-				UnpackedBytesReceivedTiFlashCrossZone: stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPCrossZone,
-			},
-			storageKV:  stmtExecInfo1.StmtCtx.IsTiKV.Load(),
-			storageMPP: stmtExecInfo1.StmtCtx.IsTiFlash.Load(),
->>>>>>> a53894aae09 (slowlog, stmtsummary: include the storage engine(s) a query read from (#61737))
 		},
 		resourceGroupName: stmtExecInfo1.ResourceGroupName,
+		storageKV:         stmtExecInfo1.StmtCtx.IsTiKV.Load(),
+		storageMPP:        stmtExecInfo1.StmtCtx.IsTiFlash.Load(),
 	}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	history := list.New()
@@ -388,12 +307,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.MaxWRU = stmtExecInfo2.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
-<<<<<<< HEAD
-=======
-	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo2.TiKVExecDetails)
 	expectedSummaryElement.storageKV = stmtExecInfo2.StmtCtx.IsTiKV.Load()
 	expectedSummaryElement.storageMPP = stmtExecInfo2.StmtCtx.IsTiFlash.Load()
->>>>>>> a53894aae09 (slowlog, stmtsummary: include the storage engine(s) a query read from (#61737))
 
 	ssMap.AddStatement(stmtExecInfo2)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -515,12 +430,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumRRU += stmtExecInfo3.RUDetail.RRU()
 	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
-<<<<<<< HEAD
-=======
-	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo3.TiKVExecDetails)
 	expectedSummaryElement.storageKV = stmtExecInfo3.StmtCtx.IsTiKV.Load()
 	expectedSummaryElement.storageMPP = stmtExecInfo3.StmtCtx.IsTiFlash.Load()
->>>>>>> a53894aae09 (slowlog, stmtsummary: include the storage engine(s) a query read from (#61737))
 
 	ssMap.AddStatement(stmtExecInfo3)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -664,14 +575,9 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			!ssElement1.firstSeen.Equal(ssElement2.firstSeen) ||
 			!ssElement1.lastSeen.Equal(ssElement2.lastSeen) ||
 			ssElement1.resourceGroupName != ssElement2.resourceGroupName ||
-<<<<<<< HEAD
-			ssElement1.StmtRUSummary != ssElement2.StmtRUSummary {
-=======
 			ssElement1.StmtRUSummary != ssElement2.StmtRUSummary ||
-			ssElement1.StmtNetworkTrafficSummary != ssElement2.StmtNetworkTrafficSummary ||
 			ssElement1.storageKV != ssElement2.storageKV ||
 			ssElement1.storageMPP != ssElement2.storageMPP {
->>>>>>> a53894aae09 (slowlog, stmtsummary: include the storage engine(s) a query read from (#61737))
 			return false
 		}
 		if len(ssElement1.backoffTypes) != len(ssElement2.backoffTypes) {
