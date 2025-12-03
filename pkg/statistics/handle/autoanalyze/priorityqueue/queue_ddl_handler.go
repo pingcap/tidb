@@ -36,7 +36,7 @@ import (
 )
 
 // HandleDDLEvent handles DDL events for the priority queue.
-func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) (err error) {
+func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 	// Check if auto analyze is enabled.
 	if !vardef.RunAutoAnalyze.Load() {
 		// Close the priority queue if auto analyze is disabled.
@@ -52,6 +52,7 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 		return notifier.ErrNotReadyRetryLater
 	}
 
+	var err error
 	defer func() {
 		if err != nil {
 			intest.Assert(
@@ -93,7 +94,10 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 		// Ignore other DDL events.
 	}
 
-	return err
+	// Ideally, we shouldn't allow any errors to be ignored, but for now, there is no retry limit mechanism.
+	// So to avoid infinite retry, we just log the error and continue.
+	// See more at: https://github.com/pingcap/tidb/issues/59474
+	return nil
 }
 
 // getAndDeleteJob tries to get a job from the priority queue and delete it if it exists.
