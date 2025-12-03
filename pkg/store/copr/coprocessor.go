@@ -510,10 +510,14 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	})
 
 	if req.MaxExecutionTime > 0 {
+		orgCtx := bo.GetCtx()
 		// If the request has a MaxExecutionTime, we need to set the deadline of the context.
-		ctxWithTimeout, cancel := context.WithTimeout(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond)
-		defer cancel()
+		ctxWithTimeout, cancel := context.WithTimeout(orgCtx, time.Duration(req.MaxExecutionTime)*time.Millisecond)
 		bo.TiKVBackoffer().SetCtx(ctxWithTimeout)
+		defer func() {
+			bo.TiKVBackoffer().SetCtx(orgCtx)
+			cancel()
+		}()
 	}
 
 	// TODO(youjiali1995): is there any request type that needn't be split by buckets?
