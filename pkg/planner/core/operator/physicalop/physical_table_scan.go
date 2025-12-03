@@ -369,7 +369,7 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 	ctx := p.SCtx()
 	if p.Table.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(p.Table)
-		idxCols, idxColLens := expression.IndexInfo2PrefixCols(p.Columns, p.Schema().Columns, pkIdx)
+		idxCols, idxColLens := util.IndexInfo2PrefixCols(p.Columns, p.Schema().Columns, pkIdx)
 		for _, cond := range access {
 			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 			if err != nil {

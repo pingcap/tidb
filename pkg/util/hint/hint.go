@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -545,21 +544,22 @@ type IndexJoinHints struct {
 // PlanHints are hints that are used to control the optimizer plan choices like 'use_index', 'hash_join'.
 // TODO: move ignore_plan_cache, straight_join, no_decorrelate here.
 type PlanHints struct {
-	IndexJoin          IndexJoinHints // inlj_join, inlhj_join, inlmj_join
-	NoIndexJoin        IndexJoinHints // no_inlj_join, no_inlhj_join, no_inlmj_join
-	HashJoin           []HintedTable  // hash_join
-	NoHashJoin         []HintedTable  // no_hash_join
-	SortMergeJoin      []HintedTable  // merge_join
-	NoMergeJoin        []HintedTable  // no_merge_join
-	BroadcastJoin      []HintedTable  // bcj_join
-	ShuffleJoin        []HintedTable  // shuffle_join
-	IndexHintList      []HintedIndex  // use_index, ignore_index
-	IndexMergeHintList []HintedIndex  // use_index_merge
-	TiFlashTables      []HintedTable  // isolation_read_engines(xx=tiflash)
-	TiKVTables         []HintedTable  // isolation_read_engines(xx=tikv)
-	LeadingJoinOrder   []HintedTable  // leading
-	HJBuild            []HintedTable  // hash_join_build
-	HJProbe            []HintedTable  // hash_join_probe
+	IndexJoin          IndexJoinHints   // inlj_join, inlhj_join, inlmj_join
+	NoIndexJoin        IndexJoinHints   // no_inlj_join, no_inlhj_join, no_inlmj_join
+	HashJoin           []HintedTable    // hash_join
+	NoHashJoin         []HintedTable    // no_hash_join
+	SortMergeJoin      []HintedTable    // merge_join
+	NoMergeJoin        []HintedTable    // no_merge_join
+	BroadcastJoin      []HintedTable    // bcj_join
+	ShuffleJoin        []HintedTable    // shuffle_join
+	IndexHintList      []HintedIndex    // use_index, ignore_index
+	IndexMergeHintList []HintedIndex    // use_index_merge
+	TiFlashTables      []HintedTable    // isolation_read_engines(xx=tiflash)
+	TiKVTables         []HintedTable    // isolation_read_engines(xx=tikv)
+	LeadingJoinOrder   []HintedTable    // leading
+	LeadingList        *ast.LeadingList // leading recursive
+	HJBuild            []HintedTable    // hash_join_build
+	HJProbe            []HintedTable    // hash_join_probe
 
 	// Hints belows are not associated with any particular table.
 	PreferAggType    uint // hash_agg, merge_agg, agg_to_cop and so on
@@ -576,6 +576,14 @@ type HintedTable struct {
 	Partitions   []ast.CIStr // partition information
 	SelectOffset int         // the select block offset of this hint
 	Matched      bool        // whether this hint is applied successfully
+}
+
+// Match checks whether the hint is matched with the given dbName and tblName.
+func (hint *HintedTable) Match(other *HintedTable) bool {
+	return hint.SelectOffset == other.SelectOffset &&
+		hint.TblName.L == other.TblName.L &&
+		(hint.DBName.L == other.DBName.L ||
+			hint.DBName.L == "*" || other.DBName.L == "*") // for cross-db bindings, e.g. *.t
 }
 
 // HintedIndex indicates which index this hint should take effect on.
@@ -718,7 +726,7 @@ func (*PlanHints) matchTiKVOrTiFlash(tableName *HintedTable, hintTables []Hinted
 		return nil
 	}
 	for i, tbl := range hintTables {
-		if tableName.DBName.L == tbl.DBName.L && tableName.TblName.L == tbl.TblName.L && tbl.SelectOffset == tableName.SelectOffset {
+		if tbl.Match(tableName) {
 			hintTables[i].Matched = true
 			return &tbl
 		}
@@ -741,9 +749,7 @@ func (*PlanHints) MatchTableName(tables []*HintedTable, hintTables []HintedTable
 			if table == nil {
 				continue
 			}
-			if (curEntry.DBName.L == table.DBName.L || curEntry.DBName.L == "*") &&
-				curEntry.TblName.L == table.TblName.L &&
-				table.SelectOffset == curEntry.SelectOffset {
+			if curEntry.Match(table) {
 				hintTables[i].Matched = true
 				hintMatched = true
 				break
@@ -774,6 +780,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		leadingJoinOrder                                                                []HintedTable
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
+		leadingList                                                                     *ast.LeadingList
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -854,15 +861,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			case HintNoOrderIndex:
 				hintType = ast.HintNoOrderIndex
 			case HintIndexLookUpPushDown:
-				inapplicableMsg := ""
-				switch {
-				case !kerneltype.IsClassic():
-					inapplicableMsg = "only classic kernel type is supported"
-				case len(hint.Indexes) == 0:
-					inapplicableMsg = "the index names should be specified"
-				}
-				if inapplicableMsg != "" {
-					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, " + inapplicableMsg)
+				if len(hint.Indexes) == 0 {
+					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified")
 					continue
 				}
 				hintType = ast.HintUse
@@ -914,6 +914,12 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintLeading:
 			if leadingHintCnt == 0 {
 				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+				// get LeadingList
+				if hint.HintData != nil {
+					if list, ok := hint.HintData.(*ast.LeadingList); ok {
+						leadingList = list
+					}
+				}
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
@@ -960,6 +966,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		PreferLimitToCop:   preferLimitToCop,
 		CTEMerge:           cteMerge,
 		LeadingJoinOrder:   leadingJoinOrder,
+		LeadingList:        leadingList,
 		HJBuild:            hjBuildTables,
 		HJProbe:            hjProbeTables,
 	}, subQueryHintFlags, nil
