@@ -1378,9 +1378,9 @@ func TestStatisticsAfterModifyColumn(t *testing.T) {
 	tk.MustExec("set tidb_stats_update_during_ddl = ON")
 
 	// Prepare data
-	tk.MustExec("create table t2(a int auto_increment, b int, c int, primary key(a), key idxb(b), key idxc(c))")
+	tk.MustExec("create table t2(a int auto_increment, b int, c int, d int, primary key(a), key idxb(b), key idxc(c))")
 	for i := range 200 {
-		tk.MustExec(fmt.Sprintf("insert into t2(b, c) values (%d, %d)", i, i))
+		tk.MustExec(fmt.Sprintf("insert into t2(b, c, d) values (%d, %d, %d)", i, i, i))
 	}
 	tk.MustExec("analyze table t2")
 
