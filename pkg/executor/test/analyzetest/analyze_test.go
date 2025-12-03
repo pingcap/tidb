@@ -722,7 +722,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	}()
 	tk.MustExec("analyze table t with 1 topn, 2 buckets")
 	is := dom.InfoSchema()
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -759,7 +759,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	lastVersion = tbl.Version
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 3, len(col0.Buckets))
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	col1 = tbl.GetCol(tableInfo.Columns[1].ID)
 	require.Equal(t, 1, len(col1.TopN.TopN))
