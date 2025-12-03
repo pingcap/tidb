@@ -220,17 +220,20 @@ func MakeTableRegions(
 
 	start := time.Now()
 
+	// In some tests, cfg.Concurrency is 0
 	concurrency := max(cfg.Concurrency, 2)
 	var fileRegionsMap sync.Map
 
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	meta := cfg.TableMeta
+
+	largeFiles := make([]FileInfo, 0, 4)
 	for _, info := range meta.DataFiles {
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():
-				return nil
+				return egCtx.Err()
 			default:
 			}
 
@@ -250,7 +253,7 @@ func MakeTableRegions(
 				// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
 				// avoid split a lot of small chunks.
 				// If a csv file is compressed, we can't split it now because we can't get the exact size of a row.
-				regions, sizes, err = SplitLargeCSV(egCtx, cfg, info)
+				largeFiles = append(largeFiles, info)
 			} else {
 				regions, sizes, err = MakeSourceFileRegion(egCtx, cfg, info)
 			}
@@ -266,6 +269,17 @@ func MakeTableRegions(
 
 	if err := eg.Wait(); err != nil {
 		return nil, err
+	}
+
+	// Process large CSV files
+	for _, info := range largeFiles {
+		regions, sizes, err := SplitLargeCSV(egCtx, cfg, info)
+		if err != nil {
+			logutil.Logger(egCtx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
+			return nil, err
+		}
+		result := fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}
+		fileRegionsMap.Store(info.FileMeta.Path, result)
 	}
 
 	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
@@ -452,9 +466,8 @@ func getHeaderColumn(
 		return nil, 0, err
 	}
 
-	defer func() {
-		_ = parser.Close()
-	}()
+	//nolint: errcheck
+	defer parser.Close()
 
 	if err = parser.ReadColumns(); err != nil {
 		return nil, 0, err
@@ -491,25 +504,29 @@ func SplitLargeCSV(
 		endOffset += maxRegionSize
 	}
 
-	// In some tests, cfg.Concurrency is 0
 	concurrency := max(cfg.Concurrency, 1) * 2
-	eg, _ := errgroup.WithContext(ctx)
+	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	for i, endOffset := range splitEndOffsets {
 		eg.Go(func() error {
-			parser, err := openCSVParser(ctx, cfg, dataFile.FileMeta.Path, endOffset)
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			default:
+			}
+
+			parser, err := openCSVParser(egCtx, cfg, dataFile.FileMeta.Path, endOffset)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			defer func() {
-				_ = parser.Close()
-			}()
+			//nolint: errcheck
+			defer parser.Close()
 			_, pos, err := parser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
 					return err
 				}
-				logutil.Logger(ctx).Warn("file contains no terminator at end",
+				logutil.Logger(egCtx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
 					zap.String("terminator", cfg.CSV.LinesTerminatedBy))
 				pos = dataFile.FileMeta.FileSize
