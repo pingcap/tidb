@@ -139,6 +139,8 @@ type ExternalEngineConfig struct {
 	MemCapacity int64
 	// OnDup is the action when a duplicate key is found during global sort.
 	OnDup engineapi.OnDuplicateKey
+	// this is the prefix of files recording conflicted KVs
+	FilePrefix string
 }
 
 // CheckCtx contains all parameters used in CheckRequirements

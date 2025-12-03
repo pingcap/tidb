@@ -68,8 +68,11 @@ const (
 	// step goes from none -> importing -> validating -> none.
 	// when used in global sort, it means importing the sorted data.
 	// when used in local sort, it means encode&sort data and then importing the data.
-	JobStepImporting  = "importing"
-	JobStepValidating = "validating"
+	JobStepImporting = "importing"
+	// JobStepResolvingConflicts is the step after importing to resolve conflicts,
+	// it's used in global sort.
+	JobStepResolvingConflicts = "resolving-conflicts"
+	JobStepValidating         = "validating"
 
 	baseQuerySQL = `SELECT
 					id, create_time, start_time, update_time, end_time,

@@ -1635,6 +1635,11 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
 }
 
+// GetExternalEngineConflictInfo returns conflict info of some engine.
+func (local *Backend) GetExternalEngineConflictInfo(engineUUID uuid.UUID) engineapi.ConflictInfo {
+	return local.engineMgr.getExternalEngineConflictInfo(engineUUID)
+}
+
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
 // invalid. Caller must use SetTSBeforeImportEngine to set a valid TS before import
 // the engine.

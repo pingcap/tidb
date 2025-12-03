@@ -285,6 +285,11 @@ func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
+// ConflictInfo implements common.Engine.
+func (*Engine) ConflictInfo() engineapi.ConflictInfo {
+	return engineapi.ConflictInfo{}
+}
+
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return e.UUID.String()
