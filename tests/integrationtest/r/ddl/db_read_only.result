@@ -67,98 +67,98 @@ def	sys
 def	test	
 alter schema db_read_only read only 1;
 alter database db_read_only charset gbk;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter database db_read_only collate utf8mb4_roman_ci;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 create placement policy p1 followers=4;
 alter database db_read_only placement policy p1;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter database db_read_only set tiflash replica 1;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 drop database db_read_only;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 create table t1(c1 int);
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 create table t2 like t;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 create table pt (a int, b int) partition by hash(a) partitions 4;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 create temporary table t1(a int);
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 create global temporary table t1(a int) on commit delete rows;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t add column cc int not null;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t add index (a);
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 create index c1 on t(a);
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t alter index b invisible;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t change column c c varchar(10);
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t drop column c;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t drop index b;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 drop index b on t;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t modify column c varchar(10);
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t rename index b to b_1;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t drop foreign key fk_a;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t add foreign key fk_a1(b) references s(a);
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t add foreign key fk_a2(b) references db_read_only_1.s(a);
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t partition by hash(a) partitions 4;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table members drop partition p1990;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table members truncate partition p1980;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table members add partition (partition `p1990to2010` values less than (2010));
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table members reorganize partition `p1990to2010` into
 (partition p1990 values less than (2000),
 partition p2000 values less than (2010),
 partition p2010 values less than (2020),
 partition p2020 values less than (2030),
 partition pMax values less than (maxvalue));
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 rename table t to t_old;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 rename table db_read_only.t to db_read_only_1.t;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter schema db_read_only read only 0;
 alter schema db_read_only_1 read only 1;
 rename table db_read_only.t to db_read_only_1.t;
-Error 3809 (HY000): Schema 'db_read_only_1' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only_1' is in read only mode.
 alter schema db_read_only read only 1;
 truncate table t;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 truncate table temp;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 drop table t;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 drop table temp;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 drop table temp_global;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 drop view v1;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 load data local infile '' into table t;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 import into t from '';
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 create view v as select * from t;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 create or replace view v as select * from t;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t auto_increment = 10000;
-Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t compact tiflash replica;
 alter schema db_read_only read only 0;
 alter schema db_read_only_1 read only 0;
@@ -194,99 +194,99 @@ insert into db1.child_3 values (3);
 alter schema db1 read only 1;
 use db1;
 insert into t1 values(1, 1);
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 insert into t1 select * from t2;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 insert into db2.t1 select * from t1; # pass
 insert into t1 table t2;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 insert into t1 set a=1;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 insert into temp values (1);
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 replace into t1 values (1, 2);
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 replace into t1 table t2;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 replace t1 set a = default;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 replace into temp values (1);
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete from t1;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete from temp where a = 1;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete t1, t2 from t1, t2;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete db1.t1, db2.t2 from db1.t1, db2.t2;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete t1,t2,t3 from t1, t2, t3 where t3.a < 5 and t1.a = 3;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete t2 from t1, t2;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete db2.t2 from db1.t1, db2.t2;
 delete db1.t1 from db1.t1, db2.t2;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete t1 from t1, t1 as t2 where t1.b = t2.b and t1.a > t2.a;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete from t1,t2,t3 using t1,t2,t3 where t3.a = 1;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete from t1,db2.t2,db2.t3 using t1,db2.t2,db2.t3 where db2.t3.a = 1;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete from t2,t3 using t1,t2,t3 where t1.a = 1;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete from t2,db2.t3 using t1,t2,db2.t3 where t1.a = 1;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 with cte as (select * from t1) delete from t2 where t2.a in (select a from cte);
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 update t1 set a = a + 1;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 update temp set a = 1;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 update t1 join db2.t2 set t1.a=1 where t1.b=db2.t2.b;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 analyze table t1; #pass
 with cte as (select * from t1) update t2 set a = 1 where t2.a in (select a from cte);
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete restrict;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update restrict;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete cascade;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update cascade;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete set null;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update set null;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select * from t1 for update;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select * from t1 for update of t1 nowait;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select * from t1 for update of t1 wait 5;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select * from t1 join t2 on t1.a= t2.a for update;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select t1.a from t1 join t2 on t1.a= t2.a for update;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 table t1 for update;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 set @@session.tidb_enable_shared_lock_promotion = 1;
 select * from t1 for share;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select * from t1 for share nowait;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select * from t1 join t2 on t1.a= t2.a for share;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select t1.a from t1 join t2 on t1.a= t2.a for share;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 table t1 for share;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select * from temp for update;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 select * from t1;
 id	a
 select * from t1 join t2 on t1.a= t2.a;
@@ -294,13 +294,13 @@ id	a	id	a
 table t1;
 id	a
 delete from db2.parent_0;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 update db2.parent_1 set id_0 = 10;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete from db2.parent_2;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 update db2.parent_3 set id_3 = 10;
-Error 3809 (HY000): Schema 'db1' is in read only mode.
+Error 3989 (HY000): Schema 'db1' is in read only mode.
 alter schema db1 read only 0;
 drop database if exists read_only;
 create database read_only;
@@ -321,29 +321,29 @@ set @a = 1;
 set @b = 2;
 alter schema read_only read only 1;
 prepare stmt from 'insert into t1 values(?, ?)';  # different from mysql, mysql allows prepare in read only mode
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
-execute stmt_insert using @a, @b; # error 3809 is wrapped by prepare/execute as 8113
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
+execute stmt_insert using @a, @b; # error 3989 is wrapped by prepare/execute as 8113
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 execute stmt_update using @b, @a;
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 execute stmt_delete using @a;
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 execute stmt_select_for_update using @a;
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 execute stmt_select using @a;
 a	b
 execute stmt_truncate;
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 execute stmt_drop_database;
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 execute stmt_alter_database;
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 execute stmt_create_table;
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 execute stmt_drop_table;
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 execute stmt_alter_table;
-Error 8113 (HY000): Schema change caused error: [schema:3809]Schema 'read_only' is in read only mode.
+Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
 alter schema read_only read only 0;
 set @a = 1;
 execute stmt_select using @a;
@@ -409,23 +409,23 @@ SET tidb_enable_non_prepared_plan_cache = OFF;
 alter schema read_only read only 1;
 create binding for select * from t1 where b = 1 using select /*+ use_index(t1, idx_b) */ * from t1 where b = 1;
 create binding for update t1 set b = 2 where a = 1 using update /*+ use_index(t1, idx_b) */ t1 set b = 2 where a = 1;
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 create binding for delete from t1 where a = 1 using delete /*+ use_index(t1, idx_b) */ from t1 where a = 1;
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 explain select * from t1 where b = 1 for update;
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 explain insert into t1 values(1, 2);
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 explain update t1 set b = 2 where a = 1;
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 explain delete from t1 where a = 1;
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 explain analyze select * from t1 where b = 1 for update;
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 explain analyze insert into t1 values(1, 2);
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 explain analyze update t1 set b = 2 where a = 1;
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 explain analyze delete from t1 where a = 1;
-Error 3809 (HY000): Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 alter schema read_only read only 0;
