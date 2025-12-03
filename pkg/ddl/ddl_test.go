@@ -145,7 +145,7 @@ func TestModifyColumn(t *testing.T) {
 	for _, tt := range tests {
 		colA := colDefStrToColInfo(t, tt.origin, ctx)
 		colB := colDefStrToColInfo(t, tt.to, ctx)
-		err := checkModifyTypes(colA, colB, false)
+		err := checkModifyTypes(colA, colB)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {
