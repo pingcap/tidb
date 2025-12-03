@@ -1883,7 +1883,7 @@ func TestNonPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t(a int)`)
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
-	tk.MustExec(`set @@global.tidb_enable_metadata_lock=off`)
+	tk.Exec(`set @@global.tidb_enable_metadata_lock=off`)
 
 	tk.MustExec(`prepare stmt from 'select * from t where a = ?'`)
 	tk.MustExec(`set @a=1`)
