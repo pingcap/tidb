@@ -708,9 +708,9 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc S3API, options *backuppb.S
 			log.Warn("failed to delete object used for permission check",
 				zap.String("bucket", options.Bucket),
 				zap.String("key", *input.Key), zap.Error(err2))
-			if err == nil {
-				err = errors.Trace(err2)
-			}
+		}
+		if err == nil {
+			err = errors.Trace(err2)
 		}
 	}()
 	// when no permission, aws returns err with code "AccessDenied"
