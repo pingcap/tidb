@@ -786,7 +786,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		for _, name := range lNames {
 			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
 			if name.ColName.L == model.ExtraHandleName.L ||
-				name.ColName.L == model.ExtraCommitTSName.L {
+				name.ColName.L == model.ExtraCommitTSName.L ||
+				name.ColName.L == model.ExtraPhysTblIDName.L {
 				continue
 			}
 			// record left map
@@ -799,7 +800,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		for _, name := range rNames {
 			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
 			if name.ColName.L == model.ExtraHandleName.L ||
-				name.ColName.L == model.ExtraCommitTSName.L {
+				name.ColName.L == model.ExtraCommitTSName.L ||
+				name.ColName.L == model.ExtraPhysTblIDName.L {
 				continue
 			}
 			// record right map
@@ -829,7 +831,8 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	for i, lName := range lNames {
 		// Natural join should ignore _tidb_rowid and _tidb_commit_ts
 		if lName.ColName.L == model.ExtraHandleName.L ||
-			lName.ColName.L == model.ExtraCommitTSName.L {
+			lName.ColName.L == model.ExtraCommitTSName.L ||
+			lName.ColName.L == model.ExtraPhysTblIDName.L {
 			continue
 		}
 		for j := commonLen; j < len(rNames); j++ {
