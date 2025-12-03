@@ -2216,7 +2216,7 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
-PARTITION BY RANGE ( a ) (
+		PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (20)
 )`
@@ -2238,7 +2238,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table only sets table options and gen globalStats
 	tk.MustExec("analyze table t columns a,c with 1 topn, 3 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a> 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
@@ -2258,7 +2258,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table with persisted table-level options
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2278,7 +2278,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table with merged table-level options
 	tk.MustExec("analyze table t with 2 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2310,7 +2310,7 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
-PARTITION BY RANGE ( a ) (
+		PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (20)
 )`
