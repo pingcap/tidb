@@ -369,17 +369,25 @@ func createOssRAMCred() (aws.CredentialsProvider, error) {
 	), nil
 }
 
-type pingcapLogger struct{}
+type pingcapLogger struct {
+	logger *zap.Logger
+}
 
-func (pingcapLogger) Logf(classification logging.Classification, format string, v ...any) {
+func newLogger(extraFields ...zap.Field) pingcapLogger {
+	return pingcapLogger{
+		logger: log.L().WithOptions(zap.AddCallerSkip(1)).With(extraFields...),
+	}
+}
+
+func (p pingcapLogger) Logf(classification logging.Classification, format string, v ...any) {
 	var loggerF func(string, ...zap.Field)
 	switch classification {
 	case logging.Warn:
-		loggerF = log.Warn
+		loggerF = p.logger.Warn
 	case logging.Debug:
-		loggerF = log.Debug
+		loggerF = p.logger.Debug
 	default:
-		loggerF = log.Info
+		loggerF = p.logger.Info
 	}
 
 	msg := fmt.Sprintf(format, v...)
@@ -400,8 +408,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 	configOpts = append(configOpts,
 		config.WithRegion(region),
-		config.WithLogger(pingcapLogger{}),
-		config.WithClientLogMode(aws.LogRequest|aws.LogRetries|aws.LogResponse),
+		config.WithLogger(newLogger(
+			zap.String("bucket", backend.GetBucket()),
+			zap.String("prefix", backend.GetPrefix()),
+			zap.String("context", "aws-sdk-global"))),
+		config.WithClientLogMode(aws.LogRequest|aws.LogRetries|aws.LogResponse|aws.LogDeprecatedUsage),
 		config.WithLogConfigurationWarnings(true),
 	)
 
@@ -453,9 +464,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	s3Opts = append(s3Opts, func(o *s3.Options) {
-		o.Logger = pingcapLogger{}
+		o.Logger = newLogger(zap.String("bucket", backend.GetBucket()), zap.String("prefix", backend.GetPrefix()), zap.String("context", "s3"))
 		// These logs will be printed when log level is `DEBUG`.
-		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse
+		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogDeprecatedUsage
 	})
 
 	// ⚠️ Do NOT set a global endpoint in the AWS config.
@@ -692,16 +703,14 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc S3API, options *backuppb.S
 			Key:    aws.String(options.Prefix + file),
 		}
 		_, err2 := svc.DeleteObject(ctx, input)
-		var aerr smithy.APIError
-		if goerrors.As(err2, &aerr) {
-			if aerr.ErrorCode() != noSuchKey {
-				log.Warn("failed to delete object used for permission check",
-					zap.String("bucket", options.Bucket),
-					zap.String("key", *input.Key), zap.Error(err2))
+		var noSuchKey *types.NoSuchKey
+		if !goerrors.As(err2, &noSuchKey) {
+			log.Warn("failed to delete object used for permission check",
+				zap.String("bucket", options.Bucket),
+				zap.String("key", *input.Key), zap.Error(err2))
+			if err == nil {
+				err = errors.Trace(err2)
 			}
-		}
-		if err == nil {
-			err = errors.Trace(err2)
 		}
 	}()
 	// when no permission, aws returns err with code "AccessDenied"
