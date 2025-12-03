@@ -66,6 +66,7 @@ func TestTurnOffAndOnAutoAnalyze(t *testing.T) {
 		return !r.IsQueueInitializedForTest()
 	}, time.Second*5, time.Millisecond*100)
 
+	// Enable auto analyze again to make sure the queue is re-initialized and handles the DDL event correctly.
 	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1;")
 	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, handle.HandleAutoAnalyze())
