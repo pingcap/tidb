@@ -611,6 +611,7 @@ func (bj BinaryJSON) CalculateHashValueSize() int64 {
 		size := int64(unsafe.Sizeof(bj.TypeCode)) + dataSizeOff
 		for i := range elemCount {
 			size += CalculateBinaryJSONSize(string(bj.objectGetKey(i)))
+			size += bj.objectGetVal(i).CalculateHashValueSize()
 		}
 	}
 	return int64(len(bj.Value)) + int64(unsafe.Sizeof(bj.TypeCode))

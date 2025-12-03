@@ -150,10 +150,9 @@ type baseJoinProbe struct {
 
 	probeCollision uint64
 
-	memoryUsagePerRowBuffer []int64
-
 	hashValueCounts    []int
 	serializedKeysLens []int
+	continuousMem      []byte
 }
 
 func (j *baseJoinProbe) GetProbeCollision() uint64 {
@@ -253,7 +252,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 
-	j.memoryUsagePerRowBuffer, err = codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.memoryUsagePerRowBuffer)
+	j.serializedKeysLens, j.continuousMem, err = codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.serializedKeysLens, j.continuousMem)
 	if err != nil {
 		return err
 	}
@@ -335,10 +334,6 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		j.matchedRowsHashValue = make([]uint64, logicalRowCount)
 	}
 
-	if cap(j.hashValueCounts) < int(j.ctx.partitionNumber) {
-		j.hashValueCounts = make([]int, j.ctx.partitionNumber)
-	}
-
 	for i := range j.hashValueCounts {
 		j.hashValueCounts[i] = 0
 	}
@@ -357,16 +352,13 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		j.serializedKeysLens[i] = 0
 	}
 
-	reserveByContinousMem := false
 	if cap(j.serializedKeys) >= logicalRowCount {
 		j.serializedKeys = j.serializedKeys[:logicalRowCount]
+		for i := range logicalRowCount {
+			j.serializedKeys[i] = j.serializedKeys[i][:0]
+		}
 	} else {
 		j.serializedKeys = make([][]byte, logicalRowCount)
-		reserveByContinousMem = true
-	}
-
-	for i := range logicalRowCount {
-		j.serializedKeys[i] = j.serializedKeys[i][:0]
 	}
 
 	j.spilledIdx = j.spilledIdx[:0]
@@ -379,27 +371,23 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		if !j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
 			j.hashValueCounts[partIndex]++
-			keyLen := len(serializedKeysCol.GetBytes(idx))
+			keyLen := serializedKeysCol.GetRawLength(idx)
 			j.serializedKeysLens[idx] = keyLen
 			totalMemUsage += keyLen
 		}
 	}
 
-	if reserveByContinousMem {
-		continuousMem := make([]byte, totalMemUsage)
-		start := 0
-		for _, idx := range j.usedRows {
-			keyLen := j.serializedKeysLens[idx]
-			j.serializedKeys[idx] = continuousMem[start : start : start+keyLen]
-			start += keyLen
-		}
+	if cap(j.continuousMem) < totalMemUsage {
+		j.continuousMem = make([]byte, totalMemUsage)
 	} else {
-		for _, idx := range j.usedRows {
-			keyLen := j.serializedKeysLens[idx]
-			if cap(j.serializedKeys[idx]) < keyLen {
-				j.serializedKeys[idx] = make([]byte, 0, keyLen)
-			}
-		}
+		j.continuousMem = j.continuousMem[:totalMemUsage]
+	}
+
+	start := 0
+	for _, idx := range j.usedRows {
+		keyLen := j.serializedKeysLens[idx]
+		j.serializedKeys[idx] = j.continuousMem[start : start : start+keyLen]
+		start += keyLen
 	}
 }
 
@@ -802,6 +790,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType plannerbase.JoinType
 		rightAsBuildSide:      rightAsBuildSide,
 		hash:                  fnv.New64(),
 		rehashBuf:             make([]byte, serialization.Uint64Len),
+		hashValueCounts:       make([]int, ctx.partitionNumber),
 	}
 
 	for i := range keyIndex {

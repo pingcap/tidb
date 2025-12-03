@@ -1350,6 +1350,23 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 	return buf, err
 }
 
+// HashKeySize returns the size of hash key
+func (d *MyDecimal) HashKeySize() (int, error) {
+	_, digitsInt := d.removeLeadingZeros()
+	_, digitsFrac := d.removeTrailingZeros()
+	prec := digitsInt + digitsFrac
+	if prec == 0 { // zeroDecimal
+		prec = 1
+	}
+
+	size, err := DecimalBinSize(prec, digitsFrac)
+	if err != nil {
+		return 0, err
+	}
+
+	return size + 1, nil
+}
+
 // PrecisionAndFrac returns the internal precision and frac number.
 func (d *MyDecimal) PrecisionAndFrac() (precision, frac int) {
 	frac = int(d.digitsFrac)
