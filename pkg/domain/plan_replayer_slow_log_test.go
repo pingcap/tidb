@@ -89,7 +89,6 @@ func TestPlanReplayerInternalQuery(t *testing.T) {
 				// Now startIdx points to the line before the first '#' line (the SQL query line)
 				// Search for Is_internal field from startIdx+1 to i+10
 				for j := startIdx + 1; j < len(lines) && j <= i; j++ {
-					t.Logf("Line %d: %s", j, lines[j])
 					if strings.HasPrefix(lines[j], "# Is_internal:") {
 						isInternal := strings.TrimSpace(strings.TrimPrefix(lines[j], "# Is_internal:"))
 						require.Equal(t, "true", isInternal, "plan_replayer query should be marked as internal in slow log")
