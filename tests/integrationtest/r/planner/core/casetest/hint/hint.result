@@ -1564,10 +1564,9 @@ HashJoin	root		CARTESIAN inner join
 │ ├─IndexRangeScan(Build)	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
 │ └─Selection(Probe)	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
 │   └─TableRowIDScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─IndexLookUp(Probe)	root		
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t4, index:idx_a(a)	range:(2,8), keep order:false, stats:pseudo
-  └─Selection(Probe)	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.b, 3)
-    └─TableRowIDScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.a, 10), lt(planner__core__casetest__hint__hint.t4.a, 8), lt(planner__core__casetest__hint__hint.t4.a, 9)
+    └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	The qb_name hint qb is unused, please check whether the table list in the qb_name hint qb is correct
 drop table if exists t;

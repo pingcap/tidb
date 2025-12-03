@@ -58,9 +58,9 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 			{"select a, b from t use index(abc) where a=1 and b=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
 			{"select a, b, c from t use index(abc) where a=1 and b=1 and c=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
 			// table scan row-size is always equal to row-size(*)
-			{"select a from t use index(primary) where a=1", "((scan(1*logrowsize(96)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(96)*tikv_scan_factor(40.7))))*1.00"},
-			{"select a, d from t use index(primary) where a=1", "((scan(1*logrowsize(96)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(96)*tikv_scan_factor(40.7))))*1.00"},
-			{"select * from t use index(primary) where a=1", "((scan(1*logrowsize(96)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(96)*tikv_scan_factor(40.7))))*1.00"},
+			{"select a from t use index(primary) where a=1", "((scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7))))*1.00"},
+			{"select a, d from t use index(primary) where a=1", "((scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7))))*1.00"},
+			{"select * from t use index(primary) where a=1", "((scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7))))*1.00"},
 		}
 		for _, c := range cases {
 			rs := tk.MustQuery("explain analyze format=true_card_cost " + c.query).Rows()
@@ -644,9 +644,9 @@ func TestIndexLookUpRowsLimit(t *testing.T) {
 		tk.MustExec(`create table t(a int, b int, key ia(a))`)
 		rs := tk.MustQuery("explain format='cost_trace' select * from t use index(ia) where a>6 limit 5 offset 100").Rows()
 		// the cost formula should consider limit-offset clause, only scan 5 rows
-		require.Equal(t, "(scan(5*logrowsize(64)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
+		require.Equal(t, "(scan(5*logrowsize(48)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
 		rs = tk.MustQuery("explain format='cost_trace' select * from t use index(ia) where a>6 limit 20 offset 100").Rows()
-		require.Equal(t, "(scan(20*logrowsize(64)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
+		require.Equal(t, "(scan(20*logrowsize(48)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
 	})
 }
 

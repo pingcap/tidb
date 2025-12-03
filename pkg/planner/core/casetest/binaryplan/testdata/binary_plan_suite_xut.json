@@ -46,7 +46,7 @@
             "children": [
               {
                 "name": "TableFullScan_5",
-                "cost": 4884000,
+                "cost": 4546159.475587022,
                 "est_rows": 10000,
                 "act_rows": 2,
                 "task_type": 2,
@@ -54,7 +54,7 @@
                 "operator_info": "keep order:false, stats:pseudo"
               }
             ],
-            "cost": 410080,
+            "cost": 387557.2983724681,
             "est_rows": 10000,
             "act_rows": 2,
             "task_type": 1,
@@ -104,7 +104,7 @@
                         "children": [
                           {
                             "name": "TableFullScan_34",
-                            "cost": 4884000,
+                            "cost": 4546159.475587022,
                             "est_rows": 10000,
                             "act_rows": 4,
                             "task_type": 2,
@@ -115,7 +115,7 @@
                         "labels": [
                           1
                         ],
-                        "cost": 367840,
+                        "cost": 345317.2983724681,
                         "est_rows": 10000,
                         "act_rows": 4,
                         "task_type": 1,
@@ -123,7 +123,7 @@
                         "operator_info": "data:TableFullScan_34"
                       }
                     ],
-                    "cost": 1150910.3333333335,
+                    "cost": 1128387.6317058015,
                     "est_rows": 100000000,
                     "act_rows": 8,
                     "task_type": 1,
@@ -131,7 +131,7 @@
                     "operator_info": "CARTESIAN inner join"
                   }
                 ],
-                "cost": 999150910.3333334,
+                "cost": 999128387.6317058,
                 "est_rows": 100000000,
                 "act_rows": 8,
                 "task_type": 1,
@@ -139,7 +139,7 @@
                 "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#10"
               }
             ],
-            "cost": 1997152418.9133332,
+            "cost": 1997129896.2117057,
             "est_rows": 1,
             "act_rows": 1,
             "task_type": 1,
@@ -184,7 +184,7 @@
                 "children": [
                   {
                     "name": "TableFullScan_6",
-                    "cost": 4884000,
+                    "cost": 4546159.475587022,
                     "est_rows": 10000,
                     "act_rows": 2,
                     "task_type": 2,
@@ -192,14 +192,14 @@
                     "operator_info": "keep order:false, stats:pseudo"
                   }
                 ],
-                "cost": 5383000,
+                "cost": 5045159.475587022,
                 "est_rows": 3333.3333333333335,
                 "task_type": 2,
                 "store_type": 2,
                 "operator_info": "gt(test.t.a, 100)"
               }
             ],
-            "cost": 372946.6666666667,
+            "cost": 350423.9650391348,
             "est_rows": 3333.3333333333335,
             "task_type": 1,
             "store_type": 1,
@@ -222,7 +222,7 @@
                     "children": [
                       {
                         "name": "TableFullScan_32",
-                        "cost": 4884000,
+                        "cost": 4546159.475587022,
                         "est_rows": 10000,
                         "act_rows": 2,
                         "task_type": 2,
@@ -230,7 +230,7 @@
                         "operator_info": "keep order:false, stats:pseudo"
                       }
                     ],
-                    "cost": 5383000,
+                    "cost": 5045159.475587022,
                     "est_rows": 9990,
                     "act_rows": 2,
                     "task_type": 2,
@@ -241,7 +241,7 @@
                 "labels": [
                   2
                 ],
-                "cost": 443262.18666666665,
+                "cost": 420739.48503913474,
                 "est_rows": 9990,
                 "act_rows": 2,
                 "task_type": 1,
@@ -256,7 +256,7 @@
                     "children": [
                       {
                         "name": "TableFullScan_42",
-                        "cost": 4884000,
+                        "cost": 4546159.475587022,
                         "est_rows": 10000,
                         "act_rows": 4,
                         "task_type": 2,
@@ -264,7 +264,7 @@
                         "operator_info": "keep order:false, stats:pseudo"
                       }
                     ],
-                    "cost": 5383000,
+                    "cost": 5045159.475587022,
                     "est_rows": 9990,
                     "act_rows": 4,
                     "task_type": 2,
@@ -275,7 +275,7 @@
                 "labels": [
                   1
                 ],
-                "cost": 443262.18666666665,
+                "cost": 420739.48503913474,
                 "est_rows": 9990,
                 "act_rows": 4,
                 "task_type": 1,
@@ -283,7 +283,7 @@
                 "operator_info": "data:Selection_43"
               }
             ],
-            "cost": 2148359.7733333334,
+            "cost": 2103314.3700782694,
             "est_rows": 12487.5,
             "task_type": 1,
             "store_type": 1,
@@ -392,7 +392,7 @@
                         "children": [
                           {
                             "name": "TableFullScan_9",
-                            "cost": 4884000,
+                            "cost": 4546159.475587022,
                             "est_rows": 10000,
                             "act_rows": 4,
                             "task_type": 2,
@@ -400,21 +400,21 @@
                             "operator_info": "keep order:false, stats:pseudo"
                           }
                         ],
-                        "cost": 5383000,
+                        "cost": 5045159.475587022,
                         "est_rows": 3333.3333333333335,
                         "task_type": 2,
                         "store_type": 2,
                         "operator_info": "gt(test.t2.b, 10)"
                       }
                     ],
-                    "cost": 401106.6666666667,
+                    "cost": 378583.9650391348,
                     "est_rows": 3333.3333333333335,
                     "task_type": 1,
                     "store_type": 1,
                     "operator_info": "data:Selection_10"
                   }
                 ],
-                "cost": 401106.6666666667,
+                "cost": 378583.9650391348,
                 "est_rows": 3333.3333333333335,
                 "task_type": 1,
                 "store_type": 1,
@@ -451,7 +451,7 @@
                 "children": [
                   {
                     "name": "TableFullScan_7",
-                    "cost": 4884000,
+                    "cost": 4546159.475587022,
                     "est_rows": 10000,
                     "act_rows": 2,
                     "task_type": 2,
@@ -459,7 +459,7 @@
                     "operator_info": "keep order:false, stats:pseudo"
                   }
                 ],
-                "cost": 410080,
+                "cost": 387557.2983724681,
                 "est_rows": 10000,
                 "act_rows": 2,
                 "task_type": 1,
@@ -488,7 +488,7 @@
                     "children": [
                       {
                         "name": "TableFullScan_8",
-                        "cost": 4884000,
+                        "cost": 4546159.475587022,
                         "est_rows": 10000,
                         "act_rows": 8,
                         "task_type": 2,
@@ -496,7 +496,7 @@
                         "operator_info": "keep order:false, stats:pseudo"
                       }
                     ],
-                    "cost": 367840,
+                    "cost": 345317.2983724681,
                     "est_rows": 10000,
                     "act_rows": 8,
                     "task_type": 1,
@@ -504,7 +504,7 @@
                     "operator_info": "data:TableFullScan_8"
                   }
                 ],
-                "cost": 367840,
+                "cost": 345317.2983724681,
                 "est_rows": 10000,
                 "act_rows": 8,
                 "task_type": 1,

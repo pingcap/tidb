@@ -41,53 +41,53 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t2",
         "Plan": [
-          "StreamAgg_27 1.00 110.83 root  funcs:count(Column#8)->Column#5",
-          "└─TableReader_28 1.00 60.93 root  data:StreamAgg_10",
-          "  └─StreamAgg_10 1.00 882.30 cop[tikv]  funcs:count(1)->Column#8",
-          "    └─TableFullScan_25 3.00 732.60 cop[tikv] table:t2 keep order:false"
+          "StreamAgg_27 1.00 107.45 root  funcs:count(Column#8)->Column#5",
+          "└─TableReader_28 1.00 57.55 root  data:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 831.62 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─TableFullScan_25 3.00 681.92 cop[tikv] table:t2 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select * from t3 order by a",
         "Plan": [
-          "Sort_4 3.00 321.65 root  test.t3.a",
-          "└─TableReader_9 3.00 74.18 root  data:TableFullScan_8",
-          "  └─TableFullScan_8 3.00 732.60 cop[tikv] table:t3 keep order:false"
+          "Sort_4 3.00 318.27 root  test.t3.a",
+          "└─TableReader_9 3.00 70.81 root  data:TableFullScan_8",
+          "  └─TableFullScan_8 3.00 681.92 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select * from t3 order by b",
         "Plan": [
-          "Sort_4 3.00 321.65 root  test.t3.b",
-          "└─TableReader_9 3.00 74.18 root  data:TableFullScan_8",
-          "  └─TableFullScan_8 3.00 732.60 cop[tikv] table:t3 keep order:false"
+          "Sort_4 3.00 318.27 root  test.t3.b",
+          "└─TableReader_9 3.00 70.81 root  data:TableFullScan_8",
+          "  └─TableFullScan_8 3.00 681.92 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select * from t3 order by a limit 1",
         "Plan": [
-          "TopN_8 1.00 64.11 root  test.t3.a, offset:0, count:1",
-          "└─TableReader_17 1.00 57.71 root  data:TopN_16",
-          "  └─TopN_16 1.00 739.00 cop[tikv]  test.t3.a, offset:0, count:1",
-          "    └─TableFullScan_15 3.00 732.60 cop[tikv] table:t3 keep order:false"
+          "TopN_8 1.00 60.74 root  test.t3.a, offset:0, count:1",
+          "└─TableReader_17 1.00 54.34 root  data:TopN_16",
+          "  └─TopN_16 1.00 688.32 cop[tikv]  test.t3.a, offset:0, count:1",
+          "    └─TableFullScan_15 3.00 681.92 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select * from t3 order by b limit 1",
         "Plan": [
-          "Projection_24 1.00 1171.63 root  test.t3.a, test.t3.b",
-          "└─IndexLookUp_23 1.00 1171.43 root  limit embedded(offset:0, count:1)",
+          "Projection_24 1.00 1171.49 root  test.t3.a, test.t3.b",
+          "└─IndexLookUp_23 1.00 1171.29 root  limit embedded(offset:0, count:1)",
           "  ├─Limit_22(Build) 1.00 203.50 cop[tikv]  offset:0, count:1",
           "  │ └─IndexFullScan_20 1.00 203.50 cop[tikv] table:t3, index:c(b) keep order:true",
-          "  └─TableRowIDScan_21(Probe) 1.00 244.20 cop[tikv] table:t3 keep order:false"
+          "  └─TableRowIDScan_21(Probe) 1.00 227.31 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 group by a",
         "Plan": [
-          "HashAgg_8 3.00 1709.47 root  group by:test.t2.a, funcs:count(1)->Column#5",
-          "└─TableReader_17 3.00 61.51 root  data:TableFullScan_16",
-          "  └─TableFullScan_16 3.00 732.60 cop[tikv] table:t2 keep order:false"
+          "HashAgg_8 3.00 1706.09 root  group by:test.t2.a, funcs:count(1)->Column#5",
+          "└─TableReader_17 3.00 58.13 root  data:TableFullScan_16",
+          "  └─TableFullScan_16 3.00 681.92 cop[tikv] table:t2 keep order:false"
         ]
       },
       {
@@ -101,31 +101,31 @@
       {
         "SQL": "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
         "Plan": [
-          "StreamAgg_12 1.00 2001.85 root  funcs:count(test.t3.a)->Column#5",
-          "└─IndexLookUp_19 1.00 1951.95 root  ",
+          "StreamAgg_12 1.00 2001.63 root  funcs:count(test.t3.a)->Column#5",
+          "└─IndexLookUp_19 1.00 1951.73 root  ",
           "  ├─IndexRangeScan_17(Build) 1.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
-          "  └─TableRowIDScan_18(Probe) 1.00 244.20 cop[tikv] table:t3 keep order:false"
+          "  └─TableRowIDScan_18(Probe) 1.00 227.31 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 where a = 0",
         "Plan": [
-          "StreamAgg_12 1.00 112.94 root  funcs:count(1)->Column#5",
-          "└─TableReader_20 1.00 63.04 root  data:Selection_19",
-          "  └─Selection_19 1.00 882.30 cop[tikv]  eq(test.t2.a, 0)",
-          "    └─TableFullScan_18 3.00 732.60 cop[tikv] table:t2 keep order:false"
+          "StreamAgg_12 1.00 109.57 root  funcs:count(1)->Column#5",
+          "└─TableReader_20 1.00 59.67 root  data:Selection_19",
+          "  └─Selection_19 1.00 831.62 cop[tikv]  eq(test.t2.a, 0)",
+          "    └─TableFullScan_18 3.00 681.92 cop[tikv] table:t2 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
         "Plan": [
-          "StreamAgg_15 1.00 2132.30 root  funcs:count(1)->Column#9",
-          "└─HashJoin_53 3.00 1982.60 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
+          "StreamAgg_15 1.00 2128.93 root  funcs:count(1)->Column#9",
+          "└─HashJoin_53 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
           "  ├─IndexReader_38(Build) 3.00 45.23 root  index:IndexFullScan_37",
           "  │ └─IndexFullScan_37 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
-          "  └─TableReader_33(Probe) 3.00 71.49 root  data:Selection_32",
-          "    └─Selection_32 3.00 882.30 cop[tikv]  not(isnull(test.t3.a))",
-          "      └─TableFullScan_31 3.00 732.60 cop[tikv] table:t keep order:false"
+          "  └─TableReader_33(Probe) 3.00 68.11 root  data:Selection_32",
+          "    └─Selection_32 3.00 831.62 cop[tikv]  not(isnull(test.t3.a))",
+          "      └─TableFullScan_31 3.00 681.92 cop[tikv] table:t keep order:false"
         ]
       },
       {

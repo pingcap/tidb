@@ -2113,7 +2113,13 @@ func attach2Task4PhysicalSequence(pp base.PhysicalPlan, tasks ...base.Task) base
 
 func collectRowSizeFromMPPPlan(mppPlan base.PhysicalPlan) (rowSize float64) {
 	if mppPlan != nil && mppPlan.StatsInfo() != nil && mppPlan.StatsInfo().HistColl != nil {
-		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, mppPlan.Schema().Columns, false, false)
+		schemaCols := mppPlan.Schema().Columns
+		for i, col := range schemaCols {
+			if col.ID == model.ExtraCommitTSID {
+				schemaCols = slices.Delete(slices.Clone(schemaCols), i, i+1)
+			}
+		}
+		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, schemaCols, false, false)
 	}
 	return 1 // use 1 as lower-bound for safety
 }

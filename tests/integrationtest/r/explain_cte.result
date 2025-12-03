@@ -32,8 +32,8 @@ explain format='plan_tree' with recursive cte(a) as (select c2 from t1 union sel
 id	task	access object	operator info
 CTEFullScan	root	CTE:cte	data:CTE_0
 CTE_0	root		Recursive CTE
-├─IndexReader(Seed Part)	root		index:IndexFullScan
-│ └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
+├─TableReader(Seed Part)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─Projection(Recursive Part)	root		cast(plus(explain_cte.t1.c2, 1), int)->explain_cte.t1.c2
   └─Selection	root		lt(explain_cte.t1.c2, 10)
     └─CTETable	root		Scan on CTE_0
@@ -82,8 +82,8 @@ CTE_0	root		Recursive CTE
   └─Selection	root		lt(Column#3, 10)
     └─CTETable	root		Scan on CTE_0
 CTE_1	root		Recursive CTE
-├─IndexReader(Seed Part)	root		index:IndexFullScan
-│ └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
+├─TableReader(Seed Part)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─Projection(Recursive Part)	root		cast(plus(explain_cte.t1.c2, 1), int)->explain_cte.t1.c2
   └─Selection	root		lt(explain_cte.t1.c2, 10)
     └─CTETable	root		Scan on CTE_1

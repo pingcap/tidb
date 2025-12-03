@@ -260,9 +260,9 @@ create table t (a int, b int, c int, key idx(a, b, c));
 explain format = 'plan_tree' select count(a) from t;
 id	task	access object	operator info
 StreamAgg	root		funcs:count(Column#14)->Column#6
-└─IndexReader	root		index:StreamAgg
+└─TableReader	root		data:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:count(select.t.a)->Column#14
-    └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b, c)	keep order:false, stats:pseudo
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(a) from t;
 count(a)
 0

@@ -395,17 +395,17 @@ func TestFixControl45132(t *testing.T) {
 		}
 		testKit.MustExec(`analyze table t`)
 		// the cost model prefers to use TableScan instead of IndexLookup to avoid double requests.
-		testKit.MustHavePlan(`select * from t where a=2`, `IndexLookUp`)
+		testKit.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 
 		testKit.MustExec(`set @@tidb_opt_fix_control = "45132:99"`)
 		testKit.MustExec(`analyze table t`)
 		testKit.EventuallyMustIndexLookup(`select * from t where a=2`) // index lookup
 
 		testKit.MustExec(`set @@tidb_opt_fix_control = "45132:500"`)
-		testKit.MustHavePlan(`select * from t where a=2`, `IndexLookUp`)
+		testKit.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 
 		testKit.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
-		testKit.MustHavePlan(`select * from t where a=2`, `IndexLookUp`)
+		testKit.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 	})
 }
 

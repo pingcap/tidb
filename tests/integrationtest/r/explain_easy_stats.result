@@ -70,8 +70,8 @@ Projection	root		Column#9
   │ └─TableReader	root		data:Selection
   │   └─Selection	cop[tikv]		not(isnull(explain_easy_stats.t2.c2))
   │     └─TableFullScan	cop[tikv]	table:b	keep order:false
-  └─IndexReader(Probe)	root		index:IndexFullScan
-    └─IndexFullScan	cop[tikv]	table:a, index:c2(c2)	keep order:false
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:a	keep order:false
 explain format = 'plan_tree' select * from t2 order by t2.c2 limit 0, 1;
 id	task	access object	operator info
 TopN	root		explain_easy_stats.t2.c2, offset:0, count:1
@@ -95,17 +95,17 @@ HashJoin	root		inner join, equal:[eq(explain_easy_stats.t1.c1, explain_easy_stat
 │ └─TableReader	root		data:Selection
 │   └─Selection	cop[tikv]		not(isnull(explain_easy_stats.t2.c2))
 │     └─TableFullScan	cop[tikv]	table:t2	keep order:false
-└─IndexReader(Probe)	root		index:IndexFullScan
-  └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false
 explain format = 'plan_tree' select * from information_schema.columns;
 id	task	access object	operator info
 MemTableScan	root	table:COLUMNS	
 explain format = 'plan_tree' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	task	access object	operator info
 Projection	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)->Column#14
-└─Apply	root		CARTESIAN left outer join, left side:IndexReader
-  ├─IndexReader(Build)	root		index:IndexFullScan
-  │ └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false
+└─Apply	root		CARTESIAN left outer join, left side:TableReader
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false
   └─TopN(Probe)	root		explain_easy_stats.t2.c1, offset:0, count:1
     └─IndexLookUp	root		
       ├─TopN(Build)	cop[tikv]		explain_easy_stats.t2.c1, offset:0, count:1
@@ -120,11 +120,11 @@ Limit	root		offset:0, count:1
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'plan_tree' select 1 in (select c2 from t2) from t1;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer semi join, left side:IndexReader, other cond:eq(1, explain_easy_stats.t2.c2)
+HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(1, explain_easy_stats.t2.c2)
 ├─TableReader(Build)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:t2	keep order:false
-└─IndexReader(Probe)	root		index:IndexFullScan
-  └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
@@ -133,14 +133,14 @@ subgraph cluster16{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_16" -> "IndexReader_20"
+"HashJoin_16" -> "TableReader_18"
 "HashJoin_16" -> "TableReader_22"
 }
-subgraph cluster19{
+subgraph cluster17{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexFullScan_19"
+"TableFullScan_17"
 }
 subgraph cluster21{
 node [style=filled, color=lightgrey]
@@ -148,7 +148,7 @@ color=black
 label = "cop"
 "TableFullScan_21"
 }
-"IndexReader_20" -> "IndexFullScan_19"
+"TableReader_18" -> "TableFullScan_17"
 "TableReader_22" -> "TableFullScan_21"
 }
 

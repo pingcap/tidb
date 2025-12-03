@@ -311,9 +311,9 @@ original_sql	bind_sql
 select * from `bindinfo__bind` . `t`	SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)
 explain format = 'verbose' select * from t;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_7	10000.00	19519506.67	root		
+IndexLookUp_7	10000.00	19517254.40	root		
 ├─IndexFullScan_5(Build)	10000.00	2035000.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
-└─TableRowIDScan_6(Probe)	10000.00	2442000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	2273079.74	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	Using the bindSQL: SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)
 drop global binding for select * from t using select * from t use index(a);
