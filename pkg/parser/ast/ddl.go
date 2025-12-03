@@ -2617,19 +2617,19 @@ const (
 	TableOptionTTLJobInterval
 	TableOptionEngineAttribute
 	TableOptionSecondaryEngineAttribute
-	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
-	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
-	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
-	TableOptionStatsColsChoice = TableOptionType(StatsOptionColsChoice)
-	TableOptionStatsColList    = TableOptionType(StatsOptionColList)
-	TableOptionStatsSampleRate = TableOptionType(StatsOptionSampleRate)
-	TableOptionAutoextendSize  = iota
+	TableOptionAutoextendSize
 	TableOptionPageChecksum
 	TableOptionPageCompressed
 	TableOptionPageCompressionLevel
 	TableOptionTransactional
 	TableOptionIetfQuotes
 	TableOptionSequence
+	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
+	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
+	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
+	TableOptionStatsColsChoice = TableOptionType(StatsOptionColsChoice)
+	TableOptionStatsColList    = TableOptionType(StatsOptionColList)
+	TableOptionStatsSampleRate = TableOptionType(StatsOptionSampleRate)
 )
 
 // RowFormat types
