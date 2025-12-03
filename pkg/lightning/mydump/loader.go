@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -88,6 +89,13 @@ type MDTableMeta struct {
 	IsRowOrdered bool
 }
 
+// ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
+type ParquetFileMeta struct {
+	// memory usage for reader, preserve for later PR
+	MemoryUsage int
+	Loc         *time.Location
+}
+
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
 type SourceFileMeta struct {
 	Path        string
@@ -103,7 +111,10 @@ type SourceFileMeta struct {
 	// If the file is parquet, RealSize is the estimated data size after convert
 	// to row oriented storage.
 	RealSize int64
-	Rows     int64 // only for parquet
+	Rows     int64
+
+	// ParquetMeta store meta only used for parquet
+	ParquetMeta ParquetFileMeta
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -632,7 +643,11 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		// Only sample once for each table
 		_, loaded := s.sampledParquetRowSizes.LoadOrStore(tableName, 0)
 		if !loaded {
+<<<<<<< HEAD
 			rowSize, err = SampleParquetRowSize(ctx, info.FileMeta, s.loader.GetStore())
+=======
+			rows, rowSize, err := SampleStatisticsFromParquet(ctx, info.FileMeta.Path, s.loader.GetStore())
+>>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 			if err != nil {
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
@@ -955,6 +970,7 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 	}
 	return float64(tot) / float64(pos), nil
 }
+<<<<<<< HEAD
 
 // SampleParquetRowSize samples row size of the parquet file.
 func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
@@ -998,3 +1014,5 @@ func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store st
 	}
 	return float64(rowSize) / float64(rowCount), nil
 }
+=======
+>>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))

@@ -15,6 +15,7 @@
 package lfu
 
 import (
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
-	"golang.org/x/exp/rand"
 )
 
 // LFU is a LFU based on the ristretto.Cache
