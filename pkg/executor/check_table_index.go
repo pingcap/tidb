@@ -382,11 +382,17 @@ func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string
 		op := row.GetString(0)
 		if strings.Contains(op, "TableFullScan") {
 			isTableScan = true
-		} else if strings.Contains(op, "IndexFullScan") || strings.Contains(op, "IndexRangeScan") ||
-			strings.Contains(op, "PointGet") || strings.Contains(op, "BatchPointGet") {
+		} else if strings.Contains(op, "IndexFullScan") || strings.Contains(op, "IndexRangeScan") {
 			// It's also possible to be index range scan if the index has condition.
 			// TODO: if the planner eliminates the range in the index scan, we can remove the `IndexRangeScan` check.
 			isIndexScan = true
+		} else if strings.Contains(op, "PointGet") || strings.Contains(op, "BatchPointGet") {
+			if row.Len() > 3 {
+				accessObject := row.GetString(3)
+				if strings.Contains(accessObject, " index:") {
+					isIndexScan = true
+				}
+			}
 		}
 	}
 
