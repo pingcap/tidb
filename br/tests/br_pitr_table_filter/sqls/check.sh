@@ -719,10 +719,10 @@ row_must_exist "test_log_db_exchange_partition_1.t_exchange_partition" "id = 115
 row_must_exist "test_log_db_exchange_partition_2.t_non_partitioned_table" "id = 105"
 
 # ActionExchangeTablePartition back
-row_must_exist "test_snapshot_db_exchange_partition_1.t_exchange_partition" "id = 105"
-row_must_exist "test_snapshot_db_exchange_partition_1.t_non_partitioned_table" "id = 115"
-row_must_exist "test_log_db_exchange_partition_1.t_exchange_partition" "id = 105"
-row_must_exist "test_log_db_exchange_partition_1.t_non_partitioned_table" "id = 115"
+row_must_exist "test_snapshot_db_exchange_partition_3.t_exchange_partition" "id = 105"
+row_must_exist "test_snapshot_db_exchange_partition_3.t_non_partitioned_table" "id = 115"
+row_must_exist "test_log_db_exchange_partition_3.t_exchange_partition" "id = 105"
+row_must_exist "test_log_db_exchange_partition_3.t_non_partitioned_table" "id = 115"
 
 # ActionReorganizePartition
 check_create_table_contains "test_snapshot_db_create.t_reorganize_partition" "pnew"
