@@ -424,7 +424,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		return err
 	}
 
-	if isTrackerEnabled && isParallelHashAggSpillEnabled &&!e.HasDistinct {
+	if isTrackerEnabled && isParallelHashAggSpillEnabled && !e.HasDistinct {
 		if e.diskTracker != nil {
 			e.diskTracker.Reset()
 		} else {
