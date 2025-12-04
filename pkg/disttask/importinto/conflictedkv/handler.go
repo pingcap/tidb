@@ -108,7 +108,7 @@ func NewBaseHandler(
 }
 
 // PreRun implements Handler interface.
-func (h *BaseHandler) PreRun() error {
+func (*BaseHandler) PreRun() error {
 	return nil
 }
 
