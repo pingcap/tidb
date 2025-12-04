@@ -231,27 +231,27 @@ type baseAvgDistinct struct {
 	baseAggFunc
 }
 
-func (*baseAvgDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*baseAvgDistinct) AllocPartialResult() (PartialResult, int64) {
 	panic("Not implemented")
 }
 
-func (*baseAvgDistinct) ResetPartialResult(pr PartialResult) {
+func (*baseAvgDistinct) ResetPartialResult(PartialResult) {
 	panic("Not implemented")
 }
 
-func (*baseAvgDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (*baseAvgDistinct) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
 	panic("Not implemented")
 }
 
-func (*baseAvgDistinct) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (*baseAvgDistinct) MergePartialResult(_ AggFuncUpdateContext, _, _ PartialResult) (int64, error) {
 	panic("Not implemented")
 }
 
-func (*baseAvgDistinct) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+func (*baseAvgDistinct) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
 	panic("Not implemented")
 }
 
-func (*baseAvgDistinct) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+func (*baseAvgDistinct) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
 	panic("Not implemented")
 }
 

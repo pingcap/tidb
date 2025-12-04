@@ -229,15 +229,15 @@ type baseAggFunc struct {
 	retTp *types.FieldType
 }
 
-func (*baseAggFunc) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
+func (*baseAggFunc) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (int64, error) {
 	panic("Not implemented")
 }
 
-func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *SerializeHelper) {
+func (*baseAggFunc) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
 	panic("Not implemented")
 }
 
-func (*baseAggFunc) DeserializePartialResult(_ *chunk.Chunk) ([]PartialResult, int64) {
+func (*baseAggFunc) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
 	panic("Not implemented")
 }
 

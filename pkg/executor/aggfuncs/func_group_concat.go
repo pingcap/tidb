@@ -60,15 +60,15 @@ type baseGroupConcat4String struct {
 	truncated *int32
 }
 
-func (*baseGroupConcat4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*baseGroupConcat4String) AllocPartialResult() (PartialResult, int64) {
 	panic("Not implemented")
 }
 
-func (*baseGroupConcat4String) ResetPartialResult(pr PartialResult) {
+func (*baseGroupConcat4String) ResetPartialResult(PartialResult) {
 	panic("Not implemented")
 }
 
-func (e *baseGroupConcat4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *baseGroupConcat4String) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
 	panic("Not implemented")
 }
 
