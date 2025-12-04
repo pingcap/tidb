@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -61,6 +62,7 @@ type encodeAndSortOperator struct {
 	sharedVars        *SharedVars
 	logger            *zap.Logger
 	errCh             chan error
+	indicesGenKV      map[int64]genKVIndex
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
@@ -84,6 +86,7 @@ func newEncodeAndSortOperator(
 		sharedVars:    sharedVars,
 		logger:        executor.logger,
 		errCh:         make(chan error),
+		indicesGenKV:  executor.indicesGenKV,
 	}
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
@@ -91,7 +94,7 @@ func newEncodeAndSortOperator(
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
 			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
-				executor.perIndexKVMemSizePerCon, executor.indexBlockSize)
+				executor.perIndexKVMemSizePerCon, executor.dataBlockSize, executor.indexBlockSize)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -150,7 +153,7 @@ type chunkWorker struct {
 }
 
 func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon,
-	perIndexKVMemSizePerCon uint64, indexBlockSize int) *chunkWorker {
+	perIndexKVMemSizePerCon uint64, dataBlockSize, indexBlockSize int) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -159,25 +162,36 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-		indexWriterFn := func(indexID int64) *external.Writer {
+		indexWriterFn := func(indexID int64) (*external.Writer, error) {
+			idx, ok := op.indicesGenKV[indexID]
+			if !ok {
+				// shouldn't happen normally, unless we have bug at getIndicesGenKV
+				return nil, errors.Errorf("unknown index with ID: %d", indexID)
+			}
+			onDup := common.OnDuplicateKeyRemove
+			if idx.unique {
+				onDup = common.OnDuplicateKeyRecord
+			}
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
-				SetBlockSize(indexBlockSize)
+				SetBlockSize(indexBlockSize).
+				SetOnDup(onDup)
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
-			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
+			writerID := path.Join("index", IndexID2KVGroup(indexID), workerUUID)
 			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
-			return writer
+			return writer, nil
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
-			SetBlockSize(getKVGroupBlockSize(dataKVGroup))
+			SetBlockSize(dataBlockSize).
+			SetOnDup(common.OnDuplicateKeyRecord)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
@@ -246,26 +260,32 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	return uint64(memPerShare * 3), uint64(memPerShare)
 }
 
+// getNumOfIndexGenKV returns the number of index generated KVs.
 func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
-	var count int
-	var nonClusteredPK bool
+	return len(getIndicesGenKV(tblInfo))
+}
+
+type genKVIndex struct {
+	name   string
+	unique bool
+}
+
+func getIndicesGenKV(tblInfo *model.TableInfo) map[int64]genKVIndex {
+	res := make(map[int64]genKVIndex, len(tblInfo.Indices))
 	for _, idxInfo := range tblInfo.Indices {
 		// all public non-primary index generates index KVs
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
-		if idxInfo.Primary {
-			if !tblInfo.HasClusteredIndex() {
-				nonClusteredPK = true
-			}
+		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
 			continue
 		}
-		count++
+		res[idxInfo.ID] = genKVIndex{
+			name:   idxInfo.Name.L,
+			unique: idxInfo.Unique,
+		}
 	}
-	if nonClusteredPK {
-		count++
-	}
-	return count
+	return res
 }
 
 func getKVGroupBlockSize(group string) int {
