@@ -210,7 +210,7 @@ type ModifySchemaActiveActiveArgs struct {
 	ActiveActive string `json:"active_active,omitempty"`
 }
 
-func (a *ModifySchemaActiveActiveArgs) getArgsV1(job *Job) []any {
+func (a *ModifySchemaActiveActiveArgs) getArgsV1(_job *Job) []any {
 	return []any{a.ActiveActive}
 }
 
@@ -231,7 +231,7 @@ type ModifySchemaSoftDeleteArgs struct {
 	SoftDeleteJobInterval string `json:"soft_delete_job_interval,omitempty"`
 }
 
-func (a *ModifySchemaSoftDeleteArgs) getArgsV1(job *Job) []any {
+func (a *ModifySchemaSoftDeleteArgs) getArgsV1(_job *Job) []any {
 	return []any{a.SoftDelete, a.SoftDeleteRetention, a.SoftDeleteJobEnable, a.SoftDeleteJobInterval}
 }
 
