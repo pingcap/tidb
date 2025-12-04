@@ -106,14 +106,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return e.importFromSelect(ctx)
 	}
 
-	importFromServer, err := storage.IsLocalPath(e.controller.Path)
-	if err != nil {
-		// since we have checked this during creating controller, this should not happen.
-		return exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
-	}
-
-	// We only read file size when importing from local.
-	if err2 := e.controller.InitDataFiles(ctx, importFromServer); err2 != nil {
+	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
 	}
 	if kerneltype.IsNextGen() {
@@ -139,7 +132,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	failpoint.InjectCall("cancellableCtx", &ctx)
 
-	jobID, task, err := e.submitTask(ctx, importFromServer)
+	jobID, task, err := e.submitTask(ctx)
 	if err != nil {
 		return err
 	}
@@ -216,7 +209,13 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	return nil
 }
 
-func (e *ImportIntoExec) submitTask(ctx context.Context, importFromServer bool) (int64, *proto.TaskBase, error) {
+func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase, error) {
+	importFromServer, err := storage.IsLocalPath(e.controller.Path)
+	if err != nil {
+		// since we have checked this during creating controller, this should not happen.
+		return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
+	}
+
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
 		zap.Bool("dist-task-enabled", vardef.EnableDistTask.Load()))
 	if importFromServer {

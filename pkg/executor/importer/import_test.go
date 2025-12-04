@@ -327,7 +327,7 @@ func TestInitCompressedFiles(t *testing.T) {
 	}
 
 	c.Path = filepath.Join(tempDir, "*.gz")
-	require.NoError(t, c.InitDataFiles(ctx, true))
+	require.NoError(t, c.InitDataFiles(ctx))
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {
@@ -359,14 +359,14 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	}
 	// no suffix
 	c.Path = filepath.Join(tempDir, "test")
-	require.ErrorIs(t, c.InitDataFiles(ctx, true), exeerrors.ErrLoadDataInvalidURI)
+	require.ErrorIs(t, c.InitDataFiles(ctx), exeerrors.ErrLoadDataInvalidURI)
 	// unknown suffix
 	c.Path = filepath.Join(tempDir, "test.abc")
-	require.ErrorIs(t, c.InitDataFiles(ctx, true), exeerrors.ErrLoadDataInvalidURI)
+	require.ErrorIs(t, c.InitDataFiles(ctx), exeerrors.ErrLoadDataInvalidURI)
 	c.Path = fileName
-	require.NoError(t, c.InitDataFiles(ctx, true))
+	require.NoError(t, c.InitDataFiles(ctx))
 	c.Path = fileName2
-	require.NoError(t, c.InitDataFiles(ctx, true))
+	require.NoError(t, c.InitDataFiles(ctx))
 
 	var allData []string
 	for i := range 3 {
@@ -393,38 +393,38 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 
 	// relative path
 	c.Path = "~/file.csv"
-	err2 := c.InitDataFiles(ctx, true)
+	err2 := c.InitDataFiles(ctx)
 	require.ErrorIs(t, err2, exeerrors.ErrLoadDataInvalidURI)
 	require.ErrorContains(t, err2, "URI of data source is invalid")
 	// non-exist parent directory
 	c.Path = "/path/to/non/exists/file.csv"
-	err = c.InitDataFiles(ctx, true)
+	err = c.InitDataFiles(ctx)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidURI)
 	require.ErrorContains(t, err, "no such file or directory")
 	// without permission to parent dir
 	c.Path = path.Join(tempDir, "no-perm", "no-perm.csv")
-	err = c.InitDataFiles(ctx, true)
+	err = c.InitDataFiles(ctx)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
 	require.ErrorContains(t, err, "permission denied")
 	// file not exists
 	c.Path = path.Join(tempDir, "not-exists.csv")
-	err = c.InitDataFiles(ctx, true)
+	err = c.InitDataFiles(ctx)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
 	require.ErrorContains(t, err, "no such file or directory")
 	// file without permission
 	c.Path = path.Join(tempDir, "no-perm.csv")
-	err = c.InitDataFiles(ctx, true)
+	err = c.InitDataFiles(ctx)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
 	require.ErrorContains(t, err, "permission denied")
 	// we don't have read access to 'no-perm' directory, so walk-dir fails
 	c.Path = path.Join(tempDir, "server-*.csv")
-	err = c.InitDataFiles(ctx, true)
+	err = c.InitDataFiles(ctx)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
 	require.ErrorContains(t, err, "permission denied")
 	// grant read access to 'no-perm' directory, should ok now.
 	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
 	c.Path = path.Join(tempDir, "server-*.csv")
-	require.NoError(t, c.InitDataFiles(ctx, true))
+	require.NoError(t, c.InitDataFiles(ctx))
 	// test glob matching pattern [12]
 	err = os.WriteFile(path.Join(tempDir, "glob-1.csv"), []byte("1,1"), 0o644)
 	require.NoError(t, err)
@@ -433,7 +433,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	err = os.WriteFile(path.Join(tempDir, "glob-3.csv"), []byte("3,3"), 0o644)
 	require.NoError(t, err)
 	c.Path = path.Join(tempDir, "glob-[12].csv")
-	require.NoError(t, c.InitDataFiles(ctx, true))
+	require.NoError(t, c.InitDataFiles(ctx))
 	gotPath := make([]string, 0, len(c.dataFiles))
 	for _, f := range c.dataFiles {
 		gotPath = append(gotPath, f.Path)
@@ -441,7 +441,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.ElementsMatch(t, []string{"glob-1.csv", "glob-2.csv"}, gotPath)
 	// test glob matching pattern [2-3]
 	c.Path = path.Join(tempDir, "glob-[2-3].csv")
-	require.NoError(t, c.InitDataFiles(ctx, true))
+	require.NoError(t, c.InitDataFiles(ctx))
 	gotPath = make([]string, 0, len(c.dataFiles))
 	for _, f := range c.dataFiles {
 		gotPath = append(gotPath, f.Path)
@@ -473,7 +473,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 			c.Path = path.Join(tempDir, fileName)
 			err = os.WriteFile(c.Path, []byte{}, 0o644)
 			require.NoError(t, err)
-			require.NoError(t, c.InitDataFiles(ctx, true))
+			require.NoError(t, c.InitDataFiles(ctx))
 			require.Equal(t, testcase.expectFormat, c.Format)
 		}
 	}

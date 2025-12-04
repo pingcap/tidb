@@ -195,7 +195,7 @@ func NewLoadDataWorker(
 }
 
 func (e *LoadDataWorker) loadRemote(ctx context.Context) error {
-	if err2 := e.controller.InitDataFiles(ctx, true); err2 != nil {
+	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
 	}
 	return e.load(ctx, e.controller.GetLoadDataReaderInfos())

@@ -83,7 +83,7 @@ func runCaseFn(t *testing.T, i int, c caseTp) {
 	require.NoError(t, err)
 	ctrl.logger = zap.Must(zap.NewDevelopment())
 	ctx := context.Background()
-	require.NoError(t, ctrl.InitDataFiles(ctx, true))
+	require.NoError(t, ctrl.InitDataFiles(ctx))
 	ratio, err := ctrl.sampleIndexSizeRatio(ctx, c.ksCodec)
 	require.NoError(t, err)
 	require.InDelta(t, c.ratio, ratio, 0.001)

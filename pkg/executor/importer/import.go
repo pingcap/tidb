@@ -1313,7 +1313,7 @@ func (r *compressionEstimator) estimate(
 
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
-func (e *LoadDataController) InitDataFiles(ctx context.Context, estimateRealSize bool) error {
+func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
@@ -1453,10 +1453,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context, estimateRealSize
 					Compression: compressTp,
 					Type:        sourceType,
 				}
-				if estimateRealSize {
-					fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
-					fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
-				}
+				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
