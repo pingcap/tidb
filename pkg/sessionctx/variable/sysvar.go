@@ -3577,6 +3577,11 @@ var defaultSysVars = []*SysVar{
 			s.DivPrecisionIncrement = tidbOptPositiveInt32(val, DefDivPrecisionIncrement)
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlanCacheMaxDecimalParamNums, Value: strconv.Itoa(DefTiDBPlanCacheMaxDecimalParamNums), Type: TypeInt, MinValue: math.MinInt, MaxValue: math.MaxInt,
+		SetSession: func(s *SessionVars, val string) error {
+			s.PlanCacheMaxDecimalParamNums = TidbOptInt(val, DefTiDBPlanCacheMaxDecimalParamNums)
+			return nil
+		}},
 	{Scope: ScopeSession, Name: TiDBDMLType, Value: DefTiDBDMLType, Type: TypeStr,
 		SetSession: func(s *SessionVars, val string) error {
 			lowerVal := strings.ToLower(val)

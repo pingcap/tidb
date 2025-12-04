@@ -36,9 +36,6 @@ const (
 // UnspecifiedServerID indicates the unspecified server id.
 const UnspecifiedServerID = 0
 
-// ServerStartupTime indicates the server's startup time as a Unix timestamp (seconds since the epoch).
-var ServerStartupTime = time.Now().Unix()
-
 // Process global variables.
 var (
 	EnableScheduleLeaderRule                = atomic.NewBool(DefTiDBXEnableScheduleLeaderRule)

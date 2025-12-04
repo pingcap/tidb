@@ -22,7 +22,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -1429,11 +1429,6 @@ func (b *builtinUUIDShortSig) Clone() builtinFunc {
 	return newSig
 }
 
-// We define a global atomic counter for the incrementing part of the UUID_SHORT.
-// A uint32 is sufficient as it only needs to cover 24 bits (0 to 16,777,215).
-// This counter will be shared across all concurrent calls to UUID_SHORT().
-var uuidShortCounter atomic.Uint32
-
 // evalString evals a builtinUUIDShortSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid-short
 func (b *builtinUUIDShortSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool, error) {
@@ -1441,16 +1436,39 @@ func (b *builtinUUIDShortSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool
 	if serverID == variable.UnspecifiedServerID {
 		return 0, false, errUnknown.GenWithStack("Unspecified server ID. Set the config `instance.server_id` to an integer between 1 and 255 when using `UUID_SHORT()`.")
 	}
-	startupTime := variable.ServerStartupTime
+	result := globalUUIDShortAllocator.next(serverID)
+	return int64(result), false, nil
+}
 
-	increment := uuidShortCounter.Add(1) - 1
+var globalUUIDShortAllocator = &UUIDShortAllocator{ts: time.Now().Unix()}
+
+// UUIDShortAllocator is used to allocate unique 64 bit unsigned integers.
+type UUIDShortAllocator struct {
+	sync.Mutex
+	ts    int64
+	count uint32
+}
+
+func (g *UUIDShortAllocator) next(serverID int) uint64 {
+	g.Lock()
+	defer g.Unlock()
+	if g.count > 0xFFFFFF {
+		now := time.Now().Unix()
+		if g.ts < now {
+			g.ts = now
+		} else {
+			g.ts += 1
+		}
+		g.count = 0
+	}
+	count := g.count
+	ts := g.ts
+	g.count += 1
 
 	p1 := uint64(serverID&0xFF) << 56
-	p2 := uint64(startupTime) << 24
-	p3 := uint64(increment & 0xFFFFFF)
-	result := p1 + p2 + p3
-
-	return int64(result), false, nil
+	p2 := uint64(ts) << 24
+	p3 := uint64(count & 0xFFFFFF)
+	return p1 + p2 + p3
 }
 
 type vitessHashFunctionClass struct {
