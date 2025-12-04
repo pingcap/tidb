@@ -16,6 +16,7 @@ package priorityqueue_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -61,11 +63,23 @@ func findEventWithTimeout(eventCh <-chan *notifier.SchemaChangeEvent, eventType 
 	}
 }
 
+// enableAutoAnalyze enables auto-analyze for the test and restores it on cleanup.
+// In tests, auto-analyze is disabled by default, so tests that need it enabled
+// should call this helper at the beginning.
+func enableAutoAnalyze(t *testing.T, tk *testkit.TestKit) {
+	bakRunAutoAnalyze := vardef.RunAutoAnalyze.Load()
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze = %t", bakRunAutoAnalyze))
+	})
+}
+
 func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	enableAutoAnalyze(t, tk)
 	tk.MustExec("create table t1 (a int)")
 	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
@@ -169,6 +183,7 @@ func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -237,6 +252,7 @@ func testTruncatePartitionedTable(
 	testKit *testkit.TestKit,
 ) {
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	h := do.StatsHandle()
 	testKit.MustExec("analyze table t")
@@ -283,6 +299,7 @@ func TestDropTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -351,6 +368,7 @@ func testDropPartitionedTable(
 	testKit *testkit.TestKit,
 ) {
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	h := do.StatsHandle()
 	testKit.MustExec("analyze table t")
@@ -397,6 +415,7 @@ func TestTruncateTablePartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -456,6 +475,7 @@ func TestDropTablePartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -515,6 +535,7 @@ func TestExchangeTablePartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	testKit.MustExec("create table t2 (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
@@ -583,6 +604,7 @@ func TestReorganizeTablePartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (10), partition p1 values less than (20))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -642,6 +664,7 @@ func TestAlterTablePartitioning(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -701,6 +724,7 @@ func TestRemovePartitioning(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -760,6 +784,7 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -831,6 +856,7 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	h := do.StatsHandle()
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	statstestutil.HandleNextDDLEventWithTxn(h)
 	testKit.MustExec("set global tidb_partition_prune_mode='static'")
@@ -927,6 +953,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@global.tidb_analyze_version=1;")
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -976,6 +1003,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testin
 	testKit.MustExec("set @@global.tidb_partition_prune_mode='static'")
 	testKit.MustExec("set @@global.tidb_analyze_version=1;")
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1049,6 +1077,7 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1109,6 +1138,7 @@ func TestTurnOffAutoAnalyze(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
