@@ -139,6 +139,12 @@ func (c *jobContext) cleanStepCtx() {
 	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
+// genReorgTimeoutErr generates a reorganization timeout error.
+func (c *jobContext) genReorgTimeoutErr() error {
+	c.reorgTimeoutOccurred = true
+	return dbterror.ErrWaitReorgTimeout
+}
+
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
 	return &asAutoIDRequirement{
 		store:     c.store,
@@ -195,6 +201,11 @@ type ReorgContext struct {
 
 	resourceGroupName string
 	cloudStorageURI   string
+	analyzeDone       chan error
+	// analyzeStartTime records when the analyze for a job was started.
+	analyzeStartTime time.Time
+	// analyzeCumulativeTimeout stores the computed cumulative timeout for analyze
+	analyzeCumulativeTimeout time.Duration
 }
 
 // NewReorgContext returns a new ddl job context.
@@ -648,6 +659,7 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
+	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(job.ID)
@@ -874,6 +886,7 @@ func (w *worker) runOneJobStep(
 					case <-stopCheckingJobCancelled:
 						return
 					case <-ticker.C:
+						failpoint.InjectCall("checkJobCancelled", job)
 						latestJob, err := jobCtx.sysTblMgr.GetJobByID(w.workCtx, job.ID)
 						if err == systable.ErrNotFound {
 							logutil.DDLLogger().Info(
@@ -902,12 +915,6 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateDone, model.JobStateSynced:
 							return
-						case model.JobStateRunning:
-							if latestJob.IsAlterable() {
-								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
-								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
-								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
-							}
 						}
 					}
 				}

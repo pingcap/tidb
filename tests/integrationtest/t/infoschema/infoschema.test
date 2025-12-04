@@ -61,10 +61,15 @@ select engine, tidb_pk_type from information_schema.tables where table_name ='t4
 drop table infoschema__infoschema.t4;
 drop table infoschema__infoschema.t5;
 create table caseSensitive (a int);
+create table caseSensitive2 (a int);
 create table unrelatedTable (a int);
 select table_schema, table_name from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
 select table_schema, table_name, tidb_pk_type from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
+select table_schema, table_name, tidb_pk_type from information_schema.tables where table_schema like '%infoschema__infoschem%' and table_name like '%aseSensitive%' and table_name like '%aseSensitive%';
+select table_schema, table_name, tidb_pk_type from information_schema.tables where table_name like '%Sensitive' and table_name like '%aseSensitive%';
+select table_schema, table_name, tidb_pk_type from information_schema.tables where table_name like '%aseSensitive%' and table_name like '%fake_table%';
 drop table caseSensitive;
+drop table caseSensitive2;
 drop table unrelatedTable;
 
 # TestPartitionsColumn
@@ -269,3 +274,8 @@ explain select sequence_schema, sequence_name from information_schema.sequences 
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema like '%db1%';
 drop database db1;
 drop database db2;
+
+# TestInfoschemaReaderRlike
+create database test_db_080;
+select SCHEMA_NAME from information_schema.schemata where schema_name rlike 'test_db_0[0-8][0-7]';
+desc format=brief select SCHEMA_NAME from information_schema.schemata where schema_name rlike 'test_db_0[0-8][0-7]';

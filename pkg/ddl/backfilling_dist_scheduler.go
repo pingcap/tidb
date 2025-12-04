@@ -97,19 +97,16 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
-		if tblInfo.Partition != nil {
-			return generatePartitionPlan(tblInfo)
-		}
-		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
+		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
 	case proto.BackfillStepMergeSort:
-		return generateMergePlan(taskHandle, task, logger)
+		return generateMergePlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, logger)
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
 				m := &BackfillSubTaskMeta{
 					MetaGroups: []*external.SortedKVMeta{},
 				}
-				metaBytes, _ := json.Marshal(m)
+				metaBytes, _ := m.Marshal()
 				metaArr := make([][]byte, 0, 16)
 				metaArr = append(metaArr, metaBytes)
 				failpoint.Return(metaArr, nil)
@@ -147,11 +144,11 @@ func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step
 	}
 }
 
-func skipMergeSort(stats []external.MultipleFilesStat) bool {
+func skipMergeSort(stats []external.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return external.GetMaxOverlappingTotal(stats) <= external.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 // OnDone implements scheduler.Extension interface.
@@ -212,52 +209,54 @@ func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.Tab
 	return tblInfo, nil
 }
 
-func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error) {
-	defs := tblInfo.Partition.Definitions
-	physicalIDs := make([]int64, len(defs))
-	for i := range defs {
-		physicalIDs[i] = defs[i].ID
-	}
-
-	subTaskMetas := make([][]byte, 0, len(physicalIDs))
-	for _, physicalID := range physicalIDs {
-		subTaskMeta := &BackfillSubTaskMeta{
-			PhysicalTableID: physicalID,
-		}
-
-		metaBytes, err := json.Marshal(subTaskMeta)
-		if err != nil {
-			return nil, err
-		}
-
-		subTaskMetas = append(subTaskMetas, metaBytes)
-	}
-	return subTaskMetas, nil
-}
-
 const (
 	scanRegionBackoffBase = 200 * time.Millisecond
 	scanRegionBackoffMax  = 2 * time.Second
 )
 
-func generateNonPartitionPlan(
+func generateReadIndexPlan(
 	ctx context.Context,
 	d *ddl,
 	tblInfo *model.TableInfo,
 	job *model.Job,
 	useCloud bool,
-	instanceCnt int,
+	nodeCnt int,
+	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}
+	if tblInfo.Partition == nil {
+		return generatePlanForPhysicalTable(ctx, d, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
+	}
+	defs := tblInfo.Partition.Definitions
+	for _, def := range defs {
+		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
+		partMeta, err := generatePlanForPhysicalTable(ctx, d, partTbl, job, useCloud, nodeCnt, logger)
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, partMeta...)
+	}
+	return metas, nil
+}
+
+func generatePlanForPhysicalTable(
+	ctx context.Context,
+	d *ddl,
+	tbl table.PhysicalTable,
+	job *model.Job,
+	useCloud bool,
+	nodeCnt int,
+	logger *zap.Logger,
+) (metas [][]byte, err error) {
 	ver, err := getValidCurrentVersion(d.store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
+	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl, ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
 		return nil, nil
@@ -271,7 +270,6 @@ func generateNonPartitionPlan(
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := d.store.(helper.Storage).GetRegionCache()
 		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-
 		if err != nil {
 			return false, err
 		}
@@ -294,7 +292,13 @@ func generateNonPartitionPlan(
 			return true, nil
 		}
 
-		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
+		logger.Info("calculate region batch",
+			zap.Int("totalRegionCnt", len(recordRegionMetas)),
+			zap.Int("regionBatch", regionBatch),
+			zap.Int("instanceCnt", nodeCnt),
+			zap.Bool("useCloud", useCloud),
+		)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			end := i + regionBatch
@@ -303,8 +307,9 @@ func generateNonPartitionPlan(
 			}
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{
-				RowStart: batch[0].StartKey(),
-				RowEnd:   batch[len(batch)-1].EndKey(),
+				PhysicalTableID: tbl.GetPhysicalID(),
+				RowStart:        batch[0].StartKey(),
+				RowEnd:          batch[len(batch)-1].EndKey(),
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
@@ -312,7 +317,7 @@ func generateNonPartitionPlan(
 			if end == len(recordRegionMetas) {
 				subTaskMeta.RowEnd = endKey
 			}
-			metaBytes, err := json.Marshal(subTaskMeta)
+			metaBytes, err := subTaskMeta.Marshal()
 			if err != nil {
 				return false, err
 			}
@@ -330,19 +335,26 @@ func generateNonPartitionPlan(
 }
 
 // CalculateRegionBatch is exported for test.
-func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) int {
 	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
 		failpoint.Return(val.(int))
 	})
 	var regionBatch int
-	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
 	if useLocalDisk {
-		regionBatch = avgTasksPerInstance
+		// We want to avoid too may partial imports when using local disk. So we
+		// limit the node count to 3 so that at most 3 partial imports if disk
+		// space is enough.
+		nodeCnt = min(3, nodeCnt)
+	}
+	avgTasksPerInstance := (totalRegionCnt + nodeCnt - 1) / nodeCnt // ceiling
+	if useLocalDisk {
+		// Special handling for small table, in this case, we want to do it on
+		// one node. 100 region data is about 10GiB.
+		regionBatch = min(max(100, avgTasksPerInstance), totalRegionCnt)
 	} else {
 		// For cloud storage, each subtask should contain no more than 4000 regions.
 		regionBatch = min(4000, avgTasksPerInstance)
 	}
-	regionBatch = max(regionBatch, 1)
 	return regionBatch
 }
 
@@ -360,7 +372,7 @@ func generateGlobalSortIngestPlan(
 	)
 	for _, step := range []proto.Step{proto.BackfillStepMergeSort, proto.BackfillStepReadIndex} {
 		hasSubtasks := false
-		err := forEachBackfillSubtaskMeta(taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
+		err := forEachBackfillSubtaskMeta(ctx, cloudStorageURI, taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
 			hasSubtasks = true
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
@@ -388,7 +400,7 @@ func generateGlobalSortIngestPlan(
 		return nil, err
 	}
 	iCnt := int64(len(instanceIDs))
-	metaArr := make([][]byte, 0, 16)
+	metaArr := make([]*BackfillSubTaskMeta, 0, 16)
 	for i, g := range kvMetaGroups {
 		if g == nil {
 			logger.Error("meet empty kv group when getting subtask summary",
@@ -406,7 +418,25 @@ func generateGlobalSortIngestPlan(
 		}
 		metaArr = append(metaArr, newMeta...)
 	}
-	return metaArr, nil
+	// write external meta to storage when using global sort
+	for i, m := range metaArr {
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, external.PlanMetaPath(
+			task.ID,
+			proto.Step2Str(proto.Backfill, proto.BackfillStepWriteAndIngest),
+			i+1,
+		)); err != nil {
+			return nil, err
+		}
+	}
+	metas := make([][]byte, 0, len(metaArr))
+	for _, m := range metaArr {
+		metaBytes, err := m.Marshal()
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, metaBytes)
+	}
+	return metas, nil
 }
 
 func splitSubtaskMetaForOneKVMetaGroup(
@@ -417,7 +447,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	cloudStorageURI string,
 	instanceCnt int64,
 	logger *zap.Logger,
-) (metaArr [][]byte, err error) {
+) (metaArr []*BackfillSubTaskMeta, err error) {
 	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
 		// Skip global sort for empty table.
 		return nil, nil
@@ -487,11 +517,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		if eleID > 0 {
 			m.EleIDs = []int64{eleID}
 		}
-		metaBytes, err := json.Marshal(m)
-		if err != nil {
-			return nil, err
-		}
-		metaArr = append(metaArr, metaBytes)
+		metaArr = append(metaArr, m)
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
@@ -501,8 +527,11 @@ func splitSubtaskMetaForOneKVMetaGroup(
 }
 
 func generateMergePlan(
+	ctx context.Context,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	nodeCnt int,
+	cloudStorageURI string,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
@@ -512,7 +541,7 @@ func generateMergePlan(
 		kvMetaGroups    []*external.SortedKVMeta
 		eleIDs          []int64
 	)
-	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, proto.BackfillStepReadIndex,
+	err := forEachBackfillSubtaskMeta(ctx, cloudStorageURI, taskHandle, task.ID, proto.BackfillStepReadIndex,
 		func(subtask *BackfillSubTaskMeta) {
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
@@ -534,7 +563,7 @@ func generateMergePlan(
 
 	allSkip := true
 	for _, multiStats := range multiStatsGroup {
-		if !skipMergeSort(multiStats) {
+		if !skipMergeSort(multiStats, task.Concurrency) {
 			allSkip = false
 			break
 		}
@@ -544,7 +573,7 @@ func generateMergePlan(
 		return nil, nil
 	}
 
-	metaArr := make([][]byte, 0, 16)
+	metaArr := make([]*BackfillSubTaskMeta, 0, 16)
 	for i, g := range kvMetaGroups {
 		dataFiles := make([]string, 0, 1000)
 		if g == nil {
@@ -561,27 +590,37 @@ func generateMergePlan(
 		if i < len(eleIDs) {
 			eleID = []int64{eleIDs[i]}
 		}
-		start := 0
-		step := external.MergeSortFileCountStep
-		for start < len(dataFiles) {
-			end := start + step
-			if end > len(dataFiles) {
-				end = len(dataFiles)
-			}
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, task.Concurrency)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, files := range dataFilesGroup {
 			m := &BackfillSubTaskMeta{
-				DataFiles: dataFiles[start:end],
+				DataFiles: files,
 				EleIDs:    eleID,
 			}
-			metaBytes, err := json.Marshal(m)
-			if err != nil {
-				return nil, err
-			}
-			metaArr = append(metaArr, metaBytes)
-
-			start = end
+			metaArr = append(metaArr, m)
 		}
 	}
-	return metaArr, nil
+
+	// write external meta to storage when using global sort
+	for i, m := range metaArr {
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, external.PlanMetaPath(
+			task.ID,
+			proto.Step2Str(proto.Backfill, proto.BackfillStepMergeSort),
+			i+1)); err != nil {
+			return nil, err
+		}
+	}
+	metas := make([][]byte, 0, len(metaArr))
+	for _, m := range metaArr {
+		metaBytes, err := m.Marshal()
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, metaBytes)
+	}
+	return metas, nil
 }
 
 func getRangeSplitter(
@@ -637,6 +676,8 @@ func getRangeSplitter(
 }
 
 func forEachBackfillSubtaskMeta(
+	ctx context.Context,
+	cloudStorageURI string,
 	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
@@ -647,7 +688,7 @@ func forEachBackfillSubtaskMeta(
 		return errors.Trace(err)
 	}
 	for _, subTaskMeta := range subTaskMetas {
-		subtask, err := decodeBackfillSubTaskMeta(subTaskMeta)
+		subtask, err := decodeBackfillSubTaskMeta(ctx, cloudStorageURI, subTaskMeta)
 		if err != nil {
 			logutil.DDLLogger().Error("unmarshal error", zap.Error(err))
 			return errors.Trace(err)

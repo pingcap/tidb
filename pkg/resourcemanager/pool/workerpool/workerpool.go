@@ -20,8 +20,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // TaskMayPanic is a type to remind the developer that need to handle panic in
@@ -196,8 +198,15 @@ func (p *WorkerPool[T, R]) Tune(numWorkers int32) {
 		}
 	} else if diff < 0 {
 		// Remove workers
+	outer:
 		for i := 0; i < int(-diff); i++ {
-			p.quitChan <- struct{}{}
+			select {
+			case p.quitChan <- struct{}{}:
+			case <-p.ctx.Done():
+				logutil.BgLogger().Info("context done when tuning worker pool",
+					zap.Int32("from", p.numWorkers), zap.Int32("to", numWorkers))
+				break outer
+			}
 		}
 	}
 	p.numWorkers = numWorkers

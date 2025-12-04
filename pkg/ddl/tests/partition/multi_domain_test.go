@@ -551,7 +551,6 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 	}
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
 		tkO.MustQuery(`select * from t where b = 5`).Check(testkit.Rows("5 5 5"))
-		tkO.MustExec(`admin check table t`)
 		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
 			"1 1 1",
 			"10 10 10",
@@ -575,11 +574,40 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 
 // TestMultiSchemaModifyColumn to show behavior when changing a column
 func TestMultiSchemaModifyColumn(t *testing.T) {
-	createSQL := `create table t (a int primary key, b varchar(255), unique key uk_b (b))`
+	createSQL := `create table t (a int primary key, b varchar(255), key k_b (b))`
 	initFn := func(tkO *testkit.TestKit) {
-		tkO.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)`)
+		tkO.MustExec(`insert into t values (1,1)`)
 	}
 	alterSQL := `alter table t modify column b int unsigned not null`
+	checkFn := func(tkO, tkNO *testkit.TestKit, id int, schemaState string) {
+		indexIDSQL := `select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't' and key_name = 'k_b'`
+		logutil.BgLogger().Info("check table", zap.Int("id", id), zap.String("schemaState", schemaState),
+			zap.String("owner table", tkO.MustQuery("select * from t use index()").Sort().String()),
+			zap.String("owner index", tkO.MustQuery("select * from t use index(k_b)").Sort().String()),
+			zap.String("owner index id", tkO.MustQuery(indexIDSQL).String()),
+			zap.Int64("owner txn schema version", sessiontxn.GetTxnManager(tkO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
+			zap.Int64("owner domain schema version", tkO.Session().GetDomainInfoSchema().SchemaMetaVersion()),
+			zap.String("non-owner table", tkNO.MustQuery("select * from t use index()").Sort().String()),
+			zap.String("non-owner index", tkNO.MustQuery("select * from t use index(k_b)").Sort().String()),
+			zap.String("non-owner index id", tkNO.MustQuery(indexIDSQL).String()),
+			zap.Int64("non-owner txn schema version", sessiontxn.GetTxnManager(tkNO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
+			zap.Int64("non-owner domain schema version", tkNO.Session().GetDomainInfoSchema().SchemaMetaVersion()),
+		)
+		tkO.MustExec("set @@sql_mode = default")
+		tkNO.MustExec("set @@sql_mode = default")
+
+		tkO.MustExec("set session tidb_enable_fast_table_check = off")
+		tkNO.MustExec("set session tidb_enable_fast_table_check = off")
+		defer func() {
+			tkO.MustExec("set session tidb_enable_fast_table_check = default")
+			tkNO.MustExec("set session tidb_enable_fast_table_check = default")
+		}()
+		err := tkO.ExecToErr(`admin check table t`)
+		require.NoError(t, err, "owner admin check table failed", fmt.Sprintf("id, %d, schemaState: %s", id, schemaState))
+		err = tkNO.ExecToErr(`admin check table t`)
+		require.NoError(t, err, "non-owner admin check table failed", fmt.Sprintf("id, %d, schemaState: %s", id, schemaState))
+	}
+	firstTimeToPublic := true
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
@@ -590,29 +618,35 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			// we are only interested in StateDeleteReorganization->StatePublic
 		case model.StateWriteReorganization.String():
 		case model.StatePublic.String():
+			if !firstTimeToPublic {
+				return
+			}
+			firstTimeToPublic = false
 			// tkNO sees varchar column and tkO sees int column
 			tkO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
 				"  `b` int(10) unsigned NOT NULL,\n" +
 				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-				"  UNIQUE KEY `uk_b` (`b`)\n" +
+				"  KEY `k_b` (`b`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 			tkNO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
 				"  `b` varchar(255) DEFAULT NULL,\n" +
 				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-				"  UNIQUE KEY `uk_b` (`b`)\n" +
+				"  KEY `k_b` (`b`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			checkFn(tkO, tkNO, 1, schemaState)
 
 			tkO.MustExec(`insert into t values (10, " 09.60 ")`)
+
+			checkFn(tkO, tkNO, 2, schemaState)
+
 			// No warning!? Same in MySQL...
 			tkNO.MustQuery(`show warnings`).Check(testkit.Rows())
-			tkNO.MustContainErrMsg(`insert into t values (11, "09.60")`, "[kv:1062]Duplicate entry '10' for key 't._Idx$_uk_b_0'")
 			tkO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
-			// <nil> ?!?
-			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 <nil>"))
+			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
 			// If the original b was defined as 'NOT NULL', then it would give an error:
 			// [table:1364]Field 'b' doesn't have a default value
 
@@ -832,6 +866,8 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	if !domOwner.DDL().OwnerManager().IsOwner() {
 		domOwner, domNonOwner = domNonOwner, domOwner
 	}
+	require.True(t, domOwner.DDL().OwnerManager().IsOwner())
+	require.False(t, domNonOwner.DDL().OwnerManager().IsOwner())
 
 	seOwner, err := session.CreateSessionWithDomain(store, domOwner)
 	require.NoError(t, err)
@@ -875,6 +911,9 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	initFn(tkO)
 
+	tkO.MustExec("set session tidb_enable_fast_table_check = off")
+	tkO.MustExec(`admin check table t`)
+
 	domOwner.Reload()
 	domNonOwner.Reload()
 
@@ -886,14 +925,13 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan *model.Job)
-	hookFunc := func(job *model.Job) {
+	// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		hookChan <- job
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
 		<-hookChan
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
-	}
-	// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", hookFunc)
+	})
 	alterChan := make(chan error)
 	go func() {
 		if backfillDML != "" {
@@ -950,6 +988,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 			state = job.SchemaState
 		}
 		states = append(states, state)
+		tkO.MustExec(fmt.Sprintf(`admin check table t /* state: %s */`, state.String()))
 		loopFn(tkO, tkNO)
 		domNonOwner.Reload()
 		if !releaseHook {
@@ -963,6 +1002,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	}
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
+	tkO.MustExec(`admin check table t`)
 	if !tbl.Meta().HasClusteredIndex() {
 		// Debug prints, so it is possible to verify possible newly generated _tidb_rowid's
 		res := tkO.MustQuery(`select *, _tidb_rowid from t`)
@@ -982,47 +1022,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	if tableID != newTableID {
 		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
 	}
-GlobalLoop:
-	for _, globIdx := range originalGlobalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == globIdx {
-				continue GlobalLoop
-			}
-		}
-		// Global index removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
-	}
-LocalLoop:
-	for _, locIdx := range originalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == locIdx {
-				continue LocalLoop
-			}
-		}
-		// local index removed
-		if tbl.Meta().Partition != nil {
-			for _, part := range tbl.Meta().Partition.Definitions {
-				require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
-			}
-		}
-	}
-PartitionLoop:
-	for _, partID := range originalPartitions {
-		if tbl.Meta().Partition != nil {
-			for _, def := range tbl.Meta().Partition.Definitions {
-				if def.ID == partID {
-					continue PartitionLoop
-				}
-			}
-		}
-		// old partitions removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
-	}
-	// TODO: Use this instead of the above, which check for any row that should not exists
-	// When the following issues are fixed:
-	// TestMultiSchemaModifyColumn - https://github.com/pingcap/tidb/issues/60264
-	// TestMultiSchemaPartitionByGlobalIndex -https://github.com/pingcap/tidb/issues/60263
-	//checkTableAndIndexEntries(t, tkO, originalIDs)
+	checkTableAndIndexEntries(t, tkO, originalPartitions)
 
 	if postFn != nil {
 		postFn(tkO, store)
@@ -2673,7 +2673,7 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 		columnFt[col.ID] = &col.FieldType
 	}
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		// TODO: start a transaction to be committed during backfill
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
@@ -3085,6 +3085,19 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t (a, b) values (1,1),(2,2)")
 	exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tk)
+	f := func(res []string, expected []any) bool {
+		if len(res) == 3 && len(expected) == 3 && res[0] == expected[0].(string) && res[1] == expected[1].(string) {
+			if res[2] == "30001" {
+				return true
+			}
+			r, err := strconv.Atoi(res[2])
+			if err != nil {
+				return false
+			}
+			return r == expected[2].(int)
+		}
+		return false
+	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		// So the table is actually in WriteOnly, before backfill!
 		if job.SchemaState != model.StateWriteReorganization {
@@ -3095,10 +3108,10 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 		tk2.MustExec("update t set b = b + 10 where a = 1")
 		// Would delete newFrom 1, which would then be backfilled again!
 		tk2.MustExec("update t set b = b + 10 where a = 2")
-		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("1 11 1", "2 12 3"))
+		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().CheckWithFunc([][]any{{"1", "11", 1}, {"2", "12", 3}}, f)
 	})
 	tk.MustExec("alter table t remove partitioning")
-	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows("1 11 1", "2 12 3"))
+	tk.MustQuery(`select a,b,_tidb_rowid from t`).Sort().CheckWithFunc([][]any{{"1", "11", 1}, {"2", "12", 3}}, f)
 }
 
 func TestNonClusteredReorgUpdate(t *testing.T) {

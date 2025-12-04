@@ -174,6 +174,7 @@ type EstablishMPPConnsParam struct {
 	Ctx      context.Context
 	Req      *MPPDispatchRequest
 	TaskMeta *mpp.TaskMeta
+	Bo       *tikv.Backoffer
 }
 
 // DispatchMPPTaskParam represents parameter for MPPClient's DispatchMPPTask
@@ -194,7 +195,7 @@ type MPPClient interface {
 	DispatchMPPTask(DispatchMPPTaskParam) (resp *mpp.DispatchTaskResponse, retry bool, err error)
 
 	// EstablishMPPConns build a mpp connection to receive data, return valid response when err is nil.
-	EstablishMPPConns(EstablishMPPConnsParam) (*tikvrpc.MPPStreamResponse, error)
+	EstablishMPPConns(EstablishMPPConnsParam) (resp *tikvrpc.MPPStreamResponse, retry bool, err error)
 
 	// CancelMPPTasks cancels mpp tasks.
 	CancelMPPTasks(CancelMPPTasksParam)

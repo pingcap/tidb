@@ -1659,6 +1659,7 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 // ModifyColumnArgs is the argument for modify column.
 type ModifyColumnArgs struct {
 	Column           *ColumnInfo         `json:"column,omitempty"`
+	OldColumnID      int64               `json:"old_column_id,omitempty"`
 	OldColumnName    pmodel.CIStr        `json:"old_column_name,omitempty"`
 	Position         *ast.ColumnPosition `json:"position,omitempty"`
 	ModifyColumnType byte                `json:"modify_column_type,omitempty"`
@@ -1674,6 +1675,7 @@ type ModifyColumnArgs struct {
 	// Finished args
 	// IndexIDs stores index ids to be added to gc table.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	NewIndexIDs  []int64 `json:"new_index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
@@ -1686,19 +1688,19 @@ func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
 	}
 	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
-		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs,
+		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs, a.OldColumnID,
 	}
 }
 
 func (a *ModifyColumnArgs) decodeV1(job *Job) error {
 	return job.decodeArgs(
 		&a.Column, &a.OldColumnName, &a.Position, &a.ModifyColumnType,
-		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs,
+		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs, &a.OldColumnID,
 	)
 }
 
 func (a *ModifyColumnArgs) getFinishedArgsV1(*Job) []any {
-	return []any{a.IndexIDs, a.PartitionIDs}
+	return []any{a.IndexIDs, a.PartitionIDs, a.NewIndexIDs}
 }
 
 // GetModifyColumnArgs get the modify column argument from job.
@@ -1712,13 +1714,15 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 		var (
 			indexIDs     []int64
 			partitionIDs []int64
+			newIndexIDs  []int64
 		)
-		if err := job.decodeArgs(&indexIDs, &partitionIDs); err != nil {
+		if err := job.decodeArgs(&indexIDs, &partitionIDs, &newIndexIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &ModifyColumnArgs{
 			IndexIDs:     indexIDs,
 			PartitionIDs: partitionIDs,
+			NewIndexIDs:  newIndexIDs,
 		}, nil
 	}
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)

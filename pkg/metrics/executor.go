@@ -54,6 +54,27 @@ var (
 
 	// AffectedRowsCounterReplace records the number of replace affected rows.
 	AffectedRowsCounterReplace prometheus.Counter
+
+	// AffectedRowsCounterNTDMLUpdate records the number of NT-DML update affected rows.
+	AffectedRowsCounterNTDMLUpdate prometheus.Counter
+	// AffectedRowsCounterNTDMLDelete records the number of NT-DML delete affected rows.
+	AffectedRowsCounterNTDMLDelete prometheus.Counter
+	// AffectedRowsCounterNTDMLInsert records the number of NT-DML insert affected rows.
+	AffectedRowsCounterNTDMLInsert prometheus.Counter
+	// AffectedRowsCounterNTDMLReplace records the number of NT-DML replace affected rows.
+	AffectedRowsCounterNTDMLReplace prometheus.Counter
+
+	// IndexLookUpExecutorDuration records the duration of index look up executor
+	IndexLookUpExecutorDuration *prometheus.HistogramVec
+
+	// IndexLookRowsCounter records the number of rows in index look up executor
+	IndexLookRowsCounter *prometheus.CounterVec
+
+	// IndexLookUpExecutorRowNumber records the number of rows scanned in one index look up executor
+	IndexLookUpExecutorRowNumber *prometheus.HistogramVec
+
+	// IndexLookUpCopTaskCount records the number of cop tasks in index look up executor
+	IndexLookUpCopTaskCount *prometheus.CounterVec
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -129,4 +150,43 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterUpdate = AffectedRowsCounter.WithLabelValues("Update")
 	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
 	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
+
+	AffectedRowsCounterNTDMLUpdate = AffectedRowsCounter.WithLabelValues("NTDML-Update")
+	AffectedRowsCounterNTDMLDelete = AffectedRowsCounter.WithLabelValues("NTDML-Delete")
+	AffectedRowsCounterNTDMLInsert = AffectedRowsCounter.WithLabelValues("NTDML-Insert")
+	AffectedRowsCounterNTDMLReplace = AffectedRowsCounter.WithLabelValues("NTDML-Replace")
+
+	IndexLookUpExecutorDuration = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "index_lookup_execute_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) in running index-lookup executor.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 30), // 100us ~ 15h
+		}, []string{LblType})
+
+	IndexLookRowsCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "index_lookup_rows",
+			Help:      "Counter of index lookup push-down rows.",
+		}, []string{LblType})
+
+	IndexLookUpExecutorRowNumber = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "index_lookup_row_number",
+			Help:      "Row number for each index lookup executor",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 10),
+		}, []string{LblType})
+
+	IndexLookUpCopTaskCount = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "index_lookup_cop_task_count",
+			Help:      "Counter for index lookup cop tasks",
+		}, []string{LblType})
 }

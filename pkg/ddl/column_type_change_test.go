@@ -123,7 +123,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	// Mock roll back at model.StateNone.
 	customizeHookRollbackAtState(t, tbl, model.StateNone)
 	// Alter sql will modify column c2 to bigint not null.
-	SQL := "alter table t modify column c2 int not null"
+	SQL := "alter table t modify column c2 varchar(16) not null"
 	err := tk.ExecToErr(SQL)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-none")
 	assertRollBackedColUnchanged(t, tk)
@@ -202,20 +202,11 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 		})
 	}
 
-	// Change int to tinyint.
-	// Although display length is increased, the default flen is decreased, reorg is needed.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int(1))")
-	tbl := external.GetTableByName(t, tk, "test", "t")
-	assertHasAlterWriteReorg(tbl)
-	tk.MustExec("alter table t modify column a tinyint(3)")
-	require.True(t, assertResult)
-
 	// Change tinyint to tinyint
 	// Although display length is decreased, default flen is the same, reorg is not needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(3))")
-	tbl = external.GetTableByName(t, tk, "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(1)")
 	require.False(t, assertResult)
@@ -224,6 +215,8 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
 func TestRowFormat(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -244,6 +237,8 @@ func TestRowFormat(t *testing.T) {
 }
 
 func TestRowFormatWithChecksums(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
@@ -266,6 +261,8 @@ func TestRowFormatWithChecksums(t *testing.T) {
 }
 
 func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -330,7 +327,8 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				if tbl.WritableCols()[2].OriginDefaultValue.(string) != "0" {
+				targetCol := tbl.WritableCols()[2]
+				if targetCol.OriginDefaultValue != "0" {
 					checkErr = errors.New("assert the write only column origin default value error")
 					return
 				}
@@ -361,7 +359,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			i++
 		}
 	})
-	tk.MustExec("alter table t modify column b tinyint NOT NULL")
+	tk.MustExec("alter table t modify column b varchar(16) DEFAULT '0' NOT NULL")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
@@ -408,7 +406,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 					return
 				}
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := "1971-06-09"
+				expectVal := "0000-00-00"
 				if originalDV != expectVal {
 					errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
 					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
@@ -493,12 +491,8 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			// modify column x
 			if job.ID == firstJobID {
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := "0000-00-00 00:00:00"
-				if originalDV != expectVal {
-					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
-					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
-					return
-				}
+				expectVal := "3771-02-28 13:00:11"
+				require.Equal(t, expectVal, originalDV)
 				// The cast value will be inserted into changing column too.
 				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
 				if err != nil {
@@ -509,12 +503,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			// modify column b
 			if job.ID == firstJobID+1 {
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := ""
-				if originalDV != expectVal {
-					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
-					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
-					return
-				}
+				require.Len(t, originalDV, 32)
 				// The cast value will be inserted into changing column too.
 				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE a = '1'")
 				if err != nil {
@@ -597,7 +586,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.Query == "alter table ctc_goroutine_leak modify column a tinyint" {
+		if job.Query == "alter table ctc_goroutine_leak modify column a varchar(16)" {
 			jobID = job.ID
 		}
 	})
@@ -610,7 +599,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	)
 	wg.Run(func() {
 		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
-		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
+		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a varchar(16)")
 	})
 
 	<-ddl.TestReorgGoroutineRunning

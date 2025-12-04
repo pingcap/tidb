@@ -38,7 +38,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
@@ -183,16 +185,29 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
-	var lastUpdateTime types.Time
+	lastUpdateTime := h.getLastUpdateTime()
 	var timeCondition string
 	var newCache FuzzyBindingCache
-	if fullLoad {
+	if fullLoad || lastUpdateTime.IsZero() { // avoid "update_time>'0000-00-00 00:00:00'", which is invalid
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
 		newCache = newFuzzyBindingCache(h.LoadBindingsFromStorage)
 	} else {
+		// If multiple TiDBs are creating bindings simultaneously and their time are not synchronized,
+		// some bindings' update_time may be earlier than the lastUpdateTime of this TiDB.
+		// timeLagToleranceSec is used to tolerate the time lag between different TiDBs.
+		// See #64250 for more details.
+		// It's safe to load duplicated bindings, because we'll deduplicate them in `pickCachedBinding`.
+		// TODO: use PD TSO to avoid time synchronization issue thoroughly.
+		const timeLagTolerance = 10 * time.Second
 		lastUpdateTime = h.getLastUpdateTime()
-		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
+		lastUpdateTimeGo, err := lastUpdateTime.GoTime(time.Local)
+		if err != nil {
+			return err
+		}
+		updateTimeBoundary := types.NewTime(types.FromGoTime(lastUpdateTimeGo.Add(-timeLagTolerance)),
+			lastUpdateTime.Type(), lastUpdateTime.Fsp())
+		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>'%s'", updateTimeBoundary.String())
 		newCache, err = h.getCache().Copy()
 		if err != nil {
 			return err
@@ -254,6 +269,9 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 	})
 }
 
+// TestTimeLagInLoadingBinding is used for test only.
+var TestTimeLagInLoadingBinding stringutil.StringerStr = "TestTimeLagInLoadingBinding"
+
 // CreateGlobalBinding creates a Bindings to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
 func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
@@ -268,6 +286,11 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 		}
 	}()
 
+	var mockTimeLag time.Duration // mock time lag between different TiDB instances for test, see #64250.
+	if intest.InTest && sctx != nil && sctx.Value(TestTimeLagInLoadingBinding) != nil {
+		mockTimeLag = sctx.Value(TestTimeLagInLoadingBinding).(time.Duration)
+	}
+
 	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
@@ -276,6 +299,9 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 
 		for i, binding := range bindings {
 			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+			if intest.InTest && mockTimeLag != 0 {
+				now = types.NewTime(types.FromGoTime(time.Now().Add(-mockTimeLag)), mysql.TypeTimestamp, 6)
+			}
 
 			updateTs := now.String()
 			_, err = exec(
@@ -728,6 +754,7 @@ func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, s
 	if sqlDigest == "" {
 		return nil, nil
 	}
+	intest.Assert(sctx.GetSessionVars().LoadBindingTimeout != 0)
 	timeout := time.Duration(sctx.GetSessionVars().LoadBindingTimeout) * time.Millisecond
 	resultChan := h.syncBindingSingleflight.DoChan(sqlDigest, func() (any, error) {
 		return h.loadBindingsFromStorageInternal(sqlDigest)

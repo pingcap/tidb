@@ -90,6 +90,7 @@ func InitMetrics() {
 	InitSessionMetrics()
 	InitSliMetrics()
 	InitStatsMetrics()
+	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitDistTaskMetrics()
@@ -273,8 +274,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
-	prometheus.MustRegister(DistTaskGauge)
-	prometheus.MustRegister(DistTaskStartTimeGauge)
 	prometheus.MustRegister(DistTaskUsedSlotsGauge)
 	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
@@ -300,6 +299,12 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	// IndexLookup
+	prometheus.MustRegister(IndexLookUpExecutorDuration)
+	prometheus.MustRegister(IndexLookRowsCounter)
+	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
+	prometheus.MustRegister(IndexLookUpCopTaskCount)
 }
 
 var mode struct {

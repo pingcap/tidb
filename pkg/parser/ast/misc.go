@@ -562,6 +562,7 @@ type ExecuteStmt struct {
 	UsingVars  []ExprNode
 	BinaryArgs interface{}
 	PrepStmt   interface{} // the corresponding prepared statement
+	PrepStmtId uint32
 	IdxInMulti int
 
 	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
@@ -3776,6 +3777,23 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// CancelDistributionJobStmt represent CANCEL DISTRIBUTION JOB statement.
+type CancelDistributionJobStmt struct {
+	stmtNode
+	JobID int64
+}
+
+func (n *CancelDistributionJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *CancelDistributionJobStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CANCEL DISTRIBUTION JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
 // Ident is the table identifier composed of schema name and table name.
 type Ident struct {
 	Schema model.CIStr
@@ -3918,7 +3936,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index":
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {

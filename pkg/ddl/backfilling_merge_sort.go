@@ -16,16 +16,18 @@ package ddl
 
 import (
 	"context"
-	"encoding/json"
 	"path"
 	"strconv"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -33,7 +35,7 @@ import (
 type mergeSortExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	jobID         int64
-	idxNum        int
+	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
 
@@ -43,13 +45,13 @@ type mergeSortExecutor struct {
 
 func newMergeSortExecutor(
 	jobID int64,
-	idxNum int,
+	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
 		jobID:         jobID,
-		idxNum:        idxNum,
+		indexes:       indexes,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
 	}, nil
@@ -63,7 +65,7 @@ func (*mergeSortExecutor) Init(ctx context.Context) error {
 func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort executor run subtask")
 
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -84,12 +86,12 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
+	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
 	memSizePerCon := res.Mem.Capacity() / int64(subtask.Concurrency)
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
-	return external.MergeOverlappingFiles(
+	err = external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
 		store,
@@ -99,7 +101,16 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		onClose,
 		subtask.Concurrency,
 		true,
+		common.OnDuplicateKeyError,
 	)
+	if err != nil {
+		currentIdx, _, err2 := getIndexInfoAndID(sm.EleIDs, m.indexes)
+		if err2 == nil {
+			return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
+		}
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
@@ -109,13 +120,18 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 
 func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
 	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil
-	newMeta, err := json.Marshal(sm)
+	// write external meta to storage when using global sort
+	if err := writeExternalBackfillSubTaskMeta(ctx, m.cloudStoreURI, sm, external.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+		return err
+	}
+
+	newMeta, err := sm.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -22,13 +22,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -198,6 +201,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -282,13 +286,127 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	}
 	leftCond = expression.RemoveDupExprs(leftCond)
 	rightCond = expression.RemoveDupExprs(rightCond)
-	leftRet, lCh := p.Children()[0].PredicatePushDown(leftCond, opt)
-	rightRet, rCh := p.Children()[1].PredicatePushDown(rightCond, opt)
-	addSelection(p, lCh, leftRet, 0, opt)
-	addSelection(p, rCh, rightRet, 1, opt)
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	children := p.Children()
+	rightChild := children[1]
+	leftChild := children[0]
+	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
+	leftCond = constraint.DeleteTrueExprsBySchema(evalCtx, leftChild.Schema(), leftCond)
+	leftRet, lCh := leftChild.PredicatePushDown(leftCond, opt)
+	rightRet, rCh := rightChild.PredicatePushDown(rightCond, opt)
+	AddSelection(p, lCh, leftRet, 0, opt)
+	AddSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
 	return ret, p.Self()
+}
+
+// simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
+func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
+	if p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != InnerJoin {
+		return
+	}
+
+	innerTable := p.children[0]
+	outerTable := p.children[1]
+	if p.JoinType == LeftOuterJoin {
+		innerTable, outerTable = outerTable, innerTable
+	}
+
+	if p.JoinType == InnerJoin {
+		return
+	}
+	// then simplify embedding outer join.
+	canBeSimplified := false
+	for _, expr := range predicates {
+		// avoid the case where the expr only refers to the schema of outerTable
+		if expression.ExprFromSchema(expr, outerTable.Schema()) {
+			continue
+		}
+		isOk := isNullRejected(p.SCtx(), innerTable.Schema(), expr)
+		if isOk {
+			canBeSimplified = true
+			break
+		}
+	}
+	if canBeSimplified {
+		p.JoinType = InnerJoin
+	}
+}
+
+// isNullRejected check whether a condition is null-rejected
+// A condition would be null-rejected in one of following cases:
+// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
+// If it is a conjunction containing a null-rejected condition as a conjunct.
+// If it is a disjunction of null-rejected conditions.
+func isNullRejected(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+	exprCtx := exprctx.WithNullRejectCheck(ctx.GetExprCtx())
+	expr = expression.PushDownNot(exprCtx, expr)
+	if expression.ContainOuterNot(expr) {
+		return false
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, cond := range expression.SplitCNFItems(expr) {
+		if isNullRejectedSpecially(ctx, schema, expr) {
+			return true
+		}
+
+		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond)
+		if err != nil {
+			return false
+		}
+		x, ok := result.(*expression.Constant)
+		if !ok {
+			continue
+		}
+		if x.Value.IsNull() {
+			return true
+		} else if isTrue, err := x.Value.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// isNullRejectedSpecially handles some null-rejected cases specially, since the current in
+// EvaluateExprWithNull is too strict for some cases, e.g. #49616.
+func isNullRejectedSpecially(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+	return specialNullRejectedCase1(ctx, schema, expr) // only 1 case now
+}
+
+// specialNullRejectedCase1 is mainly for #49616.
+// Case1 specially handles `null-rejected OR (null-rejected AND {others})`, then no matter what the result
+// of `{others}` is (True, False or Null), the result of this predicate is null, so this predicate is null-rejected.
+func specialNullRejectedCase1(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+	isFunc := func(e expression.Expression, lowerFuncName string) *expression.ScalarFunction {
+		f, ok := e.(*expression.ScalarFunction)
+		if !ok {
+			return nil
+		}
+		if f.FuncName.L == lowerFuncName {
+			return f
+		}
+		return nil
+	}
+	orFunc := isFunc(expr, ast.LogicOr)
+	if orFunc == nil {
+		return false
+	}
+	for i := range 2 {
+		andFunc := isFunc(orFunc.GetArgs()[i], ast.LogicAnd)
+		if andFunc == nil {
+			continue
+		}
+		if !isNullRejected(ctx, schema, orFunc.GetArgs()[1-i]) {
+			continue // the other side should be null-rejected: null-rejected OR (... AND ...)
+		}
+		for _, andItem := range expression.SplitCNFItems(andFunc) {
+			if isNullRejected(ctx, schema, andItem) {
+				return true // hit the case in the comment: null-rejected OR (null-rejected AND ...)
+			}
+		}
+	}
+	return false
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
@@ -748,7 +866,9 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Express
 
 // ExtractFDForInnerJoin extracts FD for inner join.
 func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
-	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
+	children := p.Children()
+	rightFD := children[1].ExtractFD()
+	leftFD := children[0].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
 
@@ -1644,7 +1764,10 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.RightConditions = nil
 	p.OtherConditions = nil
 	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin
-	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx().GetExprCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
+	exprCtx := p.SCtx().GetExprCtx()
+	outerTableSchema := outerTable.Schema()
+	innerTableSchema := innerTable.Schema()
+	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
 }

@@ -259,6 +259,16 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 
+	// HTTP path for ingest configurations
+	router.Handle("/ingest/max-batch-split-ranges", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxBatchSplitRanges)).Name("IngestMaxBatchSplitRanges")
+	router.Handle("/ingest/max-split-ranges-per-sec", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxSplitRangesPerSec)).Name("IngestMaxSplitRangesPerSec")
+	router.Handle("/ingest/max-ingest-inflight", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxInflight)).Name("IngestMaxInflight")
+	router.Handle("/ingest/max-ingest-per-sec", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxPerSecond)).Name("IngestMaxPerSec")
+
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRegions))
@@ -522,17 +532,17 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	go util.WithRecovery(func() {
 		err := grpcServer.Serve(grpcL)
-		logutil.BgLogger().Error("grpc server error", zap.Error(err))
+		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
 		err := statusServer.Serve(httpL)
-		logutil.BgLogger().Error("http server error", zap.Error(err))
+		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
 
 	err := m.Serve()
 	if err != nil {
-		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
+		logutil.BgLogger().Warn("start status/rpc server error", zap.Error(err))
 	}
 }
 

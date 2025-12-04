@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -242,19 +243,43 @@ func (mgr *TaskManager) CreateTaskWithSession(
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+basicTaskColumns+` from mysql.tidb_global_task t
-		where state in (%?, %?, %?, %?, %?, %?)
-		order by priority asc, create_time asc, id asc
-		limit %?`,
+	return mgr.getTopTasks(ctx,
 		proto.TaskStatePending,
 		proto.TaskStateRunning,
 		proto.TaskStateReverting,
 		proto.TaskStateCancelling,
 		proto.TaskStatePausing,
 		proto.TaskStateResuming,
-		proto.MaxConcurrentTask*2,
 	)
+}
+
+// GetTopNoNeedResourceTasks implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) GetTopNoNeedResourceTasks(ctx context.Context) ([]*proto.TaskBase, error) {
+	return mgr.getTopTasks(ctx,
+		proto.TaskStateReverting,
+		proto.TaskStateCancelling,
+		proto.TaskStatePausing,
+	)
+}
+
+func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskState) ([]*proto.TaskBase, error) {
+	var holders strings.Builder
+	for i := range states {
+		if i > 0 {
+			holders.WriteString(",")
+		}
+		holders.WriteString("%?")
+	}
+	sql := fmt.Sprintf(`select %s from mysql.tidb_global_task t
+		where state in (%s)
+		order by priority asc, create_time asc, id asc
+		limit %%?`, basicTaskColumns, holders.String())
+	args := make([]any, 0, len(states)+1)
+	for _, s := range states {
+		args = append(args, s)
+	}
+	args = append(args, proto.MaxConcurrentTask*2)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -786,6 +811,22 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 		subtasks = append(subtasks, Row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+// GetAllTasks gets all tasks with basic columns.
+func (mgr *TaskManager) GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicTaskColumns+` from mysql.tidb_global_task t`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	tasks := make([]*proto.TaskBase, 0, len(rs))
+	for _, r := range rs {
+		tasks = append(tasks, row2TaskBasic(r))
+	}
+	return tasks, nil
 }
 
 // GetAllSubtasks gets all subtasks with basic columns.

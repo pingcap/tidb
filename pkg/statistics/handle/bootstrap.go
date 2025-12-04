@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -35,6 +36,7 @@ import (
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	tableinfo "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -131,7 +133,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 		tblID := row.GetInt64(0)
 		if table == nil || table.PhysicalID != tblID {
 			if table != nil {
-				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+				cache.Put(table.PhysicalID, table) // put this table in the cache because all statistics of the table have been read.
 			}
 			var ok bool
 			table, ok = cache.Get(tblID)
@@ -164,7 +166,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 		}
 	}
 	if table != nil {
-		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+		cache.Put(table.PhysicalID, table) // put this table in the cache because all statistics of the table have been read.
 	}
 }
 
@@ -175,20 +177,39 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				zap.Stack("stack"))
 		}
 	}()
-	var table *statistics.Table
+	var (
+		table        *statistics.Table
+		tblInfo      tableinfo.Table
+		tblInfoValid bool
+	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
 		if table == nil || table.PhysicalID != tblID {
+			tblInfoValid = false
 			if table != nil {
 				table.ColAndIdxExistenceMap.SetChecked()
 				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
 			var ok bool
+			// This table must be already in the cache since we load stats_meta first.
 			table, ok = cache.Get(tblID)
 			if !ok {
 				continue
 			}
 			table = table.Copy()
+			// Fetch table info only once per table instead of once per row
+			tblInfo, ok = h.TableInfoByIDForInitStats(is, tblID)
+			if !ok {
+				// Table not found - likely dropped but stats metadata not yet garbage collected. Skip loading stats for this table.
+				statslogutil.StatsSampleLogger().Warn("table info not found during stats initialization, skipping", zap.Int64("physicalID", table.PhysicalID))
+				continue
+			}
+			tblInfoValid = true
+		}
+		// Skip all rows for tables that could not find table info.
+		// This happens when a table is dropped but its stats metadata is not yet garbage collected.
+		if !tblInfoValid {
+			continue
 		}
 		// All the objects in the table share the same stats version.
 		if statsVer != statistics.Version0 {
@@ -196,15 +217,9 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
-		tbl, ok := h.TableInfoByID(is, table.PhysicalID)
-		if !ok {
-			// this table has been dropped. but stats meta still exists and wait for being deleted.
-			logutil.BgLogger().Warn("cannot find this table when to init stats", zap.Int64("tableID", table.PhysicalID))
-			continue
-		}
 		if row.GetInt64(1) > 0 {
 			var idxInfo *model.IndexInfo
-			for _, idx := range tbl.Meta().Indices {
+			for _, idx := range tblInfo.Meta().Indices {
 				if idx.ID == id {
 					idxInfo = idx
 					break
@@ -246,7 +261,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
 		} else {
 			var colInfo *model.ColumnInfo
-			for _, col := range tbl.Meta().Columns {
+			for _, col := range tblInfo.Meta().Columns {
 				if col.ID == id {
 					colInfo = col
 					break
@@ -261,7 +276,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				Histogram:  *hist,
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
-				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				IsHandle:   tblInfo.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
 			}
@@ -618,6 +633,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(2) /*count*/, row.GetInt64(3) /*repeats*/, row.GetInt64(6) /*ndv*/)
 	}
 	if table != nil {
+		table.SetAllIndexFullLoadForBootstrap()
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 	if hasErr {
@@ -756,17 +772,19 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 		return err
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
+	start := time.Now()
 	cache, err := h.initStatsMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statslogutil.StatsLogger().Info("complete to load the meta in the lite mode")
+	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
+	start = time.Now()
 	err = h.initStatsHistogramsLite(ctx, cache)
 	if err != nil {
 		cache.Close()
 		return errors.Trace(err)
 	}
-	statslogutil.StatsLogger().Info("complete to load the histogram in the lite mode")
+	statslogutil.StatsLogger().Info("Complete loading the histogram in the lite mode", zap.Duration("duration", time.Since(start)))
 	h.Replace(cache)
 	return nil
 }
@@ -794,40 +812,45 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 		return err
 	}
 	failpoint.Inject("beforeInitStats", func() {})
+	start := time.Now()
 	cache, err := h.initStatsMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statslogutil.StatsLogger().Info("complete to load the meta")
+	statslogutil.StatsLogger().Info("Complete loading the stats meta", zap.Duration("duration", time.Since(start)))
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
+	start = time.Now()
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsHistogramsConcurrency(is, cache, totalMemory)
 	} else {
 		err = h.initStatsHistograms(is, cache)
 	}
-	statslogutil.StatsLogger().Info("complete to load the histogram")
+	statslogutil.StatsLogger().Info("Complete loading the histogram", zap.Duration("duration", time.Since(start)))
 	if err != nil {
 		return errors.Trace(err)
 	}
+	start = time.Now()
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsTopNConcurrency(cache, totalMemory)
 	} else {
 		err = h.initStatsTopN(cache, totalMemory)
 	}
-	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
-	statslogutil.StatsLogger().Info("complete to load the topn")
 	if err != nil {
 		return err
 	}
+	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
+	statslogutil.StatsLogger().Info("Complete loading the topn", zap.Duration("duration", time.Since(start)))
 	if loadFMSketch {
+		start = time.Now()
 		err = h.initStatsFMSketch(cache)
 		if err != nil {
 			return err
 		}
-		statslogutil.StatsLogger().Info("complete to load the FM Sketch")
+		statslogutil.StatsLogger().Info("Complete loading the FM Sketch", zap.Duration("duration", time.Since(start)))
 	}
+	start = time.Now()
 	err = h.initStatsBuckets(cache, totalMemory)
-	statslogutil.StatsLogger().Info("complete to load the bucket")
+	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
 	if err != nil {
 		return errors.Trace(err)
 	}

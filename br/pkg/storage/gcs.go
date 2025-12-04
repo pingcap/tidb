@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -141,10 +142,16 @@ func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 }
 
 // DeleteFiles delete the files in storage.
+// If the file does not exist, we will ignore it.
 func (s *GCSStorage) DeleteFiles(ctx context.Context, names []string) error {
 	for _, name := range names {
 		err := s.DeleteFile(ctx, name)
 		if err != nil {
+			// some real-TiKV test also delete objects, so we ignore the error if
+			// the object does not exist
+			if goerrors.Is(err, storage.ErrObjectNotExist) {
+				continue
+			}
 			return err
 		}
 	}
@@ -211,7 +218,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 
 	attrs, err := handle.Attrs(ctx)
 	if err != nil {
-		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
 			return nil, errors.Annotatef(err,
 				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
 				s.gcs.Bucket, path)
@@ -228,7 +235,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 			pos = *o.StartOffset
 		}
 		if o.EndOffset != nil {
-			endPos = *o.EndOffset
+			endPos = min(endPos, *o.EndOffset)
 		}
 		prefetchSize = o.PrefetchSize
 	}
@@ -511,11 +518,22 @@ func shouldRetry(err error) bool {
 		}
 	}
 
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/7090
+	// seems it's a bug of golang net/http: https://github.com/golang/go/issues/53472
+	if e := (&url.Error{}); goerrors.As(err, &e) {
+		if goerrors.Is(e.Err, io.EOF) {
+			return true
+		}
+	}
+
 	errMsg := err.Error()
 	// workaround for strange unknown errors
 	retryableErrMsg := []string{
 		"http2: client connection force closed via ClientConn.Close",
 		"broken pipe",
+		"http2: client connection lost",
+		// See https://stackoverflow.com/questions/45209168/http2-server-sent-goaway-and-closed-the-connection-laststreamid-1999 for details.
+		"http2: server sent GOAWAY",
 	}
 
 	for _, msg := range retryableErrMsg {
@@ -541,6 +559,7 @@ type gcsObjectReader struct {
 	name      string
 	objHandle *storage.ObjectHandle
 	reader    io.ReadCloser
+	// [pos, endPos) is the range of the file to read.
 	pos       int64
 	endPos    int64
 	totalSize int64
@@ -561,10 +580,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 		}
 	})
 	if r.reader == nil {
-		length := int64(-1)
-		if r.endPos != r.totalSize {
-			length = r.endPos - r.pos
-		}
+		length := r.endPos - r.pos
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)
 		if err != nil {
 			return 0, errors.Annotatef(err,
@@ -573,7 +589,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 		}
 		r.reader = rc
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, length, r.prefetchSize)
 		}
 	}
 	n, err = r.reader.Read(p)
@@ -633,7 +649,7 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = rc
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, r.endPos-r.pos, r.prefetchSize)
 	}
 
 	return realOffset, nil

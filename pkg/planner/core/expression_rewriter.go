@@ -251,7 +251,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
-			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand},
+			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, curClause: b.curClause, rollExpand: b.currentBlockExpand},
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
@@ -267,6 +267,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.ctx = ctx
 	rewriter.err = nil
 	rewriter.planCtx.plan = p
+	rewriter.planCtx.curClause = b.curClause
 	rewriter.planCtx.aggrMap = nil
 	rewriter.planCtx.insertPlan = nil
 	rewriter.planCtx.rollExpand = b.currentBlockExpand
@@ -323,6 +324,9 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 type exprRewriterPlanCtx struct {
 	plan    base.LogicalPlan
 	builder *PlanBuilder
+
+	// curClause tracks which part of the query is being processed
+	curClause clauseCode
 
 	aggrMap   map[*ast.AggregateFuncExpr]int
 	windowMap map[*ast.WindowFuncExpr]int
@@ -728,13 +732,8 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 		er.err = err
 		return v, true
 	}
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingCompareSubquery)
 
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
@@ -1038,14 +1037,24 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		er.err = err
 		return v, true
 	}
-	np = er.popExistsSubPlan(planCtx, np)
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
+	// Add LIMIT 1 when noDecorrelate is true for EXISTS subqueries to enable early exit
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingExistsSubquery)
+	if noDecorrelate {
+		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
+		if !hasLimit(np) {
+			limitClause := &ast.Limit{
+				Count: ast.NewValueExpr(1, "", ""),
+			}
+			var err error
+			np, err = planCtx.builder.buildLimit(np, limitClause)
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+		}
 	}
+	np = er.popExistsSubPlan(planCtx, np)
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
 		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
@@ -1212,16 +1221,11 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
 	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
 	// To keep it simple, we forbid this converting if they have different collations.
+	// tested by TestCollateSubQuery.
 	lt, rt := lexpr.GetType(er.sctx.GetEvalCtx()), rexpr.GetType(er.sctx.GetEvalCtx())
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	if len(corCols) == 0 && noDecorrelate {
-		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
 
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
@@ -1257,7 +1261,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		}
 		planCtx.plan = join
 	} else {
-		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, false, noDecorrelate)
+		semiRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, semiRewrite, noDecorrelate)
 		if er.err != nil {
 			return v, true
 		}
@@ -1271,6 +1276,33 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	return v, true
 }
 
+func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64, sCtx subQueryCtx) bool {
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
+
+	if len(corCols) == 0 {
+		if noDecorrelate {
+			planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
+				"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
+			noDecorrelate = false
+		}
+	} else {
+		semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+		// We can't override noDecorrelate via the variable for EXISTS subqueries with semi join rewrite
+		// as this will cause a conflict that will result in both being disabled in later code
+		if !(semiJoinRewrite && sCtx == handlingExistsSubquery) {
+			// Only support scalar and exists subqueries
+			validSubqType := sCtx == handlingScalarSubquery || sCtx == handlingExistsSubquery
+			if validSubqType && planCtx.curClause == fieldList { // subquery is in the select list
+				// If it isn't already enabled via hint, and variable is set, then enable it
+				if !noDecorrelate && planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelateInSelect {
+					noDecorrelate = true
+				}
+			}
+		}
+	}
+	return noDecorrelate
+}
+
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) (ast.Node, bool) {
 	intest.AssertNotNil(planCtx)
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
@@ -1281,13 +1313,8 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		return v, true
 	}
 	np = planCtx.builder.buildMaxOneRow(np)
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
+	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags, handlingScalarSubquery)
 
 	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, logicalop.LeftOuterJoin, noDecorrelate)
@@ -1641,6 +1668,11 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 	}
 	if err != nil {
 		return
+	}
+	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
+		if er.planCtx != nil && er.planCtx.builder != nil {
+			er.planCtx.builder.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
+		}
 	}
 	return
 }
@@ -2639,4 +2671,22 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 		return false
 	}
 	return strings.ToLower(x) == ast.CurrentTimestamp
+}
+
+// hasLimit checks if the plan already contains a LIMIT operator
+func hasLimit(plan base.LogicalPlan) bool {
+	if plan == nil {
+		return false
+	}
+	// Check if this is a LogicalLimit
+	if _, ok := plan.(*logicalop.LogicalLimit); ok {
+		return true
+	}
+	// Recursively check children
+	for _, child := range plan.Children() {
+		if hasLimit(child) {
+			return true
+		}
+	}
+	return false
 }

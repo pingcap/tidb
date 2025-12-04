@@ -1654,7 +1654,8 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 		require.Equal(t, check, true)
 	}
 
-	check := func(query string) {
+	check := func(prefix, suffix string) {
+		query := "explain " + prefix + " " + suffix
 		// If sql mode is strict, read does not push down to tiflash
 		tk.MustExec("set @@sql_mode = 'strict_trans_tables'")
 		tk.MustExec("set @@tidb_enforce_mpp=0")
@@ -1670,22 +1671,35 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 		rs = tk.MustQuery("show warnings").Rows()
 		checkRes(rs, 2, "MPP mode may be blocked because the query is not readonly and sql mode is strict.")
 
+		// If using `set_var` to set sql mode to non-strict mode, read should push down to tiflash
+		hintedQuery := "explain " + prefix + " /*+ SET_VAR(sql_mode='') */ " + suffix
+		rs = tk.MustQuery(hintedQuery).Rows()
+		checkRes(rs, 2, "mpp[tiflash]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
 		// If sql mode is not strict, read should push down to tiflash
 		tk.MustExec("set @@sql_mode = ''")
 		rs = tk.MustQuery(query).Rows()
 		checkRes(rs, 2, "mpp[tiflash]")
 		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		// If using `set_var` to set sql mode to strict mode, read should not push down to tiflash
+		hintedQuery = "explain " + prefix + " /*+ SET_VAR(sql_mode='strict_trans_tables') */ " + suffix
+		rs = tk.MustQuery(hintedQuery).Rows()
+		checkRes(rs, 2, "cop[tikv]")
+		rs = tk.MustQuery("show warnings").Rows()
+		checkRes(rs, 2, "MPP mode may be blocked because the query is not readonly and sql mode is strict.")
 	}
 
 	// Insert into ... select
-	check("explain insert into t2 select a+b from t")
-	check("explain insert into t2 select t.a from t2 join t on t2.a = t.a")
+	check("insert", "into t2 select a+b from t")
+	check("insert", "into t2 select t.a from t2 join t on t2.a = t.a")
 
 	// Replace into ... select
-	check("explain replace into t2 select a+b from t")
+	check("replace", "into t2 select a+b from t")
 
 	// CTE
-	check("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)")
+	check("update", "t set a=a+1 where b in (select a from t2 where t.a > t2.a)")
 }
 
 func TestPointGetWithSelectLock(t *testing.T) {
@@ -1968,11 +1982,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tikv.
 	rows := [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_13", "root", "data:TableFullScan_12"},
-		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tikv.
 	rows = [][]any{
@@ -2004,11 +2018,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tiflash.
 	rows = [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_15", "root", "data:TableFullScan_14"},
-		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tiflash.
 	rows = [][]any{
@@ -2108,8 +2122,8 @@ func TestIssue46556(t *testing.T) {
 		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#5, test.t0.c0)]`,
 			`├─Projection(Build) 0.00 root  <nil>->Column#5`,
 			`│ └─TableDual 0.00 root  rows:0`,
-			`└─TableReader(Probe) 7992.00 root  data:Selection`,
-			`  └─Selection 7992.00 cop[tikv]  like(test.t0.c0, test.t0.c0, 92), not(isnull(test.t0.c0))`,
+			`└─TableReader(Probe) 9990.00 root  data:Selection`,
+			`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
 			`    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
 }
 
@@ -2320,4 +2334,92 @@ func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	tk.MustExec("INSERT INTO test1 VALUES (-100000000, \"123459789332\", 1, \"123459789332\", \"BBBBB\", 1675871896, 1675871896, '{\"col10\": \"CCCCC\",\"col9\": [\"ABCDEFG\"]}', NULL, DEFAULT, DEFAULT, DEFAULT);\n")
 	tk.MustExec("UPDATE test1 SET col7 = '{\"col10\":\"DDDDD\",\"col9\":[\"abcdefg\"]}';\n")
 	tk.MustExec("DELETE FROM test1 WHERE col1 < 0;\n")
+}
+
+func TestIssue63949(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int)`)
+	tk.MustExec(`create table t2 (a int, b int, c int, d int, key ab(a, b), key abcd(a, b, c, d))`)
+	tk.MustUseIndex(`select /*+ tidb_inlj(t2) */ t2.a from t1, t2 where t1.a=t2.a and t2.b=1 and t2.d=1`, "abcd")
+}
+
+func TestIssue61669(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+CREATE TABLE B (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  RCRD_NO varchar(20) NOT NULL,
+  FILE_NO varchar(20) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  MDL_DT date DEFAULT NULL,
+  TS varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  MDL_NO varchar(50) DEFAULT NULL,
+  TXN_NO varchar(90) DEFAULT NULL,
+  SCR_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  PRIMARY KEY (ROW_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, DT, MDL_DT, TS, LD),
+  KEY IDX2_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, MDL_DT, SCR_NO, TXN_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXNDTL (FILE_NO, BSTPRTFL_NO),
+  KEY IDX_ETF_FLR_PRCHRDMP_TXN_FIX (MDL_NO, BSTPRTFL_NO, MDL_DT),
+  UNIQUE UI_ETF_FLR_PRCHRDMP_TXN_DTLTB (RCRD_NO),
+  KEY IDX3_ETF_FLR_PRCHRDMP_TXN_DTL (DT)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 2085290754;`)
+	tk.MustExec(`
+CREATE TABLE A (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  TEMP_NO varchar(20) NOT NULL,
+  VCHR_TPCD varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  CASH_RPLC_AMT decimal(19, 2) DEFAULT NULL,
+  PCSG_BTNO_NO varchar(20) DEFAULT NULL,
+  KEY INX_TEMP_NO (TEMP_NO),
+  PRIMARY KEY (ROW_NO),
+  KEY idx2_ETF_FNDTA_SALE_PA (PCSG_BTNO_NO, DT, VCHR_TPCD)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 900006;`)
+	r := tk.MustQuery(`
+explain SELECT *
+FROM A A
+JOIN
+    (SELECT CASH_RPLC_AMT,
+         S.BSTPRTFL_NO
+    FROM
+        (SELECT BSTPRTFL_NO,
+         SUM(CASE
+            WHEN LD IN ('03') THEN
+            DAM
+            ELSE 0 END) AS CASH_RPLC_AMT
+        FROM
+            (SELECT B.LD,
+         SUM(B.DAM) DAM,
+         B.BSTPRTFL_NO
+            FROM B B
+            GROUP BY  B.LD, B.BSTPRTFL_NO) ff
+            GROUP BY  BSTPRTFL_NO) S ) f
+            ON A.BSTPRTFL_NO = f.BSTPRTFL_NO
+    WHERE A.PCSG_BTNO_NO = 'MXUU2022123043502318'`)
+	require.True(t, len(r.Rows()) > 0) // no error
+}
+
+func TestIssue58829(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t1 (id varchar(64) not null,  key(id))`)
+	tk.MustExec(`create table t2 (id bigint(20), k int)`)
+
+	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
+	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
 }

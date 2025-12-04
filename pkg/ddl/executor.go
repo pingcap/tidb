@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -77,6 +78,7 @@ import (
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
+	removingObjPrefix     = "_Tombstone$_"
 	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
@@ -957,10 +959,6 @@ func checkGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexInfo *mo
 			// Makes no sense with LOCAL/GLOBAL index for non-partitioned tables, since we don't support
 			// partitioning an index differently from the table partitioning.
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
-		}
-		// TODO: remove limitation
-		if !indexInfo.Unique {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption on non-unique index")
 		}
 		validateGlobalIndexWithGeneratedColumns(ec, tblInfo, indexInfo.Name.O, indexInfo.Columns)
 	}
@@ -2012,16 +2010,20 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
+		SessionVars:         make(map[string]string, 2),
 	}
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	job.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(ctx))
+	job.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
+	setNeedAnalyze(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -3325,6 +3327,8 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+	jobW.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(sctx))
+	jobW.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -3425,6 +3429,8 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+	jobW.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(sctx))
+	jobW.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -4543,14 +4549,10 @@ func GetName4AnonymousIndex(t table.Table, colName pmodel.CIStr, idxName pmodel.
 	return indexName
 }
 
-func checkCreateUniqueGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexName string, indexColumns []*model.IndexColumn, isUnique bool, isGlobal bool) error {
+func checkCreateGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexName string, indexColumns []*model.IndexColumn, isUnique bool, isGlobal bool) error {
 	pi := tblInfo.GetPartitionInfo()
 	if isGlobal && pi == nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
-	}
-	if isGlobal && !isUnique {
-		// TODO: remove this limitation
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on non-unique index")
 	}
 	if isUnique && pi != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
@@ -4561,6 +4563,8 @@ func checkCreateUniqueGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, i
 			// index columns does not contain all partition columns, must be global
 			return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName)
 		}
+	}
+	if isGlobal {
 		validateGlobalIndexWithGeneratedColumns(ec, tblInfo, indexName, indexColumns)
 	}
 	return nil
@@ -4611,7 +4615,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		return err
 	}
 
-	if err = checkCreateUniqueGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, "PRIMARY", indexColumns, true, indexOption != nil && indexOption.Global); err != nil {
+	if err = checkCreateGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, "PRIMARY", indexColumns, true, indexOption != nil && indexOption.Global); err != nil {
 		return err
 	}
 
@@ -4795,15 +4799,16 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		BinlogInfo: &model.HistoryInfo{},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
-		Charset:    charset,
-		Collate:    collate,
-		SQLMode:    ctx.GetSessionVars().SQLMode,
+		SchemaID:    schema.ID,
+		TableID:     t.Meta().ID,
+		SchemaName:  schema.Name.L,
+		TableName:   t.Meta().Name.L,
+		BinlogInfo:  &model.HistoryInfo{},
+		Priority:    ctx.GetSessionVars().DDLReorgPriority,
+		Charset:     charset,
+		Collate:     collate,
+		SQLMode:     ctx.GetSessionVars().SQLMode,
+		SessionVars: make(map[string]string),
 	}
 	return job
 }
@@ -4859,6 +4864,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if len(indexName.L) == 0 {
+		// It means that there is already an index exists with same name
+		return nil
+	}
 
 	tblInfo := t.Meta()
 	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
@@ -4875,7 +4884,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
-	if err = checkCreateUniqueGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns, unique, indexOption != nil && indexOption.Global); err != nil {
+	if err = checkCreateGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns, unique, indexOption != nil && indexOption.Global); err != nil {
 		return err
 	}
 
@@ -4904,6 +4913,8 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
+	job.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(ctx))
+	job.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
@@ -4971,10 +4982,17 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		if err != nil {
 			return err
 		}
+	case model.ActionModifyColumn:
+		setReorgParam()
+		if modifyColumnNeedReorg(job.CtxVars) {
+			err := setDistTaskParam()
+			if err != nil {
+				return err
+			}
+		}
 	case model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning,
-		model.ActionModifyColumn:
+		model.ActionAlterTablePartitioning:
 		setReorgParam()
 	case model.ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -4985,16 +5003,24 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				if err != nil {
 					return err
 				}
+			case model.ActionModifyColumn:
+				setReorgParam()
+				if modifyColumnNeedReorg(sub.CtxVars) {
+					err := setDistTaskParam()
+					if err != nil {
+						return err
+					}
+				}
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
-				model.ActionAlterTablePartitioning,
-				model.ActionModifyColumn:
+				model.ActionAlterTablePartitioning:
 				setReorgParam()
 			}
 		}
 	default:
 		return nil
 	}
+	failpoint.InjectCall("beforeInitReorgMeta", m)
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
 		zap.String("jobSchema", job.SchemaName),
@@ -5007,6 +5033,15 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Int("batchSize", m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))),
 	)
 	return nil
+}
+
+func modifyColumnNeedReorg(jobCtxVars []any) bool {
+	if len(jobCtxVars) > 0 {
+		if v, ok := jobCtxVars[0].(bool); ok {
+			return v
+		}
+	}
+	return false
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
@@ -6886,12 +6921,23 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 }
 
 func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
-	var scatterScope string
-	val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
-	if !ok {
-		logutil.DDLLogger().Info("won't scatter region since system variable didn't set")
-	} else {
-		scatterScope = val
+	if val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion); ok {
+		return val
 	}
-	return scatterScope
+	logutil.DDLLogger().Info("system variable tidb_scatter_region not found, use default value")
+	return variable.DefTiDBScatterRegion
+}
+
+func getEnableDDLAnalyze(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBEnableStatsUpdateDuringDDL); ok {
+		return val
+	}
+	return variable.BoolToOnOff(variable.DefTiDBEnableStatsUpdateDuringDDL)
+}
+
+func getAnalyzeVersion(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBAnalyzeVersion); ok {
+		return val
+	}
+	return strconv.Itoa(variable.DefTiDBAnalyzeVersion)
 }

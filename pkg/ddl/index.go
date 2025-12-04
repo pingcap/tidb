@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -58,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -87,6 +89,16 @@ const (
 	// MaxCommentLength is exported for testing.
 	MaxCommentLength = 1024
 )
+
+var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+
+// DefaultCumulativeTimeout is the default cumulative timeout for analyze operation.
+// exported for testing.
+var DefaultCumulativeTimeout = 1 * time.Minute
+
+// DefaultAnalyzeCheckInterval is the interval for checking analyze status.
+// exported for testing.
+var DefaultAnalyzeCheckInterval = 10 * time.Second
 
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
@@ -564,7 +576,7 @@ func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ er
 
 func setIndexVisibility(tblInfo *model.TableInfo, name pmodel.CIStr, invisible bool) {
 	for _, idx := range tblInfo.Indices {
-		if idx.Name.L == name.L || (isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
+		if idx.Name.L == name.L || getChangingIndexOriginName(idx) == name.O {
 			idx.Invisible = invisible
 		}
 	}
@@ -984,19 +996,10 @@ SwitchIndexState:
 	switch allIndexInfos[0].State {
 	case model.StateNone:
 		// none -> delete only
-		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(job)
+		err = initForReorgIndexes(w, job, allIndexInfos)
 		if err != nil {
-			if !isRetryableJobError(err, job.ErrorCount) {
-				job.State = model.JobStateCancelled
-			}
+			job.State = model.JobStateCancelled
 			return ver, err
-		}
-		loadCloudStorageURI(w, job)
-		if reorgTp.NeedMergeProcess() {
-			for _, indexInfo := range allIndexInfos {
-				indexInfo.BackfillState = model.BackfillStateRunning
-			}
 		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteOnly
@@ -1046,80 +1049,347 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		var done bool
-		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, job, tbl, allIndexInfos)
-		} else {
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			// reorg the index data.
+			var done bool
 			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-		}
-		if !done {
-			return ver, err
-		}
-
-		// Set column index flag.
-		for _, indexInfo := range allIndexInfos {
-			AddIndexColumnFlag(tblInfo, indexInfo)
-			if isPK {
-				if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
-					return ver, errors.Trace(err)
-				}
+			if !done {
+				return ver, err
 			}
-			indexInfo.State = model.StatePublic
-		}
-
-		// Inject the failpoint to prevent the progress of index creation.
-		failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
-			if sigFile, ok := v.(string); ok {
-				for {
-					time.Sleep(1 * time.Second)
-					if _, err := os.Stat(sigFile); err != nil {
-						if os.IsNotExist(err) {
-							continue
-						}
-						failpoint.Return(ver, errors.Trace(err))
+			if checkAnalyzeNecessary(job, allIndexInfos, tblInfo) {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+			} else {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateRunning:
+			// after all old index data are reorged. re-analyze it.
+			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+			failpoint.InjectCall("analyzeTableDone", job)
+			if done || timedOut || failed {
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				if timedOut {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+				}
+				if failed {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
+				}
+				checkAndMarkNonRevertible(job)
+			}
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			// Set column index flag.
+			for _, indexInfo := range allIndexInfos {
+				AddIndexColumnFlag(tblInfo, indexInfo)
+				if isPK {
+					if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
+						return ver, errors.Trace(err)
 					}
-					break
 				}
+				indexInfo.State = model.StatePublic
 			}
-		})
 
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		a := &model.ModifyIndexArgs{
-			PartitionIDs: getPartitionIDs(tbl.Meta()),
-			OpType:       model.OpAddIndex,
-		}
-		for _, indexInfo := range allIndexInfos {
-			a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
-				IndexID:  indexInfo.ID,
-				IfExist:  false,
-				IsGlobal: indexInfo.Global,
+			// Inject the failpoint to prevent the progress of index creation.
+			failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
+				if sigFile, ok := v.(string); ok {
+					for {
+						time.Sleep(1 * time.Second)
+						if _, err := os.Stat(sigFile); err != nil {
+							if os.IsNotExist(err) {
+								continue
+							}
+							failpoint.Return(ver, errors.Trace(err))
+						}
+						break
+					}
+				}
 			})
-		}
-		job.FillFinishedArgs(a)
 
-		addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos)
-		err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
-		if err2 != nil {
-			return ver, errors.Trace(err2)
-		}
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
+			a := &model.ModifyIndexArgs{
+				PartitionIDs: getPartitionIDs(tbl.Meta()),
+				OpType:       model.OpAddIndex,
+			}
+			for _, indexInfo := range allIndexInfos {
+				a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
+					IndexID:  indexInfo.ID,
+					IfExist:  false,
+					IsGlobal: indexInfo.Global,
+				})
+			}
+			job.FillFinishedArgs(a)
+
+			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
+			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, analyzed)
+			err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
+			if err2 != nil {
+				return ver, errors.Trace(err2)
+			}
+
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
+				ingest.LitBackCtxMgr.Unregister(job.ID)
+			}
+			logutil.DDLLogger().Info("run add index job done",
+				zap.String("charset", job.Charset),
+				zap.String("collation", job.Collate))
 		}
-		logutil.DDLLogger().Info("run add index job done",
-			zap.String("charset", job.Charset),
-			zap.String("collation", job.Collate))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo) error {
+	if len(idxInfos) == 0 {
+		return nil
+	}
+	reorgTp, err := pickBackfillType(job)
+	if err != nil {
+		return err
+	}
+	loadCloudStorageURI(w, job)
+	if reorgTp.NeedMergeProcess() {
+		// Increase telemetryAddIndexIngestUsage
+		telemetryAddIndexIngestUsage.Inc()
+		for _, indexInfo := range idxInfos {
+			indexInfo.BackfillState = model.BackfillStateRunning
+		}
+	}
+	return nil
+}
+
+type analyzeStatus int
+
+const (
+	analyzeUnknown analyzeStatus = iota
+	analyzeRunning
+	analyzeFinished
+	analyzeFailed
+)
+
+// queryAnalyzeStatusSince queries `analyze_jobs` for the specified table
+// and start_time >= startTS. It returns one of analyzeStatus values. If the
+// sessPool cannot provide a session or the query fails, it returns
+// analyzeUnknown and a nil error so the caller may decide to proceed with
+// starting ANALYZE.
+func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string) (analyzeStatus, error) {
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return analyzeUnknown, err
+	}
+	defer w.sessPool.Put(sessCtx)
+
+	startTimeStr := time.Now().UTC().Format(time.DateTime)
+	if startTS > 0 {
+		startTimeStr = model.TSConvert2Time(startTS).UTC().Format(time.DateTime)
+	}
+	kctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnStats)
+
+	// set session time zone to UTC to match the time format in `startTimeStr`
+	originalTimeZone := sessCtx.GetSessionVars().TimeZone
+	sessCtx.GetSessionVars().TimeZone = time.UTC
+	defer func() {
+		sessCtx.GetSessionVars().TimeZone = originalTimeZone
+	}()
+	exec := sessCtx.GetRestrictedSQLExecutor()
+	rows, _, chkErr := exec.ExecRestrictedSQL(kctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"SELECT state FROM mysql.analyze_jobs WHERE table_schema = %? AND table_name = %? AND start_time >= %?", dbName, tblName, startTimeStr)
+	if chkErr != nil {
+		return analyzeUnknown, chkErr
+	}
+	if len(rows) == 0 {
+		return analyzeUnknown, nil
+	}
+
+	for _, r := range rows {
+		var state string
+		if !r.IsNull(0) {
+			state = r.GetString(0)
+		}
+		switch {
+		case strings.EqualFold(state, "running"):
+			return analyzeRunning, nil
+		case strings.EqualFold(state, "failed"):
+			return analyzeFailed, nil
+		case strings.EqualFold(state, "finished"):
+			return analyzeFinished, nil
+		default:
+			// unknown state: continue checking other rows
+		}
+	}
+	// If no recognizable state found, treat as unknown so caller may attempt to start ANALYZE.
+	return analyzeUnknown, nil
+}
+
+// analyzeStatusDecision encapsulates the decision logic after observing
+// the analyze status for a table. It returns three booleans:
+//
+//	done: whether the caller should consider analyze finished (true) and continue DDL;
+//	timedOut: whether the analyze has exceeded cumulative timeout and caller should proceed with timeout handling;
+//	failed: whether the analyze has failed;
+//	proceed: whether the caller should proceed to start ANALYZE locally (true for unknown status).
+func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, status analyzeStatus, cumulativeTimeout time.Duration) (done, timedOut, failed, proceed bool) {
+	switch status {
+	case analyzeFinished:
+		logutil.DDLLogger().Info("analyze already finished by other owner", zap.Int64("jobID", job.ID), zap.String("db", dbName), zap.String("table", tblName))
+		w.ddlCtx.clearAnalyzeStartTime(job.ID)
+		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+		return true, false, false, false
+	case analyzeFailed:
+		logutil.DDLLogger().Warn("analyze previously failed on another owner, continue finishing DDL", zap.Int64("jobID", job.ID), zap.String("db", dbName), zap.String("table", tblName))
+		w.ddlCtx.clearAnalyzeStartTime(job.ID)
+		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+		return true, false, true, false
+	case analyzeRunning:
+		// If analyze is running, respect cumulative timeout. If expired, return timeout to let caller proceed.
+		if start, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); ok {
+			if time.Since(start) > cumulativeTimeout {
+				logutil.DDLLogger().Warn("analyze table is running but exceeded cumulative timeout, proceeding to finish DDL", zap.Int64("jobID", job.ID), zap.Duration("elapsed", time.Since(start)))
+				w.ddlCtx.clearAnalyzeStartTime(job.ID)
+				w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+				return false, true, false, false
+			}
+		} else {
+			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
+		}
+		select {
+		case <-w.ctx.Done():
+			logutil.DDLLogger().Info("analyze table after create index context done", zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
+			w.ddlCtx.clearAnalyzeStartTime(job.ID)
+			w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+			return true, false, false, false
+		case <-time.After(DefaultAnalyzeCheckInterval):
+			return false, false, false, false
+		}
+	default:
+		// analyzeUnknown: caller should proceed to start ANALYZE locally.
+		return false, false, false, true
+	}
+}
+
+func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) (done bool, timedOut bool, failed bool) {
+	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
+	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
+		// If the job is a multi-schema-change job,
+		// we only analyze the table once after all schema changes are done.
+		return true, false, false
+	}
+
+	cumulativeTimeout, found := w.ddlCtx.getAnalyzeCumulativeTimeout(job.ID)
+	if !found {
+		cumulativeTimeout = DefaultCumulativeTimeout
+		if job.RealStartTS != 0 {
+			addStart := model.TSConvert2Time(job.RealStartTS)
+			elapsed := time.Since(addStart)
+			if elapsed*2 > cumulativeTimeout {
+				cumulativeTimeout = elapsed * 2
+			}
+		}
+		w.ddlCtx.setAnalyzeCumulativeTimeout(job.ID, cumulativeTimeout)
+	}
+
+	if doneCh == nil {
+		status, err := w.queryAnalyzeStatusSince(job.StartTS, dbName, tblName)
+		if err != nil {
+			logutil.DDLLogger().Warn("query analyze status failed", zap.Int64("jobID", job.ID), zap.Error(err))
+			status = analyzeUnknown
+		}
+
+		done, timedOut, failed, proceed := w.analyzeStatusDecision(job, dbName, tblName, status, cumulativeTimeout)
+		if done || timedOut || failed {
+			return done, timedOut, failed
+		}
+		if !proceed {
+			// We decided not to proceed to start ANALYZE locally (i.e. it's running and we waited),
+			// so simply return and retry later.
+			return false, false, false
+		}
+
+		if _, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); !ok {
+			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
+		}
+
+		doneCh = make(chan error)
+		eg := util.NewErrorGroupWithRecover()
+		eg.Go(func() error {
+			sessCtx, err := w.sessPool.Get()
+			if err != nil {
+				return err
+			}
+			defer func() {
+				w.sessPool.Put(sessCtx)
+				close(doneCh)
+			}()
+			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
+
+			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
+			if !ok {
+				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
+			}
+			// internal sql may not init the analysis related variable correctly.
+			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
+			if err != nil {
+				return err
+			}
+			failpoint.InjectCall("beforeAnalyzeTable")
+			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			failpoint.InjectCall("afterAnalyzeTable", &err)
+			if err != nil {
+				logutil.DDLLogger().Warn("analyze table failed",
+					zap.Int64("jobID", job.ID),
+					zap.String("db", dbName),
+					zap.String("table", tblName),
+					zap.Error(err),
+					zap.Stack("stack"))
+				// We can continue to finish the job even if analyze table failed.
+				doneCh <- err
+			}
+			failpoint.InjectCall("afterAnalyzeTable")
+			return nil
+		})
+		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
+	}
+	select {
+	case err := <-doneCh:
+		logutil.DDLLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
+		w.ddlCtx.clearAnalyzeStartTime(job.ID)
+		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+		return true, false, err != nil
+	case <-w.ctx.Done():
+		logutil.DDLLogger().Info("analyze table after create index context done",
+			zap.Int64("jobID", job.ID), zap.Error(w.ctx.Err()))
+		w.ddlCtx.clearAnalyzeStartTime(job.ID)
+		w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+		return true, false, false
+	case <-time.After(DefaultAnalyzeCheckInterval):
+		failpoint.Inject("mockAnalyzeTimeout", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				cumulativeTimeout = time.Duration(v) * time.Millisecond
+			}
+		})
+		if start, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); ok {
+			if time.Since(start) > cumulativeTimeout {
+				logutil.DDLLogger().Warn("analyze table after create index exceed cumulative timeout, proceeding to finish DDL",
+					zap.Int64("jobID", job.ID), zap.Duration("elapsed", time.Since(start)))
+				// Do not persist job here. Let the caller mark AnalyzeStateTimeout and persist.
+				w.ddlCtx.clearAnalyzeStartTime(job.ID)
+				w.ddlCtx.clearAnalyzeCumulativeTimeout(job.ID)
+				return false, true, false
+			}
+		} else {
+			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
+		}
+		return false, false, false
+	}
 }
 
 func checkIfTableReorgWorkCanSkip(
@@ -1281,16 +1551,16 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 	}
 	if ingest.LitInitialized {
 		if job.ReorgMeta.UseCloudStorage {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge, nil
+			job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+			return model.ReorgTypeIngest, nil
 		}
 		available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 		if err != nil {
 			return model.ReorgTypeNone, err
 		}
 		if available {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge, nil
+			job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+			return model.ReorgTypeIngest, nil
 		}
 	}
 	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
@@ -1304,22 +1574,6 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
 	jc.cloudStorageURI = variable.CloudStorageURI.Load()
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
-}
-
-func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo.Revertible {
-		done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-		if done {
-			job.MarkNonRevertible()
-			if err == nil {
-				ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
-			}
-		}
-		// We need another round to wait for all the others sub-jobs to finish.
-		return false, ver, err
-	}
-	return true, ver, err
 }
 
 func doReorgWorkForCreateIndex(
@@ -1350,10 +1604,10 @@ func doReorgWorkForCreateIndex(
 		if !skipReorg {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
-				zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
+				zap.Bool("ingest mode", reorgTp == model.ReorgTypeIngest),
 				zap.String("index", allIndexInfos[0].Name.O))
 			switch reorgTp {
-			case model.ReorgTypeLitMerge:
+			case model.ReorgTypeIngest:
 				if job.ReorgMeta.IsDistReorg {
 					done, ver, err = runIngestReorgJobDist(w, jobCtx, job, tbl, allIndexInfos)
 				} else {
@@ -1375,6 +1629,7 @@ func doReorgWorkForCreateIndex(
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
 		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
@@ -1390,7 +1645,7 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateMerging
 		}
-		if reorgTp == model.ReorgTypeLitMerge {
+		if reorgTp == model.ReorgTypeIngest {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
@@ -1412,7 +1667,8 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		}
-		return true, ver, err
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		return true, ver, errors.Trace(err)
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", allIndexInfos[0].BackfillState)
 	}
@@ -2165,7 +2421,7 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunkToLocal(
+func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
@@ -2174,6 +2430,7 @@ func writeChunkToLocal(
 	errCtx errctx.Context,
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
+	tblInfo *model.TableInfo,
 ) (int, kv.Handle, error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
@@ -2230,8 +2487,9 @@ func writeChunkToLocal(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKVToLocal(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			err = writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
+				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
 				return 0, nil, errors.Trace(err)
 			}
 		}
@@ -2252,7 +2510,7 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKVToLocal(
+func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
 	index table.Index,
@@ -2287,7 +2545,7 @@ func writeOneKVToLocal(
 // BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
 // Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
 // BackfillData will add w.batchCnt indices once, default value of w.batchCnt is 128.
-func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -2364,6 +2622,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 			MockDMLExecution()
 		}
 	})
+	failpoint.InjectCall("mockAddIndexTxnWorkerStuck")
 	return
 }
 
@@ -2392,6 +2651,11 @@ func (w *worker) addPhysicalTableIndex(
 		return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 	}
 	logutil.DDLLogger().Info("start to add table index", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
+	m := metrics.RegisterLightningCommonMetricsForDDL(reorgInfo.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, m)
+	defer func() {
+		metrics.UnregisterLightningCommonMetricsForDDL(reorgInfo.ID, m)
+	}()
 	return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexWorker, reorgInfo)
 }
 
@@ -2403,13 +2667,18 @@ func (w *worker) addTableIndex(
 ) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 			err := w.executeDistTask(ctx, t, reorgInfo)
 			if err != nil {
 				return err
 			}
 			//nolint:forcetypeassert
 			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+			if reorgInfo.ReorgMeta.UseCloudStorage {
+				// When adding unique index by global sort, it detects duplicate keys in each step.
+				// A duplicate key must be detected before, so we can skip the check bellow.
+				return nil
+			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, discovery)
 		}
 	}
@@ -2471,7 +2740,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
 				bc, err = ingest.LitBackCtxMgr.Register(
-					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS, 0)
+					ctx, reorgInfo.Job, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS, 0)
 				if err != nil {
 					return err
 				}
@@ -2519,6 +2788,7 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 		// It's possible that the task state is succeed but the ddl job is paused.
 		// When task in succeed state, we can skip the dist task execution/scheduing process.
 		if task.State == proto.TaskStateSucceed {
+			w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 			logutil.DDLLogger().Info(
 				"task succeed, start to resume the ddl job",
 				zap.String("task-key", taskKey))
@@ -2956,7 +3226,7 @@ func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	}, nil
 }
 
-func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -2985,13 +3255,52 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
+		lockCtx := new(kv.LockCtx)
+		evalCtx := w.exprCtx.GetEvalCtx()
+		loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 		n := len(w.indexes)
+		globalIndexKeys := make([]kv.Key, 0, len(idxRecords))
+		allKeys := make([]kv.Key, 0, len(idxRecords))
+		for i, idxRecord := range idxRecords {
+			key, distinct, err := w.indexes[i%n].GenIndexKey(ec, loc, idxRecord.vals, idxRecord.handle, nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if distinct {
+				globalIndexKeys = append(globalIndexKeys, key)
+			}
+			allKeys = append(allKeys, key)
+		}
+
+		var found map[string][]byte
+		found, err = txn.BatchGet(ctx, globalIndexKeys)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
+			if val, ok := found[string(allKeys[i])]; ok {
+				// Only delete if it is from the partition it was read from.
+				handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
+				if errPart != nil {
+					return errors.Trace(errPart)
+				}
+				if partHandle, ok := handle.(kv.PartitionHandle); ok {
+					if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
+						continue
+					}
+				}
+				// Lock the global index entry, to prevent deleting something that is concurrently added.
+				err = txn.LockKeys(ctx, lockCtx, allKeys[i])
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
 			// we fetch records row by row, so records will belong to
 			// index[0], index[1] ... index[n-1], index[0], index[1] ...
 			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err := w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
+			err = w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -3095,7 +3404,7 @@ func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) 
 	var normalIdxInfos, tempIdxInfos []changingIndex
 	for _, idxInfo := range tblInfo.Indices {
 		if pos := findIdxCol(idxInfo, colName); pos != -1 {
-			isTemp := isTempIdxInfo(idxInfo, tblInfo)
+			isTemp := isTempIndex(idxInfo, tblInfo)
 			r := changingIndex{IndexInfo: idxInfo, Offset: pos, isTemp: isTemp}
 			if isTemp {
 				tempIdxInfos = append(tempIdxInfos, r)
@@ -3120,9 +3429,24 @@ func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) 
 	return result
 }
 
-func isTempIdxInfo(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+// isColumnarIndexColumn checks if any index contains the given column is a columnar index.
+func isColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
+	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
+	for _, idx := range indexesToChange {
+		if idx.IndexInfo.VectorInfo != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// isTempIndex checks whether the index is a temp index created by modify column.
+// There are two types of temp index:
+// 1. The index contains a temp column that is newly added, indicated by ChangeStateInfo
+// 2. The index contains a old column changing its type in place, indicated by UsingChangingType
+func isTempIndex(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	for _, idxCol := range idxInfo.Columns {
-		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
+		if idxCol.UseChangingType || tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
 			return true
 		}
 	}
@@ -3142,7 +3466,9 @@ func renameIndexes(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == from.L {
 			idx.Name = to
-		} else if isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == from.O {
+		} else if isTempIndex(idx, tblInfo) &&
+			(getChangingIndexOriginName(idx) == from.O ||
+				getRemovingObjOriginName(idx.Name.O) == from.O) {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}

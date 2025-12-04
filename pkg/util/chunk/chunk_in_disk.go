@@ -37,7 +37,8 @@ const int64Len = int64(unsafe.Sizeof(int64(0)))
 const chkFixedSize = intLen * 4
 const colMetaSize = int64Len * 4
 
-const defaultChunkDataInDiskByChunksPath = "defaultChunkDataInDiskByChunksPath"
+// DefaultChunkDataInDiskByChunksPath gives the file name prefix
+const DefaultChunkDataInDiskByChunksPath = "defaultChunkDataInDiskByChunksPath"
 
 // DataInDiskByChunks represents some data stored in temporary disk.
 // They can only be restored by chunks.
@@ -53,17 +54,22 @@ type DataInDiskByChunks struct {
 
 	// Write or read data needs this buffer to temporarily store data
 	buf []byte
+
+	// In the CI, some uts are concurrently executed.
+	// So we need name prefix to differentiate spill files between tests.
+	fileNamePrefixForTest string
 }
 
 // NewDataInDiskByChunks creates a new DataInDiskByChunks with field types.
-func NewDataInDiskByChunks(fieldTypes []*types.FieldType) *DataInDiskByChunks {
+func NewDataInDiskByChunks(fieldTypes []*types.FieldType, fileNamePrefixForTest string) *DataInDiskByChunks {
 	d := &DataInDiskByChunks{
 		fieldTypes:    fieldTypes,
 		totalDataSize: 0,
 		totalRowNum:   0,
 		// TODO: set the quota of disk usage.
-		diskTracker: disk.NewTracker(memory.LabelForChunkDataInDiskByChunks, -1),
-		buf:         make([]byte, 0, 4096),
+		diskTracker:           disk.NewTracker(memory.LabelForChunkDataInDiskByChunks, -1),
+		buf:                   make([]byte, 0, 4096),
+		fileNamePrefixForTest: fileNamePrefixForTest,
 	}
 	return d
 }
@@ -73,7 +79,7 @@ func (d *DataInDiskByChunks) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	err = d.dataFile.initWithFileName(defaultChunkDataInDiskByChunksPath + strconv.Itoa(d.diskTracker.Label()))
+	err = d.dataFile.initWithFileName(d.fileNamePrefixForTest + DefaultChunkDataInDiskByChunksPath + strconv.Itoa(d.diskTracker.Label()))
 	return
 }
 

@@ -321,16 +321,14 @@ func (em *engineManager) closeEngine(
 			externalCfg.EndKey,
 			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			em.keyAdapter,
-			em.DupeDetectEnabled,
-			em.duplicateDB,
-			em.DuplicateDetectOpt,
 			em.WorkerConcurrency,
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
 			externalCfg.MemCapacity,
+			externalCfg.OnDup,
+			externalCfg.FilePrefix,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -407,6 +405,14 @@ func (em *engineManager) getExternalEngineKVStatistics(engineUUID uuid.UUID) (
 		return 0, 0
 	}
 	return v.ImportedStatistics()
+}
+
+func (em *engineManager) getExternalEngineConflictInfo(engineUUID uuid.UUID) common.ConflictInfo {
+	v, ok := em.externalEngine[engineUUID]
+	if !ok {
+		return common.ConflictInfo{}
+	}
+	return v.ConflictInfo()
 }
 
 // resetEngine reset the engine and reclaim the space.

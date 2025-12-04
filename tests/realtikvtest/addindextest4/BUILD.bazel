@@ -11,11 +11,13 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/util",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",

@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -523,13 +525,11 @@ func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
-}
 
-// Scale scales the TopN by the given factor.
-func (c *TopN) Scale(scaleFactor float64) {
-	for i := range c.TopN {
-		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
-	}
+	totalCount uint64
+	minCount   uint64
+	// minCount and totalCount are initialized only once.
+	once sync.Once
 }
 
 // AppendTopN appends a topn into the TopN struct.
@@ -607,6 +607,31 @@ func (c *TopN) Copy() *TopN {
 	return &TopN{
 		TopN: topN,
 	}
+}
+
+func (c *TopN) calculateCount() {
+	if intest.InTest {
+		// In test, After the sync.Once is called, topN will not be modified anymore.
+		totalCount := c.calculateCountInternal()
+		c.onceCalculateCount()
+		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+		return
+	}
+	c.onceCalculateCount()
+}
+
+func (c *TopN) onceCalculateCount() {
+	c.once.Do(func() {
+		// Initialize to the first value in TopN
+		c.totalCount = c.calculateCountInternal()
+	})
+}
+
+func (c *TopN) calculateCountInternal() (total uint64) {
+	for _, t := range c.TopN {
+		total += t.Count
+	}
+	return total
 }
 
 // TopNMeta stores the unit of the TopN.
@@ -716,14 +741,11 @@ func (c *TopN) Sort() {
 
 // TotalCount returns how many data is stored in TopN.
 func (c *TopN) TotalCount() uint64 {
-	if c == nil {
+	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	total := uint64(0)
-	for _, t := range c.TopN {
-		total += t.Count
-	}
-	return total
+	c.calculateCount()
+	return c.totalCount
 }
 
 // Equal checks whether the two TopN are equal.

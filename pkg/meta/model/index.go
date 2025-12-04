@@ -174,6 +174,8 @@ type IndexColumn struct {
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing
 	Length int `json:"length"`
+	// Whether this index column use changing type
+	UseChangingType bool `json:"using_changing_type,omitempty"`
 }
 
 // Clone clones IndexColumn.
@@ -190,4 +192,14 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 		}
 	}
 	return -1, nil
+}
+
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
 }

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/spf13/cobra"
@@ -809,6 +810,18 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if client.IsRawKvMode() {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
 	}
+	if client.IsIncremental() {
+		// don't support checkpoint for the ddl restore
+		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
+		cfg.UseCheckpoint = false
+	}
+	var checkpointFirstRun = true
+	if cfg.UseCheckpoint {
+		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
+		// for the first time.
+		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
+		checkpointFirstRun = !existsCheckpointMetadata
+	}
 	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
 		return err
 	}
@@ -817,7 +830,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
-	if cfg.CheckRequirements {
+	if cfg.CheckRequirements && checkpointFirstRun {
 		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
 			return errors.Trace(err)
 		}
@@ -835,12 +848,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// for full + log restore. should check the cluster is empty.
 	if client.IsFull() && checkInfo != nil && checkInfo.FullRestoreCheckErr != nil {
 		return checkInfo.FullRestoreCheckErr
-	}
-
-	if client.IsIncremental() {
-		// don't support checkpoint for the ddl restore
-		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
-		cfg.UseCheckpoint = false
 	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
@@ -863,14 +870,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("finish removing pd scheduler")
 	}()
 
-	var checkpointFirstRun = true
-	if cfg.UseCheckpoint {
-		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
-		// for the first time.
-		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
-		checkpointFirstRun = !existsCheckpointMetadata
-	}
-
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
@@ -884,7 +883,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
 		}
-	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
+	}
+	if !client.IsIncremental() && checkpointFirstRun && cfg.CheckRequirements {
 		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
 			schedulersRemovable = true
 			return errors.Trace(err)
@@ -898,7 +898,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	err = client.AllocTableIDs(ctx, tables)
+	idFrom, idEnd, err := client.AllocTableIDs(ctx, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1093,6 +1093,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	compactProtectStartKey, compactProtectEndKey := encodeCompactAndCheckKey(mgr.GetStorage().GetCodec(), idFrom, idEnd)
 	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
@@ -1100,6 +1101,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
 		// It's recommended to enable TiDB configure `split-table` instead.
 		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
+		compactProtectStartKey, compactProtectEndKey,
 		updateCh,
 	); err != nil {
 		return errors.Trace(err)
@@ -1609,6 +1611,12 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	}
 
 	return
+}
+
+func encodeCompactAndCheckKey(codec tikv.Codec, idFrom, idEnd int64) ([]byte, []byte) {
+	checkStartKey := tablecodec.EncodeTablePrefix(idFrom)
+	checkEndKey := tablecodec.EncodeTablePrefix(idEnd)
+	return codec.EncodeRange(checkStartKey, checkEndKey)
 }
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool

@@ -23,7 +23,6 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/lightning/log",
-        "//pkg/metrics",
         "//pkg/sessionctx",
         "//pkg/util",
         "//pkg/util/backoff",
@@ -57,7 +56,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-    shard_count = 34,
+    shard_count = 35,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/mock",

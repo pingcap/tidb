@@ -119,22 +119,19 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	s1.procKeys.Add(100)
 	s1.procKeys.Add(200)
 
-	s2 := *s1
-	stmtStats.RegisterStats(1, s1)
-	stmtStats.RegisterStats(1, &s2)
+	s2 := s1.Clone()
+	stmtStats.RegisterStats(1, s1.Clone())
+	stmtStats.RegisterStats(1, s2)
 	stats := stmtStats.GetRootStats(1)
 	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
 
-	s1.reqStat.RPCStats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
-		Count:   1,
-		Consume: int64(time.Second),
-	}
+	s1.reqStat.RecordRPCRuntimeStats(tikvrpc.CmdCop, time.Second)
 	s1.reqStat.RecordRPCErrorStats("server_is_busy")
 	s1.reqStat.RecordRPCErrorStats("server_is_busy")
-	stmtStats.RegisterStats(2, s1)
+	stmtStats.RegisterStats(2, s1.Clone())
 	stats = stmtStats.GetRootStats(2)
 	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, rpc_info:{Cop:{num_rpc:1, total_time:1s}, rpc_errors:{server_is_busy:2}}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, stats.String())
@@ -208,6 +205,9 @@ type mockResponse struct {
 	total int
 	batch int
 	ctx   sessionctx.Context
+	// intermediateOutputs is used to mock the intermediate output from coprocessor.
+	intermediateOutputs [][]*tipb.IntermediateOutput
+	closed              bool
 	sync.Mutex
 }
 
@@ -216,6 +216,7 @@ func (resp *mockResponse) Close() error {
 	resp.Lock()
 	defer resp.Unlock()
 
+	resp.closed = true
 	resp.count = 0
 	return nil
 }
@@ -225,10 +226,20 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 	resp.Lock()
 	defer resp.Unlock()
 
-	if resp.count >= resp.total {
+	if resp.closed {
+		panic("closed")
+	}
+
+	var intermediateOutputs []*tipb.IntermediateOutput
+	if len(resp.intermediateOutputs) > 0 {
+		intermediateOutputs = resp.intermediateOutputs[0]
+		resp.intermediateOutputs = resp.intermediateOutputs[1:]
+	}
+
+	if resp.count >= resp.total && intermediateOutputs == nil {
 		return nil, nil
 	}
-	numRows := min(resp.batch, resp.total-resp.count)
+	numRows := max(0, min(resp.batch, resp.total-resp.count))
 	resp.count += numRows
 
 	var chunks []tipb.Chunk
@@ -267,8 +278,9 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 	}
 
 	respPB := &tipb.SelectResponse{
-		Chunks:       chunks,
-		OutputCounts: []int64{1},
+		Chunks:              chunks,
+		OutputCounts:        []int64{1},
+		IntermediateOutputs: intermediateOutputs,
 	}
 	if canUseChunkRPC(resp.ctx.GetDistSQLCtx()) {
 		respPB.EncodeType = tipb.EncodeType_TypeChunk
@@ -280,6 +292,95 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 		panic(err)
 	}
 	return &mockResultSubset{respBytes}, nil
+}
+
+func mockChunk(loc *time.Location, encodeType tipb.EncodeType, colTypes []*types.FieldType, rows [][]any) tipb.Chunk {
+	var chk *chunk.Chunk
+	dsRows := [][]types.Datum(nil)
+	switch encodeType {
+	case tipb.EncodeType_TypeDefault:
+		dsRows = make([][]types.Datum, 0, len(rows))
+	case tipb.EncodeType_TypeChunk:
+		chk = chunk.New(colTypes, len(rows), len(rows))
+	default:
+		panic("unsupported encode type: " + encodeType.String())
+	}
+
+	for _, row := range rows {
+		if len(row) != len(colTypes) {
+			panic("row length not match column length")
+		}
+		var ds []types.Datum
+		if dsRows != nil {
+			ds = make([]types.Datum, len(row))
+		}
+		for i, val := range row {
+			switch v := val.(type) {
+			case int:
+				if chk != nil {
+					chk.AppendInt64(i, int64(v))
+				} else {
+					ds[i] = types.NewIntDatum(int64(v))
+				}
+			case int64:
+				if chk != nil {
+					chk.AppendInt64(i, v)
+				} else {
+					ds[i] = types.NewIntDatum(v)
+				}
+			case uint64:
+				if chk != nil {
+					chk.AppendUint64(i, v)
+				} else {
+					ds[i] = types.NewUintDatum(v)
+				}
+			case string:
+				if chk != nil {
+					chk.AppendString(i, v)
+				} else {
+					ds[i] = types.NewStringDatum(v)
+				}
+			case []byte:
+				if chk != nil {
+					chk.AppendBytes(i, v)
+				} else {
+					ds[i] = types.NewBytesDatum(v)
+				}
+			case time.Time:
+				tm := types.NewTime(types.FromGoTime(v.In(loc)), mysql.TypeTimestamp, 0)
+				if chk != nil {
+					chk.AppendTime(i, tm)
+				} else {
+					ds[i] = types.NewTimeDatum(tm)
+				}
+			case nil:
+				if chk != nil {
+					chk.AppendNull(i)
+				} else {
+					ds[i] = types.Datum{}
+				}
+			default:
+				panic("unsupported mock type")
+			}
+		}
+		dsRows = append(dsRows, ds)
+	}
+
+	if chk != nil {
+		c := chunk.NewCodec(colTypes)
+		buffer := c.Encode(chk)
+		return tipb.Chunk{RowsData: buffer}
+	}
+
+	var buffer []byte
+	var err error
+	for _, ds := range dsRows {
+		buffer, err = codec.EncodeValue(loc, buffer, ds...)
+		if err != nil {
+			panic(err)
+		}
+	}
+	return tipb.Chunk{RowsData: buffer}
 }
 
 // mockResultSubset implements kv.ResultSubset interface.
