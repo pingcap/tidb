@@ -589,6 +589,12 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 		totalMemUsage += usage
 	}
 
+	if cap(continuousMem) < totalMemUsage {
+		continuousMem = make([]byte, totalMemUsage)
+	} else {
+		continuousMem = continuousMem[:totalMemUsage]
+	}
+
 	start := 0
 	for i := range serializedKeysVectorBuffer {
 		rowLen := serializedKeyLens[i]
