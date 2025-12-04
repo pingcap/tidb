@@ -817,6 +817,10 @@ func (ds *DataSource) preparePKRangesForTiCI(ticiPath *util.AccessPath, pushedPr
 		if err := detachCondAndBuildRangeForPath(ds.SCtx(), ticiPath, pushedPredicates); err != nil {
 			return err
 		}
+		ticiPath.IdxCols = ticiPath.IdxCols[:0]
+		ticiPath.IdxColLens = ticiPath.IdxColLens[:0]
+		ticiPath.FullIdxCols = ticiPath.FullIdxCols[:0]
+		ticiPath.FullIdxColLens = ticiPath.FullIdxColLens[:0]
 		return nil
 	}
 	var pkCol *expression.Column
@@ -857,7 +861,6 @@ func detachCondAndBuildRangeForPath(
 	conds []expression.Expression,
 ) error {
 	if len(path.IdxCols) == 0 {
-		path.TableFilters = conds
 		return nil
 	}
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
@@ -866,16 +869,6 @@ func detachCondAndBuildRangeForPath(
 	}
 	path.Ranges = res.Ranges
 	path.AccessConds = res.AccessConds
-	path.EqCondCount = res.EqCondCount
-	path.EqOrInCondCount = res.EqOrInCount
-	path.IsDNFCond = res.IsDNFCond
-	path.MinAccessCondsForDNFCond = res.MinAccessCondsForDNFCond
-	path.ConstCols = make([]bool, len(path.IdxCols))
-	if res.ColumnValues != nil {
-		for i := range path.ConstCols {
-			path.ConstCols[i] = res.ColumnValues[i] != nil
-		}
-	}
 	// Row count estimation is not updated
 	return err
 }
