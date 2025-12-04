@@ -600,7 +600,7 @@ JOIN test_table t2 ON t1.id = t2.id;
 	tk.MustExec(`use test`)
 	if injectedPanic {
 		fpName := "github.com/pingcap/tidb/pkg/planner/core/ConsumeVolcanoOptimizePanic"
-		require.NoError(t, failpoint.Enable(fpName, "5%panic(\"injected panic\")"))
+		require.NoError(t, failpoint.Enable(fpName, "panic(\"injected panic\")"))
 		defer func() {
 			require.NoError(t, failpoint.Disable(fpName))
 		}()
