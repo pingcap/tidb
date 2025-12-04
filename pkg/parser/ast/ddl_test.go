@@ -1153,7 +1153,6 @@ func TestActiveActiveAndSoftDeleteRestore(t *testing.T) {
 			"CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'ON' SOFTDELETE = 'ON'"},
 		{"create table t (id int) active_active = 'on' softdelete = 'on' softdelete_retention = '7d'",
 			"CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'ON' SOFTDELETE = 'ON' SOFTDELETE_RETENTION = '7d'"},
-
 	}
 
 	// Test with special comment flags (like TTL does)

@@ -207,7 +207,7 @@ func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
 
 // ModifySchemaActiveActiveArgs is the arguments for modify schema active-active.
 type ModifySchemaActiveActiveArgs struct {
-	ActiveActive          string `json:"active_active,omitempty"`
+	ActiveActive string `json:"active_active,omitempty"`
 }
 
 func (a *ModifySchemaActiveActiveArgs) getArgsV1(job *Job) []any {
@@ -239,7 +239,7 @@ func (a *ModifySchemaSoftDeleteArgs) decodeV1(job *Job) error {
 	return errors.Trace(job.decodeArgs(&a.SoftDelete, &a.SoftDeleteRetention, &a.SoftDeleteJobEnable, &a.SoftDeleteJobInterval))
 }
 
-// GetModifySchemaActiveActiveAndSoftDeleteArgs gets the modify schema soft-delete args.
+// GetModifySchemaSoftDeleteArgs gets the modify schema soft-delete args.
 func GetModifySchemaSoftDeleteArgs(job *Job) (*ModifySchemaSoftDeleteArgs, error) {
 	return getOrDecodeArgs[*ModifySchemaSoftDeleteArgs](&ModifySchemaSoftDeleteArgs{}, job)
 }
