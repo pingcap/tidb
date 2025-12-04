@@ -254,7 +254,7 @@ const (
 // AllCategories can be used to enable every known trace category.
 const AllCategories = traceCategorySentinel - 1
 
-const defaultEnabledCategories = AllCategories &^ (TiKVWriteDetails | TiKVReadDetails)
+const defaultEnabledCategories = 0
 
 func init() {
 	enabledCategories.Store(uint64(defaultEnabledCategories))
