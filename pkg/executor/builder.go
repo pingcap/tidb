@@ -3761,6 +3761,15 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
 		v.SetSchema(v.GetTablePlan().Schema())
 	}
+
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	switch v.StoreType {
+	case kv.TiKV:
+		sctx.IsTiKV.Store(true)
+	case kv.TiFlash:
+		sctx.IsTiFlash.Store(true)
+	}
+
 	useMPP := useMPPExecution(b.ctx, v)
 	useTiFlashBatchCop := v.ReadReqType == plannercore.BatchCop
 	useTiFlash := useMPP || useTiFlashBatchCop
@@ -3788,7 +3797,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	}
 
 	ret.ranges = ts.Ranges
-	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -3810,9 +3818,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	if err != nil {
 		b.err = err
 		return nil
-	}
-	if v.StoreType == kv.TiFlash {
-		sctx.IsTiFlash.Store(true)
 	}
 
 	if len(partitions) == 0 {
@@ -3970,6 +3975,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		return nil, err
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &IndexReaderExecutor{
 		indexReaderExecutorContext: newIndexReaderExecutorContext(b.ctx),
@@ -4214,6 +4221,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		return nil, err
 	}
 
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+
 	e := &IndexLookUpExecutor{
 		indexLookUpExecutorContext: newIndexLookUpExecutorContext(b.ctx),
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
@@ -4369,6 +4378,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	if err != nil {
 		return nil, err
 	}
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &IndexMergeReaderExecutor{
 		BaseExecutor:             exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -5456,6 +5467,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		}
 	}
 
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
@@ -5660,6 +5673,7 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		b.err = err
 		return nil
 	}
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 	e := &TableSampleExecutor{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		table:        v.TableInfo,
