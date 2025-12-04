@@ -193,7 +193,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	whereColSet := make(map[int64]struct{})
 	// Track processed conditions using a slice and proper equality checking
 	// We can't use a map because Expression doesn't implement comparable, and using hash codes is unsafe
-	var processedConds []expression.Expression
+	processedConds := make([]expression.Expression, 0, len(ds.PushedDownConds))
 	// First, process PushedDownConds
 	for _, cond := range ds.PushedDownConds {
 		condCols := expression.ExtractColumns(cond)
