@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kvconflicts
+package conflictedkv
 
 import (
 	"maps"
@@ -35,15 +35,16 @@ const (
 	handleMapEntryShallowSize    = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
 )
 
-type handleFilter struct {
-	set *BoundedHandleSet
+// HandleFilter is used to filter row handles.
+type HandleFilter struct {
+	*BoundedHandleSet
 }
 
-func (f *handleFilter) needSkip(handle tidbkv.Handle) bool {
+func (f *HandleFilter) needSkip(handle tidbkv.Handle) bool {
 	if f == nil {
 		return false
 	}
-	return f.set.Contains(handle)
+	return f.Contains(handle)
 }
 
 // BoundedHandleSet is a set of row handles with a size limit.

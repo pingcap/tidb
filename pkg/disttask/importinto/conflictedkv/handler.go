@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kvconflicts
+package conflictedkv
 
 import (
 	"context"
@@ -44,58 +44,93 @@ const (
 	// https://github.com/tikv/client-go/blob/3150e385e39fbbb324fe975d68abe4fdf5dbd6ba/txnkv/transaction/2pc.go#L695-L696
 	bufferedKeySizeLimit  = 2 * units.MiB
 	bufferedKeyCountLimit = 9600
-	bufferedHandleLimit   = 256
 )
 
-// handler is the conflict KV handler, either collecting info about those KVs or
+var (
+	// BufferedHandleLimit is the max number of handles buffered before processing.
+	// exported for test.
+	BufferedHandleLimit = 256
+)
+
+// Handler is the conflict KV Handler, either collecting info about those KVs or
 // delete those KVs from the cluster.
-type handler interface {
-	preRun() error
-	run(context.Context, chan *external.KVPair) error
-	close(context.Context) error
+type Handler interface {
+	// PreRun is called before Run.
+	// if it failed, Close still need to be called.
+	PreRun() error
+	// Run processes the conflicted KV pairs from the channel.
+	Run(context.Context, chan *external.KVPair) error
+	// Close must be called regardless of PreRun/Run result.
+	Close(context.Context) error
 }
 
-type kvHandler interface {
-	handle(context.Context, *external.KVPair) error
+// KVHandler handles a single conflict KV pair.
+// exported for test.
+type KVHandler interface {
+	Handle(context.Context, *external.KVPair) error
 }
 
-type encodedRowHandler interface {
-	handleEncodedRow(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error
+// EncodedRowHandler handles the re-encoded row from conflict KV.
+// exported for test.
+type EncodedRowHandler interface {
+	HandleEncodedRow(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error
 }
 
-var _ handler = (*baseHandler)(nil)
+var _ Handler = (*BaseHandler)(nil)
 
-type baseHandler struct {
+// BaseHandler is the base struct for conflict KV handlers.
+// exported for test.
+type BaseHandler struct {
 	targetTable table.Table
-	logger      *zap.Logger
 	kvGroup     string
 	encoder     *importer.TableKVEncoder
+	logger      *zap.Logger
+	EncodedRowHandler
 
-	kvHandler
-	encodedRowHandler
+	KVHandler
 }
 
-func (h *baseHandler) preRun() error {
+// NewBaseHandler creates a new BaseHandler.
+func NewBaseHandler(
+	targetTable table.Table,
+	kvGroup string,
+	encoder *importer.TableKVEncoder,
+	encodedRowHdl EncodedRowHandler,
+	logger *zap.Logger,
+) *BaseHandler {
+	return &BaseHandler{
+		targetTable:       targetTable,
+		kvGroup:           kvGroup,
+		encoder:           encoder,
+		logger:            logger,
+		EncodedRowHandler: encodedRowHdl,
+	}
+}
+
+// PreRun implements Handler interface.
+func (h *BaseHandler) PreRun() error {
 	return nil
 }
 
-func (h *baseHandler) run(ctx context.Context, pairCh chan *external.KVPair) error {
+// Run implements Handler interface.
+func (h *BaseHandler) Run(ctx context.Context, pairCh chan *external.KVPair) error {
 	for kvPair := range pairCh {
-		if err := h.handle(ctx, kvPair); err != nil {
+		if err := h.Handle(ctx, kvPair); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
-func (h *baseHandler) close(context.Context) error {
+// Close implements Handler interface.
+func (h *BaseHandler) Close(context.Context) error {
 	return h.encoder.Close()
 }
 
 // re-encode the row from the handle and value of data KV, then we either delete
 // all encoded keys or call handleConflictRowFn, it's possible that part or all
 // of the keys are already deleted.
-func (h *baseHandler) encodeAndHandleRow(ctx context.Context,
+func (h *BaseHandler) encodeAndHandleRow(ctx context.Context,
 	handle tidbkv.Handle, val []byte) (err error) {
 	tblMeta := h.targetTable.Meta()
 	decodedData, _, err := tables.DecodeRawRowData(h.encoder.SessionCtx.GetExprCtx(),
@@ -112,7 +147,7 @@ func (h *baseHandler) encodeAndHandleRow(ctx context.Context,
 		return errors.Trace(err)
 	}
 
-	err = h.handleEncodedRow(ctx, handle, decodedData, kvPairs)
+	err = h.HandleEncodedRow(ctx, handle, decodedData, kvPairs)
 	kvPairs.Clear()
 	if err != nil {
 		return errors.Trace(err)
@@ -120,22 +155,25 @@ func (h *baseHandler) encodeAndHandleRow(ctx context.Context,
 	return nil
 }
 
-type dataKVHandler struct {
-	*baseHandler
+// DataKVHandler handles conflicted data KVs.
+type DataKVHandler struct {
+	*BaseHandler
 }
 
 var (
-	_ handler   = (*dataKVHandler)(nil)
-	_ kvHandler = (*dataKVHandler)(nil)
+	_ Handler   = (*DataKVHandler)(nil)
+	_ KVHandler = (*DataKVHandler)(nil)
 )
 
-func newDataKVHandler(base *baseHandler) *dataKVHandler {
-	h := &dataKVHandler{baseHandler: base}
-	base.kvHandler = h
+// NewDataKVHandler creates a new DataKVHandler.
+func NewDataKVHandler(base *BaseHandler) *DataKVHandler {
+	h := &DataKVHandler{BaseHandler: base}
+	base.KVHandler = h
 	return h
 }
 
-func (h *dataKVHandler) handle(ctx context.Context, kv *external.KVPair) error {
+// Handle implements KVHandler interface.
+func (h *DataKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
 	handle, err := tablecodec.DecodeRowKey(kv.Key)
 	if err != nil {
 		return err
@@ -148,31 +186,36 @@ type handleOfTable struct {
 	handle  tidbkv.Handle
 }
 
-type indexKVHandler struct {
-	*baseHandler
-	snapshot  *lazyRefreshedSnapshot
-	hdlFilter *handleFilter
+// IndexKVHandler handles conflicted index KVs.
+// exported for test.
+type IndexKVHandler struct {
+	*BaseHandler
+	snapshot  *LazyRefreshedSnapshot
+	hdlFilter *HandleFilter
 
 	targetIdx       *model.IndexInfo
 	bufferedHandles []handleOfTable
 }
 
 var (
-	_ handler   = (*indexKVHandler)(nil)
-	_ kvHandler = (*indexKVHandler)(nil)
+	_ Handler   = (*IndexKVHandler)(nil)
+	_ KVHandler = (*IndexKVHandler)(nil)
 )
 
-func newIndexKVHandler(base *baseHandler, snapshot *lazyRefreshedSnapshot, filter *handleFilter) *indexKVHandler {
-	h := &indexKVHandler{
-		baseHandler: base,
+// NewIndexKVHandler creates a new IndexKVHandler.
+// exported for test.
+func NewIndexKVHandler(base *BaseHandler, snapshot *LazyRefreshedSnapshot, filter *HandleFilter) *IndexKVHandler {
+	h := &IndexKVHandler{
+		BaseHandler: base,
 		snapshot:    snapshot,
 		hdlFilter:   filter,
 	}
-	base.kvHandler = h
+	base.KVHandler = h
 	return h
 }
 
-func (h *indexKVHandler) preRun() error {
+// PreRun implements Handler interface.
+func (h *IndexKVHandler) PreRun() error {
 	indexID, err := external.KVGroup2IndexID(h.kvGroup)
 	if err != nil {
 		return errors.Trace(err)
@@ -184,7 +227,7 @@ func (h *indexKVHandler) preRun() error {
 		return errors.Errorf("index %d in table %s", indexID, tblMeta.Name)
 	}
 
-	if err = h.baseHandler.preRun(); err != nil {
+	if err = h.BaseHandler.PreRun(); err != nil {
 		return err
 	}
 
@@ -192,7 +235,9 @@ func (h *indexKVHandler) preRun() error {
 	return nil
 }
 
-func (h *indexKVHandler) handle(ctx context.Context, kv *external.KVPair) error {
+// Handle implements KVHandler interface.
+func (h *IndexKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
+	// we should use the table ID from the key, in case of partition table
 	tableID := tablecodec.DecodeTableID(kv.Key)
 	if tableID == 0 {
 		// should not happen
@@ -208,13 +253,13 @@ func (h *indexKVHandler) handle(ctx context.Context, kv *external.KVPair) error 
 
 	h.bufferedHandles = append(h.bufferedHandles, handleOfTable{handle: handle, tableID: tableID})
 
-	if len(h.bufferedHandles) >= bufferedHandleLimit {
+	if len(h.bufferedHandles) >= BufferedHandleLimit {
 		return h.handleBufferedHandles(ctx)
 	}
 	return nil
 }
 
-func (h *indexKVHandler) handleBufferedHandles(ctx context.Context) error {
+func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 	if len(h.bufferedHandles) == 0 {
 		return nil
 	}
@@ -243,20 +288,31 @@ func (h *indexKVHandler) handleBufferedHandles(ctx context.Context) error {
 	return nil
 }
 
-func (h *indexKVHandler) close(ctx context.Context) error {
+// Close implements Handler interface.
+func (h *IndexKVHandler) Close(ctx context.Context) error {
 	var firstErr common.OnceError
 	firstErr.Set(h.handleBufferedHandles(ctx))
-	firstErr.Set(h.baseHandler.close(ctx))
+	firstErr.Set(h.BaseHandler.Close(ctx))
 	return firstErr.Get()
 }
 
-type lazyRefreshedSnapshot struct {
+// LazyRefreshedSnapshot is a snapshot that refreshes its version lazily.
+// exported for test.
+type LazyRefreshedSnapshot struct {
 	tidbkv.Snapshot
 	store           tidbkv.Storage
 	lastRefreshTime time.Time
 }
 
-func (s *lazyRefreshedSnapshot) refreshAsNeeded() error {
+// NewLazyRefreshedSnapshot creates a new LazyRefreshedSnapshot.
+// exported for test.
+func NewLazyRefreshedSnapshot(store tidbkv.Storage) *LazyRefreshedSnapshot {
+	return &LazyRefreshedSnapshot{
+		store: store,
+	}
+}
+
+func (s *LazyRefreshedSnapshot) refreshAsNeeded() error {
 	if s.Snapshot != nil && time.Since(s.lastRefreshTime) < snapshotRefreshInterval {
 		return nil
 	}
