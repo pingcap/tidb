@@ -133,6 +133,8 @@ type Engine struct {
 	largeBlockBufPool *membuf.Pool
 
 	memKVsAndBuffers memKVsAndBuffers
+	// totalLoadedKVsCount accumulates the total number of KVs loaded in LoadIngestData
+	totalLoadedKVsCount atomic.Int64
 
 	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
 	// if hotspot file is detected, we will use multiple readers to read data.
@@ -411,6 +413,9 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		e.memKVsAndBuffers.memKVBuffers,
 	)
 
+	// accumulate the total number of KVs loaded in LoadIngestData
+	e.totalLoadedKVsCount.Add(int64(len(deduplicatedKVs)))
+
 	// release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.kvs = nil
 	e.memKVsAndBuffers.memKVBuffers = nil
@@ -533,6 +538,11 @@ func (e *Engine) KVStatistics() (totalKVSize int64, totalKVCount int64) {
 // ImportedStatistics returns the imported kv size and imported kv count.
 func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
+}
+
+// GetTotalLoadedKVsCount returns the total number of KVs loaded in LoadIngestData.
+func (e *Engine) GetTotalLoadedKVsCount() int64 {
+	return e.totalLoadedKVsCount.Load()
 }
 
 // ConflictInfo implements common.Engine.

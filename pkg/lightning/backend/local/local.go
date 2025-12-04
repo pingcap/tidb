@@ -1118,6 +1118,7 @@ func (local *Backend) generateAndSendJob(
 						}
 						return err
 					}
+					// reference the job to prevent the job from being GCed before being put into jobToWorkerCh.
 					for _, job := range jobs {
 						job.ref(jobWg)
 					}
@@ -1377,8 +1378,14 @@ func (local *Backend) ImportEngine(
 
 		importedSize, importedLength := e.ImportedStatistics()
 		// Verify the imported statistics after import.
-		if importedLength != lfLength {
-			return errors.Errorf("imported length mismatch, expected %d, got %d", lfLength, importedLength)
+		// For external engine, use the total number of KVs loaded in LoadIngestData
+		// (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
+		expectedLength := lfLength
+		if extEngine, ok := e.(*external.Engine); ok {
+			expectedLength = extEngine.GetTotalLoadedKVsCount()
+		}
+		if importedLength != expectedLength {
+			return errors.Errorf("imported length mismatch, expected %d, got %d", expectedLength, importedLength)
 		}
 
 		tidblogutil.Logger(ctx).Info("import engine success",
