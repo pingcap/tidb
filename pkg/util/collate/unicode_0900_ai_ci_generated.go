@@ -152,4 +152,3 @@ func (uc *unicode0900AICICollator) Pattern() WildcardPattern {
 func (uc *unicode0900AICICollator) MaxLenOneByte() int {
 	return 2
 }
-

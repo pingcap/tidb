@@ -152,4 +152,3 @@ func (uc *unicodeCICollator) Pattern() WildcardPattern {
 func (uc *unicodeCICollator) MaxLenOneByte() int {
 	return 2
 }
-
