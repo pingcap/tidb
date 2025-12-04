@@ -115,43 +115,12 @@ func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
 				row:       row.Data,
 				rowID:     row.ID,
 				endOffset: -1,
+				startPos:  -1,
 				resetFn:   func() {},
 			}
 			return
 		}
 	}
-<<<<<<< HEAD
-=======
-
-	chkRow := r.currChk.Chk.GetRow(r.cursor)
-	rowLen := chkRow.Len()
-	if cap(row) < rowLen {
-		row = make([]types.Datum, rowLen)
-	} else {
-		row = row[:0]
-		for range rowLen {
-			row = append(row, types.Datum{}) // nozero
-		}
-	}
-	row = chkRow.GetDatumRowWithBuffer(r.currChk.Fields, row)
-	r.cursor++
-	data = rowToEncode{
-		row:       row,
-		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
-		endOffset: -1,
-		startPos:  -1,
-		resetFn:   func() {},
-	}
-	return
-}
-
-// queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
-func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
-	reader := queryChunkEncodeReader{chunkCh: chunkCh}
-	return func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
-		return reader.readRow(ctx, row)
-	}
->>>>>>> 579148dffb3 (importinto: enhance encode error msg (#63764))
 }
 
 type encodedKVGroupBatch struct {
@@ -306,13 +275,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		return nil
 	}
 
-<<<<<<< HEAD
-=======
-	var (
-		readRowCache []types.Datum
-		rowNumber    int
-	)
->>>>>>> 579148dffb3 (importinto: enhance encode error msg (#63764))
+	var rowNumber int
 	for {
 		readDurStart := time.Now()
 		data, closed, err := p.readFn(ctx)
@@ -322,11 +285,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		if closed {
 			break
 		}
-<<<<<<< HEAD
-=======
 		rowNumber++
-		readRowCache = data.row
->>>>>>> 579148dffb3 (importinto: enhance encode error msg (#63764))
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
