@@ -198,6 +198,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatementDeadlockDetectDuration)
 	prometheus.MustRegister(StatementPessimisticRetryCount)
 	prometheus.MustRegister(StatementLockKeysCount)
+	prometheus.MustRegister(StatementSharedLockKeysCount)
 	prometheus.MustRegister(ValidateReadTSFromPDCount)
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(WatchOwnerCounter)

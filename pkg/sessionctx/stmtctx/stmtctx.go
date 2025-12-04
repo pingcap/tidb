@@ -350,6 +350,7 @@ type StatementContext struct {
 	PessimisticLockWaited int32
 	LockKeysDuration      int64
 	LockKeysCount         int32
+	SharedLockKeysCount   int32
 	LockTableIDs          map[int64]struct{} // table IDs need to be locked, empty for lock all tables
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64 // unique ID for an execution of a statement
