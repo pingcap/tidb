@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -118,7 +117,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
 
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -174,7 +173,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -196,7 +195,14 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 		zap.Int("fileCount", len(all.MultipleFilesStats)),
 		zap.Uint64("totalKVSize", all.TotalKVSize))
 
-	meta, err := json.Marshal(sm)
+	// write external meta to storage when using global sort
+	if r.isGlobalSort() {
+		if err := writeExternalBackfillSubTaskMeta(ctx, r.cloudStorageURI, sm, external.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+			return err
+		}
+	}
+
+	meta, err := sm.Marshal()
 	if err != nil {
 		return err
 	}
