@@ -494,7 +494,6 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 					continue
 				}
 
-				// Buffer length for all decimal in one column should be same
 				size, err := ds[physicalRowindex].HashKeySize()
 				if err != nil {
 					return serializedKeyLens, continuousMem, err
