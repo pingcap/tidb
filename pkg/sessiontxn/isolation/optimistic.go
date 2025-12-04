@@ -49,14 +49,10 @@ func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, c
 
 func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
 	sessVars := p.sctx.GetSessionVars()
-<<<<<<< HEAD
 	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
-=======
-	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp, txn.IsPipelined())
 	failpoint.Inject("injectOptimisticTxnRetryable", func(val failpoint.Value) {
 		sessVars.TxnCtx.CouldRetry = val.(bool)
 	})
->>>>>>> b302859f2c4 (plugin: add retry information in the plugin completed event. (#64692))
 }
 
 // isOptimisticTxnRetryable (if returns true) means the transaction could retry.
