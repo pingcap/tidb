@@ -254,7 +254,7 @@ func tidbOptIntAllowNegativeOne(opt string, defaultVal int) int {
 	if err != nil {
 		return defaultVal
 	}
-	// Allow -1 as a special "disabled" value, otherwise must be positive
+	// Allow -1 as a special "disabled" value, otherwise must be non-negative
 	if val < -1 {
 		return defaultVal
 	}

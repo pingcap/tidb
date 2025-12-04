@@ -79,13 +79,8 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	// Only prune with score > 0 when we have more index paths than the threshold
 	const defaultMaxIndexes = 10
 	var maxToKeep int
-	if totalPathCount > threshold {
-		// When pruning, use threshold if provided, otherwise use defaultMaxIndexes
-		if threshold > 0 {
-			maxToKeep = threshold
-		} else {
-			maxToKeep = defaultMaxIndexes
-		}
+	if totalPathCount > threshold && threshold > 0 {
+		maxToKeep = max(threshold, defaultMaxIndexes) // Avoid being too aggressive when threshold is small
 	} else {
 		// When not pruning (len(paths) < threshold), set maxToKeep to keep all indexes with score > 0
 		maxToKeep = totalPathCount

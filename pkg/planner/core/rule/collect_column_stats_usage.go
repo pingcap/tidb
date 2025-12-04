@@ -287,6 +287,53 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
+// extractMinMaxOrderingColumns extracts columns from MIN/MAX aggregate functions.
+// These columns can benefit from ordered indexes for efficient computation.
+func (c *columnStatsUsageCollector) extractMinMaxOrderingColumns(lp base.LogicalPlan) []*expression.Column {
+	agg, ok := lp.(*logicalop.LogicalAggregation)
+	if !ok {
+		return nil
+	}
+
+	var minMaxCols []*expression.Column
+	for _, aggFunc := range agg.AggFuncs {
+		if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax {
+			cols := expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)
+			minMaxCols = append(minMaxCols, cols...)
+		}
+	}
+	return minMaxCols
+}
+
+// extractJoinColumns extracts columns from join conditions of LogicalJoin or LogicalApply nodes.
+// It only extracts from EqualConditions and OtherConditions, not from LeftConditions or RightConditions,
+// as those are filters on individual tables rather than join conditions between tables.
+func (c *columnStatsUsageCollector) extractJoinColumns(lp base.LogicalPlan) []*expression.Column {
+	var equalConds []*expression.ScalarFunction
+	var otherConds []expression.Expression
+
+	switch x := lp.(type) {
+	case *logicalop.LogicalJoin:
+		equalConds = x.EqualConditions
+		otherConds = x.OtherConditions
+	case *logicalop.LogicalApply:
+		equalConds = x.EqualConditions
+		otherConds = x.OtherConditions
+	default:
+		return nil
+	}
+
+	joinExprs := make([]expression.Expression, 0, len(equalConds)+len(otherConds))
+	for _, cond := range equalConds {
+		joinExprs = append(joinExprs, cond)
+	}
+	for _, cond := range otherConds {
+		joinExprs = append(joinExprs, cond)
+	}
+
+	return expression.ExtractColumnsFromExpressions(joinExprs, nil)
+}
+
 // collectFromPlan will dive into the tree to collect base column stats usage, in this process
 // we also make the use of the dive process down to passing the parent operator's column groups
 // requirement to notify the underlying datasource to maintain the possible group ndv.
@@ -328,30 +375,14 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		// Extract and accumulate join columns to propagate to DataSource
 		// Note: LeftConditions and RightConditions are not join conditions between tables,
 		// they are filters on individual tables, so we only extract from EqualConditions and OtherConditions
-		// We accumulate (append) rather than replace to capture join columns from parent joins
-		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
-		for _, cond := range x.EqualConditions {
-			joinExprs = append(joinExprs, cond)
-		}
-		for _, cond := range x.OtherConditions {
-			joinExprs = append(joinExprs, cond)
-		}
-		newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
-		// Append new join columns to existing ones to accumulate from parent joins
-		c.joinColumns = append(c.joinColumns, newJoinCols...)
+		c.joinColumns = append(c.joinColumns, c.extractJoinColumns(lp)...)
 	case *logicalop.LogicalApply:
 		// Extract and accumulate join columns to propagate to DataSource
-		// We accumulate (append) rather than replace to capture join columns from parent joins
-		joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
-		for _, cond := range x.EqualConditions {
-			joinExprs = append(joinExprs, cond)
-		}
-		for _, cond := range x.OtherConditions {
-			joinExprs = append(joinExprs, cond)
-		}
-		newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
-		// Append new join columns to existing ones to accumulate from parent joins
-		c.joinColumns = append(c.joinColumns, newJoinCols...)
+		c.joinColumns = append(c.joinColumns, c.extractJoinColumns(lp)...)
+	case *logicalop.LogicalAggregation:
+		// Extract columns from MIN/MAX aggregates - these can benefit from ordered indexes
+		// Do this before visiting children so the ordering columns are available to DataSource nodes below
+		c.orderingColumns = append(c.orderingColumns, c.extractMinMaxOrderingColumns(lp)...)
 	}
 
 	for _, child := range lp.Children() {
@@ -364,28 +395,13 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		c.orderingColumns = savedOrderingColumns
 		c.joinColumns = make([]*expression.Column, len(savedJoinColumns))
 		copy(c.joinColumns, savedJoinColumns)
-		// Re-apply this node's join columns if it's a join
-		switch x := lp.(type) {
-		case *logicalop.LogicalJoin:
-			joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
-			for _, cond := range x.EqualConditions {
-				joinExprs = append(joinExprs, cond)
-			}
-			for _, cond := range x.OtherConditions {
-				joinExprs = append(joinExprs, cond)
-			}
-			newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
-			c.joinColumns = append(c.joinColumns, newJoinCols...)
-		case *logicalop.LogicalApply:
-			joinExprs := make([]expression.Expression, 0, len(x.EqualConditions)+len(x.OtherConditions))
-			for _, cond := range x.EqualConditions {
-				joinExprs = append(joinExprs, cond)
-			}
-			for _, cond := range x.OtherConditions {
-				joinExprs = append(joinExprs, cond)
-			}
-			newJoinCols := expression.ExtractColumnsFromExpressions(joinExprs, nil)
-			c.joinColumns = append(c.joinColumns, newJoinCols...)
+		// Re-apply this node's join columns if it's a join, or ordering columns if it's an aggregation
+		switch lp.(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalApply:
+			c.joinColumns = append(c.joinColumns, c.extractJoinColumns(lp)...)
+		case *logicalop.LogicalAggregation:
+			// Re-apply MIN/MAX ordering columns for the next child
+			c.orderingColumns = append(c.orderingColumns, c.extractMinMaxOrderingColumns(lp)...)
 		}
 	}
 	switch x := lp.(type) {
@@ -412,14 +428,6 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		c.addPredicateColumnsFromExpressions(x.GroupByItems, false)
 		// Schema change from children to self.
 		schema := x.Schema()
-		// Extract columns from MIN/MAX/FIRST_VALUE aggregates - these can benefit from ordered indexes
-		// Do this before visiting children so the ordering columns are available to DataSource nodes below
-		for _, aggFunc := range x.AggFuncs {
-			if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncFirstRow {
-				minMaxCols := expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)
-				c.orderingColumns = append(c.orderingColumns, minMaxCols...)
-			}
-		}
 		for i, aggFunc := range x.AggFuncs {
 			c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
 		}
