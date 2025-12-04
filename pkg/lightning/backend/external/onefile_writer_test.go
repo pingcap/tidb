@@ -223,12 +223,8 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		1000,
 		func(summary *WriterSummary) { onefile = summary.MultipleFilesStats[0].Filenames[0] },
 		true,
-<<<<<<< HEAD
 		common.OnDuplicateKeyIgnore,
-=======
-		engineapi.OnDuplicateKeyIgnore,
 		1,
->>>>>>> fdca8155d1d (global sort: reduce the memory usage of merge sort concurrent reader (#62921))
 	))
 
 	kvs := make([]KVPair, 0, kvCount)
@@ -326,12 +322,8 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		1000,
 		onClose,
 		true,
-<<<<<<< HEAD
 		common.OnDuplicateKeyIgnore,
-=======
-		engineapi.OnDuplicateKeyIgnore,
 		1,
->>>>>>> fdca8155d1d (global sort: reduce the memory usage of merge sort concurrent reader (#62921))
 	))
 
 	bufSize := rand.Intn(100) + 1
