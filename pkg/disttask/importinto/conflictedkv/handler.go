@@ -127,9 +127,8 @@ func (h *BaseHandler) Close(context.Context) error {
 	return h.encoder.Close()
 }
 
-// re-encode the row from the handle and value of data KV, then we either delete
-// all encoded keys or call handleConflictRowFn, it's possible that part or all
-// of the keys are already deleted.
+// re-encode the row from the handle and value of data KV into KV pairs and handle
+// them using the EncodedRowHandler.
 func (h *BaseHandler) encodeAndHandleRow(ctx context.Context,
 	handle tidbkv.Handle, val []byte) (err error) {
 	tblMeta := h.targetTable.Meta()
