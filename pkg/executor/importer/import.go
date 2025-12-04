@@ -1236,7 +1236,11 @@ func estimateCompressionRatio(
 	return compressionRatio, nil
 }
 
-const compressionSampleCount = 256
+// Consider the extreme case that user data contains all compression types.
+// In such case, we need to sample about 3,000 files. Suppose each file takes
+// 0.5 second to sample (for example, cross region read), we can finish in about
+// 1.5 minutes with 16 concurrency.
+const compressionSampleCount = 512
 
 // compressionEstimator estimates compression ratio for different compression types.
 // It uses harmonic mean to get the average compression ratio.

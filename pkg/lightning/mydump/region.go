@@ -273,9 +273,9 @@ func MakeTableRegions(
 
 	// Process large CSV files
 	for _, info := range largeFiles {
-		regions, sizes, err := SplitLargeCSV(egCtx, cfg, info)
+		regions, sizes, err := SplitLargeCSV(ctx, cfg, info)
 		if err != nil {
-			logutil.Logger(egCtx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
+			logutil.Logger(ctx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
 			return nil, err
 		}
 		result := fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}
