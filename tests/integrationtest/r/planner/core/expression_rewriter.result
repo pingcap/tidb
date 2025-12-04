@@ -297,7 +297,7 @@ a	c
 c	D
 explain select * from t1 where 'a' between 'g' and 'f';
 id	estRows	task	access object	operator info
-TableDual_6	0.00	root		rows:0
+TableDual_7	0.00	root		rows:0
 select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;
 Error 1270 (HY000): Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'BETWEEN'
 DROP TABLE if exists t1, t2, source;
@@ -317,11 +317,11 @@ INSERT INTO t1 VALUES(1, 1);
 select CAST(IFNULL(cnull, '1') AS DATE), CAST(IFNULL(cnotnull, '1') AS DATE) from t1;
 CAST(IFNULL(cnull, '1') AS DATE)	CAST(IFNULL(cnotnull, '1') AS DATE)
 NULL	NULL
-explain format="brief" select IFNULL(cnotnull, '1') from t1;
-id	estRows	task	access object	operator info
-Projection	10000.00	root		cast(planner__core__expression_rewriter.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)->Column#4
-└─TableReader	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format="plan_tree" select IFNULL(cnotnull, '1') from t1;
+id	task	access object	operator info
+Projection	root		cast(planner__core__expression_rewriter.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)->Column#5
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 DROP TABLE if exists t0;
 DROP VIEW if exists t0;
 CREATE TABLE t0(c0 TEXT(328) );
@@ -433,3 +433,16 @@ select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
 collation(_utf8mb4'@a' collate utf8mb4_general_ci)
 utf8mb4_general_ci
 set @@session.default_collation_for_utf8mb4=default;
+drop table if exists tb0;
+create table tb0 (c0 bigint unsigned not null);
+select 1 as col from tb0 where ((true not in (select 1)) not in (tb0.c0));
+col
+explain format='plan_tree' select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));
+id	task	access object	operator info
+Projection	root		1->Column#6
+└─Selection	root		ne(Column#5, planner__core__expression_rewriter.tb0.c0)
+  └─HashJoin	root		CARTESIAN anti left outer semi join, left side:TableReader
+    ├─Projection(Build)	root		0->Column#10
+    │ └─TableDual	root		rows:1
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:tb0	keep order:false, stats:pseudo

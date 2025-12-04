@@ -50,6 +50,7 @@ func TestTableSampleBasic(t *testing.T) {
 	tk.MustExec("alter table t add column c int as (a + 1);")
 	tk.MustQuery("select c from t tablesample regions();").Check(testkit.Rows("1"))
 	tk.MustQuery("select c, _tidb_rowid from t tablesample regions();").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select c, _tidb_rowid, _tidb_commit_ts from t tablesample regions();").Check(testkit.Rows("1 1 <nil>"))
 	tk.MustHavePlan("select * from t tablesample regions();", "TableSample")
 
 	tk.MustExec("drop table if exists t;")

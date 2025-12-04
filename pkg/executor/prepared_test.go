@@ -21,16 +21,19 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,10 +54,10 @@ func TestPreparedNullParam(t *testing.T) {
 		tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-			"TableDual_5 0.00 root  rows:0"))
+			"TableDual_7 0.00 root  rows:0"))
 	}
 }
 
@@ -88,13 +91,13 @@ func TestIssue29850(t *testing.T) {
 	tk.MustExec(`set @c_id=1549`)
 	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
-		`Projection_7 0.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─HashJoin_8 0.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_11(Build) 1.00 root table:warehouse handle:1262`,
-		`  └─Point_Get_10(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
+		`Projection 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
+		`└─MergeJoin 1.00 root  inner join, left key:test.customer.c_w_id, right key:test.warehouse.w_id`,
+		`  ├─Point_Get(Build) 1.00 root table:warehouse handle:1262`,
+		`  └─Point_Get(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
 	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
 
@@ -104,20 +107,20 @@ func TestIssue29850(t *testing.T) {
 	tk.MustExec(`set @a1=1, @a2=2`)
 	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		`Point_Get_5 1.00 root table:t handle:1`))
+		`Point_Get_6 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustExec(`prepare stmt from 'select * from t where a=? or a=?'`)
 	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a or condition
-		`Point_Get_5 1.00 root table:t handle:1`))
+		`Point_Get_6 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 }
 
@@ -139,13 +142,13 @@ func TestIssue28064(t *testing.T) {
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	rows.Check(testkit.Rows(
-		"IndexLookUp_7 0.00 root  ",
-		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+		"IndexLookUp_8 1.25 root  ",
+		"├─IndexRangeScan_6(Build) 1.25 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery("select @@last_plan_from_cache")
@@ -154,15 +157,15 @@ func TestIssue28064(t *testing.T) {
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	rows.Check(testkit.Rows(
-		"IndexLookUp_7 0.00 root  ",
-		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+		"IndexLookUp_8 1.25 root  ",
+		"├─IndexRangeScan_6(Build) 1.25 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 }
 
 func TestPreparePlanCache4Blacklist(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -173,7 +176,7 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.MustExec("prepare stmt from 'select min(a) from t;';")
 	tk.MustExec("execute stmt;")
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	require.Contains(t, res.Rows()[1][0], "TopN")
@@ -188,7 +191,7 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustExec("execute stmt;")
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	// Plans that have been cached will not be affected by the blacklist.
@@ -203,7 +206,7 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.MustExec("prepare stmt from 'SELECT * FROM t WHERE a < 2 and a > 2;';")
 	tk.MustExec("execute stmt;")
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	require.Equal(t, 3, len(res.Rows()))
@@ -221,7 +224,7 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt;")
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	// The expressions can not be pushed down to tikv.
@@ -244,7 +247,7 @@ func TestPlanCacheClusterIndex(t *testing.T) {
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
@@ -263,7 +266,7 @@ func TestPlanCacheClusterIndex(t *testing.T) {
 	tk.MustExec("set @v2 = '2'")
 	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("3 3 333"))
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	require.Equal(t, 0, strings.Index(rows[len(rows)-1][4].(string), `range:("3" "2","3" +inf]`))
@@ -281,7 +284,7 @@ func TestPlanCacheClusterIndex(t *testing.T) {
 	tk.MustExec("set @v2 = '3'")
 	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("3 3 333"))
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	require.Equal(t, 0, strings.Index(rows[len(rows)-1][0].(string), `Point_Get`))
@@ -309,7 +312,7 @@ func TestPlanCacheClusterIndex(t *testing.T) {
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	require.True(t, strings.Contains(rows[3][0].(string), `TableRangeScan`))
@@ -329,7 +332,7 @@ func TestPlanCacheClusterIndex(t *testing.T) {
 	tk.MustQuery(`execute stmt2 using @v2, @v2, @v3, @v3`).Check(testkit.Rows("b b 2 2 2", "c c 3 3 3"))
 
 	// For issue 19002
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(a int, b int, c int, primary key(a, b))`)
 	tk.MustExec(`insert into t1 values(1,1,111),(2,2,222),(3,3,333)`)
@@ -410,7 +413,7 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 			lastPlanUseCache := tk.MustQuery("select @@last_plan_from_cache").Rows()[0][0]
 			tk.MustQuery(exec.ExecuteSQL)
 			tkProcess := tk.Session().ShowProcess()
-			ps := []*util.ProcessInfo{tkProcess}
+			ps := []*sessmgr.ProcessInfo{tkProcess}
 			tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 			testdata.OnRecord(func() {
@@ -791,13 +794,15 @@ func TestIssue29101(t *testing.T) {
 	tk.MustExec(`set @a=936,@b=7,@c=158`)
 	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PK
 		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─HashJoin_7 1.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_10(Build) 1.00 root table:warehouse handle:936`,
-		`  └─Point_Get_9(Probe) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `))
+		`└─IndexJoin_11 1.00 root  inner join, inner:TableReader_30, outer key:test.customer.c_w_id, inner key:test.warehouse.w_id, equal cond:eq(test.customer.c_w_id, test.warehouse.w_id)`,
+		`  ├─Point_Get_27(Build) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `,
+		`  └─TableReader_30(Probe) 0.00 root  data:Selection_29`,
+		`    └─Selection_29 0.00 cop[tikv]  eq(test.warehouse.w_id, 936)`,
+		`      └─TableRangeScan_28 1.00 cop[tikv] table:warehouse range: decided by [test.customer.c_w_id], keep order:false, stats:pseudo`))
 	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 
@@ -817,18 +822,18 @@ func TestIssue29101(t *testing.T) {
 	tk.MustExec(`set @a=391,@b=1,@c=3058,@d=18`)
 	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use index-join
-		`StreamAgg_9 1.00 root  funcs:count(distinct test.stock.s_i_id)->Column#11`,
-		`└─IndexJoin_14 0.03 root  inner join, inner:IndexLookUp_13, outer key:test.order_line.ol_i_id, inner key:test.stock.s_i_id, equal cond:eq(test.order_line.ol_i_id, test.stock.s_i_id)`,
-		`  ├─IndexLookUp_25(Build) 0.03 root  `,
-		`  │ ├─IndexRangeScan_23(Build) 0.03 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
-		`  │ └─TableRowIDScan_24(Probe) 0.03 cop[tikv] table:order_line keep order:false, stats:pseudo`,
-		`  └─IndexLookUp_13(Probe) 0.03 root  `,
-		`    ├─IndexRangeScan_10(Build) 0.03 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
-		`    └─Selection_12(Probe) 0.03 cop[tikv]  lt(test.stock.s_quantity, 18)`,
-		`      └─TableRowIDScan_11 0.03 cop[tikv] table:stock keep order:false, stats:pseudo`))
+		`StreamAgg_14 1.00 root  funcs:count(distinct test.stock.s_i_id)->Column#13`,
+		`└─IndexJoin_43 1.25 root  inner join, inner:IndexLookUp_36, outer key:test.order_line.ol_i_id, inner key:test.stock.s_i_id, equal cond:eq(test.order_line.ol_i_id, test.stock.s_i_id)`,
+		`  ├─IndexLookUp_32(Build) 1.25 root  `,
+		`  │ ├─IndexRangeScan_30(Build) 1.25 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
+		`  │ └─TableRowIDScan_31(Probe) 1.25 cop[tikv] table:order_line keep order:false, stats:pseudo`,
+		`  └─IndexLookUp_36(Probe) 1.25 root  `,
+		`    ├─IndexRangeScan_33(Build) 1.25 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
+		`    └─Selection_35(Probe) 1.25 cop[tikv]  lt(test.stock.s_quantity, 18)`,
+		`      └─TableRowIDScan_34 1.25 cop[tikv] table:stock keep order:false, stats:pseudo`))
 	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 }
@@ -860,7 +865,7 @@ func TestParameterPushDown(t *testing.T) {
 			fromCache := tk.MustQuery("select @@last_plan_from_cache")
 			tk.MustQuery(tt.SQL)
 			tkProcess := tk.Session().ShowProcess()
-			ps := []*util.ProcessInfo{tkProcess}
+			ps := []*sessmgr.ProcessInfo{tkProcess}
 			tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 
@@ -948,7 +953,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.MustExec("prepare stmt from 'select * from t use index(idx_a, idx_b) where a > 1 or b > 1;';")
 	tk.MustExec("execute stmt;")
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Equal(t, 4, len(res.Rows()))
@@ -957,7 +962,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_index_merge = 0;")
 	tk.MustExec("execute stmt;")
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Equal(t, 4, len(res.Rows()))
@@ -974,8 +979,9 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Contains(t, res.Rows()[1][0], "Apply")
@@ -983,8 +989,9 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("set tidb_enable_parallel_apply=false")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Contains(t, res.Rows()[1][0], "Apply")
@@ -1006,8 +1013,9 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Contains(t, res.Rows()[1][0], "Apply")
@@ -1015,8 +1023,9 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 
 	tk.MustExec("set tidb_mem_quota_apply_cache=0")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.Session().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Contains(t, res.Rows()[1][0], "Apply")
@@ -1040,7 +1049,7 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 
 	// create virtual tiflash replica.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1052,7 +1061,7 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	tk.MustQuery("execute stmt")
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	require.Equal(t, "cop[tikv]", rows[len(rows)-1][2])
@@ -1063,7 +1072,7 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	tk.MustExec("set @@session.tidb_allow_mpp=0")
 	tk.MustExec("execute stmt")
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	require.Equal(t, rows[len(rows)-1][2], "cop[tiflash]")
@@ -1173,6 +1182,27 @@ func TestPrepareProtocolWorkWithForeignKey(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestExecuteWithWrongType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t3 (c1 int, c2 decimal(32, 30))")
+
+	tk.MustExec(`prepare p1 from "update t3 set c1 = 2 where c2 in (?, ?)"`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 0.0`)
+	tk.MustExec(`execute p1 using @i0, @i1`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 'aa'`)
+	tk.MustExecToErr(`execute p1 using @i0, @i1`)
+
+	tk.MustExec(`prepare p2 from "update t3 set c1 = 2 where c2 in (?, ?)"`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 'aa'`)
+	tk.MustExecToErr(`execute p2 using @i0, @i1`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 0.0`)
+	tk.MustExec(`execute p2 using @i0, @i1`)
+}
+
 func TestIssue58870(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1194,4 +1224,29 @@ func TestIssue58870(t *testing.T) {
 	rs, err := tk.Session().ExecutePreparedStmt(context.TODO(), stmt, nil)
 	require.Nil(t, err)
 	require.Nil(t, rs)
+}
+func TestIssue57528(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE customer (
+	  c_id int(11) NOT NULL,
+	  c_discount int(11) DEFAULT NULL,
+	  PRIMARY KEY (c_id))`)
+	tk.MustExec(`insert into customer values (1, 2)`)
+	tk.MustExec(`prepare stmt from 'SELECT c_discount FROM customer WHERE c_id = ?'`)
+	tk.MustExec(`set @c_id=1`)
+	tk.MustQuery(`execute stmt using @c_id`).Check(testkit.Rows("2"))
+	tk.MustQuery(`execute stmt using @c_id`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
+
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	}()
+	tk.MustQuery(`execute stmt using @c_id`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
 }

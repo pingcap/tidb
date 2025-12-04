@@ -1419,7 +1419,7 @@ func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop 
 
 func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
 	for _, col := range ds.Columns {
-		if col.Name.L == model.ExtraHandleName.L {
+		if col.Name.L == model.ExtraHandleName.L || col.Name.L == model.ExtraCommitTSName.L {
 			continue
 		}
 
