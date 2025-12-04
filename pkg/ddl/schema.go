@@ -154,8 +154,8 @@ func onModifySchemaDefaultPlacement(jobCtx *jobContext, job *model.Job) (ver int
 	return ver, nil
 }
 
-func onModifySchemaActiveActiveAndSoftDelete(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	args, err := model.GetModifySchemaActiveActiveAndSoftDeleteArgs(job)
+func onModifySchemaActiveActive(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetModifySchemaActiveActiveArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -171,6 +171,31 @@ func onModifySchemaActiveActiveAndSoftDelete(jobCtx *jobContext, job *model.Job)
 	if args.ActiveActive != "" {
 		dbInfo.IsActiveActive = args.ActiveActive
 	}
+
+	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	return ver, nil
+}
+
+func onModifySchemaSoftDelete(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetModifySchemaSoftDeleteArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Update database fields with new values
+	// Empty strings from args mean "not set in this ALTER DATABASE command", so we only update non-empty values
 	if args.SoftDelete != "" {
 		dbInfo.SoftDeleteEnable = args.SoftDelete
 	}

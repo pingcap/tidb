@@ -397,7 +397,6 @@ var Keywords = []KeywordsType{
 	{"GLOBAL", false, "unreserved"},
 	{"GRANTS", false, "unreserved"},
 	{"HANDLER", false, "unreserved"},
-	{"HARD", false, "unreserved"},
 	{"HASH", false, "unreserved"},
 	{"HELP", false, "unreserved"},
 	{"HISTOGRAM", false, "unreserved"},

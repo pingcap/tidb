@@ -2591,8 +2591,6 @@ type DeleteStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints []*TableOptimizerHint
 	With       *WithClause
-	// HardDelete is true if DELETE HARD is specified
-	HardDelete bool
 }
 
 // Restore implements Node interface.
@@ -2620,9 +2618,6 @@ func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("*/ ")
 	}
 
-	if n.HardDelete {
-		ctx.WriteKeyWord("HARD ")
-	}
 	if err := n.Priority.Restore(ctx); err != nil {
 		return errors.Trace(err)
 	}

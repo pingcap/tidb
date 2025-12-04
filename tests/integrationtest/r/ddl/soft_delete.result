@@ -1,30 +1,102 @@
 drop database if exists test_sd;
 create database test_sd softdelete = 'ON';
-drop database if exists test_sd;
-create database test_sd softdelete_retention = '7d';
-drop database if exists test_sd;
-create database test_sd softdelete_job_enable = 'ON';
-drop database if exists test_sd;
-create database test_sd softdelete_job_interval = '1h';
-drop database if exists test_sd;
-create database test_sd softdelete = 'OFF';
-alter database test_sd softdelete = 'ON';
-alter database test_sd softdelete_retention = '7d';
-alter database test_sd softdelete_job_enable = 'ON';
-alter database test_sd softdelete_job_interval = '1h';
+show create database test_sd;
+Database	Create Database
+test_sd	CREATE DATABASE `test_sd` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![softdelete] SOFTDELETE='ON' */
+drop database test_sd;
+create database test_sd softdelete_retention = '7d' softdelete_job_enable = 'ON' softdelete_job_interval = '1h' softdelete = 'OFF';
+show create database test_sd;
+Database	Create Database
+test_sd	CREATE DATABASE `test_sd` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![softdelete] SOFTDELETE='OFF' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='1h' */
 alter database test_sd softdelete = 'OFF';
-drop database if exists test_sd;
+show create database test_sd;
+Database	Create Database
+test_sd	CREATE DATABASE `test_sd` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![softdelete] SOFTDELETE='OFF' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='1h' */
+alter database test_sd softdelete_retention = '8d' softdelete_job_interval = '3h';
+show create database test_sd;
+Database	Create Database
+test_sd	CREATE DATABASE `test_sd` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![softdelete] SOFTDELETE='OFF' */ /*T![softdelete] SOFTDELETE_RETENTION='8d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='3h' */
+drop database test_sd;
 create database test_sd;
 use test_sd;
 create table t1 (id int primary key, name varchar(50)) softdelete = 'ON';
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 create table t2 (id int primary key, name varchar(50)) softdelete = 'ON' softdelete_retention = '14d';
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='14d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 create table t3 (id int primary key, name varchar(50)) softdelete = 'ON' softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='2h' */
+alter database test_sd softdelete = 'ON';
 create table t4 (id int primary key, name varchar(50));
+show create table t4;
+Table	Create Table
+t4	CREATE TABLE `t4` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+create table t5 (id int primary key, name varchar(50)) softdelete = 'OFF' softdelete_retention = '14d';
+Error 8274 (HY000): Cannot set SOFTDELETE on a table without SOFTDELETE config
+alter database test_sd softdelete = 'OFF';
+create table t5 (id int primary key, name varchar(50)) softdelete_retention = '14d';
+Error 8274 (HY000): Cannot set SOFTDELETE on a table without SOFTDELETE config
 alter table t4 softdelete = 'ON';
+show create table t4;
+Table	Create Table
+t4	CREATE TABLE `t4` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 alter table t4 softdelete_retention = '30d';
-alter table t4 softdelete_job_enable = 'ON';
-alter table t4 softdelete_job_interval = '3h';
+show create table t4;
+Table	Create Table
+t4	CREATE TABLE `t4` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='30d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
+show create table t4;
+Table	Create Table
+t4	CREATE TABLE `t4` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='30d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='OFF' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='9h' */
 alter table t4 softdelete = 'OFF';
+show create table t4;
+Table	Create Table
+t4	CREATE TABLE `t4` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE='OFF' */ /*T![softdelete] SOFTDELETE_RETENTION='30d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='OFF' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='9h' */
 alter database test_sd softdelete = 'INVALID';
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 45 near ""The SOFTDELETE option must be 'ON' or 'OFF' 
 create table t5 (id int) softdelete = 'YES';

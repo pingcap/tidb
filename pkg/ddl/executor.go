@@ -713,7 +713,7 @@ func checkMultiSchemaSpecs(_ sessionctx.Context, specs []*ast.DatabaseOption) er
 	return nil
 }
 
-func (e *executor) ModifySchemaActiveActiveAndSoftDelete(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, activeActive, softDelete, softDeleteRetention, softDeleteJobEnable, softDeleteJobInterval string) error {
+func (e *executor) ModifySchemaActiveActive(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, activeActive string) error {
 	dbName := stmt.Name
 	is := e.infoCache.GetLatest()
 	dbInfo, ok := is.SchemaByName(dbName)
@@ -727,7 +727,7 @@ func (e *executor) ModifySchemaActiveActiveAndSoftDelete(sctx sessionctx.Context
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       dbInfo.ID,
 		SchemaName:     dbInfo.Name.L,
-		Type:           model.ActionModifySchemaActiveActiveAndSoftDelete,
+		Type:           model.ActionModifySchemaActiveActive,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
@@ -736,8 +736,36 @@ func (e *executor) ModifySchemaActiveActiveAndSoftDelete(sctx sessionctx.Context
 		}},
 		SQLMode: sctx.GetSessionVars().SQLMode,
 	}
-	args := &model.ModifySchemaActiveActiveAndSoftDeleteArgs{
-		ActiveActive:          activeActive,
+	args := &model.ModifySchemaActiveActiveArgs{
+		ActiveActive: activeActive,
+	}
+	return errors.Trace(e.doDDLJob2(sctx, job, args))
+}
+
+func (e *executor) ModifySchemaSoftDelete(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, softDelete, softDeleteRetention, softDeleteJobEnable, softDeleteJobInterval string) error {
+	dbName := stmt.Name
+	is := e.infoCache.GetLatest()
+	dbInfo, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+
+	// Build the args with the new values
+	// Empty strings mean "not set" in this ALTER DATABASE command
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		Type:           model.ActionModifySchemaSoftDelete,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: sctx.GetSessionVars().SQLMode,
+	}
+	args := &model.ModifySchemaSoftDeleteArgs{
 		SoftDelete:            softDelete,
 		SoftDeleteRetention:   softDeleteRetention,
 		SoftDeleteJobEnable:   softDeleteJobEnable,
@@ -749,16 +777,17 @@ func (e *executor) ModifySchemaActiveActiveAndSoftDelete(sctx sessionctx.Context
 func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
-		toCharset, toCollate        string
-		isAlterCharsetAndCollate    bool
-		placementPolicyRef          *model.PolicyRefInfo
-		tiflashReplica              *ast.TiFlashReplicaSpec
-		activeActive                string
-		softDelete                  string
-		softDeleteRetention         string
-		softDeleteJobEnable         string
-		softDeleteJobInterval       string
-		hasActiveActiveOrSoftDelete bool
+		toCharset, toCollate     string
+		isAlterCharsetAndCollate bool
+		placementPolicyRef       *model.PolicyRefInfo
+		tiflashReplica           *ast.TiFlashReplicaSpec
+		activeActive             string
+		softDelete               string
+		softDeleteRetention      string
+		softDeleteJobEnable      string
+		softDeleteJobInterval    string
+		hasSoftDelete            bool
+		hasActiveActive          bool
 	)
 
 	err = checkMultiSchemaSpecs(sctx, stmt.Options)
@@ -793,19 +822,19 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 			tiflashReplica = val.TiFlashReplica
 		case ast.DatabaseOptionActiveActive:
 			activeActive = val.Value
-			hasActiveActiveOrSoftDelete = true
+			hasActiveActive = true
 		case ast.DatabaseOptionSoftDelete:
 			softDelete = val.Value
-			hasActiveActiveOrSoftDelete = true
+			hasSoftDelete = true
 		case ast.DatabaseOptionSoftDeleteRetention:
 			softDeleteRetention = val.Value
-			hasActiveActiveOrSoftDelete = true
+			hasSoftDelete = true
 		case ast.DatabaseOptionSoftDeleteJobEnable:
 			softDeleteJobEnable = val.Value
-			hasActiveActiveOrSoftDelete = true
+			hasSoftDelete = true
 		case ast.DatabaseOptionSoftDeleteJobInterval:
 			softDeleteJobInterval = val.Value
-			hasActiveActiveOrSoftDelete = true
+			hasSoftDelete = true
 		}
 	}
 
@@ -824,8 +853,13 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 			return err
 		}
 	}
-	if hasActiveActiveOrSoftDelete {
-		if err = e.ModifySchemaActiveActiveAndSoftDelete(sctx, stmt, activeActive, softDelete, softDeleteRetention, softDeleteJobEnable, softDeleteJobInterval); err != nil {
+	if hasActiveActive {
+		if err = e.ModifySchemaActiveActive(sctx, stmt, activeActive); err != nil {
+			return err
+		}
+	}
+	if hasSoftDelete {
+		if err = e.ModifySchemaSoftDelete(sctx, stmt, softDelete, softDeleteRetention, softDeleteJobEnable, softDeleteJobInterval); err != nil {
 			return err
 		}
 	}
@@ -3901,8 +3935,9 @@ func (e *executor) AlterTableSoftDeleteInfo(
 
 	// Apply the soft delete configuration
 	tblInfo.SoftdeleteInfo = softDeleteInfo
+
 	// Validate the soft delete configuration
-	err = checkSoftDeleteInfoValid(tblInfo, false)
+	err = checkSoftDeleteAndActiveActive(tblInfo, false)
 	if err != nil {
 		return err
 	}

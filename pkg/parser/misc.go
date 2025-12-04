@@ -434,7 +434,6 @@ var tokenMap = map[string]int{
 	"HASH":                           hash,
 	"HANDLER":                        handler,
 	"HAVING":                         having,
-	"HARD":                           hard,
 	"HELP":                           help,
 	"HIGH_PRIORITY":                  highPriority,
 	"HISTORY":                        history,

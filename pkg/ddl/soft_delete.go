@@ -48,13 +48,14 @@ func onSoftDeleteInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err 
 
 	var columnInfo *model.ColumnInfo
 	for _, col := range tblInfo.Columns {
-		if col.ID == model.ExtraSoftDeleteTimeID {
+		if col.Name == model.ExtraSoftDeleteTimeName {
 			columnInfo = col
 			break
 		}
 	}
 	if columnInfo == nil {
 		softDeleteCol := model.NewExtraSoftDeleteTimeColInfo()
+		softDeleteCol.ID = allocateConstraintID(tblInfo)
 		softDeleteCol.State = model.StateNone
 		softDeleteCol.Offset = len(tblInfo.Columns)
 		tblInfo.Columns = append(tblInfo.Columns, softDeleteCol)
@@ -146,19 +147,29 @@ func getDefaultSoftDeleteInfo(dbInfo *model.DBInfo) *model.SoftdeleteInfo {
 	return info
 }
 
-// checkSoftDeleteInfoValid validates soft delete configuration
-func checkSoftDeleteInfoValid(tblInfo *model.TableInfo, isCreateTable bool) error {
-	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("soft delete")
-	}
-
+// checkSoftDeleteAndActiveActive validates soft delete configuration
+func checkSoftDeleteAndActiveActive(tblInfo *model.TableInfo, isCreateTable bool) error {
 	if tblInfo.SoftdeleteInfo == nil {
+		if tblInfo.IsActiveActive {
+			return errors.Trace(dbterror.ErrSetSoftDeleteOptionForNonSoftDeleteTable.FastGenByArgs("ACTIVE_ACTIVE"))
+		}
 		return nil
 	}
 
 	// In CREATE TABLE, soft delete options were set without enabling it
 	if isCreateTable && !tblInfo.SoftdeleteInfo.Enable {
 		return errors.Trace(dbterror.ErrSetSoftDeleteOptionForNonSoftDeleteTable.FastGenByArgs("SOFTDELETE"))
+	}
+
+	if !tblInfo.SoftdeleteInfo.Enable {
+		if tblInfo.IsActiveActive {
+			return errors.Trace(dbterror.ErrSetSoftDeleteOptionForNonSoftDeleteTable.FastGenByArgs("ACTIVE_ACTIVE"))
+		}
+		return nil
+	}
+
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("soft delete")
 	}
 
 	// Validate retention duration (if not empty)

@@ -50,12 +50,6 @@ const ExtraRowChecksumID = -4
 // ExtraCommitTSID is the column ID of column which holds the commit timestamp.
 const ExtraCommitTSID = -5
 
-// ExtraOriginTSID is the column ID of column which holds the origin timestamp.
-const ExtraOriginTSID = -6
-
-// ExtraSoftDeleteTimeID is the column ID of column which holds the soft delete expiration time.
-const ExtraSoftDeleteTimeID = -7
-
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement

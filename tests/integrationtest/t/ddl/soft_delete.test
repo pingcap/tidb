@@ -1,36 +1,45 @@
 drop database if exists test_sd;
 create database test_sd softdelete = 'ON';
-drop database if exists test_sd;
-create database test_sd softdelete_retention = '7d';
-drop database if exists test_sd;
-create database test_sd softdelete_job_enable = 'ON';
-drop database if exists test_sd;
-create database test_sd softdelete_job_interval = '1h';
-drop database if exists test_sd;
-create database test_sd softdelete = 'OFF';
+show create database test_sd;
+drop database test_sd;
+create database test_sd softdelete_retention = '7d' softdelete_job_enable = 'ON' softdelete_job_interval = '1h' softdelete = 'OFF';
+show create database test_sd;
 
-alter database test_sd softdelete = 'ON';
-alter database test_sd softdelete_retention = '7d';
-alter database test_sd softdelete_job_enable = 'ON';
-alter database test_sd softdelete_job_interval = '1h';
 alter database test_sd softdelete = 'OFF';
+show create database test_sd;
+alter database test_sd softdelete_retention = '8d' softdelete_job_interval = '3h';
+show create database test_sd;
 
-drop database if exists test_sd;
+drop database test_sd;
 create database test_sd;
 use test_sd;
 
 # Create table
 create table t1 (id int primary key, name varchar(50)) softdelete = 'ON';
+show create table t1;
 create table t2 (id int primary key, name varchar(50)) softdelete = 'ON' softdelete_retention = '14d';
+show create table t2;
 create table t3 (id int primary key, name varchar(50)) softdelete = 'ON' softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
+show create table t3;
+alter database test_sd softdelete = 'ON';
 create table t4 (id int primary key, name varchar(50));
+show create table t4;
+
+-- error 8274
+create table t5 (id int primary key, name varchar(50)) softdelete = 'OFF' softdelete_retention = '14d';
+alter database test_sd softdelete = 'OFF';
+-- error 8274
+create table t5 (id int primary key, name varchar(50)) softdelete_retention = '14d';
 
 # Alter table
 alter table t4 softdelete = 'ON';
+show create table t4;
 alter table t4 softdelete_retention = '30d';
-alter table t4 softdelete_job_enable = 'ON';
-alter table t4 softdelete_job_interval = '3h';
+show create table t4;
+alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
+show create table t4;
 alter table t4 softdelete = 'OFF';
+show create table t4;
 
 # Invalid value 
 -- error 1064

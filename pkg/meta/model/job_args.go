@@ -205,26 +205,43 @@ func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
 	return getOrDecodeArgs[*ModifySchemaArgs](&ModifySchemaArgs{}, job)
 }
 
-// ModifySchemaActiveActiveAndSoftDeleteArgs is the arguments for modify schema active-active and soft-delete.
-type ModifySchemaActiveActiveAndSoftDeleteArgs struct {
+// ModifySchemaActiveActiveArgs is the arguments for modify schema active-active.
+type ModifySchemaActiveActiveArgs struct {
 	ActiveActive          string `json:"active_active,omitempty"`
+}
+
+func (a *ModifySchemaActiveActiveArgs) getArgsV1(job *Job) []any {
+	return []any{a.ActiveActive}
+}
+
+func (a *ModifySchemaActiveActiveArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.ActiveActive))
+}
+
+// GetModifySchemaActiveActiveArgs gets the modify schema active-active.
+func GetModifySchemaActiveActiveArgs(job *Job) (*ModifySchemaActiveActiveArgs, error) {
+	return getOrDecodeArgs[*ModifySchemaActiveActiveArgs](&ModifySchemaActiveActiveArgs{}, job)
+}
+
+// ModifySchemaSoftDeleteArgs is the arguments for modify schema soft-delete.
+type ModifySchemaSoftDeleteArgs struct {
 	SoftDelete            string `json:"soft_delete,omitempty"`
 	SoftDeleteRetention   string `json:"soft_delete_retention,omitempty"`
 	SoftDeleteJobEnable   string `json:"soft_delete_job_enable,omitempty"`
 	SoftDeleteJobInterval string `json:"soft_delete_job_interval,omitempty"`
 }
 
-func (a *ModifySchemaActiveActiveAndSoftDeleteArgs) getArgsV1(job *Job) []any {
-	return []any{a.ActiveActive, a.SoftDelete, a.SoftDeleteRetention, a.SoftDeleteJobEnable, a.SoftDeleteJobInterval}
+func (a *ModifySchemaSoftDeleteArgs) getArgsV1(job *Job) []any {
+	return []any{a.SoftDelete, a.SoftDeleteRetention, a.SoftDeleteJobEnable, a.SoftDeleteJobInterval}
 }
 
-func (a *ModifySchemaActiveActiveAndSoftDeleteArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.ActiveActive, &a.SoftDelete, &a.SoftDeleteRetention, &a.SoftDeleteJobEnable, &a.SoftDeleteJobInterval))
+func (a *ModifySchemaSoftDeleteArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.SoftDelete, &a.SoftDeleteRetention, &a.SoftDeleteJobEnable, &a.SoftDeleteJobInterval))
 }
 
-// GetModifySchemaActiveActiveAndSoftDeleteArgs gets the modify schema active-active and soft-delete args.
-func GetModifySchemaActiveActiveAndSoftDeleteArgs(job *Job) (*ModifySchemaActiveActiveAndSoftDeleteArgs, error) {
-	return getOrDecodeArgs[*ModifySchemaActiveActiveAndSoftDeleteArgs](&ModifySchemaActiveActiveAndSoftDeleteArgs{}, job)
+// GetModifySchemaActiveActiveAndSoftDeleteArgs gets the modify schema soft-delete args.
+func GetModifySchemaSoftDeleteArgs(job *Job) (*ModifySchemaSoftDeleteArgs, error) {
+	return getOrDecodeArgs[*ModifySchemaSoftDeleteArgs](&ModifySchemaSoftDeleteArgs{}, job)
 }
 
 // CreateTableArgs is the arguments for create table/view/sequence job.

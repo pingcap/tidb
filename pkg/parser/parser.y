@@ -449,7 +449,6 @@ import (
 	global                     "GLOBAL"
 	grants                     "GRANTS"
 	handler                    "HANDLER"
-	hard                       "HARD"
 	hash                       "HASH"
 	help                       "HELP"
 	histogram                  "HISTOGRAM"
@@ -1282,7 +1281,6 @@ import (
 	AlterOrderItem                         "Alter Order item"
 	AlterOrderList                         "Alter Order list"
 	QuickOptional                          "QUICK or empty"
-	DeleteHardOpt                          "HARD or empty"
 	PartitionDefinition                    "Partition definition"
 	PartitionDefinitionList                "Partition definition list"
 	PartitionDefinitionListOpt             "Partition definition list option"
@@ -5342,86 +5340,73 @@ DoStmt:
  *  Delete Statement
  *
  *******************************************************************/
-DeleteHardOpt:
-	/* empty */ %prec empty
-	{
-		$$ = false
-	}
-|	"HARD"
-	{
-		$$ = true
-	}
-
 DeleteWithoutUsingStmt:
-	"DELETE" TableOptimizerHintsOpt DeleteHardOpt PriorityOpt QuickOptional IgnoreOptional "FROM" TableName PartitionNameListOpt TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" TableOptimizerHintsOpt PriorityOpt QuickOptional IgnoreOptional "FROM" TableName PartitionNameListOpt TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
-		tn := $8.(*ast.TableName)
-		tn.IndexHints = $11.([]*ast.IndexHint)
-		tn.PartitionNames = $9.([]ast.CIStr)
-		join := &ast.Join{Left: &ast.TableSource{Source: tn, AsName: $10.(ast.CIStr)}, Right: nil}
+		tn := $7.(*ast.TableName)
+		tn.IndexHints = $10.([]*ast.IndexHint)
+		tn.PartitionNames = $8.([]ast.CIStr)
+		join := &ast.Join{Left: &ast.TableSource{Source: tn, AsName: $9.(ast.CIStr)}, Right: nil}
 		x := &ast.DeleteStmt{
 			TableRefs:  &ast.TableRefsClause{TableRefs: join},
-			Priority:   $4.(mysql.PriorityEnum),
-			Quick:      $5.(bool),
-			IgnoreErr:  $6.(bool),
-			HardDelete: $3.(bool),
-		}
-		if $2 != nil {
-			x.TableHints = $2.([]*ast.TableOptimizerHint)
-		}
-		if $12 != nil {
-			x.Where = $12.(ast.ExprNode)
-		}
-		if $13 != nil {
-			x.Order = $13.(*ast.OrderByClause)
-		}
-		if $14 != nil {
-			x.Limit = $14.(*ast.Limit)
-		}
-
-		$$ = x
-	}
-|	"DELETE" TableOptimizerHintsOpt DeleteHardOpt PriorityOpt QuickOptional IgnoreOptional TableAliasRefList "FROM" TableRefs WhereClauseOptional
-	{
-		// Multiple Table
-		x := &ast.DeleteStmt{
-			Priority:     $4.(mysql.PriorityEnum),
-			Quick:        $5.(bool),
-			IgnoreErr:    $6.(bool),
-			IsMultiTable: true,
-			BeforeFrom:   true,
-			Tables:       &ast.DeleteTableList{Tables: $7.([]*ast.TableName)},
-			TableRefs:    &ast.TableRefsClause{TableRefs: $9.(*ast.Join)},
-			HardDelete:   $3.(bool),
-		}
-		if $2 != nil {
-			x.TableHints = $2.([]*ast.TableOptimizerHint)
-		}
-		if $10 != nil {
-			x.Where = $10.(ast.ExprNode)
-		}
-		$$ = x
-	}
-
-DeleteWithUsingStmt:
-	"DELETE" TableOptimizerHintsOpt DeleteHardOpt PriorityOpt QuickOptional IgnoreOptional "FROM" TableAliasRefList "USING" TableRefs WhereClauseOptional
-	{
-		// Multiple Table
-		x := &ast.DeleteStmt{
-			Priority:     $4.(mysql.PriorityEnum),
-			Quick:        $5.(bool),
-			IgnoreErr:    $6.(bool),
-			IsMultiTable: true,
-			Tables:       &ast.DeleteTableList{Tables: $8.([]*ast.TableName)},
-			TableRefs:    &ast.TableRefsClause{TableRefs: $10.(*ast.Join)},
-			HardDelete:   $3.(bool),
+			Priority:   $3.(mysql.PriorityEnum),
+			Quick:      $4.(bool),
+			IgnoreErr:  $5.(bool),
 		}
 		if $2 != nil {
 			x.TableHints = $2.([]*ast.TableOptimizerHint)
 		}
 		if $11 != nil {
 			x.Where = $11.(ast.ExprNode)
+		}
+		if $12 != nil {
+			x.Order = $12.(*ast.OrderByClause)
+		}
+		if $13 != nil {
+			x.Limit = $13.(*ast.Limit)
+		}
+
+		$$ = x
+	}
+|	"DELETE" TableOptimizerHintsOpt PriorityOpt QuickOptional IgnoreOptional TableAliasRefList "FROM" TableRefs WhereClauseOptional
+	{
+		// Multiple Table
+		x := &ast.DeleteStmt{
+			Priority:     $3.(mysql.PriorityEnum),
+			Quick:        $4.(bool),
+			IgnoreErr:    $5.(bool),
+			IsMultiTable: true,
+			BeforeFrom:   true,
+			Tables:       &ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
+			TableRefs:    &ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
+		}
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
+		if $9 != nil {
+			x.Where = $9.(ast.ExprNode)
+		}
+		$$ = x
+	}
+
+DeleteWithUsingStmt:
+	"DELETE" TableOptimizerHintsOpt PriorityOpt QuickOptional IgnoreOptional "FROM" TableAliasRefList "USING" TableRefs WhereClauseOptional
+	{
+		// Multiple Table
+		x := &ast.DeleteStmt{
+			Priority:     $3.(mysql.PriorityEnum),
+			Quick:        $4.(bool),
+			IgnoreErr:    $5.(bool),
+			IsMultiTable: true,
+			Tables:       &ast.DeleteTableList{Tables: $7.([]*ast.TableName)},
+			TableRefs:    &ast.TableRefsClause{TableRefs: $9.(*ast.Join)},
+		}
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
+		if $10 != nil {
+			x.Where = $10.(ast.ExprNode)
 		}
 		$$ = x
 	}
@@ -7098,7 +7083,6 @@ UnReservedKeyword:
 |	"FULL"
 |	"GENERAL"
 |	"GLOBAL"
-|	"HARD"
 |	"HASH"
 |	"HELP"
 |	"HOUR"

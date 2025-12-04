@@ -819,10 +819,6 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbIn
 		return nil, errors.Trace(err)
 	}
 
-	if err := checkSoftDeleteInfoValid(tbInfo, true); err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	if _, err = validateCommentLength(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), ctx.GetSQLMode(), tbInfo.Name.L, &tbInfo.Comment, dbterror.ErrTooLongTableComment); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1008,7 +1004,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 	tbInfo.IsActiveActive = isActiveActive
 
 	// Set soft-delete info
-	if softdeleteHandled {
+	if softdeleteHandled || softdeleteInfo.Enable {
 		tbInfo.SoftdeleteInfo = softdeleteInfo
 	}
 
@@ -1016,6 +1012,37 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 	if tbInfo.PreSplitRegions > shardingBits {
 		tbInfo.PreSplitRegions = shardingBits
 	}
+
+	if err := checkSoftDeleteAndActiveActive(tbInfo, true); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Add extra hidden columns for active-active and soft-delete features
+	if tbInfo.IsActiveActive {
+		// Add _tidb_commit_ts hidden column
+		// virtual column has fixed ID
+		commitTSCol := model.NewExtraCommitTSColInfo()
+		commitTSCol.State = model.StatePublic
+		commitTSCol.Offset = len(tbInfo.Columns)
+		tbInfo.Columns = append(tbInfo.Columns, commitTSCol)
+
+		// Add _tidb_origin_ts hidden column
+		originTSCol := model.NewExtraOriginTSColInfo()
+		originTSCol.ID = AllocateColumnID(tbInfo)
+		originTSCol.State = model.StatePublic
+		originTSCol.Offset = len(tbInfo.Columns)
+		tbInfo.Columns = append(tbInfo.Columns, originTSCol)
+	}
+
+	if tbInfo.SoftdeleteInfo != nil && tbInfo.SoftdeleteInfo.Enable {
+		// Add _tidb_softdelete_time hidden column
+		softDeleteCol := model.NewExtraSoftDeleteTimeColInfo()
+		softDeleteCol.ID = AllocateColumnID(tbInfo)
+		softDeleteCol.State = model.StatePublic
+		softDeleteCol.Offset = len(tbInfo.Columns)
+		tbInfo.Columns = append(tbInfo.Columns, softDeleteCol)
+	}
+
 	return nil
 }
 
@@ -1343,32 +1370,6 @@ func BuildTableInfo(
 			hiddenCol.Offset = len(tbInfo.Columns)
 			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
 			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
-		}
-
-		// Add extra hidden columns for active-active and soft-delete features
-		if tbInfo.IsActiveActive {
-			// Add _tidb_origin_ts hidden column
-			originTSCol := model.NewExtraOriginTSColInfo()
-			originTSCol.State = model.StatePublic
-			originTSCol.Offset = len(tbInfo.Columns)
-			tbInfo.Columns = append(tbInfo.Columns, originTSCol)
-			tblColumns = append(tblColumns, table.ToColumn(originTSCol))
-
-			// Add _tidb_commit_ts hidden column
-			commitTSCol := model.NewExtraCommitTSColInfo()
-			commitTSCol.State = model.StatePublic
-			commitTSCol.Offset = len(tbInfo.Columns)
-			tbInfo.Columns = append(tbInfo.Columns, commitTSCol)
-			tblColumns = append(tblColumns, table.ToColumn(commitTSCol))
-		}
-
-		if tbInfo.SoftdeleteInfo != nil && tbInfo.SoftdeleteInfo.Enable {
-			// Add _tidb_softdelete_time hidden column
-			softDeleteCol := model.NewExtraSoftDeleteTimeColInfo()
-			softDeleteCol.State = model.StatePublic
-			softDeleteCol.Offset = len(tbInfo.Columns)
-			tbInfo.Columns = append(tbInfo.Columns, softDeleteCol)
-			tblColumns = append(tblColumns, table.ToColumn(softDeleteCol))
 		}
 
 		// Check clustered on non-primary key.

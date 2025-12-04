@@ -7948,32 +7948,6 @@ func TestSoftDeleteAndActiveActive(t *testing.T) {
 	RunTest(t, table, false)
 }
 
-func TestDeleteHard(t *testing.T) {
-	table := []testCase{
-		// DELETE HARD statements
-		{"delete hard from t where id = 1", true, "DELETE HARD FROM `t` WHERE `id`=1"},
-		{"DELETE HARD FROM t WHERE id > 10", true, "DELETE HARD FROM `t` WHERE `id`>10"},
-		{"delete hard from t where id > 10 limit 5", true, "DELETE HARD FROM `t` WHERE `id`>10 LIMIT 5"},
-		{"delete hard from t where id = 1 order by name", true, "DELETE HARD FROM `t` WHERE `id`=1 ORDER BY `name`"},
-		{"delete hard from t where id = 1 order by name limit 10", true, "DELETE HARD FROM `t` WHERE `id`=1 ORDER BY `name` LIMIT 10"},
-
-		// DELETE HARD with modifiers
-		{"delete hard low_priority from t where id = 1", true, "DELETE HARD LOW_PRIORITY FROM `t` WHERE `id`=1"},
-		{"delete hard quick from t where id = 1", true, "DELETE HARD QUICK FROM `t` WHERE `id`=1"},
-		{"delete hard ignore from t where id = 1", true, "DELETE HARD IGNORE FROM `t` WHERE `id`=1"},
-		{"delete hard low_priority quick ignore from t where id = 1", true, "DELETE HARD LOW_PRIORITY QUICK IGNORE FROM `t` WHERE `id`=1"},
-
-		// DELETE HARD multi-table
-		{"delete hard t1, t2 from t1, t2 where t1.id = t2.id", true, "DELETE HARD `t1`,`t2` FROM (`t1`) JOIN `t2` WHERE `t1`.`id`=`t2`.`id`"},
-		{"delete hard t1 from t1, t2 where t1.id = t2.id", true, "DELETE HARD `t1` FROM (`t1`) JOIN `t2` WHERE `t1`.`id`=`t2`.`id`"},
-
-		// Regular DELETE (for comparison)
-		{"delete from t where id = 1", true, "DELETE FROM `t` WHERE `id`=1"},
-	}
-
-	RunTest(t, table, false)
-}
-
 func TestIssue45898(t *testing.T) {
 	p := parser.New()
 	p.ParseSQL("a.")
