@@ -625,6 +625,23 @@ func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast
 	return hasDefaultValue, nil
 }
 
+// allowedDateFormatSpecifiers holds the set of format strings that are permitted
+// within a DEFAULT value expression for the DATE_FORMAT function.
+var allowedDateFormatSpecifiers = map[string]struct{}{
+	"%Y-%m":                 {},
+	"%Y-%m-%d":              {},
+	"%y%m%d":                {},
+	"%Y-%m-%d %H.%i.%s":     {},
+	"%Y-%m-%d %H:%i:%s":     {},
+}
+
+// isAllowedDateFormatSpecifier checks if the given format specifier
+// is in the whitelist of formats allowed for default value expressions.
+func isAllowedDateFormatSpecifier(specifier string) bool {
+	_, ok := allowedDateFormatSpecifiers[specifier]
+	return ok
+}
+
 // getFuncCallDefaultValue gets the default column value of function-call expression.
 func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (any, bool, error) {
 	switch expr.FnName.L {
@@ -663,27 +680,34 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		// Support DATE_FORMAT(NOW(),'%Y-%m'), DATE_FORMAT(NOW(),'%Y-%m-%d'),
-		// DATE_FORMAT(NOW(),'%Y-%m-%d %H.%i.%s'), DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s').
-		nowFunc, ok := expr.Args[0].(*ast.FuncCallExpr)
-		if ok && nowFunc.FnName.L == ast.Now {
-			if err := expression.VerifyArgsWrapper(nowFunc.FnName.L, len(nowFunc.Args)); err != nil {
+
+		switch arg0 := expr.Args[0].(type) {
+		case *ast.FuncCallExpr:
+			if arg0.FnName.L != ast.Now {
+				return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+					fmt.Sprintf("%s with disallowed function %s", expr.FnName.String(), arg0.FnName.String()))
+			}
+			if err := expression.VerifyArgsWrapper(arg0.FnName.L, len(arg0.Args)); err != nil {
 				return nil, false, errors.Trace(err)
 			}
-			valExpr, isValue := expr.Args[1].(ast.ValueExpr)
-			if !isValue || (valExpr.GetString() != "%Y-%m" && valExpr.GetString() != "%Y-%m-%d" &&
-				valExpr.GetString() != "%Y-%m-%d %H.%i.%s" && valExpr.GetString() != "%Y-%m-%d %H:%i:%s") {
-				return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), valExpr)
-			}
-			str, err := restoreFuncCall(expr)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			col.DefaultIsExpr = true
-			return str, false, nil
+		case ast.ValueExpr:
+			// A literal string like '2025-08-08 13:13:13' is a deterministic value and is allowed.
+		default:
+			return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+				fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
-			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
+
+		valExpr, isValue := expr.Args[1].(ast.ValueExpr)
+		if !isValue || !isAllowedDateFormatSpecifier(valExpr.GetString()) {
+			return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), valExpr)
+		}
+
+		str, err := restoreFuncCall(expr)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		col.DefaultIsExpr = true
+		return str, false, nil
 	case ast.Replace:
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)

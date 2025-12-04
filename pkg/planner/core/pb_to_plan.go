@@ -130,6 +130,16 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 			}
 		}
 		p.Extractor = extractor
+	case infoschema.ClusterTableAuditLog:
+		extractor := &AuditLogExtractor{}
+		extractor.Desc = tblScan.Desc
+		if b.ranges != nil {
+			err := extractor.buildTimeRangeFromKeyRange(b.ranges)
+			if err != nil {
+				return nil, err
+			}
+		}
+		p.Extractor = extractor
 	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
 		p.Extractor = &StatementsSummaryExtractor{}
 	case infoschema.ClusterTableTiDBIndexUsage:

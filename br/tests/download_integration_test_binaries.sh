@@ -71,15 +71,15 @@ function main() {
     mkdir third_bin
     mkdir tmp
     
-    #PD server
-    download "$pd_download_url" "pd-server.tar.gz" "tmp/pd-server.tar.gz"
-    tar -xzf tmp/pd-server.tar.gz -C third_bin --wildcards 'bin/*'
-    mv third_bin/bin/* third_bin/ 
+    # #PD server
+    # download "$pd_download_url" "pd-server.tar.gz" "tmp/pd-server.tar.gz"
+    # tar -xzf tmp/pd-server.tar.gz -C third_bin --wildcards 'bin/*'
+    # mv third_bin/bin/* third_bin/ 
 
-    #TiKV server
-    download "$tikv_download_url" "tikv-server.tar.gz" "tmp/tikv-server.tar.gz"
-    tar -xzf tmp/tikv-server.tar.gz -C third_bin --wildcards 'bin/*'
-    mv third_bin/bin/* third_bin/
+    # #TiKV server
+    # download "$tikv_download_url" "tikv-server.tar.gz" "tmp/tikv-server.tar.gz"
+    # tar -xzf tmp/tikv-server.tar.gz -C third_bin --wildcards 'bin/*'
+    # mv third_bin/bin/* third_bin/
 
     #TiFlash
     download "$tiflash_download_url" "tiflash.tar.gz" "tmp/tiflash.tar.gz"
