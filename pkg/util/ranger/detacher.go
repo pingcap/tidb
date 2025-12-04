@@ -310,7 +310,7 @@ func mergeTwoCNFRanges(sctx *rangerctx.RangerContext, cond expression.Expression
 // e.g, for input CNF expressions ((a,b) in ((1,1),(2,2))) and a > 1 and ((a,b,c) in (1,1,1),(2,2,2))
 // ((a,b,c) in (1,1,1),(2,2,2)) would be extracted.
 func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.Expression, cols []*expression.Column,
-	lengths []int, rangeMaxSize int64, convertToSortKey bool) (*cnfItemRangeResult, []*valueInfo, error) {
+	lengths []int, newTpSlice []*types.FieldType, rangeMaxSize int64, convertToSortKey bool) (*cnfItemRangeResult, []*valueInfo, error) {
 	if len(conds) < 2 {
 		return nil, nil, nil
 	}
@@ -329,7 +329,7 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 		// We build ranges for `(a,b) in ((1,1),(1,2))` and get `[1 1, 1 1] [1 2, 1 2]`, which are point ranges and we can
 		// append `c = 1` to the point ranges. However, if we choose to merge consecutive ranges here, we get `[1 1, 1 2]`,
 		// which are not point ranges, and we cannot append `c = 1` anymore.
-		res, err := detachCondAndBuildRange(sctx, tmpConds, cols, lengths, rangeMaxSize, convertToSortKey, false)
+		res, err := detachCondAndBuildRangeRecursive(sctx, tmpConds, cols, lengths, newTpSlice, rangeMaxSize, convertToSortKey, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -394,7 +394,7 @@ func chooseBetweenRangeAndPoint(sctx *rangerctx.RangerContext, r1 *DetachRangeRe
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
-func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, newTpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
+func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, considerDNF bool) (*DetachRangeResult, error) {
 	var (
 		eqCount int
 		ranges  Ranges
@@ -407,7 +407,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	var remainedConds []expression.Expression
-	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(newTpSlice, len(accessConds), accessConds)
+	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(len(accessConds), accessConds)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +467,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		ctx:                      d.sctx.ExprCtx.GetEvalCtx(),
 	}
 	if considerDNF {
-		bestCNFItemRes, columnValues, err := extractBestCNFItemRanges(d.sctx, conditions, d.cols, d.lengths, d.rangeMaxSize, d.convertToSortKey)
+		bestCNFItemRes, columnValues, err := extractBestCNFItemRanges(d.sctx, conditions, d.cols, d.lengths, d.newTpSlice, d.rangeMaxSize, d.convertToSortKey)
 		if err != nil {
 			return nil, err
 		}
@@ -547,7 +547,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		}
 		// `eqOrInCount` must be 0 when coming here.
 		res.AccessConds, res.RemainedConds = detachColumnCNFConditions(d.sctx.ExprCtx, newConditions, checker)
-		ranges, res.AccessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, 0, res.AccessConds)
+		ranges, res.AccessConds, remainedConds, err = d.buildCNFIndexRange(0, res.AccessConds)
 		if err != nil {
 			return nil, err
 		}
@@ -583,7 +583,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		accessConds = append(accessConds, cond)
 		// TODO: if it's prefix column, we need to add cond to filterConds?
 	}
-	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, eqOrInCount, accessConds)
+	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(eqOrInCount, accessConds)
 	if err != nil {
 		return nil, err
 	}
@@ -845,7 +845,6 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 // We will detach the conditions of every DNF items, then compose them to a DNF.
 func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(
 	condition *expression.ScalarFunction,
-	newTpSlice []*types.FieldType,
 ) (
 	Ranges,
 	[]expression.Expression,
@@ -874,7 +873,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(
 		if sf, ok := item.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			cnfItems := expression.FlattenCNFConditions(sf)
 			var accesses, filters []expression.Expression
-			res, err := d.detachCNFCondAndBuildRangeForIndex(cnfItems, newTpSlice, true)
+			res, err := d.detachCNFCondAndBuildRangeForIndex(cnfItems, true)
 			if err != nil {
 				return nil, nil, nil, false, -1, err
 			}
@@ -928,8 +927,8 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(
 			if shouldReserve {
 				hasResidual = true
 			}
-			points := rb.build(item, newTpSlice[0], d.lengths[0], d.convertToSortKey)
-			tmpNewTp := newTpSlice[0]
+			points := rb.build(item, d.newTpSlice[0], d.lengths[0], d.convertToSortKey)
+			tmpNewTp := d.newTpSlice[0]
 			if d.convertToSortKey {
 				tmpNewTp = convertStringFTToBinaryCollate(tmpNewTp)
 			}
@@ -1030,26 +1029,28 @@ type DetachRangeResult struct {
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64) (*DetachRangeResult, error) {
-	d := &rangeDetacher{
-		sctx:             sctx,
-		allConds:         conditions,
-		cols:             cols,
-		lengths:          lengths,
-		mergeConsecutive: true,
-		convertToSortKey: true,
-		rangeMaxSize:     rangeMaxSize,
-	}
-	return d.detachCondAndBuildRangeForCols()
+	return detachCondAndBuildRange(sctx, conditions, cols, lengths, rangeMaxSize, true, true)
 }
 
 // detachCondAndBuildRange detaches the index filters from table filters and uses them to build ranges.
 func detachCondAndBuildRange(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64, convertToSortKey bool, mergeConsecutive bool) (*DetachRangeResult, error) {
+	newTpSlice := make([]*types.FieldType, 0, len(cols))
+	for _, col := range cols {
+		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
+	}
+
+	return detachCondAndBuildRangeRecursive(sctx, conditions, cols, lengths, newTpSlice, rangeMaxSize, convertToSortKey, mergeConsecutive)
+}
+
+func detachCondAndBuildRangeRecursive(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
+	lengths []int, newTpSlice []*types.FieldType, rangeMaxSize int64, convertToSortKey bool, mergeConsecutive bool) (*DetachRangeResult, error) {
 	d := &rangeDetacher{
 		sctx:             sctx,
 		allConds:         conditions,
 		cols:             cols,
 		lengths:          lengths,
+		newTpSlice:       newTpSlice,
 		mergeConsecutive: mergeConsecutive,
 		convertToSortKey: convertToSortKey,
 		rangeMaxSize:     rangeMaxSize,
@@ -1071,6 +1072,7 @@ type rangeDetacher struct {
 	allConds         []expression.Expression
 	cols             []*expression.Column
 	lengths          []int
+	newTpSlice       []*types.FieldType
 	mergeConsecutive bool
 	convertToSortKey bool
 	rangeMaxSize     int64
@@ -1078,14 +1080,10 @@ type rangeDetacher struct {
 
 func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, error) {
 	res := &DetachRangeResult{}
-	newTpSlice := make([]*types.FieldType, 0, len(d.cols))
-	for _, col := range d.cols {
-		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
-	}
 	if len(d.allConds) == 1 {
 		if sf, ok := d.allConds[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			ranges, accesses, columnValues, hasResidual, minAccessConds, err :=
-				d.detachDNFCondAndBuildRangeForIndex(sf, newTpSlice)
+				d.detachDNFCondAndBuildRangeForIndex(sf)
 			if err != nil {
 				return res, errors.Trace(err)
 			}
@@ -1104,7 +1102,7 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 			return res, nil
 		}
 	}
-	return d.detachCNFCondAndBuildRangeForIndex(d.allConds, newTpSlice, true)
+	return d.detachCNFCondAndBuildRangeForIndex(d.allConds, true)
 }
 
 // DetachSimpleCondAndBuildRangeForIndex will detach the index filters from table filters.
@@ -1122,11 +1120,12 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 		allConds:         conditions,
 		cols:             cols,
 		lengths:          lengths,
+		newTpSlice:       newTpSlice,
 		mergeConsecutive: true,
 		convertToSortKey: true,
 		rangeMaxSize:     rangeMaxSize,
 	}
-	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, newTpSlice, false)
+	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, false)
 	return res.Ranges, res.AccessConds, err
 }
 
