@@ -1148,6 +1148,9 @@ const (
 	// TiDBDisableTxnFile is used to control whether to disable file-based transaction feature.
 	TiDBDisableTxnFile = "tidb_disable_txn_file"
 
+	// TiDBTxnFileMinMutationSize is the minimum mutation size for using file-based transactions.
+	TiDBTxnFileMinMutationSize = "tidb_txn_file_min_mutation_size"
+
 	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
 
@@ -1865,6 +1868,8 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBDisableTxnFile                             = false
+	DefTiDBTxnFileMinMutationSize                     = 0
+	MinTiDBTxnFileMinMutationSize                     = 1 << 20 // 1 MiB
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 	DefTiDBAccelerateUserCreationUpdate               = false
