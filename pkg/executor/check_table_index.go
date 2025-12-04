@@ -389,7 +389,7 @@ func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string
 		} else if strings.Contains(op, "PointGet") || strings.Contains(op, "BatchPointGet") {
 			if row.Len() > 3 {
 				accessObject := row.GetString(3)
-				if strings.Contains(accessObject, " index:") {
+				if strings.Contains(accessObject, ", index:") {
 					isIndexScan = true
 				}
 			}
