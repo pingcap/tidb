@@ -191,7 +191,9 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	// We need to extract only local WHERE conditions (those that reference only this table's columns)
 	// A column can appear in both local WHERE and join predicates - e.g., "WHERE t1.a = t2.a AND t1.a = 5"
 	whereColSet := make(map[int64]struct{})
-	allConds := make(map[string]struct{})
+	// Track processed conditions using a slice and proper equality checking
+	// We can't use a map because Expression doesn't implement comparable, and using hash codes is unsafe
+	var processedConds []expression.Expression
 	// First, process PushedDownConds
 	for _, cond := range ds.PushedDownConds {
 		condCols := expression.ExtractColumns(cond)
@@ -211,12 +213,19 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 			}
 		}
 		// Track which conditions we've already processed
-		allConds[string(cond.HashCode())] = struct{}{}
+		processedConds = append(processedConds, cond)
 	}
 	// Also process AllConds to catch OR conditions and other conditions that weren't pushed down
 	for _, cond := range ds.AllConds {
-		// Skip if we already processed this condition
-		if _, exists := allConds[string(cond.HashCode())]; exists {
+		// Skip if we already processed this condition - use proper equality check
+		alreadyProcessed := false
+		for _, processed := range processedConds {
+			if expression.ExpressionsSemanticEqual(cond, processed) {
+				alreadyProcessed = true
+				break
+			}
+		}
+		if alreadyProcessed {
 			continue
 		}
 		condCols := expression.ExtractColumns(cond)
@@ -289,7 +298,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 
 // extractMinMaxOrderingColumns extracts columns from MIN/MAX aggregate functions.
 // These columns can benefit from ordered indexes for efficient computation.
-func (c *columnStatsUsageCollector) extractMinMaxOrderingColumns(lp base.LogicalPlan) []*expression.Column {
+func extractMinMaxOrderingColumns(lp base.LogicalPlan) []*expression.Column {
 	agg, ok := lp.(*logicalop.LogicalAggregation)
 	if !ok {
 		return nil
@@ -308,7 +317,7 @@ func (c *columnStatsUsageCollector) extractMinMaxOrderingColumns(lp base.Logical
 // extractJoinColumns extracts columns from join conditions of LogicalJoin or LogicalApply nodes.
 // It only extracts from EqualConditions and OtherConditions, not from LeftConditions or RightConditions,
 // as those are filters on individual tables rather than join conditions between tables.
-func (c *columnStatsUsageCollector) extractJoinColumns(lp base.LogicalPlan) []*expression.Column {
+func extractJoinColumns(lp base.LogicalPlan) []*expression.Column {
 	var equalConds []*expression.ScalarFunction
 	var otherConds []expression.Expression
 
@@ -327,9 +336,7 @@ func (c *columnStatsUsageCollector) extractJoinColumns(lp base.LogicalPlan) []*e
 	for _, cond := range equalConds {
 		joinExprs = append(joinExprs, cond)
 	}
-	for _, cond := range otherConds {
-		joinExprs = append(joinExprs, cond)
-	}
+	joinExprs = append(joinExprs, otherConds...)
 
 	return expression.ExtractColumnsFromExpressions(joinExprs, nil)
 }
@@ -346,6 +353,22 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 	savedOrderingColumns := c.orderingColumns
 	savedJoinColumns := make([]*expression.Column, len(c.joinColumns))
 	copy(savedJoinColumns, c.joinColumns)
+
+	// Validation: Ensure state is properly restored when this function returns
+	// This catches any code path that fails to restore state correctly
+	// Note: We only validate for nodes with children, as leaf nodes may legitimately modify state
+	if intest.InTest && len(lp.Children()) > 0 {
+		savedOrderingLen := len(savedOrderingColumns)
+		savedJoinLen := len(savedJoinColumns)
+		defer func() {
+			// After processing all children, state should be back to what it was when we entered
+			// (The restoration happens inside the child loop at lines 402-404)
+			intest.Assert(len(c.orderingColumns) == savedOrderingLen,
+				"orderingColumns length changed after processing all children - state not properly restored")
+			intest.Assert(len(c.joinColumns) == savedJoinLen,
+				"joinColumns length changed after processing all children - state not properly restored")
+		}()
+	}
 
 	switch x := lp.(type) {
 	case *logicalop.LogicalSort:
@@ -375,14 +398,14 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		// Extract and accumulate join columns to propagate to DataSource
 		// Note: LeftConditions and RightConditions are not join conditions between tables,
 		// they are filters on individual tables, so we only extract from EqualConditions and OtherConditions
-		c.joinColumns = append(c.joinColumns, c.extractJoinColumns(lp)...)
+		c.joinColumns = append(c.joinColumns, extractJoinColumns(lp)...)
 	case *logicalop.LogicalApply:
 		// Extract and accumulate join columns to propagate to DataSource
-		c.joinColumns = append(c.joinColumns, c.extractJoinColumns(lp)...)
+		c.joinColumns = append(c.joinColumns, extractJoinColumns(lp)...)
 	case *logicalop.LogicalAggregation:
 		// Extract columns from MIN/MAX aggregates - these can benefit from ordered indexes
 		// Do this before visiting children so the ordering columns are available to DataSource nodes below
-		c.orderingColumns = append(c.orderingColumns, c.extractMinMaxOrderingColumns(lp)...)
+		c.orderingColumns = append(c.orderingColumns, extractMinMaxOrderingColumns(lp)...)
 	}
 
 	for _, child := range lp.Children() {
@@ -395,13 +418,20 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		c.orderingColumns = savedOrderingColumns
 		c.joinColumns = make([]*expression.Column, len(savedJoinColumns))
 		copy(c.joinColumns, savedJoinColumns)
+
+		// Validation: Verify state was properly restored
+		intest.Assert(len(c.orderingColumns) == len(savedOrderingColumns),
+			"orderingColumns not properly restored after visiting child")
+		intest.Assert(len(c.joinColumns) == len(savedJoinColumns),
+			"joinColumns not properly restored after visiting child")
+
 		// Re-apply this node's join columns if it's a join, or ordering columns if it's an aggregation
 		switch lp.(type) {
 		case *logicalop.LogicalJoin, *logicalop.LogicalApply:
-			c.joinColumns = append(c.joinColumns, c.extractJoinColumns(lp)...)
+			c.joinColumns = append(c.joinColumns, extractJoinColumns(lp)...)
 		case *logicalop.LogicalAggregation:
 			// Re-apply MIN/MAX ordering columns for the next child
-			c.orderingColumns = append(c.orderingColumns, c.extractMinMaxOrderingColumns(lp)...)
+			c.orderingColumns = append(c.orderingColumns, extractMinMaxOrderingColumns(lp)...)
 		}
 	}
 	switch x := lp.(type) {

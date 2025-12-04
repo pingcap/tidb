@@ -23,6 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 )
 
+const (
+	// defaultMaxIndexes is the default maximum number of indexes to keep when pruning.
+	// This prevents overly aggressive pruning when the threshold is small.
+	defaultMaxIndexes = 10
+)
+
 // indexWithScore stores an access path along with its coverage scores for ranking.
 type indexWithScore struct {
 	path                     *util.AccessPath
@@ -68,16 +74,11 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	// Build column ID maps and calculate totals
 	req := buildColumnRequirements(whereColumns, orderingColumns, joinColumns)
 
-	// If there are no required columns, only keep table paths and covering indexes (IsSingleScan)
-	// since indexes are only useful for filtering/ordering, or as covering indexes to avoid table lookups
-	//noRequiredColumns := len(whereColumns) == 0 && len(orderingColumns) == 0 && len(joinColumns) == 0
-
 	totalPathCount := len(paths)
 
 	// If totalPathCount <= threshold, we should keep all indexes with score > 0
 	// Which means only prune with score ==0
 	// Only prune with score > 0 when we have more index paths than the threshold
-	const defaultMaxIndexes = 10
 	var maxToKeep int
 	if totalPathCount > threshold && threshold > 0 {
 		maxToKeep = max(threshold, defaultMaxIndexes) // Avoid being too aggressive when threshold is small
@@ -120,8 +121,6 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		idxScore := scoreIndexPath(path, req)
 
 		// Calculate aggregate metrics
-		//totalLocalCovered := idxScore.whereCount + idxScore.orderingCount
-		//totalJoinCovered := idxScore.joinCount + idxScore.whereCount
 		totalConsecutive := idxScore.consecutiveWhereCount + idxScore.consecutiveOrderingCount + idxScore.consecutiveJoinCount
 
 		path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
@@ -309,8 +308,13 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 		// Tie-breaker: use index ID for deterministic ordering when all other criteria are equal
 		// This ensures stable sorting for functionally identical indexes (e.g., k1 and k2 with same expressions)
 		if a.info.path.Index != nil && b.info.path.Index != nil {
-			if a.info.path.Index.ID != b.info.path.Index.ID {
-				return int(a.info.path.Index.ID - b.info.path.Index.ID)
+			// Use proper three-way comparison to avoid integer overflow
+			// (a.info.path.Index.ID is int64, casting the difference to int can overflow)
+			if a.info.path.Index.ID < b.info.path.Index.ID {
+				return -1
+			}
+			if a.info.path.Index.ID > b.info.path.Index.ID {
+				return 1
 			}
 		}
 		return 0
@@ -319,8 +323,7 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 }
 
 func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, whereIndexes, joinIndexes []indexWithScore, maxToKeep int, req columnRequirements) []*util.AccessPath {
-	const maxIndexes = 10
-	result := make([]*util.AccessPath, 0, maxIndexes)
+	result := make([]*util.AccessPath, 0, defaultMaxIndexes)
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
 	result = append(result, tablePaths...)
