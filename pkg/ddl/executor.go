@@ -3948,7 +3948,7 @@ func (e *executor) AlterTableSoftDeleteInfo(
 		TableID:        tableID,
 		SchemaName:     schema.Name.L,
 		TableName:      tableName,
-		Type:           model.ActionAlterSoftDeleteInfo,
+		Type:           model.ActionAlterTableSoftDeleteInfo,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,

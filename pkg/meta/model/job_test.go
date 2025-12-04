@@ -268,7 +268,7 @@ func TestString(t *testing.T) {
 		{ActionAddColumn, "add column"},
 		{ActionDropColumn, "drop column"},
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
-		{ActionAlterSoftDeleteInfo, "alter soft delete info"},
+		{ActionAlterTableSoftDeleteInfo, "alter soft delete info"},
 		{ActionModifySchemaActiveActive, "modify schema active-active"},
 		{ActionModifySchemaSoftDelete, "modify schema soft delete"},
 		{ActionAlterTablePlacement, "alter table placement"},

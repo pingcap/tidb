@@ -117,7 +117,7 @@ const (
 	ActionAlterTableMode           ActionType = 75
 	ActionRefreshMeta              ActionType = 76
 	ActionModifySchemaReadOnly     ActionType = 77 // reserve for database read-only feature
-	ActionAlterSoftDeleteInfo      ActionType = 78
+	ActionAlterTableSoftDeleteInfo ActionType = 78
 	ActionModifySchemaActiveActive ActionType = 79
 	ActionModifySchemaSoftDelete   ActionType = 80
 )
@@ -186,7 +186,7 @@ var ActionMap = map[ActionType]string{
 	ActionReorganizePartition:           "alter table reorganize partition",
 	ActionAlterTTLInfo:                  "alter table ttl",
 	ActionAlterTTLRemove:                "alter table no_ttl",
-	ActionAlterSoftDeleteInfo:           "alter soft delete info",
+	ActionAlterTableSoftDeleteInfo:      "alter soft delete info",
 	ActionModifySchemaActiveActive:      "modify schema active-active",
 	ActionModifySchemaSoftDelete:        "modify schema soft delete",
 	ActionCreateResourceGroup:           "create resource group",

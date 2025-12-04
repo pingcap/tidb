@@ -1063,7 +1063,7 @@ func (w *worker) runOneJobStep(
 		ver, err = onTTLInfoChange(jobCtx, job)
 	case model.ActionAlterTTLRemove:
 		ver, err = onTTLInfoRemove(jobCtx, job)
-	case model.ActionAlterSoftDeleteInfo:
+	case model.ActionAlterTableSoftDeleteInfo:
 		ver, err = onSoftDeleteInfoChange(jobCtx, job)
 	case model.ActionAddCheckConstraint:
 		ver, err = w.onAddCheckConstraint(jobCtx, job)
