@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"sync/atomic"
@@ -549,10 +548,6 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key, opt
 	var getOptions tikv.GetOptions
 	getOptions.Apply(options)
 
-	if getOptions.RequireCommitTS() {
-		return kv.ValueEntry{}, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
-	}
-
 	val, ok := getter.txnCtx.GetKeyInPessimisticLockCache(key)
 	if ok {
 		return kv.NewValueEntry(val, 0), nil
@@ -569,10 +564,6 @@ type cacheBatchGetter struct {
 func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	var getOptions tikv.BatchGetOptions
 	getOptions.Apply(options)
-
-	if getOptions.RequireCommitTS() {
-		return nil, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
-	}
 
 	cacheDB := b.ctx.GetStore().GetMemCache()
 	vals := make(map[string]kv.ValueEntry)
