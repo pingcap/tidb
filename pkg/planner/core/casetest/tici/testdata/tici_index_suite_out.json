@@ -281,15 +281,6 @@
         "Warn": null
       },
       {
-        "SQL": "explain format='brief' select * from t4 where i > 1 and ts < '2025-11-30 00:00:00'",
-        "Plan": [
-          "IndexLookUp 1000.00 root  ",
-          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:gt(test.t4.i, 1), lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
-        ],
-        "Warn": null
-      },
-      {
         "SQL": "explain format='brief' select * from t4 where i > 1 and ts < '2025-11-30 00:00:00' limit 10 offset 15",
         "Plan": [
           "IndexLookUp 10.00 root  limit embedded(offset:15, count:10)",
@@ -338,6 +329,39 @@
           "└─IndexLookUp 15.00 root  ",
           "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 15, keep order:false, stats:pseudo",
           "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts:desc, offset:0, count:15",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, d limit 10 offset 5",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.d, offset:5, count:10",
+          "└─IndexLookUp 15.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 15, keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:15",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, d, t limit 10 offset 5",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.d, test.t4.t, offset:5, count:10",
+          "└─IndexLookUp 15.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts:desc, test.t4.d, test.t4.t, offset:0, count:15",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, t, d limit 10 offset 5",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.t, test.t4.d, offset:5, count:10",
+          "└─IndexLookUp 15.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts:desc, test.t4.t, test.t4.d, offset:0, count:15",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
         "Warn": null

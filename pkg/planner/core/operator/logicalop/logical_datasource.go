@@ -661,25 +661,26 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 				}
 			}
 		}
-		noUnmatchedFTSFunc := true
+		allFTSFuncIsCovered := false
 		tmpMatchedExprSet.Clear()
 	checkExprForIndexLoop:
 		for i, cond := range ds.PushedDownConds {
 			fullyCovered := expression.ExprCoveredByOneTiCIIndex(cond, &ftsCols, &invertedIndexedCols)
 			if !fullyCovered {
+				// If this expression can not be calculated at TiCI side, check whether it has fts function.
+				// If yes, we should skip this index path.
 				if expression.ContainsFullTextSearchFn(cond) {
-					noUnmatchedFTSFunc = false
+					allFTSFuncIsCovered = true
 					break checkExprForIndexLoop
 				}
 				continue
 			}
-			if fullyCovered {
-				tmpMatchedExprSet.Insert(i)
-			}
+			tmpMatchedExprSet.Insert(i)
 		}
-		if !noUnmatchedFTSFunc {
+		if allFTSFuncIsCovered {
 			continue
 		}
+		// We get here means this index can cover all FTS functions.
 		hasUnmatchedFTSOverAllIdx = false
 		// We have filterer out (!path.Forced && matchedIndexIsHinted) case before.
 		// So after we check the (path.Forced && !matchedIndexIsHinted) case, the implicit case is:
