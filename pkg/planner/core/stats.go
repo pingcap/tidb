@@ -134,7 +134,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	// They are not suitable for normal read.
 	ds.CleanUnusedTiCIIndexes()
 	for _, path := range ds.AllPossibleAccessPaths {
-		if path.IsTablePath() {
+		if path.IsTablePath() || path.Index.IsTiCIIndex() {
 			continue
 		}
 		err := fillIndexPath(ds, path, ds.PushedDownConds)
