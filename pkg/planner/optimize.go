@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -157,6 +158,39 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		return p, names, err
 	}
 
+<<<<<<< HEAD
+=======
+	return optimizeCache(ctx, sctx, node, is)
+}
+
+func optimizeCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	// Call into the non-prepared plan cache.
+	cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, node, is)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ok {
+		return cachedPlan, names, nil
+	}
+
+	return optimizeNoCache(ctx, sctx, node, is)
+}
+
+func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = tidbutil.GetRecoverError(r)
+		}
+	}()
+	pctx := sctx.GetPlanCtx()
+	sessVars := sctx.GetSessionVars()
+
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(pctx)
+		defer debugtrace.LeaveContextCommon(pctx)
+	}
+
+>>>>>>> 2042309765f (planner,executor: fix cannot dump plan replayer when query happen to panic (#64836))
 	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
 		setVarHintChecker, hypoIndexChecker(ctx, is),
