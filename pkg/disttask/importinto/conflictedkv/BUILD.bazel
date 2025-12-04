@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "conflictedkv",
@@ -9,6 +9,20 @@ go_library(
         "//pkg/kv",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "conflictedkv_test",
+    timeout = "short",
+    srcs = ["row_handle_test.go"],
+    embed = [":conflictedkv"],
+    flaky = True,
+    shard_count = 2,
+    deps = [
+        "//pkg/kv",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
     ],
 )

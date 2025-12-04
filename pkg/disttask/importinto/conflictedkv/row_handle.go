@@ -76,18 +76,21 @@ func (s *BoundedHandleSet) Add(handle tidbkv.Handle) {
 	}
 
 	hdlStr := handle.String()
-	s.sharedSize.Add(int64(len(hdlStr)) + handleMapEntryShallowSize)
-	if s.BoundExceeded() {
+	delta := int64(len(hdlStr)) + handleMapEntryShallowSize
+	newSize := s.sharedSize.Add(delta)
+	s.handles[hdlStr] = true
+
+	// log when exceeding the limit for the first time
+	if newSize >= s.sizeLimit && newSize-delta < s.sizeLimit {
 		s.logger.Info("too many conflict rows from index, skip checking",
 			zap.String("totalHandleSize", units.BytesSize(float64(s.sharedSize.Load()))),
+			zap.String("sizeLimit", units.BytesSize(float64(s.sizeLimit))),
 			zap.Int("localHandleCount", len(s.handles)))
 		// Note: we still keep the handles in memory, to make it merged into the
 		// global handle set, so we can avoid handling other KV groups of same
 		// handle as much as possible.
 		return
 	}
-
-	s.handles[hdlStr] = true
 }
 
 // Contains checks whether the handle is in the set.
@@ -111,6 +114,6 @@ func (s *BoundedHandleSet) Merge(other *BoundedHandleSet) {
 // BoundExceeded checks whether the size limit is exceeded.
 func (s *BoundedHandleSet) BoundExceeded() bool {
 	limit := s.sizeLimit
-	failpoint.InjectCall("trySaveHandledRowFromIndex", &limit)
+	failpoint.InjectCall("mockHandleSetSizeLimit", &limit)
 	return s.sharedSize.Load() >= limit
 }
