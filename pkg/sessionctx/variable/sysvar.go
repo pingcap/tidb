@@ -4160,6 +4160,10 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDisableTxnFile, Value: BoolToOnOff(vardef.DefTiDBDisableTxnFile), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.KVVars.DisableTxnFile = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
