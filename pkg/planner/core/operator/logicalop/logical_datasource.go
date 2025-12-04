@@ -742,12 +742,6 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	// Re-construct the AllConds because column pruning relays on AllConds.
 	ds.AllConds = slices.Clone(ds.PushedDownConds)
 
-	// We may do optimization on the predicates when extracting pk ranges.
-	// So this part must be done before we building the TiCI query predicates.
-	for _, access := range ds.PossibleAccessPaths[0].AccessConds {
-		delete(matchedFuncs, access.(*expression.ScalarFunction))
-	}
-
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	client := ds.SCtx().GetBuildPBCtx().Client
 	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
@@ -773,6 +767,8 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 		MatchExpr:      pbExprs,
 	}
 
+	// It represets the TiCI search functions currently.
+	ds.PossibleAccessPaths[0].AccessConds = ds.PossibleAccessPaths[0].AccessConds[:0]
 	for ftsFunc := range matchedFuncs {
 		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
 	}
