@@ -713,7 +713,7 @@ bazel_txntest: failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_pushdowntest
 bazel_pushdowntest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest --jobs=1 \
 		-- //tests/realtikvtest/pushdowntest/...
 
 .PHONY: bazel_addindextest
