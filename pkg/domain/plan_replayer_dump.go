@@ -393,7 +393,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	} else {
 		// Dump explain
 		if err = dumpPlanReplayerExplain(sctx, zw, task, &records); err != nil {
-			return err
+			errMsgs = append(errMsgs, err.Error())
 		}
 	}
 
