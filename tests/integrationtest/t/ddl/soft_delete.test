@@ -1,0 +1,48 @@
+drop database if exists test_sd;
+create database test_sd softdelete = 'ON';
+drop database if exists test_sd;
+create database test_sd softdelete_retention = '7d';
+drop database if exists test_sd;
+create database test_sd softdelete_job_enable = 'ON';
+drop database if exists test_sd;
+create database test_sd softdelete_job_interval = '1h';
+drop database if exists test_sd;
+create database test_sd softdelete = 'OFF';
+
+alter database test_sd softdelete = 'ON';
+alter database test_sd softdelete_retention = '7d';
+alter database test_sd softdelete_job_enable = 'ON';
+alter database test_sd softdelete_job_interval = '1h';
+alter database test_sd softdelete = 'OFF';
+
+drop database if exists test_sd;
+create database test_sd;
+use test_sd;
+
+# Create table
+create table t1 (id int primary key, name varchar(50)) softdelete = 'ON';
+create table t2 (id int primary key, name varchar(50)) softdelete = 'ON' softdelete_retention = '14d';
+create table t3 (id int primary key, name varchar(50)) softdelete = 'ON' softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
+create table t4 (id int primary key, name varchar(50));
+
+# Alter table
+alter table t4 softdelete = 'ON';
+alter table t4 softdelete_retention = '30d';
+alter table t4 softdelete_job_enable = 'ON';
+alter table t4 softdelete_job_interval = '3h';
+alter table t4 softdelete = 'OFF';
+
+# Invalid value 
+-- error 1064
+alter database test_sd softdelete = 'INVALID';
+
+-- error 1064
+create table t5 (id int) softdelete = 'YES';
+
+-- error 1064
+alter table t1 softdelete_job_enable = 'MAYBE';
+
+-- error 1064
+create table t6 (id int) softdelete_retention = 'invalid_duration';
+
+drop database test_sd;

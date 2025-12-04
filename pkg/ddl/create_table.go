@@ -469,13 +469,13 @@ func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName string) (in
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromAST(ctx *metabuild.Context, s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	// TODO: Support the vector index for this function.
-	return buildTableInfoWithCheck(ctx, nil, s, mysql.DefaultCharset, "", nil)
+	return buildTableInfoWithCheck(ctx, nil, s, nil)
 }
 
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func buildTableInfoWithCheck(ctx *metabuild.Context, store kv.Storage, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
-	tbInfo, err := BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
+func buildTableInfoWithCheck(ctx *metabuild.Context, store kv.Storage, s *ast.CreateTableStmt, dbInfo *model.DBInfo) (*model.TableInfo, error) {
+	tbInfo, err := BuildTableInfoWithStmt(ctx, s, dbInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -739,7 +739,7 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 
 // BuildSessionTemporaryTableInfo builds model.TableInfo from a SQL statement.
 func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is infoschema.InfoSchema, s *ast.CreateTableStmt,
-	dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+	dbInfo *model.DBInfo) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	//build tableInfo
 	var tbInfo *model.TableInfo
@@ -757,14 +757,23 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbCharset, dbCollate, placementPolicyRef)
+		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbInfo)
 	}
 	return tbInfo, err
 }
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
-func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbInfo *model.DBInfo) (*model.TableInfo, error) {
+	if dbInfo == nil {
+		dbInfo = &model.DBInfo{
+			Charset: mysql.DefaultCharset,
+			Collate: mysql.DefaultCollationName,
+		}
+	}
+
 	colDefs := s.Cols
+	dbCharset := dbInfo.Charset
+	dbCollate := dbInfo.Collate
 	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -806,7 +815,11 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 		tbInfo.PreSplitRegions = ctx.GetPreSplitRegions()
 	}
 
-	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+	if err = handleTableOptions(s.Options, tbInfo, dbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err := checkSoftDeleteInfoValid(tbInfo, true); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -814,9 +827,9 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
-	if tbInfo.TempTableType == model.TempTableNone && tbInfo.PlacementPolicyRef == nil && placementPolicyRef != nil {
+	if tbInfo.TempTableType == model.TempTableNone && tbInfo.PlacementPolicyRef == nil && dbInfo.PlacementPolicyRef != nil {
 		// Set the defaults from Schema. Note: they are mutual exclusive!
-		tbInfo.PlacementPolicyRef = placementPolicyRef
+		tbInfo.PlacementPolicyRef = dbInfo.PlacementPolicyRef
 	}
 
 	// After handleTableOptions, so the partitions can get defaults from Table level
@@ -906,8 +919,16 @@ func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBit
 }
 
 // handleTableOptions updates tableInfo according to table options.
-func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
+func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbInfo *model.DBInfo) error {
 	var ttlOptionsHandled bool
+	var softdeleteHandled bool
+	softdeleteInfo := getDefaultSoftDeleteInfo(dbInfo)
+
+	// Inherit active-active default from database
+	isActiveActive := false
+	if dbInfo != nil && dbInfo.IsActiveActive == "ON" {
+		isActiveActive = true
+	}
 
 	for _, op := range options {
 		switch op.Tp {
@@ -964,10 +985,33 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionSoftDelete:
+			softdeleteInfo.Enable = op.BoolValue
+			softdeleteHandled = true
+		case ast.TableOptionSoftDeleteRetention:
+			softdeleteInfo.Retention = op.StrValue
+			softdeleteHandled = true
+		case ast.TableOptionSoftDeleteJobInterval:
+			softdeleteInfo.JobInterval = op.StrValue
+			softdeleteHandled = true
+		case ast.TableOptionSoftDeleteJobEnable:
+			softdeleteInfo.JobEnable = op.BoolValue
+			softdeleteHandled = true
+		case ast.TableOptionActiveActive:
+			isActiveActive = op.BoolValue
 		case ast.TableOptionEngineAttribute:
 			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
 	}
+
+	// Set active-active (from database default or table option)
+	tbInfo.IsActiveActive = isActiveActive
+
+	// Set soft-delete info
+	if softdeleteHandled {
+		tbInfo.SoftdeleteInfo = softdeleteInfo
+	}
+
 	shardingBits := shardingBits(tbInfo)
 	if tbInfo.PreSplitRegions > shardingBits {
 		tbInfo.PreSplitRegions = shardingBits
@@ -1300,6 +1344,33 @@ func BuildTableInfo(
 			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
 			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
 		}
+
+		// Add extra hidden columns for active-active and soft-delete features
+		if tbInfo.IsActiveActive {
+			// Add _tidb_origin_ts hidden column
+			originTSCol := model.NewExtraOriginTSColInfo()
+			originTSCol.State = model.StatePublic
+			originTSCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, originTSCol)
+			tblColumns = append(tblColumns, table.ToColumn(originTSCol))
+
+			// Add _tidb_commit_ts hidden column
+			commitTSCol := model.NewExtraCommitTSColInfo()
+			commitTSCol.State = model.StatePublic
+			commitTSCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, commitTSCol)
+			tblColumns = append(tblColumns, table.ToColumn(commitTSCol))
+		}
+
+		if tbInfo.SoftdeleteInfo != nil && tbInfo.SoftdeleteInfo.Enable {
+			// Add _tidb_softdelete_time hidden column
+			softDeleteCol := model.NewExtraSoftDeleteTimeColInfo()
+			softDeleteCol.State = model.StatePublic
+			softDeleteCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, softDeleteCol)
+			tblColumns = append(tblColumns, table.ToColumn(softDeleteCol))
+		}
+
 		// Check clustered on non-primary key.
 		if constr.Option != nil && constr.Option.PrimaryKeyTp != ast.PrimaryKeyTypeDefault &&
 			constr.Tp != ast.ConstraintPrimaryKey {

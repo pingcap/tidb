@@ -78,6 +78,11 @@ const (
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
 	DatabaseSetTiFlashReplica
+	DatabaseOptionActiveActive
+	DatabaseOptionSoftDelete
+	DatabaseOptionSoftDeleteRetention
+	DatabaseOptionSoftDeleteJobEnable
+	DatabaseOptionSoftDeleteJobInterval
 	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
@@ -124,6 +129,41 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
+	case DatabaseOptionActiveActive:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
+			ctx.WriteKeyWord("ACTIVE_ACTIVE ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.Value)
+			return nil
+		})
+	case DatabaseOptionSoftDelete:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.Value)
+			return nil
+		})
+	case DatabaseOptionSoftDeleteRetention:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_RETENTION ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.Value)
+			return nil
+		})
+	case DatabaseOptionSoftDeleteJobEnable:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_JOB_ENABLE ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.Value)
+			return nil
+		})
+	case DatabaseOptionSoftDeleteJobInterval:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.Value)
+			return nil
+		})
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
@@ -2615,6 +2655,11 @@ const (
 	TableOptionTTL
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
+	TableOptionSoftDelete
+	TableOptionSoftDeleteRetention
+	TableOptionSoftDeleteJobInterval
+	TableOptionSoftDeleteJobEnable
+	TableOptionActiveActive
 	TableOptionEngineAttribute
 	TableOptionSecondaryEngineAttribute
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
@@ -2976,6 +3021,53 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("TTL_JOB_INTERVAL ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionSoftDelete:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
+	case TableOptionSoftDeleteRetention:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_RETENTION ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionSoftDeleteJobInterval:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionSoftDeleteJobEnable:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_JOB_ENABLE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
+	case TableOptionActiveActive:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
+			ctx.WriteKeyWord("ACTIVE_ACTIVE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
 			return nil
 		})
 	default:

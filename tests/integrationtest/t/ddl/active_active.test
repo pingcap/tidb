@@ -1,0 +1,21 @@
+drop database if exists test_aa;
+create database test_aa active_active = 'ON';
+alter database test_aa active_active = 'ON';
+alter database test_aa active_active = 'OFF';
+use test_aa;
+
+create table t1 (id int primary key, name varchar(50));
+create table t2 (id int primary key, name varchar(50)) active_active = 'ON';
+create table t3 (id int primary key, name varchar(50)) active_active = 'OFF';
+
+# Alter table should fail
+-- error 1064
+alter table t1 active_active = 'ON';
+
+# Invalid value
+-- error 1064
+alter database test_aa active_active = 'INVALID';
+-- error 1064
+create table t4 (id int) active_active = 'YES';
+
+drop database test_aa;

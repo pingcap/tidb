@@ -50,6 +50,12 @@ const ExtraRowChecksumID = -4
 // ExtraCommitTSID is the column ID of column which holds the commit timestamp.
 const ExtraCommitTSID = -5
 
+// ExtraOriginTSID is the column ID of column which holds the origin timestamp.
+const ExtraOriginTSID = -6
+
+// ExtraSoftDeleteTimeID is the column ID of column which holds the soft delete expiration time.
+const ExtraSoftDeleteTimeID = -7
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -95,6 +101,12 @@ var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
 
 // ExtraCommitTSName is the name of ExtraCommitTSID Column.
 var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
+
+// ExtraOriginTSName is the name of ExtraOriginTSID Column.
+var ExtraOriginTSName = ast.NewCIStr("_tidb_origin_ts")
+
+// ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
+var ExtraSoftDeleteTimeName = ast.NewCIStr("_tidb_softdelete_time")
 
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,
@@ -211,6 +223,12 @@ type TableInfo struct {
 	DBID int64 `json:"-"`
 
 	Mode TableMode `json:"mode,omitempty"`
+
+	// IsActiveActive indicates if the table has active-active replication enabled
+	IsActiveActive bool `json:"is_active_active,omitempty"`
+
+	// SoftdeleteInfo holds the soft delete configuration for this table
+	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -1398,6 +1416,12 @@ const DefaultTTLJobInterval = "24h"
 // It is used by some codes to keep compatible with the previous versions.
 const OldDefaultTTLJobInterval = "1h"
 
+// DefaultSoftDeleteRetention is the default retention period for soft deleted data
+const DefaultSoftDeleteRetention = "7d"
+
+// DefaultSoftDeleteJobInterval is the default interval of soft delete cleanup jobs
+const DefaultSoftDeleteJobInterval = "24h"
+
 // TTLInfo records the TTL config
 type TTLInfo struct {
 	ColumnName      ast.CIStr `json:"column"`
@@ -1434,4 +1458,41 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 	}
 
 	return duration.ParseDuration(t.JobInterval)
+}
+
+// SoftdeleteInfo records the Softdelete config.
+type SoftdeleteInfo struct {
+	// Enable controls whether soft delete is active
+	Enable bool `json:"enable"`
+	// Retention specifies how long soft-deleted data is kept.
+	Retention   string `json:"retention,omitempty"`
+	JobEnable   bool   `json:"job_enable,omitempty"`
+	JobInterval string `json:"job_interval,omitempty"`
+}
+
+// Clone clones SoftdeleteInfo
+func (s *SoftdeleteInfo) Clone() *SoftdeleteInfo {
+	if s == nil {
+		return nil
+	}
+	cloned := *s
+	return &cloned
+}
+
+// GetRetention parses the retention duration and returns it
+// If retention is empty, returns DefaultSoftDeleteRetention for compatibility
+func (s *SoftdeleteInfo) GetRetention() (time.Duration, error) {
+	if len(s.Retention) == 0 {
+		return duration.ParseDuration(DefaultSoftDeleteRetention)
+	}
+	return duration.ParseDuration(s.Retention)
+}
+
+// GetJobInterval parses the job interval and returns it
+// If job interval is empty, returns DefaultSoftDeleteJobInterval for compatibility
+func (s *SoftdeleteInfo) GetJobInterval() (time.Duration, error) {
+	if len(s.JobInterval) == 0 {
+		return duration.ParseDuration(DefaultSoftDeleteJobInterval)
+	}
+	return duration.ParseDuration(s.JobInterval)
 }

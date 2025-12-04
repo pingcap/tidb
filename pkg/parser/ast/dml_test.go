@@ -662,3 +662,21 @@ func TestImportIntoFromSelectInvalidStmt(t *testing.T) {
 	_, err = p.ParseOneStmt("IMPORT INTO t1(a) set a=1 FROM select a from t2;", "", "")
 	require.ErrorContains(t, err, "Cannot use SET clause in IMPORT INTO FROM SELECT statement.")
 }
+
+func TestDeleteHardRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"DELETE HARD FROM t WHERE id = 1", "DELETE HARD FROM `t` WHERE `id`=1"},
+		{"DELETE HARD FROM t WHERE id > 10 LIMIT 5", "DELETE HARD FROM `t` WHERE `id`>10 LIMIT 5"},
+		{"DELETE HARD LOW_PRIORITY FROM t WHERE id = 1", "DELETE HARD LOW_PRIORITY FROM `t` WHERE `id`=1"},
+		{"DELETE HARD QUICK FROM t WHERE id = 1", "DELETE HARD QUICK FROM `t` WHERE `id`=1"},
+		{"DELETE HARD IGNORE FROM t WHERE id = 1", "DELETE HARD IGNORE FROM `t` WHERE `id`=1"},
+		{"DELETE HARD t1, t2 FROM t1, t2 WHERE t1.id = t2.id",
+			"DELETE HARD `t1`,`t2` FROM (`t1`) JOIN `t2` WHERE `t1`.`id`=`t2`.`id`"},
+		{"DELETE FROM t WHERE id = 1", "DELETE FROM `t` WHERE `id`=1"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node.(*DeleteStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
