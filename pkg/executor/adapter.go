@@ -510,6 +510,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			if lockKeysCnt > 0 {
 				metrics.StatementLockKeysCount.Observe(float64(lockKeysCnt))
 			}
+			sharedLockKeysCnt := a.Ctx.GetSessionVars().StmtCtx.SharedLockKeysCount
+			if sharedLockKeysCnt > 0 {
+				metrics.StatementSharedLockKeysCount.Observe(float64(sharedLockKeysCnt))
+			}
 
 			execDetails := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
 			if err == nil && execDetails.LockKeysDetail != nil &&
@@ -1108,11 +1112,10 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		if len(keys) == 0 {
 			return nil, nil
 		}
-		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
+		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys), shared)
 		if err != nil {
 			return nil, err
 		}
-		lockCtx.InShareMode = shared
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
@@ -1122,7 +1125,11 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			e.RuntimeStats().Record(time.Since(startLocking), 0)
 		}
 		if lockKeyStats != nil {
-			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+			if shared {
+				seVars.StmtCtx.MergeSharedLockKeysExecDetails(lockKeyStats)
+			} else {
+				seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+			}
 		}
 		if err == nil {
 			return nil, nil
@@ -1463,8 +1470,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
 	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
 		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
-			Commit:   execDetail.CommitDetail,
-			LockKeys: execDetail.LockKeysDetail,
+			Commit:         execDetail.CommitDetail,
+			LockKeys:       execDetail.LockKeysDetail,
+			SharedLockKeys: execDetail.SharedLockKeysDetail,
 		}
 		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
 	}

@@ -266,7 +266,7 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	// doLockKeys for optimistic transaction, it won't send any request to tikv but adds `flagKeyLocked` to these keys
 	// so that LOCK records will be written during 2PC.
 	sessVars := fkc.ctx.GetSessionVars()
-	lockCtx, err := newLockCtx(fkc.ctx, sessVars.LockWaitTimeout, len(fkc.toBeLockedKeys))
+	lockCtx, err := newLockCtx(fkc.ctx, sessVars.LockWaitTimeout, len(fkc.toBeLockedKeys), false)
 	if err != nil {
 		return err
 	}
