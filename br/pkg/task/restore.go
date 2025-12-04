@@ -911,6 +911,11 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreErr = err
 			return
 		}
+		if cfg.tableMappingManager == nil {
+			log.Error("tableMappingManager is nil, blocklist will contain no IDs")
+			restoreErr = errors.New("tableMappingManager is nil")
+			return
+		}
 
 		// Extract downstream IDs from tableMappingManager
 		// ApplyFilterToDBReplaceMap has already filtered the DBReplaceMap based on PiTRTableTracker,
@@ -918,33 +923,27 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		var downstreamTableIds []int64
 		var downstreamDbIds []int64
 
-		if cfg.tableMappingManager != nil {
-			// Iterate through DBReplaceMap which has already been filtered by ApplyFilterToDBReplaceMap
-			for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
-				if dbReplace.FilteredOut {
+		// Iterate through DBReplaceMap which has already been filtered by ApplyFilterToDBReplaceMap
+		for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
+			if dbReplace.FilteredOut {
+				continue
+			}
+			// Collect downstream DB ID
+			downstreamDbIds = append(downstreamDbIds, dbReplace.DbID)
+
+			// Iterate through tables in this database
+			for _, tableReplace := range dbReplace.TableMap {
+				if tableReplace.FilteredOut {
 					continue
 				}
-				// Collect downstream DB ID
-				downstreamDbIds = append(downstreamDbIds, dbReplace.DbID)
+				// Collect downstream table ID
+				downstreamTableIds = append(downstreamTableIds, tableReplace.TableID)
 
-				// Iterate through tables in this database
-				for _, tableReplace := range dbReplace.TableMap {
-					if tableReplace.FilteredOut {
-						continue
-					}
-					// Collect downstream table ID
-					downstreamTableIds = append(downstreamTableIds, tableReplace.TableID)
-
-					// Collect all partition IDs for this table
-					for _, downstreamPartitionId := range tableReplace.PartitionMap {
-						downstreamTableIds = append(downstreamTableIds, downstreamPartitionId)
-					}
+				// Collect all partition IDs for this table
+				for _, downstreamPartitionId := range tableReplace.PartitionMap {
+					downstreamTableIds = append(downstreamTableIds, downstreamPartitionId)
 				}
 			}
-		} else {
-			log.Error("tableMappingManager is nil, blocklist will contain no IDs")
-			restoreErr = errors.New("tableMappingManager is nil")
-			return
 		}
 
 		restoreStartTs := cfg.RestoreStartTS
