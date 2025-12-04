@@ -341,7 +341,7 @@ func (e *indexScanExec) Process(key, value []byte) error {
 
 	// If we need common handle key, we should fill it here.
 	if e.commonHandleKeyIdx != nil && *e.commonHandleKeyIdx >= len(values) {
-		h, err := tablecodec.DecodeIndexHandle(decodedKey, value, e.numIdxCols)
+		h, err := tablecodec.DecodeIndexHandle(key, value, e.numIdxCols)
 		if err != nil {
 			return err
 		}
