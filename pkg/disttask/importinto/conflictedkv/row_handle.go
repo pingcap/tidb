@@ -37,14 +37,20 @@ const (
 
 // HandleFilter is used to filter row handles.
 type HandleFilter struct {
-	*BoundedHandleSet
+	set *BoundedHandleSet
+}
+
+// NewHandleFilter creates a new HandleFilter.
+// exported for test.
+func NewHandleFilter(set *BoundedHandleSet) *HandleFilter {
+	return &HandleFilter{set: set}
 }
 
 func (f *HandleFilter) needSkip(handle tidbkv.Handle) bool {
 	if f == nil {
 		return false
 	}
-	return f.Contains(handle)
+	return f.set.Contains(handle)
 }
 
 // BoundedHandleSet is a set of row handles with a size limit.

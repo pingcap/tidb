@@ -31,7 +31,7 @@ func TestHandleFilter(t *testing.T) {
 	sharedSize := atomic.Int64{}
 	set := NewBoundedHandleSet(nil, &sharedSize, 1024)
 	set.Add(tidbkv.IntHandle(1))
-	hf = &HandleFilter{BoundedHandleSet: set}
+	hf = NewHandleFilter(set)
 	require.True(t, hf.needSkip(tidbkv.IntHandle(1)))
 	require.False(t, hf.needSkip(tidbkv.IntHandle(2)))
 }

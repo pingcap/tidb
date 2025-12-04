@@ -173,7 +173,7 @@ func TestHandler(t *testing.T) {
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
 				conflictedkv.NewLazyRefreshedSnapshot(store),
-				&conflictedkv.HandleFilter{BoundedHandleSet: alreadyProcessedHandles},
+				conflictedkv.NewHandleFilter(alreadyProcessedHandles),
 			)
 			require.NoError(t, indexKVHdl.PreRun())
 			var ch = make(chan *external.KVPair, 10)
