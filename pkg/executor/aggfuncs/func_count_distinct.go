@@ -64,19 +64,19 @@ func (*baseCountDistinct) MergePartialResult(_ AggFuncUpdateContext, _, _ Partia
 	panic("Not implemented")
 }
 
-func (e *baseCountDistinct) AppendFinalResult2Chunk(AggFuncUpdateContext, PartialResult, *chunk.Chunk) error {
+func (*baseCountDistinct) AppendFinalResult2Chunk(AggFuncUpdateContext, PartialResult, *chunk.Chunk) error {
 	panic("Not implemented")
 }
 
-func (e *baseCountDistinct) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
+func (*baseCountDistinct) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
 	panic("Not implemented")
 }
 
-func (e *baseCountDistinct) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
+func (*baseCountDistinct) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
 	panic("Not implemented")
 }
 
-func (e *baseCountDistinct) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
+func (*baseCountDistinct) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
 	panic("Not implemented")
 }
 
@@ -374,7 +374,7 @@ type countPartialWithDistinct4String struct {
 	baseCountDistinct4String
 }
 
-func (e *countPartialWithDistinct4String) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
+func (*countPartialWithDistinct4String) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4CountDistinctString)(src), (*partialResult4CountDistinctString)(dst)
 
 	for val := range s.valSet.StringSet {
@@ -443,7 +443,7 @@ type countPartialWithDistinct struct {
 	baseCountDistinct4MultiArgs
 }
 
-func (e *countPartialWithDistinct) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
+func (*countPartialWithDistinct) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4CountWithDistinct)(src), (*partialResult4CountWithDistinct)(dst)
 
 	for val := range s.valSet.StringSet {

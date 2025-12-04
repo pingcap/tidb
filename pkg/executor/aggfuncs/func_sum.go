@@ -325,7 +325,7 @@ func (*baseSumDistinct) ResetPartialResult(PartialResult) {
 	panic("Not implemented")
 }
 
-func (e *baseSumDistinct) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
+func (*baseSumDistinct) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
 	panic("Not implemented")
 }
 
@@ -333,11 +333,11 @@ func (*baseSumDistinct) MergePartialResult(_ AggFuncUpdateContext, _, _ PartialR
 	panic("Not implemented")
 }
 
-func (e *baseSumDistinct) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
+func (*baseSumDistinct) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
 	panic("Not implemented")
 }
 
-func (e *baseSumDistinct) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
+func (*baseSumDistinct) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
 	panic("Not implemented")
 }
 

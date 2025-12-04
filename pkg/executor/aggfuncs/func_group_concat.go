@@ -68,7 +68,7 @@ func (*baseGroupConcat4String) ResetPartialResult(PartialResult) {
 	panic("Not implemented")
 }
 
-func (e *baseGroupConcat4String) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
+func (*baseGroupConcat4String) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
 	panic("Not implemented")
 }
 
@@ -268,7 +268,7 @@ type groupPartialConcatDistinct struct {
 	baseGroupConcatDistinct4String
 }
 
-func (e *groupPartialConcatDistinct) MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (e *groupPartialConcatDistinct) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4GroupConcatDistinct)(src), (*partialResult4GroupConcatDistinct)(dst)
 
 	for key, val := range s.valSet.Data {
