@@ -699,10 +699,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) {
 		if e.Ctx().GetSessionVars().EnablePointGetCache {
-			if e.commitTSOffset < 0 {
-				// TODO: When e.commitTSOffset < 0, it should return nil, but we return 0
-				// So this is a workaround just skip cache, to get _tidb_commit_ts value.
-			} else {
+			if e.commitTSOffset < 0 { // When user require _tidb_commit_ts value, we should not use cache.
 				cacheDB := e.Ctx().GetStore().GetMemCache()
 				val1, err := cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
 				if err != nil {
