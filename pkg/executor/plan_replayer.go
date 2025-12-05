@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -337,22 +336,24 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 		return nil
 	}
 	bindings := strings.Split(buf.String(), "\n")
+	// The original SQL in our bind info is actually normalized SQL, which cannot be executed directly. This is
+	// especially true for function names that are not defined as keywords, such as count and ifnull. These will be
+	// treated as strings and used to calculate the digest. Therefore, the original SQL cannot be directly used to
+	// construct the create binding. As a result, we have to use `CREATE BINDING USING <bind sql>` to create the binding.
 	for _, binding := range bindings {
 		cols := strings.Split(binding, "\t")
 		if len(cols) < 3 {
 			continue
 		}
-		originSQL := cols[0]
 		bindingSQL := cols[1]
 		enabled := cols[3]
-		newNormalizedSQL := parser.NormalizeForBinding(originSQL, true)
 		if strings.Compare(enabled, "enabled") == 0 {
-			sql := fmt.Sprintf("CREATE %s BINDING FOR %s USING %s", func() string {
+			sql := fmt.Sprintf("CREATE %s BINDING USING %s", func() string {
 				if isSession {
 					return "SESSION"
 				}
 				return "GLOBAL"
-			}(), newNormalizedSQL, bindingSQL)
+			}(), bindingSQL)
 			c := context.Background()
 			_, err = ctx.GetSQLExecutor().Execute(c, sql)
 			if err != nil {
