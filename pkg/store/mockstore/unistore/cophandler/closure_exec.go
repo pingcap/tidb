@@ -841,7 +841,7 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.scanCtx.decoder.DecodeToChunk(value, handle, e.scanCtx.chk)
+	err = e.scanCtx.decoder.DecodeToChunk(value, 0, handle, e.scanCtx.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
