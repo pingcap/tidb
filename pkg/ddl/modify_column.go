@@ -328,11 +328,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(oldCol, args.Column); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	if err = checkColumnReferencedByPartialCondition(tblInfo, args.Column.Name); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -2091,25 +2086,31 @@ func checkModifyTypes(from, to *model.ColumnInfo) error {
 		}
 	}
 
-	// Since we support conversion between charset and collation in the process of reorg,
-	// here we just check whether the modification is supported.
-	err = checkModifyCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate(), fromFt.GetCharset(), fromFt.GetCollate(), true)
-
-	if err != nil {
-		if toFt.GetCharset() == charset.CharsetGBK || fromFt.GetCharset() == charset.CharsetGBK {
-			return errors.Trace(err)
-		}
-		if strings.Contains(err.Error(), "Unsupported modifying collation") {
-			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s'"
-			err = dbterror.ErrUnsupportedModifyCollation.GenWithStack(colErrMsg, from.Name.L, from.GetCollate(), to.GetCollate())
-		}
-
-		// column type change can handle the charset change between these two types in the process of the reorg.
-		if dbterror.ErrUnsupportedModifyCharset.Equal(err) && canReorg {
-			return nil
-		}
+	toCharset := toFt.GetCharset()
+	toCollate := toFt.GetCollate()
+	origCharset := fromFt.GetCharset()
+	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
+		return dbterror.ErrUnknownCharacterSet.GenWithStack(
+			"Unknown character set: '%s', collation: '%s'", toCharset, toCollate)
 	}
-	return errors.Trace(err)
+
+	// Here we just check the charset.
+	if origCharset == toCharset ||
+		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
+		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4) {
+		// TiDB only allow utf8/latin1 to be changed to utf8mb4, or changing the collation when the charset is utf8/utf8mb4/latin1.
+		return nil
+	}
+
+	// column type change can handle the charset change between these two types in the process of the reorg.
+	if canReorg {
+		return nil
+	}
+
+	return dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs(
+		fmt.Sprintf("charset from %s to %s", origCharset, toCharset))
 }
 
 // ProcessModifyColumnOptions process column options.
