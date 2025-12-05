@@ -728,7 +728,10 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
 
-	ds.preparePKRangesForTiCI(ds.PossibleAccessPaths[0], ds.PushedDownConds)
+	err := ds.preparePKRangesForTiCI(ds.PossibleAccessPaths[0], ds.PushedDownConds)
+	if err != nil {
+		return err
+	}
 
 	// Remove the matched conditions from PushedDownConds.
 	ds.PushedDownConds = slices.DeleteFunc(ds.PushedDownConds, func(cond expression.Expression) bool {
