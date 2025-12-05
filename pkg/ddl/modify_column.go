@@ -1867,6 +1867,8 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || (toUnsigned != originUnsigned)
 	}
 
+	differerntCollation := oldCol.GetCollate() != newCol.GetCollate()
+
 	// Deal with the same type.
 	if oldCol.GetType() == newCol.GetType() {
 		switch oldCol.GetType() {
@@ -1887,7 +1889,7 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 			return !(newCol.GetFlen() != types.UnspecifiedLength && oldCol.GetFlen() != newCol.GetFlen())
 		}
 
-		return !needTruncationOrToggleSign()
+		return !needTruncationOrToggleSign() && !differerntCollation
 	}
 
 	oldTp := oldCol.GetType()
@@ -1899,8 +1901,7 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 	// CHAR->VARCHAR
 	if oldTp == mysql.TypeString && types.IsTypeVarchar(newTp) {
 		// If there are related index, the index may need reorg.
-		relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
-		if len(relatedIndexes) > 0 {
+		if len(getRelatedIndexIDs(tblInfo, oldCol.ID, false)) > 0 {
 			return false
 		}
 	}
@@ -1910,7 +1911,7 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch newCol.GetType() {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return !needTruncationOrToggleSign()
+			return !needTruncationOrToggleSign() && !differerntCollation
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch newCol.GetType() {
