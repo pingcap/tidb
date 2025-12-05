@@ -146,10 +146,7 @@ ifneq ("$(CI)", "")
 endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
 BAZEL_BIN_PATH := $(shell bazel info bazel-bin --noannounce_rc)
-BAZEL_EXECUTION_PATH := $(shell bazel info execution_root --noannounce_rc)
-BAZEL_WORKSPACE := $(shell bazel info workspace --noannounce_rc)
-BAZEL_WORKSPACE_BIN_PATH := $(shell echo $(BAZEL_BIN_PATH) | sed 's|$(BAZEL_EXECUTION_PATH)|$(BAZEL_WORKSPACE)|')
-TIDB_SERVER_PATH := "$(BAZEL_WORKSPACE_BIN_PATH)/cmd/tidb-server/tidb-server_/tidb-server"
-IMPORTER_PATH := "$(BAZEL_WORKSPACE_BIN_PATH)/cmd/importer/importer_/importer"
-TIDB_SERVER_CHECK_PATH := "$(BAZEL_WORKSPACE_BIN_PATH)/cmd/tidb-server/tidb-server_/tidb-server_check"
+TIDB_SERVER_PATH := "$(BAZEL_BIN_PATH)/cmd/tidb-server/tidb-server_/tidb-server"
+IMPORTER_PATH := "$(BAZEL_BIN_PATH)/cmd/importer/importer_/importer"
+TIDB_SERVER_CHECK_PATH := "$(BAZEL_BIN_PATH)/cmd/tidb-server/tidb-server_/tidb-server_check"
 NOGO_FLAG=true
