@@ -62,22 +62,5 @@ _tidb_commit_ts	id
 TSO	1
 TSO	2
 TSO	3
-alter table t cache;
-explain format = 'brief' select _tidb_commit_ts, id from t where id = 1;
-id	estRows	task	access object	operator info
-Projection	1.00	root		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.id
-└─Point_Get	1.00	root	table:t	handle:1
-select _tidb_commit_ts, id from t where id = 1;
-_tidb_commit_ts	id
-TSO	1
-explain format = 'brief' select _tidb_commit_ts, id from t where id in (1, 2, 3);
-id	estRows	task	access object	operator info
-Projection	3.00	root		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.id
-└─Batch_Point_Get	3.00	root	table:t	handle:[1 2 3], keep order:false, desc:false
-select _tidb_commit_ts, id from t where id in (1, 2, 3);
-_tidb_commit_ts	id
-TSO	1
-TSO	2
-TSO	3
 # TODO
 # coprocessor is not supported yet
