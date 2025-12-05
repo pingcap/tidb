@@ -14,6 +14,7 @@ go_library(
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/kv",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/session",
