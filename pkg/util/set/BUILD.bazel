@@ -13,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/set",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/types",
         "//pkg/util/hack",
         "//pkg/util/memory",
     ],
