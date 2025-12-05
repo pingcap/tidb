@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/importsdk"
@@ -95,6 +96,13 @@ func (s *DefaultJobSubmitter) buildImportOptions(tableMeta *importsdk.TableMeta)
 		Detached:        true,
 		GroupKey:        s.groupKey,
 		DisablePrecheck: !cfg.App.CheckRequirements,
+	}
+
+	if cfg.Mydumper.SourceDir != "" {
+		u, err := url.Parse(cfg.Mydumper.SourceDir)
+		if err == nil {
+			opts.ResourceParameters = u.RawQuery
+		}
 	}
 
 	// Set format based on data files

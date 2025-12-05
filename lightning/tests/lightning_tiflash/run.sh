@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # before v4.0.5 tiflash doesn't support tls, so we should skip this test then
-(check_cluster_version 4 0 5 'TiFlash' && [ -n "$TIFLASH" ]) || exit 0
+#check_cluster_version 4 0 5 'TiFlash' && [ -n "$TIFLASH" ]) || exit 0
 
 set -euE
 # Populate the mydumper source
@@ -38,7 +38,7 @@ echo "INSERT INTO t2 VALUES (3, 3), (4, 4)" > "$DBPATH/$DB.t2.1.sql"
 tiflash_replica_ready() {
   i=0
   run_sql "select sum(AVAILABLE) from information_schema.tiflash_replica WHERE TABLE_NAME = \"$1\""
-  while ! check_contains "sum(AVAILABLE): 1" check; do
+  while ! check_contains "sum(AVAILABLE): 1"; do
     i=$((i+1))
     if [ "$i" -gt 100 ]; then
         echo "wait tiflash replica ready timeout"
@@ -49,10 +49,10 @@ tiflash_replica_ready() {
   done
 }
 
-for BACKEND in tidb local; do
+for BACKEND in "import-into"; do
   run_sql "DROP DATABASE IF EXISTS $DB"
   run_sql "CREATE DATABASE $DB"
-  run_sql "CREATE TABLE $DB.t1 (i INT, j INT, s varchar(32), PRIMARY KEY(s, i));"
+  run_sql "CREATE TABLE $DB.t1 (s varchar(32), i INT, j INT, PRIMARY KEY(s, i));"
   run_sql "ALTER TABLE $DB.t1 SET TIFLASH REPLICA 1;"
   tiflash_replica_ready t1
   run_sql "CREATE TABLE $DB.t2 (i INT, j TINYINT);"

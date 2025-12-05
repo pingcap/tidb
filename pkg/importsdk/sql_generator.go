@@ -16,6 +16,7 @@ package importsdk
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -40,8 +41,22 @@ func (g *sqlGenerator) GenerateImportSQL(tableMeta *TableMeta, options *ImportOp
 	sb.WriteString(escapeIdentifier(tableMeta.Database))
 	sb.WriteString(".")
 	sb.WriteString(escapeIdentifier(tableMeta.Table))
+
+	path := tableMeta.WildcardPath
+	if options.ResourceParameters != "" {
+		u, err := url.Parse(path)
+		if err == nil {
+			if u.RawQuery != "" {
+				u.RawQuery += "&" + options.ResourceParameters
+			} else {
+				u.RawQuery = options.ResourceParameters
+			}
+			path = u.String()
+		}
+	}
+
 	sb.WriteString(" FROM '")
-	sb.WriteString(tableMeta.WildcardPath)
+	sb.WriteString(path)
 	sb.WriteString("'")
 
 	if options.Format != "" {

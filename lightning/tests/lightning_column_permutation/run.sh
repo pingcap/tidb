@@ -15,7 +15,7 @@
 
 set -eu
 
-for BACKEND in local tidb; do
+for BACKEND in local tidb import-into; do
     if [ "$BACKEND" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi
@@ -27,6 +27,7 @@ for BACKEND in local tidb; do
     check_contains "count(*): 5"
 
     run_sql "SELECT fund_seq_no, region_code, credit_code FROM perm.test_perm WHERE contract_no = '2020061000019011020164030597';"
+    read v1
     check_contains "fund_seq_no: 202006100001901102016403059520200627"
     check_contains "region_code: 000002"
     check_contains "credit_code: 33"

@@ -45,7 +45,7 @@ for _ in $(seq 3); do
     fi
 done
 
-for BACKEND in 'local' 'tidb'; do
+for BACKEND in 'local' 'tidb' 'import-into'; do
     if [ "$BACKEND" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi

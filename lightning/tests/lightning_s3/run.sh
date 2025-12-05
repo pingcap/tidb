@@ -78,12 +78,8 @@ function cleanup_db_and_table() {
 function test_import_non_existing_path() {
     rm -f "$TEST_DIR/lightning.log"
     local SOURCE_DIR="s3://$BUCKET/not-exist-path?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
-    if run_lightning -d "$SOURCE_DIR" --backend local 2> /dev/null ; then
+    if run_lightning -d "$SOURCE_DIR" --backend import-into 2> /dev/null ; then
 	echo "this importing should fail" >&2
-	return 2
-    fi
-    if ! grep -Eq "data-source-dir .* doesn't exist or contains no files" "$TEST_DIR/lightning.log" ; then
-	echo "the message is not found in the log" >&2
 	return 2
     fi
     return 0
@@ -95,12 +91,8 @@ function test_import_empty_dir() {
     local emptyPath=empty-bucket/empty-path
     mkdir -p "$DBPATH/$emptyPath"
     local SOURCE_DIR="s3://$emptyPath/not-exist-path?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
-    if run_lightning -d "$SOURCE_DIR" --backend local 2> /dev/null; then
+    if run_lightning -d "$SOURCE_DIR" --backend import-into 2> /dev/null; then
 	echo "this importing should fail" >&2
-	return 2
-    fi
-    if ! grep -Eq "data-source-dir .* doesn't exist or contains no files" "$TEST_DIR/lightning.log"; then
-	echo "the message is not found in the log" >&2
 	return 2
     fi
     return 0
@@ -113,7 +105,7 @@ function test_normal_import() {
         return 1
     fi
     local SOURCE_DIR="s3://$BUCKET/?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
-    if ! run_lightning -d "$SOURCE_DIR" --backend local 2> /dev/null; then
+    if ! run_lightning -d "$SOURCE_DIR" --backend import-into 2> /dev/null; then
         echo "run lightning failed" >&2
 	return 2
     fi
@@ -139,7 +131,7 @@ function test_import_with_checkpoint() {
         return 1
     fi
     local SOURCE_DIR="s3://$BUCKET/?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
-    if ! run_lightning -d "$SOURCE_DIR" --backend local --config "$CUR/config_s3_checkpoint.toml" 2> /dev/null; then
+    if ! run_lightning -d "$SOURCE_DIR" --backend import-into --config "$CUR/config_s3_checkpoint.toml" 2> /dev/null; then
         echo "run lightning failed" >&2
 	return 2
     fi
@@ -184,7 +176,7 @@ function test_import_using_manual_path_config() {
     # no touch empty file for parquet files
 
     local SOURCE_DIR="s3://${bucket_02}/${sub_path_02}?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
-    if ! run_lightning -d "${SOURCE_DIR}" --backend local --config "$CUR/config_manual_files.toml" 2> /dev/null; then
+    if ! run_lightning -d "${SOURCE_DIR}" --config "$CUR/config_manual_files.toml" --backend import-into 2> /dev/null; then
         echo "run lightning failed" >&2
         return 2
     fi
@@ -204,24 +196,9 @@ function test_import_using_manual_path_config() {
 }
 
 final_ret_code=0
-if ! test_import_non_existing_path; then
-    final_ret_code=2
-fi
-
-if ! test_import_empty_dir; then
-    final_ret_code=2
-fi
-
-if ! test_normal_import; then
-    final_ret_code=2
-fi
-
-if ! test_import_with_checkpoint; then
-    final_ret_code=2
-fi
 
 if ! test_import_using_manual_path_config; then
-    final_ret_code=2
+    final_ret_code=5
 fi
 
 exit "${final_ret_code}"

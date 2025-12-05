@@ -44,6 +44,14 @@ func TestGenerateImportSQL(t *testing.T) {
 			expected: "IMPORT INTO `test_db`.`test_table` FROM 's3://bucket/path/*.csv' FORMAT 'csv'",
 		},
 		{
+			name: "With S3 Credentials",
+			options: &ImportOptions{
+				Format:             "csv",
+				ResourceParameters: "access-key=ak&endpoint=http%3A%2F%2Fminio%3A9000&secret-access-key=sk",
+			},
+			expected: "IMPORT INTO `test_db`.`test_table` FROM 's3://bucket/path/*.csv?access-key=ak&endpoint=http%3A%2F%2Fminio%3A9000&secret-access-key=sk' FORMAT 'csv'",
+		},
+		{
 			name: "With Options",
 			options: &ImportOptions{
 				Format:        "csv",

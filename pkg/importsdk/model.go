@@ -58,6 +58,7 @@ type ImportOptions struct {
 	DisableTiKVImportMode bool
 	MaxEngineSize         string
 	DisablePrecheck       bool
+	ResourceParameters    string
 }
 
 // GroupStatus represents the aggregated status for a group of import jobs.

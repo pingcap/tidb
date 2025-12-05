@@ -21,6 +21,7 @@ go_library(
         "//pkg/lightning/mydump",
         "//pkg/parser/mysql",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

@@ -161,6 +161,10 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 	sem := make(chan struct{}, o.submitConcurrency)
 
 	for _, table := range tables {
+		if len(table.DataFiles) == 0 || table.TotalSize == 0 {
+			o.logger.Info("skipping table with no data", zap.String("database", table.Database), zap.String("table", table.Table))
+			continue
+		}
 		eg.Go(func() error {
 			// Acquire semaphore to limit concurrent submissions
 			sem <- struct{}{}

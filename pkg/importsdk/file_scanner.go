@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"go.uber.org/zap"
 )
 
 // FileScanner defines the interface for scanning files
@@ -207,6 +208,11 @@ func (s *fileScanner) buildTableMeta(
 	dataFiles, totalSize := processDataFiles(tblMeta.DataFiles)
 	tableMeta.DataFiles = dataFiles
 	tableMeta.TotalSize = totalSize
+
+	if len(tblMeta.DataFiles) == 0 {
+		s.logger.Warn("table has no data files", zap.String("database", dbMeta.Name), zap.String("table", tblMeta.Name))
+		return tableMeta, nil
+	}
 
 	wildcard, err := generateWildcardPath(tblMeta.DataFiles, allDataFiles)
 	if err != nil {

@@ -38,11 +38,11 @@ LOG_FILE1="$TEST_DIR/lightning-import-compress1.log"
 LOG_FILE2="$TEST_DIR/lightning-import-compress2.log"
 LOG_FILE3="$TEST_DIR/lightning-import-compress3.log"
 
-run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config.toml" --log-file "$LOG_FILE1" -L debug
+run_lightning --backend import-into -d "$TEST_DIR/data" --config "$CUR/config.toml" --log-file "$LOG_FILE1" -L debug
 run_sql 'DROP DATABASE test;'
-run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config_gz.toml" --log-file "$LOG_FILE2" -L debug
+run_lightning --backend import-into -d "$TEST_DIR/data" --config "$CUR/config_gz.toml" --log-file "$LOG_FILE2" -L debug
 run_sql 'DROP DATABASE test;'
-run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config_gzip.toml" --log-file "$LOG_FILE3" -L debug
+run_lightning --backend import-into -d "$TEST_DIR/data" --config "$CUR/config_gzip.toml" --log-file "$LOG_FILE3" -L debug
 
 uncompress=$(grep "import write" $LOG_FILE1 |
   grep -Eo "bytes=[0-9]+" | sed 's/bytes=//g' | awk '{sum+=$1} END {print sum}')

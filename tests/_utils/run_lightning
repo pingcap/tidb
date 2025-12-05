@@ -31,4 +31,5 @@ tidb-lightning.test -test.coverprofile="$COV_DIR/cov.$TEST_NAME.$$.out" DEVEL \
     --sorted-kv-dir "$TEST_DIR/$TEST_NAME.sorted" \
     --enable-checkpoint=0 \
     --check-requirements=0 \
+    --backend import-into \
     "$@"

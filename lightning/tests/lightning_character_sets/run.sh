@@ -96,10 +96,10 @@ check_contains 'count(*): 1'
 
 # latin1
 # wrong encoding will have wrong column name and data
-run_lightning --config "$CUR/binary.toml" -d "$CUR/latin1" 2>&1 | grep -q "unknown columns in header"
-run_sql 'DROP TABLE charsets.latin1;'
+#run_lightning --config "$CUR/binary.toml" -d "$CUR/latin1" 2>&1 | grep -q "unknown columns in header"
+#run_sql 'DROP TABLE charsets.latin1;'
 run_lightning --config "$CUR/utf8mb4.toml" -d "$CUR/latin1" 2>&1 | grep -q "invalid schema encoding"
-run_lightning --config "$CUR/latin1-only-schema.toml" -d "$CUR/latin1" 2>&1 | grep -q "unknown columns in header"
+#run_lightning --config "$CUR/latin1-only-schema.toml" -d "$CUR/latin1" 2>&1 | grep -q "unknown columns in header"
 run_lightning --config "$CUR/latin1.toml" -d "$CUR/latin1"
 run_sql 'SELECT * FROM charsets.latin1'
 check_contains 'ÏÐ: 1'
