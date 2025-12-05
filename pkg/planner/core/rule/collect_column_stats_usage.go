@@ -434,6 +434,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			c.orderingColumns = append(c.orderingColumns, extractMinMaxOrderingColumns(lp)...)
 		}
 	}
+
+	// Restore state after processing all children to avoid polluting parent's state
+	c.orderingColumns = savedOrderingColumns
+	c.joinColumns = savedJoinColumns
+
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
 		c.collectPredicateColumnsForDataSource(askedColGroups, x)
