@@ -134,8 +134,9 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 	// the first time we meet it.
 	// currently, we use memory to do this check, if it's too large, we just skip
 	// the checking and skip later checksum.
-	// TODO we can upload those handles to sort storage and check them in another
-	//  pass later.
+	//
+	// an alternative solution is to upload those handles to sort storage and
+	// check them in another pass later.
 	if c.kvGroup != external.DataKVGroup {
 		c.hdlSet.Add(handle)
 	}

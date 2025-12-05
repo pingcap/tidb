@@ -123,8 +123,12 @@ func (h *BaseHandler) Run(ctx context.Context, pairCh chan *external.KVPair) err
 }
 
 // Close implements Handler interface.
-func (h *BaseHandler) Close(context.Context) error {
-	return h.encoder.Close()
+func (h *BaseHandler) Close(context.Context) (err error) {
+	if h.encoder != nil {
+		// in some test, we don't set encoder
+		err = h.encoder.Close()
+	}
+	return err
 }
 
 // re-encode the row from the handle and value of data KV into KV pairs and handle
