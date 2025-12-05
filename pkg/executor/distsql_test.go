@@ -603,9 +603,6 @@ func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
 }
 
 func TestIndexLookUpPushDownCopTask(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("IndexLookUp push down is not supported temporarily in nextgen")
-	}
 	// ensure cop-cache is enabled by default
 	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {

@@ -1185,10 +1185,10 @@ func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *m
 func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
 	unSupportedReason := ""
 	sessionVars := ctx.GetSessionVars()
-	if tblInfo.IsCommonHandle {
-		unSupportedReason = "common handle table is not supported"
-	} else if tblInfo.Partition != nil {
-		unSupportedReason = "partition table is not supported"
+	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion < 1 {
+		unSupportedReason = "common handle table with old encoding version is not supported"
+	} else if index.Global {
+		unSupportedReason = "the global index in partition table is not supported"
 	} else if tblInfo.TempTableType != model.TempTableNone {
 		unSupportedReason = "temporary table is not supported"
 	} else if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {

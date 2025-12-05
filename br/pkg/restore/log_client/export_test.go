@@ -30,7 +30,6 @@ import (
 
 var (
 	FilterFilesByRegion = filterFilesByRegion
-	PitrIDMapsFilename  = pitrIDMapsFilename
 )
 
 func (metaname *MetaName) Meta() Meta {

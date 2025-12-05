@@ -9711,7 +9711,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(increase(tidb_executor_index_lookup_row_number_bucket{instance=~\"$instance\", type=~\"enable_index_lookup_push_down\"}[1m])) by (le)",
+              "expr": "sum(increase(tidb_executor_index_lookup_row_number_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=~\"enable_index_lookup_push_down\"}[1m])) by (le)",
               "format": "heatmap",
               "interval": "",
               "intervalFactor": 2,

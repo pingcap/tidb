@@ -81,7 +81,7 @@
                         "children": [
                           {
                             "name": "IndexFullScan_32",
-                            "cost": 1628000,
+                            "cost": 1628000.000001,
                             "est_rows": 10000,
                             "act_rows": 2,
                             "task_type": 2,
@@ -92,7 +92,7 @@
                         "labels": [
                           2
                         ],
-                        "cost": 150773.33333333334,
+                        "cost": 150773.33333340002,
                         "est_rows": 10000,
                         "act_rows": 2,
                         "task_type": 1,
@@ -123,7 +123,7 @@
                         "operator_info": "data:TableFullScan_34"
                       }
                     ],
-                    "cost": 1128387.6317058015,
+                    "cost": 1128387.631705868,
                     "est_rows": 100000000,
                     "act_rows": 8,
                     "task_type": 1,
@@ -131,7 +131,7 @@
                     "operator_info": "CARTESIAN inner join"
                   }
                 ],
-                "cost": 999128387.6317058,
+                "cost": 999128387.6317059,
                 "est_rows": 100000000,
                 "act_rows": 8,
                 "task_type": 1,
@@ -157,14 +157,14 @@
             "children": [
               {
                 "name": "IndexRangeScan_6",
-                "cost": 542666.6666666667,
+                "cost": 542666.6666676668,
                 "est_rows": 3333.3333333333335,
                 "task_type": 2,
                 "store_type": 2,
                 "operator_info": "range:(100,+inf], keep order:false, stats:pseudo"
               }
             ],
-            "cost": 50257.77777777778,
+            "cost": 50257.77777784445,
             "est_rows": 3333.3333333333335,
             "task_type": 1,
             "store_type": 1,

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -202,6 +203,11 @@ func optimizeCache(ctx context.Context, sctx sessionctx.Context, node *resolve.N
 }
 
 func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = tidbutil.GetRecoverError(r)
+		}
+	}()
 	pctx := sctx.GetPlanCtx()
 	sessVars := sctx.GetSessionVars()
 

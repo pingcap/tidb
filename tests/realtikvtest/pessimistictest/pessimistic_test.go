@@ -2760,7 +2760,11 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk2.MustExec("insert into t3 values (1, 2)")
 	err = tk.ExecToErr("commit")
 	require.ErrorContains(t, err, "[kv:9007]Write conflict")
-	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
+	if kerneltype.IsClassic() {
+		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
+	} else {
+		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
+	}
 
 	// case: DML returns error => abort txn
 	tk.MustExec("create table t4 (id int primary key, v int, key i1(v))")
@@ -3083,7 +3087,11 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	tk2.MustExec("insert into t2 values (2, 1)")
 	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
 	err = tk.ExecToErr("commit")
-	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
+	if kerneltype.IsClassic() {
+		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
+	} else {
+		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
+	}
 }
 
 func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
