@@ -250,6 +250,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
 		defer cancel()
 	}
+	e.commitTSOffset = -1
+	for i, col := range e.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			e.commitTSOffset = i
+			break
+		}
+	}
+
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
@@ -427,13 +435,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		err = LockKeys(ctx, e.Ctx(), e.waitTime, lockKeys...)
 		if err != nil {
 			return err
-		}
-	}
-	e.commitTSOffset = -1
-	for i, col := range e.Schema().Columns {
-		if col.ID == model.ExtraCommitTSID {
-			e.commitTSOffset = i
-			break
 		}
 	}
 
