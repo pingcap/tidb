@@ -1236,11 +1236,12 @@ func estimateCompressionRatio(
 	return compressionRatio, nil
 }
 
-// Consider the extreme case that user data contains all 3 compression types.
-// In such case, we need to sample about 1,500 files. Suppose each file takes
-// 0.5 second to sample (for example, cross region read), we can finish in one
-// minute with 16 concurrency.
-const compressionSampleCount = 512
+// maxSampledCompressedFiles indicates the max number of files we used to sample
+// compression ratio for each compression type. Consider the extreme case that
+// user data contains all 3 compression types. Then we need to sample about 1,500
+// files. Suppose each file costs 0.5 second (for example, cross region access),
+// we still can finish in one minute with 16 concurrency.
+const maxSampledCompressedFiles = 512
 
 // compressionEstimator estimates compression ratio for different compression types.
 // It uses harmonic mean to get the average compression ratio.
@@ -1293,17 +1294,17 @@ func (r *compressionEstimator) estimate(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if v, ok := r.ratio.Load(compressTp); ok {
-		return v.(float64)
+	if _, ok := r.ratio.Load(compressTp); ok {
+		return compressRatio
 	}
 
 	if r.records[compressTp] == nil {
 		r.records[compressTp] = make([]float64, 0, 256)
 	}
-	if len(r.records[compressTp]) < compressionSampleCount {
+	if len(r.records[compressTp]) < maxSampledCompressedFiles {
 		r.records[compressTp] = append(r.records[compressTp], compressRatio)
 	}
-	if len(r.records[compressTp]) >= compressionSampleCount {
+	if len(r.records[compressTp]) >= maxSampledCompressedFiles {
 		// Using harmonic mean can better handle outlier values.
 		compressRatio = getHarmonicMean(r.records[compressTp])
 		r.ratio.Store(compressTp, compressRatio)
@@ -1362,9 +1363,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize        int64
-		sourceType       mydump.SourceType
-		compressionRatio = 1.0
+		totalSize  int64
+		sourceType mydump.SourceType
+		// sizeExpansionRatio is the estimated size expansion for parquet format.
+		// For non-parquet format, it's always 1.0.
+		sizeExpansionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1441,7 +1444,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
-					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
 				})
 				if err2 != nil {
 					return nil, err2
@@ -1454,7 +1457,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 				}
 				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
-				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err

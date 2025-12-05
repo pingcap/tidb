@@ -492,7 +492,10 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 		DataFiles:  fakeDataFiles,
 	}
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
+	}()
 
 	cp := &checkpoints.TableCheckpoint{
 		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
@@ -525,7 +528,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 						Offset:       0,
 						EndOffset:    14,
 						PrevRowIDMax: 0,
-						RowIDMax:     4,
+						RowIDMax:     4, // 37 bytes with 3 columns can store at most 7 rows.
 					},
 					Timestamp: 1234567897,
 				},
@@ -548,7 +551,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 						Offset:       6,
 						EndOffset:    52,
 						PrevRowIDMax: 7,
-						RowIDMax:     22,
+						RowIDMax:     20,
 						Columns:      []string{"a", "b", "c"},
 					},
 
@@ -561,8 +564,8 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Chunk: mydump.Chunk{
 						Offset:       52,
 						EndOffset:    60,
-						PrevRowIDMax: 22,
-						RowIDMax:     24,
+						PrevRowIDMax: 20,
+						RowIDMax:     22,
 						Columns:      []string{"a", "b", "c"},
 					},
 					Timestamp: 1234567897,
@@ -574,8 +577,8 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Chunk: mydump.Chunk{
 						Offset:       6,
 						EndOffset:    48,
-						PrevRowIDMax: 24,
-						RowIDMax:     38,
+						PrevRowIDMax: 22,
+						RowIDMax:     35,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
@@ -592,8 +595,8 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Chunk: mydump.Chunk{
 						Offset:       48,
 						EndOffset:    101,
-						PrevRowIDMax: 38,
-						RowIDMax:     55,
+						PrevRowIDMax: 35,
+						RowIDMax:     48,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
@@ -605,8 +608,8 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Chunk: mydump.Chunk{
 						Offset:       101,
 						EndOffset:    102,
-						PrevRowIDMax: 55,
-						RowIDMax:     55,
+						PrevRowIDMax: 48,
+						RowIDMax:     48,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
@@ -618,8 +621,8 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Chunk: mydump.Chunk{
 						Offset:       4,
 						EndOffset:    59,
-						PrevRowIDMax: 55,
-						RowIDMax:     73,
+						PrevRowIDMax: 48,
+						RowIDMax:     61,
 						Columns:      []string{"b", "c"},
 					},
 					Timestamp: 1234567897,
@@ -636,8 +639,8 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Chunk: mydump.Chunk{
 						Offset:       59,
 						EndOffset:    60,
-						PrevRowIDMax: 73,
-						RowIDMax:     73,
+						PrevRowIDMax: 61,
+						RowIDMax:     61,
 						Columns:      []string{"b", "c"},
 					},
 					Timestamp: 1234567897,
