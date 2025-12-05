@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -1756,5 +1757,178 @@ func TestPutRawKvWithRetry(t *testing.T) {
 			}
 			require.Equal(t, tt.wantPuts, mockRawClient.putCount)
 		})
+	}
+}
+
+func TestRepairIngestIndexWithForeignKey(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("create table test.parent (id int, index i2(id))")
+	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
+	tk.MustExec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", checkpoint.LogRestoreCheckpointDatabaseName))
+	g := gluetidb.New()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+	client.SetUseCheckpoint()
+
+	fakeJob := func(
+		schemaName string,
+		tableName string,
+		tableID int64,
+		indexID int64,
+		indexName string,
+		columnName string,
+		args json.RawMessage,
+	) *model.Job {
+		return &model.Job{
+			Version:    model.JobVersion1,
+			SchemaName: schemaName,
+			TableName:  tableName,
+			TableID:    tableID,
+			Type:       model.ActionAddIndex,
+			State:      model.JobStateSynced,
+			RowCount:   100,
+			RawArgs:    args,
+			ReorgMeta: &model.DDLReorgMeta{
+				ReorgTp: model.ReorgTypeLitMerge,
+			},
+			BinlogInfo: &model.HistoryInfo{
+				TableInfo: &model.TableInfo{
+					Indices: []*model.IndexInfo{
+						{
+							ID:   indexID,
+							Name: pmodel.NewCIStr(indexName),
+							Columns: []*model.IndexColumn{{
+								Name: pmodel.NewCIStr(columnName),
+							}},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	{
+		infoSchema := s.Mock.InfoSchema()
+		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		childTableIndexI1 := childTableInfo.Indices[0]
+		parentTableIndexI2 := parentTableInfo.Indices[0]
+
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID)),
+		), false))
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
+		), false))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		infoSchema = s.Mock.InfoSchema()
+		newChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		newParentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+
+		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
+		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
+		require.Equal(t, childTableIndexI1.Name, newChildTableInfo.Indices[0].Name)
+		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
+		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
+		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
+		sqls, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
+		require.NoError(t, err)
+		require.Len(t, sqls.FKSQLs, 1)
+		sqls.FKSQLs[0].FKID = newChildTableInfo.ForeignKeys[0].ID
+		if sqls.SQLs[0].TableName == childTableInfo.Name {
+			sqls.SQLs[0].IndexID = newChildTableInfo.Indices[0].ID
+			sqls.SQLs[1].IndexID = newParentTableInfo.Indices[0].ID
+		} else {
+			sqls.SQLs[0].IndexID = newParentTableInfo.Indices[0].ID
+			sqls.SQLs[1].IndexID = newChildTableInfo.Indices[0].ID
+		}
+		tk.MustExec(fmt.Sprintf("drop table %s.cpt_ingest", checkpoint.LogRestoreCheckpointDatabaseName))
+		err = checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, se, sqls)
+		require.NoError(t, err)
+	}
+	{
+		infoSchema := s.Mock.InfoSchema()
+		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		childTableIndexI1 := childTableInfo.Indices[0]
+		parentTableIndexI2 := parentTableInfo.Indices[0]
+
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		infoSchema = s.Mock.InfoSchema()
+		newChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		newParentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
+		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
+		require.Equal(t, childTableIndexI1.Name, newChildTableInfo.Indices[0].Name)
+		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
+		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
+		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
+	}
+	{
+		require.NoError(t, checkpoint.RemoveCheckpointDataForLogRestore(ctx, s.Mock.Domain, se))
+		infoSchema := s.Mock.InfoSchema()
+		tk.MustExec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", checkpoint.LogRestoreCheckpointDatabaseName))
+		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		childTableIndexI1 := childTableInfo.Indices[0]
+		parentTableIndexI2 := parentTableInfo.Indices[0]
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index", `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
+		}()
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID)),
+		), false))
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
+		), false))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index", `return(true)`))
+		defer func() {
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index")
+		}()
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index", `return(true)`))
+		defer func() {
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index")
+		}()
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index"))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+
+		infoSchema = s.Mock.InfoSchema()
+		newChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		newParentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
+		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
+		require.Equal(t, childTableIndexI1.Name, newChildTableInfo.Indices[0].Name)
+		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
+		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
+		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
 	}
 }
