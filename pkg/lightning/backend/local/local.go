@@ -1708,6 +1708,11 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
 }
 
+// GetExternalEngineConflictInfo returns conflict info of some engine.
+func (local *Backend) GetExternalEngineConflictInfo(engineUUID uuid.UUID) common.ConflictInfo {
+	return local.engineMgr.getExternalEngineConflictInfo(engineUUID)
+}
+
 // ResetEngine reset the engine and reclaim the space.
 func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, false)

@@ -39,8 +39,7 @@ var (
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
-func MergeOverlappingFiles(
-	ctx context.Context,
+func MergeOverlappingFiles(ctx context.Context,
 	paths []string,
 	store storage.ExternalStorage,
 	partSize int64,
@@ -118,7 +117,7 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // memory usage of this function is:
 //
 //	defaultOneWriterMemSizeLimit
-//	+ MaxMergingFilesPerThread * (X + defaultReadBufferSize)
+//	+ MaxMergingFilesPerThread * (X + DefaultReadBufferSize)
 //	+ maxUploadWorkersPerThread * (data-part-size + 5MiB(stat-part-size))
 //	+ memory taken by concurrent reading if check-hotspot is enabled
 //
@@ -153,7 +152,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, DefaultReadBufferSize, checkHotspot, 0)
 	if err != nil {
 		return err
 	}
