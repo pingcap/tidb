@@ -188,8 +188,13 @@ func (c *pdClient) needScatter(ctx context.Context) bool {
 func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo) error {
 	log.Info("scatter regions", zap.Int("regions", len(newRegions)))
 	// the retry is for the temporary network errors during sending request.
+<<<<<<< HEAD
 	return utils.WithRetry(ctx, func() error {
 		err := c.tryScatterRegions(ctx, newRegions)
+=======
+	err := utils.WithRetry(ctx, func() error {
+		failedRegionsID, err := c.tryScatterRegions(ctx, newRegions)
+>>>>>>> bc50e0d3e23 (region scatter client: retry scatter regions when finished percentage is not 100. (#64884))
 		// if err is unsupported, we need to fallback to the old method.
 		// ErrPDRegionsNotFullyScatter means the regions are not fully scattered,
 		// in new version of PD, the scatter regions API will return the failed regions id,
@@ -227,11 +232,28 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 		return errors.Annotatef(berrors.ErrPDInvalidResponse,
 			"pd returns error during batch scattering: %s", pbErr)
 	}
+<<<<<<< HEAD
 	if finished := resp.GetFinishedPercentage(); finished < 100 {
 		return errors.Annotatef(berrors.ErrPDRegionsNotFullyScatter, "scatter finished percentage %d less than 100", finished)
 	}
 
 	return nil
+=======
+
+	if len(resp.FailedRegionsId) > 0 {
+		failedRegionsID := make(map[uint64]struct{})
+		for _, id := range resp.FailedRegionsId {
+			failedRegionsID[id] = struct{}{}
+		}
+		return failedRegionsID, nil
+	}
+
+	if finished := resp.GetFinishedPercentage(); finished < 100 {
+		return nil, errors.Annotatef(berrors.ErrPDRegionsNotFullyScatter, "scatter finished percentage %d less than 100", finished)
+	}
+
+	return nil, nil
+>>>>>>> bc50e0d3e23 (region scatter client: retry scatter regions when finished percentage is not 100. (#64884))
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
