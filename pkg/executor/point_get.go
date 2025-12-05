@@ -690,6 +690,9 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		if e.lock {
 			val1, ok := e.Ctx().GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
 			if ok {
+				if e.commitTSOffset >= 0 {
+					return kv.ValueEntry{}, errors.Errorf("TODO: _tidb_commit_ts should return NULL but not implemented yet")
+				}
 				return kv.ValueEntry{Value: val1}, nil
 			}
 		}
@@ -698,8 +701,8 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) {
-		if e.Ctx().GetSessionVars().EnablePointGetCache {
-			if e.commitTSOffset < 0 { // When user require _tidb_commit_ts value, we should not use cache.
+		// About e.commitTSOffset < 0: when user require _tidb_commit_ts value, we just skip using cache.
+		if e.Ctx().GetSessionVars().EnablePointGetCache && e.commitTSOffset < 0 {
 				cacheDB := e.Ctx().GetStore().GetMemCache()
 				val1, err := cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
 				if err != nil {
