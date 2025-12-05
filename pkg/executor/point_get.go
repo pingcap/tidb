@@ -645,6 +645,9 @@ func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
 	key []byte) (kv.ValueEntry, error) {
 	if val, ok := lockCtx.Values[string(key)]; ok {
 		if val.Exists {
+			if e.commitTSOffset >= 0 {
+				return kv.ValueEntry{}, errors.Errorf("TODO: _tidb_commit_ts should return NULL but not implemented yet")
+			}
 			return kv.ValueEntry{Value: val.Value}, nil
 		} else if val.AlreadyLocked {
 			val, err := e.get(ctx, key)
@@ -696,12 +699,17 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) {
 		if e.Ctx().GetSessionVars().EnablePointGetCache {
-			cacheDB := e.Ctx().GetStore().GetMemCache()
-			val1, err := cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
-			if err != nil {
-				return val, err
+			if e.commitTSOffset < 0 {
+				// TODO: When e.commitTSOffset < 0, it should return nil, but we return 0
+				// So this is a workaround just skip cache, to get _tidb_commit_ts value.
+			} else {
+				cacheDB := e.Ctx().GetStore().GetMemCache()
+				val1, err := cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
+				if err != nil {
+					return val, err
+				}
+				return kv.ValueEntry{Value: val1}, nil
 			}
-			return kv.ValueEntry{Value: val1}, nil
 		}
 	}
 	// if not read lock or table was unlock then snapshot get

@@ -1846,11 +1846,15 @@ func (store *MVCCStore) GetPair(reqCtx *requestCtx, key []byte, version uint64) 
 			return nil, err
 		}
 	}
-	val, commitTS, err := reqCtx.getDBReader().Get(key, version)
+	val, userMeta, err := reqCtx.getDBReader().Get(key, version)
 	if err != nil {
 		return nil, err
 	}
 
+	var commitTS uint64
+	if reqCtx.returnCommitTS && len(userMeta) > 0 {
+		commitTS = userMeta.CommitTS()
+	}
 	return &kvrpcpb.KvPair{
 		Key:      safeCopy(key),
 		Value:    safeCopy(val),
@@ -1959,7 +1963,7 @@ type kvScanProcessor struct {
 	scanCnt    uint32
 }
 
-func (p *kvScanProcessor) Process(key, value []byte, commitTS uint64) (err error) {
+func (p *kvScanProcessor) Process(key, value []byte) (err error) {
 	if p.sampleStep > 0 {
 		p.scanCnt++
 		if (p.scanCnt-1)%p.sampleStep != 0 {

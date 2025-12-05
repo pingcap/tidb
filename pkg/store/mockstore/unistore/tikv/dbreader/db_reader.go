@@ -135,28 +135,28 @@ func (r *DBReader) GetMvccInfoByKey(key []byte, _ bool, mvccInfo *kvrpcpb.MvccIn
 }
 
 // Get gets a value with the key and start ts.
-func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, uint64, error) {
+func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, mvcc.DBUserMeta, error) {
 	r.txn.SetReadTS(startTS)
 	if r.RcCheckTS {
 		r.txn.SetReadTS(math.MaxUint64)
 	}
 	item, err := r.txn.Get(key)
 	if err != nil && err != badger.ErrKeyNotFound {
-		return nil, 0, errors.Trace(err)
+		return nil, mvcc.DBUserMeta{}, errors.Trace(err)
 	}
 	if item == nil {
-		return nil, 0, nil
+		return nil, mvcc.DBUserMeta{}, nil
 	}
 	err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, mvcc.DBUserMeta{}, errors.Trace(err)
 	}
 
 	val, err := item.Value()
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, mvcc.DBUserMeta{}, errors.Trace(err)
 	}
-	return val, item.Version(), nil
+	return val, item.UserMeta(), nil
 }
 
 // GetIter returns the *badger.Iterator of a *DBReader.
@@ -236,7 +236,7 @@ type ScanFunc = func(key, value []byte) error
 type ScanProcessor interface {
 	// Process accepts key and value, should not keep reference to them.
 	// Returns ErrScanBreak will break the scan loop.
-	Process(key, value []byte, commitTS uint64) error
+	Process(key, value []byte) error
 	// SkipValue returns if we can skip the value.
 	SkipValue() bool
 }
@@ -278,7 +278,7 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 				return errors.Trace(err)
 			}
 		}
-		err = proc.Process(key, val, item.Version())
+		err = proc.Process(key, val)
 		if err != nil {
 			if err == ErrScanBreak {
 				break
@@ -344,7 +344,7 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 				return errors.Trace(err)
 			}
 		}
-		err = proc.Process(key, val, item.Version())
+		err = proc.Process(key, val)
 		if err != nil {
 			if err == ErrScanBreak {
 				break
