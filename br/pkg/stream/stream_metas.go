@@ -1257,7 +1257,7 @@ func (m MigrationExt) processCompactions(ctx context.Context, mig *pb.Migration,
 	// If we are going to truncate some files, for now we still need to use `br log truncate`.
 	for _, compaction := range mig.Compactions {
 		// Can we also remove the compaction when `until-ts` is equal to `truncated-to`...?
-		if compaction.CompactionUntilTs > mig.TruncatedTo {
+		if compaction.InputMaxTs >= mig.TruncatedTo {
 			result.NewBase.Compactions = append(result.NewBase.Compactions, compaction)
 		} else {
 			m.tryRemovePrefix(ctx, compaction.Artifacts, result)
