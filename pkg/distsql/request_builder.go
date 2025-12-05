@@ -926,15 +926,11 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 // FulltextIndexRangesToKVRanges converts fulltext index ranges to "KeyRange".
 // This is a temporary solution, and we should implement the fulltext index
 // ranges conversion in the future.
-func FulltextIndexRangesToKVRanges(_ *distsqlctx.DistSQLContext, tids []int64, _ []*ranger.Range) (*kv.KeyRanges, error) {
-	// Mocking the fulltext index ranges to be the same as the table ranges.
-	kvRanges := make([][]kv.KeyRange, 0, len(tids))
-	for _, id := range tids {
-		startKey := tablecodec.EncodeTablePrefix(id)
-		endKey := tablecodec.EncodeTablePrefix(id + 1)
-		kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
-		kvRanges = kvRanges[:0]
-		kvRanges = append(kvRanges, []kv.KeyRange{kvRange})
-	}
-	return kv.NewPartitionedKeyRanges(kvRanges), nil
+func FulltextIndexRangesToKVRanges(
+	dctx *distsqlctx.DistSQLContext,
+	tids []int64,
+	ranges []*ranger.Range,
+	tableIsCommonHandle bool,
+) (*kv.KeyRanges, error) {
+	return TableHandleRangesToKVRanges(dctx, tids, tableIsCommonHandle, ranges)
 }

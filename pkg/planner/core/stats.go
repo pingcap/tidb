@@ -174,16 +174,16 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+	if path.Index.IsTiCIIndex() {
+		path.TableFilters = slices.Clone(conds)
+		return nil
+	}
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.MinCountAfterAccess = 0
 	path.MaxCountAfterAccess = 0
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-	if path.Index.FullTextInfo != nil || path.Index.HybridInfo != nil {
-		path.TableFilters = slices.Clone(conds)
-		return nil
-	}
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.GetPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
