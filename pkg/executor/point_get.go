@@ -448,7 +448,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 
-	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val.Value}, []kv.Handle{e.handle}, req, nil)
+	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, []kv.ValueEntry{val}, []kv.Handle{e.handle}, req, nil)
 	if err != nil {
 		return err
 	}
@@ -474,7 +474,7 @@ func fillRowChecksum(
 	sctx sessionctx.Context,
 	start, end int,
 	schema *expression.Schema, tblInfo *model.TableInfo,
-	values [][]byte, handles []kv.Handle,
+	values []kv.ValueEntry, handles []kv.Handle,
 	req *chunk.Chunk, buf []byte,
 ) error {
 	checksumColumnIndex, ok := shouldFillRowChecksum(schema)
@@ -503,7 +503,7 @@ func fillRowChecksum(
 	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType(sctx.GetExprCtx().GetEvalCtx())}
 	checksumCols := chunk.NewChunkWithCapacity(ft, req.Capacity())
 	for i := start; i < end; i++ {
-		handle, val := handles[i], values[i]
+		handle, val := handles[i], values[i].Value
 		if !rowcodec.IsNewFormat(val) {
 			checksumCols.AppendNull(0)
 			continue
@@ -773,7 +773,11 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())
 	for i, col := range schema.Columns {
 		if col.ID == model.ExtraCommitTSID {
-			chk.AppendUint64(i, commitTS)
+			if commitTS > 0 {
+				chk.AppendUint64(i, commitTS)
+			} else {
+				chk.AppendNull(i)
+			}
 			continue
 		}
 

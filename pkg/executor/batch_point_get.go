@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -65,8 +66,7 @@ type BatchPointGetExec struct {
 	waitTime       int64
 	inited         uint32
 	commitTSOffset int
-	commitTSs      []uint64
-	values         [][]byte
+	values         []kv.ValueEntry
 	index          int
 	rowDecoder     *rowcodec.ChunkDecoder
 	keepOrder      bool
@@ -220,9 +220,9 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		handle, val := e.handles[e.index], e.values[e.index]
 		commitTS := uint64(0)
 		if e.commitTSOffset >= 0 {
-			commitTS = e.commitTSs[e.index]
+			commitTS = val.CommitTS
 		}
-		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, commitTS, req, e.rowDecoder)
+		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val.Value, commitTS, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -429,6 +429,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			return err
 		}
 	}
+	e.commitTSOffset = -1
+	for i, col := range e.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			e.commitTSOffset = i
+			break
+		}
+	}
+
 	// Fetch all values.
 	values, err = e.batchGet(ctx, keys)
 	if err != nil {
@@ -439,14 +447,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if e.lock && rc {
 		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
-	e.values = make([][]byte, 0, len(values))
-	e.commitTSOffset = -1
-	for i, col := range e.Schema().Columns {
-		if col.ID == model.ExtraCommitTSID {
-			e.commitTSs = make([]uint64, 0, len(values))
-			e.commitTSOffset = i
-		}
-	}
+	e.values = make([]kv.ValueEntry, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
 		if val.IsValueEmpty() {
@@ -472,10 +473,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 			continue
 		}
-		e.values = append(e.values, val.Value)
-		if e.commitTSOffset >= 0 {
-			e.commitTSs = append(e.commitTSs, val.CommitTS)
-		}
+		e.values = append(e.values, val)
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
@@ -548,6 +546,10 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key, opt
 	var getOptions tikv.GetOptions
 	getOptions.Apply(options)
 
+	if getOptions.RequireCommitTS() {
+		return kv.ValueEntry{}, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
+	}
+
 	val, ok := getter.txnCtx.GetKeyInPessimisticLockCache(key)
 	if ok {
 		return kv.NewValueEntry(val, 0), nil
@@ -564,6 +566,10 @@ type cacheBatchGetter struct {
 func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	var getOptions tikv.BatchGetOptions
 	getOptions.Apply(options)
+
+	if getOptions.RequireCommitTS() {
+		return nil, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
+	}
 
 	cacheDB := b.ctx.GetStore().GetMemCache()
 	vals := make(map[string]kv.ValueEntry)

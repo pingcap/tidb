@@ -212,7 +212,11 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, commitTS uint64, hand
 	for colIdx := range decoder.columns {
 		col := &decoder.columns[colIdx]
 		if col.ID == model.ExtraCommitTSID {
-			chk.AppendUint64(colIdx, commitTS)
+			if commitTS > 0 {
+				chk.AppendUint64(colIdx, commitTS)
+			} else {
+				chk.AppendNull(colIdx)
+			}
 			continue
 		}
 
