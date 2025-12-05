@@ -1031,7 +1031,7 @@ var defaultConf = Config{
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
 		ConcurrentlyInitStats:             true,
-		EnableAsyncBatchGet:               true,
+		EnableAsyncBatchGet:               false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
