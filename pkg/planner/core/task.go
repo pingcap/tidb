@@ -18,6 +18,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -345,6 +346,7 @@ func appendExpr(p *physicalop.PhysicalProjection, expr expression.Expression) *e
 	col := &expression.Column{
 		UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 		RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
+		OrigName: expr.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable),
 	}
 	col.SetCoercibility(expr.Coercibility())
 	p.Schema().Append(col)

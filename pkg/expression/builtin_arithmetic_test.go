@@ -702,3 +702,46 @@ func TestDecimalErrOverflow(t *testing.T) {
 		require.EqualError(t, err, tc.errStr)
 	}
 }
+
+// TestArithmeticOverflowErrorMessageWithColumnName tests that overflow error messages
+// display the actual column name instead of "Column#N".
+// This is a regression test for https://github.com/pingcap/tidb/issues/17993
+func TestArithmeticOverflowErrorMessageWithColumnName(t *testing.T) {
+	ctx := createContext(t)
+
+	// Create a column with OrigName set (simulating a real table column)
+	col := &Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		ID:       1,
+		UniqueID: 1,
+		Index:    0,
+		OrigName: "test.t.col1",
+	}
+
+	// Create a constant for -1
+	constant := &Constant{
+		Value:   types.NewIntDatum(-1),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	// Build the multiply function with column * constant
+	// When column value is MinInt64 and multiplied by -1, it overflows
+	bf, err := funcs[ast.Mul].getFunction(ctx, []Expression{col, constant})
+	require.NoError(t, err)
+	require.NotNil(t, bf)
+
+	// Create a mock chunk with MinInt64 that will cause overflow when multiplied by -1
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+	chk.AppendInt64(0, math.MinInt64)
+	row := chk.GetRow(0)
+
+	// Execute the function - should cause overflow
+	_, _, err = bf.evalInt(ctx, row)
+	require.Error(t, err)
+
+	// The error message should contain the actual column name "test.t.col1"
+	// instead of "Column#1"
+	errMsg := err.Error()
+	require.Contains(t, errMsg, "test.t.col1", "Error message should contain the actual column name")
+	require.NotContains(t, errMsg, "Column#", "Error message should not contain 'Column#'")
+}
