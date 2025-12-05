@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kvconflicts
+package conflictedkv
 
 import (
 	"context"
 	"fmt"
 	"path"
-	"unsafe"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -32,16 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
-)
-
-const (
-	// we use this size as a hint to the map size for the conflict rows which is
-	// from index KV conflict and ingested to downstream.
-	// as conflict row might generate more than one conflict KV, and its data KV
-	// might not be ingested to downstream, so we choose a small value for its init
-	// size.
-	initMapSizeForConflictedRows = 128
-	handleMapEntryShallowSize    = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
 )
 
 // MaxConflictRowFileSize is the maximum size of the conflict row file.
@@ -84,7 +73,7 @@ type Collector struct {
 	store          storage.ExternalStorage
 	filenamePrefix string
 	kvGroup        string
-	handler        handler
+	handler        Handler
 	result         *CollectResult
 	hdlSet         *BoundedHandleSet
 
@@ -112,18 +101,12 @@ func NewCollector(
 		result:         NewCollectResult(store.GetCodec().GetKeyspace()),
 		hdlSet:         localSet,
 	}
-	base := &baseHandler{
-		targetTable:       targetTbl,
-		logger:            logger,
-		kvGroup:           kvGroup,
-		encoder:           encoder,
-		encodedRowHandler: collector,
-	}
-	var h handler
+	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, logger)
+	var h Handler
 	if kvGroup == external.DataKVGroup {
-		h = newDataKVHandler(base)
+		h = NewDataKVHandler(base)
 	} else {
-		h = newIndexKVHandler(base, &lazyRefreshedSnapshot{store: store}, &handleFilter{set: globalSet})
+		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store), NewHandleFilter(globalSet))
 	}
 	collector.handler = h
 	return collector
@@ -131,13 +114,14 @@ func NewCollector(
 
 // Run starts the collector to collect conflicted KV info.
 func (c *Collector) Run(ctx context.Context, ch chan *external.KVPair) (err error) {
-	if err = c.handler.preRun(); err != nil {
+	if err = c.handler.PreRun(); err != nil {
 		return err
 	}
-	return c.handler.run(ctx, ch)
+	return c.handler.Run(ctx, ch)
 }
 
-func (c *Collector) handleEncodedRow(ctx context.Context, handle tidbkv.Handle,
+// HandleEncodedRow handles the re-encoded row from conflict KV.
+func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 	row []types.Datum, kvPairs *kv.Pairs) error {
 	if c.writer == nil || c.currFileSize >= MaxConflictRowFileSize {
 		if err := c.switchFile(ctx); err != nil {
@@ -199,14 +183,14 @@ func (c *Collector) switchFile(ctx context.Context) error {
 // Close the collector.
 func (c *Collector) Close(ctx context.Context) error {
 	var firstErr common.OnceError
-	firstErr.Set(c.handler.close(ctx))
+	firstErr.Set(c.handler.Close(ctx))
 	if c.writer != nil {
 		firstErr.Set(c.writer.Close(ctx))
 	}
 	return firstErr.Get()
 }
 
-// GetCollectResult get the collected result.
+// GetCollectResult returns the collect result.
 func (c *Collector) GetCollectResult() *CollectResult {
 	return c.result
 }
