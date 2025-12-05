@@ -783,7 +783,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 	}
 
-	if !comparable1 && !comparable2 {
+	if !comparable1 || !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
