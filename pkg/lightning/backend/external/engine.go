@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -132,6 +133,8 @@ type Engine struct {
 	largeBlockBufPool *membuf.Pool
 
 	memKVsAndBuffers memKVsAndBuffers
+	// totalLoadedKVsCount accumulates the total number of KVs loaded in LoadIngestData
+	totalLoadedKVsCount atomic.Int64
 
 	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
 	// if hotspot file is detected, we will use multiple readers to read data.
@@ -414,6 +417,9 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		e.memKVsAndBuffers.memKVBuffers,
 	)
 
+	// accumulate the total number of KVs loaded in LoadIngestData
+	e.totalLoadedKVsCount.Add(int64(len(deduplicatedKVs)))
+
 	// release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.kvs = nil
 	e.memKVsAndBuffers.memKVBuffers = nil
@@ -538,6 +544,11 @@ func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
+// GetTotalLoadedKVsCount returns the total number of KVs loaded in LoadIngestData.
+func (e *Engine) GetTotalLoadedKVsCount() int64 {
+	return e.totalLoadedKVsCount.Load()
+}
+
 // ConflictInfo implements common.Engine.
 func (e *Engine) ConflictInfo() engineapi.ConflictInfo {
 	if e.recordedDupCnt == 0 {
@@ -552,6 +563,11 @@ func (e *Engine) ConflictInfo() engineapi.ConflictInfo {
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return "external"
+}
+
+// GetOnDup returns the OnDuplicateKey action for this engine.
+func (e *Engine) GetOnDup() engineapi.OnDuplicateKey {
+	return e.onDup
 }
 
 // GetKeyRange implements common.Engine.
@@ -727,6 +743,8 @@ func (m *MemoryIngestData) GetTS() uint64 {
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
+	// Make sure data is not released.
+	intest.Assert(len(m.kvs) > 0)
 }
 
 // DecRef implements IngestData.DecRef.

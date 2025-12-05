@@ -1118,8 +1118,11 @@ func (local *Backend) generateAndSendJob(
 						}
 						return err
 					}
+					// reference the job to prevent the job from being GCed before being put into jobToWorkerCh.
 					for _, job := range jobs {
 						job.ref(jobWg)
+					}
+					for _, job := range jobs {
 						select {
 						case <-egCtx.Done():
 							// this job is not put into jobToWorkerCh
@@ -1361,7 +1364,30 @@ func (local *Backend) ImportEngine(
 
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
+		// Check if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used.
+		// These options are not yet implemented for local backend, so we skip
+		// the statistics verification and return an error to remind future
+		// implementers to add support for this check.
+		if extEngine, ok := e.(*external.Engine); ok {
+			onDup := extEngine.GetOnDup()
+			if onDup == engineapi.OnDuplicateKeyRecord || onDup == engineapi.OnDuplicateKeyRemove {
+				return errors.Errorf("OnDuplicateKeyRecord and OnDuplicateKeyRemove are not yet implemented for local backend. " +
+					"When implementing these options, please also implement the statistics verification for them.")
+			}
+		}
+
 		importedSize, importedLength := e.ImportedStatistics()
+		// Verify the imported statistics after import.
+		// For external engine, use the total number of KVs loaded in LoadIngestData
+		// (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
+		expectedLength := lfLength
+		if extEngine, ok := e.(*external.Engine); ok {
+			expectedLength = extEngine.GetTotalLoadedKVsCount()
+		}
+		if importedLength != expectedLength {
+			return errors.Errorf("imported length mismatch, expected %d, got %d", expectedLength, importedLength)
+		}
+
 		tidblogutil.Logger(ctx).Info("import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),
