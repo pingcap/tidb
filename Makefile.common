@@ -145,8 +145,7 @@ ifneq ("$(CI)", "")
 	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
 endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
-BAZEL_BIN_PATH := $(shell bazel info bazel-bin --noannounce_rc)
-TIDB_SERVER_PATH := "$(BAZEL_BIN_PATH)/cmd/tidb-server/tidb-server_/tidb-server"
-IMPORTER_PATH := "$(BAZEL_BIN_PATH)/cmd/importer/importer_/importer"
-TIDB_SERVER_CHECK_PATH := "$(BAZEL_BIN_PATH)/cmd/tidb-server/tidb-server_/tidb-server_check"
+TIDB_SERVER_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server
+IMPORTER_PATH := ./bazel-bin/cmd/importer/importer_/importer
+TIDB_SERVER_CHECK_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server_check
 NOGO_FLAG=true
