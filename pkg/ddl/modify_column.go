@@ -2091,7 +2091,7 @@ func checkModifyTypes(from, to *model.ColumnInfo) error {
 		}
 	}
 
-	// Since we support convertion between charset and collation in the process of reorg,
+	// Since we support conversion between charset and collation in the process of reorg,
 	// here we just check whether the modification is supported.
 	err = checkModifyCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate(), fromFt.GetCharset(), fromFt.GetCollate(), true)
 
