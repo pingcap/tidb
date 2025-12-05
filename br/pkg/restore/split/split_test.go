@@ -730,3 +730,44 @@ func TestRegionsNotFullyScatter(t *testing.T) {
 	require.Equal(t, 2+1+1, mockClient.scatterRegions.regionCount)
 	require.Equal(t, map[uint64]int{1: 1 + 7, 2: 1 + 7}, mockClient.scatterRegion.count)
 }
+
+func TestRegionsNotFullyScatter(t *testing.T) {
+	mockClient := NewMockPDClientForSplit()
+	client := pdClient{
+		needScatterVal: true,
+		client:         mockClient,
+	}
+	client.needScatterInit.Do(func() {})
+	ctx := context.Background()
+
+	regions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id: 1,
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id: 2,
+			},
+		},
+	}
+	err := client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 2, mockClient.scatterRegions.regionCount)
+	require.Len(t, mockClient.scatterRegion.count, 0)
+
+	// simulate that one region is not fully scattered when scatterRegions
+	mockClient.scatterRegions.finishedPercentage = 50
+	err = client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 2+1, mockClient.scatterRegions.regionCount)
+	require.Equal(t, map[uint64]int{1: 1, 2: 1}, mockClient.scatterRegion.count)
+
+	// simulate that the regions is not fully scattered when scatterRegion
+	mockClient.scatterRegion.eachRegionFailBefore = 7
+	err = client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 2+1+1, mockClient.scatterRegions.regionCount)
+	require.Equal(t, map[uint64]int{1: 1 + 7, 2: 1 + 7}, mockClient.scatterRegion.count)
+}
