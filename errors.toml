@@ -646,6 +646,21 @@ error = '''
 open duplicate db error
 '''
 
+["Lightning:Restore:ErrRemoteLoadDataTaskCanceled"]
+error = '''
+[remote bakcend] load data task %s is canceled, error: %s
+'''
+
+["Lightning:Restore:ErrRemoteLoadDataTaskNotFound"]
+error = '''
+[remote bakcend] load data task %s is not found in remote worker
+'''
+
+["Lightning:Restore:ErrRemoteRequestRemoteWorker"]
+error = '''
+[remote bakcend] request remote worker error, status code: %d, message: %s
+'''
+
 ["Lightning:Restore:ErrResolveDuplicateRows"]
 error = '''
 resolve duplicate rows error on table '%s'
