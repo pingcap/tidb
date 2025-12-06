@@ -1482,7 +1482,7 @@ func (local *Backend) ImportEngine(
 		zap.Float64("maxReqPerSec", maxReqPerSec),
 	)
 
-	failpoint.Inject("ReadyForImportEngine", func() {})
+	failpoint.InjectCall("ReadyForImportEngine")
 
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
