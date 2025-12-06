@@ -72,8 +72,7 @@ import (
 
 const (
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey             = "/tidb/ddl/fg/owner"
-	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	// Prompt is the prompt for ddl owner manager.
@@ -464,7 +463,7 @@ func (dc *ddlCtx) setDDLLabelForTopSQL(jobID int64, jobQuery string) {
 	ctx.setDDLLabelForTopSQL(jobQuery)
 }
 
-func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType) {
+func (dc *ddlCtx) setRequestSource(jobID int64, jobType model.ActionType) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
@@ -472,7 +471,7 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType
 		ctx = NewReorgContext()
 		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
-	ctx.setDDLLabelForDiagnosis(jobType)
+	ctx.setRequestSource(jobType)
 }
 
 func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) *kv.ResourceGroupTagBuilder {

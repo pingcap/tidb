@@ -58,6 +58,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -68,8 +69,7 @@ import (
 
 // reorgCtx is for reorganization.
 type reorgCtx struct {
-	// doneCh is used to notify.
-	// If the reorganization job is done, we will use this channel to notify outer.
+	// doneCh is used to notify outer when the reorganization job is done.
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
 	doneCh chan reorgFnResult
@@ -499,55 +499,59 @@ func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 	job.SetWarnings(warnings, warningsCount)
 }
 
-func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
-	addedRowCount int64) {
-	if tblInfo == nil {
-		return
+func getReorgProgress(w *worker, tblInfo *model.TableInfo, addedRowCount int64) float64 {
+	var progress float64
+
+	totalCount := getTableTotalCount(w, tblInfo)
+	if totalCount > 0 {
+		progress = mathutil.Clamp(float64(addedRowCount)/float64(totalCount), 0, 1)
 	}
-	progress := float64(0)
-	if addedRowCount != 0 {
-		totalCount := getTableTotalCount(w, tblInfo)
-		if totalCount > 0 {
-			progress = float64(addedRowCount) / float64(totalCount)
-		} else {
-			progress = 0
-		}
-		if progress > 1 {
-			progress = 1
-		}
-		logutil.DDLLogger().Debug("update progress",
-			zap.Float64("progress", progress),
-			zap.Int64("addedRowCount", addedRowCount),
-			zap.Int64("totalCount", totalCount))
+
+	logutil.DDLLogger().Debug("update progress",
+		zap.Float64("progress", progress),
+		zap.Int64("addedRowCount", addedRowCount),
+		zap.Int64("totalCount", totalCount))
+
+	return progress * 100
+}
+
+func updateBackfillProgress(
+	w *worker,
+	reorgInfo *reorgInfo,
+	tblInfo *model.TableInfo,
+	addedRowCount int64,
+) {
+	progress := getReorgProgress(w, tblInfo, addedRowCount)
+	jobID := reorgInfo.ID
+	tableName := tblInfo.Name.String()
+
+	tp := reorgInfo.reorgType
+	if tp == model.ActionNone {
+		tp = reorgInfo.Type
 	}
-	switch reorgInfo.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		var label string
+
+	switch tp {
+	case model.ActionAddIndex:
+		var indexInfos []*model.IndexInfo
+		for _, elem := range reorgInfo.elements {
+			if bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+				indexInfos = append(indexInfos, model.FindIndexInfoByID(tblInfo.Indices, elem.ID))
+			}
+		}
+
+		indexNames := getIndexNames(indexInfos)
 		if reorgInfo.mergingTmpIdx {
-			label = metrics.LblAddIndexMerge
+			metrics.GetBackfillProgressByLabel(jobID, metrics.LblAddIndexMerge, reorgInfo.SchemaName, tableName, indexNames).Set(progress)
 		} else {
-			label = metrics.LblAddIndex
+			metrics.GetBackfillProgressByLabel(jobID, metrics.LblAddIndex, reorgInfo.SchemaName, tableName, indexNames).Set(progress)
 		}
-		idxNames := ""
-		args, err := model.GetModifyIndexArgs(reorgInfo.Job)
-		if err != nil {
-			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.Error(err))
-		} else {
-			idxNames = getIdxNamesFromArgs(args)
-		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
-		colName := ""
-		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
-		if err != nil {
-			logutil.DDLLogger().Error("Fail to get ModifyColumnArgs", zap.Error(err))
-		} else {
-			colName = args.OldColumnName.O
-		}
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+		colName := getChangingColumnOriginName(model.FindColumnInfoByID(tblInfo.Columns, reorgInfo.elements[0].ID))
+		metrics.GetBackfillProgressByLabel(jobID, metrics.LblModifyColumn, reorgInfo.SchemaName, tableName, colName).Set(progress)
+	case model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(jobID, metrics.LblReorgPartition, reorgInfo.SchemaName, tableName).Set(progress)
 	}
 }
 
@@ -612,6 +616,11 @@ type reorgInfo struct {
 	jobCtx        *jobContext
 	first         bool
 	mergingTmpIdx bool
+
+	// reorgType is the actual type of reorg. For example, MODIFY COLUMN may
+	// run both row and index reorg.
+	reorgType model.ActionType
+
 	// PhysicalTableID is used for partitioned table.
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PhysicalTableID is used to trace the current partition we are handling.

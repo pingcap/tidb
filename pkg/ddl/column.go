@@ -634,7 +634,7 @@ func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (old
 }
 
 func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*updateColumnWorker, error) {
-	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblUpdateColRate, true)
+	bCtx, err := newBackfillCtx(id, reorgInfo, t, jc, metrics.LblUpdateColRate, true)
 	if err != nil {
 		return nil, err
 	}
