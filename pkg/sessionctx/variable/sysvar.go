@@ -2038,8 +2038,17 @@ var defaultSysVars = []*SysVar{
 		s.scanFactor = tidbOptFloat64(val, DefOptScanFactor)
 		return nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptDescScanFactor, Value: strconv.FormatFloat(DefOptDescScanFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.descScanFactor = tidbOptFloat64(val, DefOptDescScanFactor)
+=======
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptAlwaysKeepJoinKey, Value: BoolToOnOff(vardef.DefOptAlwaysKeepJoinKey), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.AlwaysKeepJoinKey = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCPUFactor, Value: strconv.FormatFloat(vardef.DefOptCPUFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.cpuFactor = tidbOptFloat64(val, vardef.DefOptCPUFactor)
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptSeekFactor, Value: strconv.FormatFloat(DefOptSeekFactor, 'f', -1, 64), skipInit: true, Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
