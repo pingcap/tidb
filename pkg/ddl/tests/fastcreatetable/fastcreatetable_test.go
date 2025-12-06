@@ -130,12 +130,12 @@ func TestMergedJob(t *testing.T) {
 	wg.Run(func() {
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
-		tk1.MustExecToErr("create table t(a int)")
+		tk1.MustExecToErr("create table t1(id int AUTO_INCREMENT, c int) AUTO_INCREMENT 1000")
 	})
 	wg.Run(func() {
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
-		tk1.MustExecToErr("create table t1(a int)")
+		tk1.MustExecToErr("create table t(a int)")
 	})
 	require.Eventually(t, func() bool {
 		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
@@ -143,7 +143,28 @@ func TestMergedJob(t *testing.T) {
 		return len(gotJobs) == 2 && gotJobs[1].Type == model.ActionCreateTables
 	}, 10*time.Second, 100*time.Millisecond)
 
+	// below 2 jobs are merged into the third group, they will succeed together.
+	wg.Run(func() {
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		tk1.MustExec("create table t1(id int AUTO_INCREMENT, c int) AUTO_INCREMENT 100")
+	})
+	wg.Run(func() {
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		tk1.MustExec("create table t2(id int AUTO_INCREMENT, c int) AUTO_INCREMENT 100")
+	})
+	require.Eventually(t, func() bool {
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
+		require.NoError(t, err)
+		return len(gotJobs) == 3 && gotJobs[2].Type == model.ActionCreateTables
+	}, 10*time.Second, 100*time.Millisecond)
+
 	// start to run the jobs
 	close(startSchedule)
 	wg.Wait()
+
+	// Test the correctness of auto id after failed merge job 2
+	tk.MustExec("insert into test.t1(c) values(1)")
+	tk.MustQuery("select * from test.t1").Check(testkit.Rows("100 1"))
 }
