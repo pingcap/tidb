@@ -728,8 +728,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
-	lhsFullMatch := isFullIndexMatch(lhs)
-	rhsFullMatch := isFullIndexMatch(rhs)
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
@@ -757,7 +755,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
-	if (lhsPseudo || rhsPseudo) && !tablePseudo { // At least one index doesn't have statistics
+	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
+		(lhsEqOrInCount > 0 || rhsEqOrInCount > 0) { // At least one index has equal/IN predicates
+		lhsFullMatch := isFullIndexMatch(lhs)
+		rhsFullMatch := isFullIndexMatch(rhs)
 		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount, preferRange)
 		if pseudoResult > 0 && totalSum >= 0 {
 			return pseudoResult, lhsPseudo
@@ -798,14 +799,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
 	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-		if lhs.path.Index != nil {
+		if !lhs.path.IsTablePath() && lhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
 				lhsPseudo = false // We have statistics for the lhs index
 			} else {
 				lhsPseudo = true
 			}
 		}
-		if rhs.path.Index != nil {
+		if !rhs.path.IsTablePath() && rhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
 				rhsPseudo = false // We have statistics on the rhs index
 			} else {
@@ -1294,10 +1295,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 				}
 			}
-			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
-				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+
+			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+			indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+				if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
