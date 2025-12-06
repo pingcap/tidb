@@ -17,6 +17,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/util/codec",
         "//pkg/util/redact",
+        "@com_github_gogo_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
@@ -34,7 +35,7 @@ go_test(
         "rewrite_rule_test.go",
     ],
     flaky = True,
-    shard_count = 14,
+    shard_count = 16,
     deps = [
         ":utils",
         "//br/pkg/conn",
