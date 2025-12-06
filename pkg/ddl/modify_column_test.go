@@ -26,15 +26,22 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1081,7 +1088,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		require.Equal(t, ddl.ModifyTypeNoReorgWithCheck, reorgType)
 	}
 
-	signed2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+	signed2Signed := func(oldColTp, newColTp string) {
 		maxValOfNewCol, minValOfNewCol := maxMinSignedVal[newColTp][0], maxMinSignedVal[newColTp][1]
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
 		tk.MustExec("drop table if exists t")
@@ -1103,7 +1110,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (%d), (0)", maxValOfNewCol, minValOfNewCol), newColTp)
 	}
 
-	unsigned2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+	unsigned2Unsigned := func(oldColTp, newColTp string) {
 		maxValOfNewCol, minValOfNewCol := maxMinUnsignedVal[newColTp][0], maxMinUnsignedVal[newColTp][1]
 		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1119,7 +1126,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp)
 	}
 
-	signed2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte, oldColIdx, newColIdx int) {
+	signed2Unsigned := func(oldColTp, newColTp string, oldColIdx, newColIdx int) {
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
 		maxValOfNewCol := maxMinUnsignedVal[newColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1143,7 +1150,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp)
 	}
 
-	unsigned2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+	unsigned2Signed := func(oldColTp, newColTp string) {
 		maxValOfNewCol := maxMinSignedVal[newColTp][0]
 		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1165,24 +1172,24 @@ func TestModifyIntegerColumn(t *testing.T) {
 		// 1. signed -> signed
 		// bigint -> int, mediumint, smallint, tinyint; int -> mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(signedTp); newColIdx++ {
-			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx])
 		}
 		// 2. signed -> unsigned
 		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := range unsignedTp {
-			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
+			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], oldColIdx, newColIdx)
 		}
 	}
 	for oldColIdx := range unsignedTp {
 		// 3. unsigned -> unsigned
 		// bigint unsigned -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int unsigned -> mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(unsignedTp); newColIdx++ {
-			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx])
 		}
 		// 4. unsigned -> signed
 		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint; int unsigned -> int, mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
-			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx])
 		}
 	}
 }
@@ -1362,4 +1369,137 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestStatisticsAfterModifyColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_stats_update_during_ddl = ON")
+
+	// Prepare data
+	tk.MustExec("create table t2(a int auto_increment, b int, c int, d int, primary key(a), key idxb(b), key idxc(c))")
+	for i := range 200 {
+		tk.MustExec(fmt.Sprintf("insert into t2(b, c, d) values (%d, %d, %d)", i, i, i))
+	}
+	tk.MustExec("analyze table t2")
+
+	getCountByTopN := func(topN *statistics.TopN, tp *types.FieldType) uint64 {
+		lowerValue, err := table.CastColumnValueWithStrictMode(types.NewIntDatum(25), tp)
+		require.NoError(t, err)
+		upperValue, err := table.CastColumnValueWithStrictMode(types.NewIntDatum(125), tp)
+		require.NoError(t, err)
+
+		lowEncoded, err := codec.EncodeKey(time.UTC, nil, lowerValue)
+		require.NoError(t, err)
+		upperEncoded, err := codec.EncodeKey(time.UTC, nil, upperValue)
+		require.NoError(t, err)
+
+		return topN.BetweenCount(nil, lowEncoded, upperEncoded)
+	}
+
+	getTopNAndHg := func(offset int64, isIndex int) (*statistics.TopN, *statistics.Histogram) {
+		tblInfo := external.GetTableByName(t, tk, "test", "t2").Meta()
+		var (
+			tp *types.FieldType
+			id int64
+		)
+
+		if isIndex == 0 {
+			tp = &tblInfo.Columns[offset].FieldType
+			id = tblInfo.Columns[offset].ID
+		} else {
+			idx := tblInfo.Indices[offset]
+			tp = types.NewFieldType(mysql.TypeBlob)
+			id = idx.ID
+		}
+
+		topN, err := storage.TopNFromStorage(tk.Session(), tblInfo.ID, isIndex, id)
+		require.NoError(t, err)
+		hg, err := storage.HistogramFromStorageWithPriority(
+			tk.Session(), tblInfo.ID, id, tp, 0,
+			isIndex, 0, 0, 0, 0, kv.PriorityHigh)
+		require.NoError(t, err)
+		return topN, hg
+	}
+
+	var (
+		oldTopNs = make([]*statistics.TopN, 0, 3)
+		newTopNs = make([]*statistics.TopN, 0, 3)
+		oldHgs   = make([]*statistics.Histogram, 0, 3)
+		newHgs   = make([]*statistics.Histogram, 0, 3)
+	)
+	for _, check := range [][]int64{{1, 0}, {2, 0}, {0, 1}} {
+		oldTopN, oldHg := getTopNAndHg(check[0], int(check[1]))
+		oldTopNs = append(oldTopNs, oldTopN)
+		oldHgs = append(oldHgs, oldHg)
+	}
+
+	time.Sleep(time.Second)
+	beginRs := tk.MustQuery("select now();").Rows()
+	begin := beginRs[0][0].(string)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		tk1 := testkit.NewTestKit(t, store)
+		dom := domain.GetDomain(tk1.Session())
+		require.NoError(t, dom.Reload())
+		tk1.MustExec("analyze table test.t2")
+		analyzeStatusRs := tk1.MustQuery(
+			fmt.Sprintf("show analyze status where start_time >= '%s' and table_name = 't2';", begin)).Rows()
+		require.Len(t, analyzeStatusRs, 0)
+	})
+
+	tk.MustExec("alter table t2 modify column b mediumint unsigned, modify column c mediumint unsigned")
+	for _, check := range [][]int64{{1, 0}, {2, 0}, {0, 1}} {
+		newTopN, newHg := getTopNAndHg(check[0], int(check[1]))
+		newTopNs = append(newTopNs, newTopN)
+		newHgs = append(newHgs, newHg)
+	}
+
+	oldTp := types.NewFieldType(mysql.TypeLong)
+	newTp := types.NewFieldType(mysql.TypeInt24)
+	newTp.AddFlag(mysql.UnsignedFlag)
+
+	// Check TopN
+	for i := range 3 {
+		oldTopN := oldTopNs[i]
+		newTopN := newTopNs[i]
+		oldCount := getCountByTopN(oldTopN, oldTp)
+		newCount := getCountByTopN(newTopN, newTp)
+		require.Equal(t, oldCount, newCount)
+	}
+
+	// Index historgram is stored as blob from index value, we need to decode it.
+	decodeToInt := func(b *types.Datum) int64 {
+		d, err := codec.Decode(b.GetBytes(), 1)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(d))
+		return d[0].GetInt64()
+	}
+
+	// Check Histogram
+	for i := range 3 {
+		oldHg := oldHgs[i]
+		newHg := newHgs[i]
+		require.Equal(t, len(oldHg.Buckets), len(newHg.Buckets))
+
+		var (
+			oldLower, oldUpper int64
+			newLower, newUpper int64
+		)
+
+		for j := range len(oldHg.Buckets) {
+			if i == 2 {
+				oldLower, oldUpper = decodeToInt(oldHg.GetLower(j)), decodeToInt(oldHg.GetUpper(j))
+				newLower, newUpper = decodeToInt(newHg.GetLower(j)), decodeToInt(newHg.GetUpper(j))
+			} else {
+				oldLower, oldUpper = oldHg.GetLower(j).GetInt64(), oldHg.GetUpper(j).GetInt64()
+				newLower, newUpper = newHg.GetLower(j).GetInt64(), newHg.GetUpper(j).GetInt64()
+			}
+			require.Equal(t, oldLower, newLower)
+			require.Equal(t, oldUpper, newUpper)
+		}
+	}
+
+	rs := tk.MustQuery("explain select * from t2 where b between 26 and 125").Rows()
+	require.Equal(t, rs[0][1], "100.00")
 }

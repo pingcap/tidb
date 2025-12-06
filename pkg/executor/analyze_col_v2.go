@@ -669,6 +669,31 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
+// buildCastingTypes get the types to do necessary casting.
+// See model.IndexColumn and model.ColumnInfo for more details.
+func (e *AnalyzeColumnsExecV2) buildCastingTypes(task *samplingBuildTask) []*types.FieldType {
+	if task.isColumn {
+		var tp *types.FieldType
+		if e.colsInfo[task.slicePos].ChangingFieldType != nil {
+			tp = e.colsInfo[task.slicePos].ChangingFieldType
+		}
+		return []*types.FieldType{tp}
+	}
+
+	idx := e.indexes[task.slicePos-len(e.colsInfo)]
+	changingTypes := make([]*types.FieldType, 0, len(idx.Columns))
+	for _, idxCol := range idx.Columns {
+		col := e.colsInfo[idxCol.Offset]
+		if idxCol.UseChangingType && col.ChangingFieldType != nil {
+			changingTypes = append(changingTypes, col.ChangingFieldType)
+		} else {
+			changingTypes = append(changingTypes, nil)
+		}
+	}
+
+	return changingTypes
+}
+
 func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -695,6 +720,7 @@ workLoop:
 				break workLoop
 			}
 			var collector *statistics.SampleCollector
+			castingTps := e.buildCastingTypes(task)
 			if task.isColumn {
 				if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
 					hists[task.slicePos] = nil
@@ -714,6 +740,7 @@ workLoop:
 				if ft.EvalType() == types.ETString && ft.GetType() != mysql.TypeEnum && ft.GetType() != mysql.TypeSet {
 					collator = collate.GetCollator(ft.GetCollate())
 				}
+				var err error
 				for j, row := range task.rootRowCollector.Base().Samples {
 					if row.Columns[task.slicePos].IsNull() {
 						continue
@@ -722,6 +749,12 @@ workLoop:
 					// If this value is very big, we think that it is not a value that can occur many times. So we don't record it.
 					if len(val.GetBytes()) > statistics.MaxSampleValueLength {
 						continue
+					}
+					if castingTps[0] != nil {
+						if val, err = table.CastColumnValueWithStrictMode(val, castingTps[0]); err != nil {
+							resultCh <- err
+							continue workLoop
+						}
 					}
 					if collator != nil {
 						val.SetBytes(collator.Key(val.GetString()))
@@ -763,23 +796,26 @@ workLoop:
 						continue
 					}
 					b := make([]byte, 0, 8)
-					for _, col := range idx.Columns {
+					for i, col := range idx.Columns {
 						// If the index value contains one value which is too long, we think that it's a value that doesn't occur many times.
 						if len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
 							continue indexSampleCollectLoop
+						}
+						if castingTps[i] != nil {
+							row.Columns[col.Offset], err = table.CastColumnValueWithStrictMode(row.Columns[col.Offset], castingTps[i])
+							if err != nil {
+								resultCh <- err
+								continue workLoop
+							}
 						}
 						if col.Length != types.UnspecifiedLength {
 							row.Columns[col.Offset].Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
 							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
-							err = errCtx.HandleError(err)
-							if err != nil {
-								resultCh <- err
-								continue workLoop
-							}
-							continue
+						} else {
+							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
 						}
-						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
+
 						err = errCtx.HandleError(err)
 						if err != nil {
 							resultCh <- err
