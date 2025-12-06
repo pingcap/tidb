@@ -585,7 +585,13 @@ const (
 	TempTableNone TempTableType = iota
 	TempTableGlobal
 	TempTableLocal
+	TempTableGlobalSession
 )
+
+// HasLocalData returns true if the temp table has local data.
+func (t TempTableType) HasLocalData() bool {
+	return t == TempTableLocal || t == TempTableGlobalSession
+}
 
 // String implements fmt.Stringer interface.
 func (t TempTableType) String() string {
@@ -594,6 +600,8 @@ func (t TempTableType) String() string {
 		return "global"
 	case TempTableLocal:
 		return "local"
+	case TempTableGlobalSession:
+		return "global-session"
 	default:
 		return ""
 	}
