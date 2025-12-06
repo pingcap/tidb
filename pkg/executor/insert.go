@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -47,10 +48,11 @@ import (
 // InsertExec represents an insert executor.
 type InsertExec struct {
 	*InsertValues
-	OnDuplicate    []*expression.Assignment
-	evalBuffer4Dup chunk.MutRow
-	curInsertVals  chunk.MutRow
-	row4Update     []types.Datum
+	OnDuplicate       []*expression.Assignment
+	evalBuffer4Dup    chunk.MutRow
+	curInsertVals     chunk.MutRow
+	row4Update        []types.Datum
+	replaceConflictIf func(expression.EvalContext, []types.Datum) (bool, error)
 
 	Priority mysql.PriorityEnum
 }
@@ -87,7 +89,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
-	if len(e.OnDuplicate) > 0 {
+	if len(e.OnDuplicate) > 0 || e.replaceConflictIf != nil {
 		err := e.batchUpdateDupRows(ctx, rows)
 		if err != nil {
 			return err
@@ -197,17 +199,12 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 func (e *InsertExec) updateDupRow(
 	ctx context.Context,
 	idxInBatch int,
-	txn kv.Transaction,
 	row toBeCheckedRow,
+	oldRow []types.Datum,
 	handle kv.Handle,
-	_ []*expression.Assignment,
 	dupKeyCheck table.DupKeyCheckMode,
 	autoColIdx int,
-) error {
-	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
-	if err != nil {
-		return err
-	}
+) (err error) {
 	// get the extra columns from the SELECT clause.
 	var extraCols []types.Datum
 	if len(e.Ctx().GetSessionVars().CurrInsertBatchExtraCols) > 0 {
@@ -263,6 +260,12 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		autoColIdx = -1
 	}
 
+	type removeOldRow struct {
+		handle kv.Handle
+		oldRow []types.Datum
+	}
+
+	var removeOldRows []removeOldRow
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -270,12 +273,39 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck, autoColIdx)
-			if err == nil {
-				continue
-			}
-			if !kv.IsErrNotFound(err) {
+			oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+			if err != nil && !kv.IsErrNotFound(err) {
 				return err
+			}
+
+			if oldRow != nil {
+				shouldRemoveOldRow := false
+				if e.replaceConflictIf != nil {
+					shouldRemoveOldRow, err = e.replaceConflictIf(e.Ctx().GetExprCtx().GetEvalCtx(), oldRow)
+					if err != nil {
+						return err
+					}
+				}
+
+				if shouldRemoveOldRow {
+					removeOldRows = append(removeOldRows, removeOldRow{
+						handle: handle,
+						oldRow: oldRow,
+					})
+				} else if len(e.OnDuplicate) > 0 {
+					if err = e.updateDupRow(ctx, i, r, oldRow, handle, updateDupKeyCheck, autoColIdx); err != nil {
+						return err
+					}
+					continue
+				} else if e.ignoreErr {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
+						e.Ctx().GetSessionVars().LockUnchangedKeys {
+						// lock duplicated row key on insert-ignore
+						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey)
+					}
+					continue
+				}
 			}
 		}
 
@@ -287,7 +317,8 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			if handle == nil {
 				continue
 			}
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck, autoColIdx)
+
+			oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -300,8 +331,35 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			newRows[i] = nil
-			break
+			shouldRemoveOldRow := false
+			if e.replaceConflictIf != nil {
+				shouldRemoveOldRow, err = e.replaceConflictIf(e.Ctx().GetExprCtx().GetEvalCtx(), oldRow)
+				if err != nil {
+					return err
+				}
+			}
+
+			if shouldRemoveOldRow {
+				removeOldRows = append(removeOldRows, removeOldRow{
+					handle: handle,
+					oldRow: oldRow,
+				})
+			} else if len(e.OnDuplicate) > 0 {
+				if err = e.updateDupRow(ctx, i, r, oldRow, handle, updateDupKeyCheck, autoColIdx); err != nil {
+					return err
+				}
+				newRows[i] = nil
+				break
+			} else if e.ignoreErr {
+				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+				if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
+					e.Ctx().GetSessionVars().LockUnchangedKeys {
+					// lock duplicated row key on insert-ignore
+					txnCtx.AddUnchangedKeyForLock(uk.newKey)
+				}
+				newRows[i] = nil
+				break
+			}
 		}
 
 		// If row was checked with no duplicate keys,
@@ -309,6 +367,15 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
+			for _, rm := range removeOldRows {
+				unchanged, err := e.removeOldRow(txn, rm.handle, rm.oldRow, r, false)
+				if err != nil {
+					return err
+				}
+				intest.Assert(!unchanged, "old row should not be identical to the new row, it's supposed that change happens")
+			}
+			removeOldRows = removeOldRows[:0]
+
 			err := e.addRecord(ctx, newRows[i], addRecordDupKeyCheck)
 			if err != nil {
 				return err
