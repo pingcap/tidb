@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1993,4 +1994,147 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	handler.WriteData(w, config.GetGlobalConfig().Labels)
+}
+
+// IngestParam is the type for lightning ingest parameters.
+type IngestParam string
+
+const (
+	// IngestParamMaxBatchSplitRanges is the parameter for lightning max_batch_split_ranges.
+	IngestParamMaxBatchSplitRanges IngestParam = "max_batch_split_ranges"
+	// IngestParamMaxSplitRangesPerSec is the parameter for lightning max_split_ranges_per_sec.
+	IngestParamMaxSplitRangesPerSec IngestParam = "max_split_ranges_per_sec"
+	// IngestParamMaxInflight is the parameter for lightning max_inflight.
+	IngestParamMaxInflight IngestParam = "max_inflight"
+	// IngestParamMaxPerSecond is the parameter for lightning max_per_second.
+	IngestParamMaxPerSecond IngestParam = "max_per_second"
+)
+
+// IngestConcurrencyHandler is the handler for lightning max_batch_split_ranges and max_inflight.
+type IngestConcurrencyHandler struct {
+	*handler.TikvHandlerTool
+	param IngestParam
+}
+
+// NewIngestConcurrencyHandler creates a new IngestConcurrencyHandler.
+func NewIngestConcurrencyHandler(tool *handler.TikvHandlerTool, param IngestParam) IngestConcurrencyHandler {
+	return IngestConcurrencyHandler{tool, param}
+}
+
+// ServeHTTP handles request of lightning max_batch_split_ranges.
+func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	var getter func(*meta.Meta) (float64, bool, error)
+	var setter func(*meta.Meta, float64) error
+	var updateGlobal func(v float64) float64
+	switch h.param {
+	case IngestParamMaxBatchSplitRanges:
+		getter = func(m *meta.Meta) (float64, bool, error) {
+			v, isNull, err := m.GetIngestMaxBatchSplitRanges()
+			return float64(v), isNull, err
+		}
+		setter = func(m *meta.Meta, value float64) error {
+			return m.SetIngestMaxBatchSplitRanges(int(value))
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxBatchSplitRanges.Load()
+			intV := int(v)
+			local.CurrentMaxBatchSplitRanges.Store(&intV)
+			return float64(*old)
+		}
+	case IngestParamMaxSplitRangesPerSec:
+		getter = func(m *meta.Meta) (float64, bool, error) {
+			return m.GetIngestMaxSplitRangesPerSec()
+		}
+		setter = func(m *meta.Meta, value float64) error {
+			return m.SetIngestMaxSplitRangesPerSec(value)
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxSplitRangesPerSec.Load()
+			local.CurrentMaxSplitRangesPerSec.Store(&v)
+			return *old
+		}
+	case IngestParamMaxPerSecond:
+		getter = func(m *meta.Meta) (float64, bool, error) {
+			return m.GetIngestMaxPerSec()
+		}
+		setter = func(m *meta.Meta, value float64) error {
+			return m.SetIngestMaxPerSec(value)
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxIngestPerSec.Load()
+			local.CurrentMaxIngestPerSec.Store(&v)
+			return *old
+		}
+	case IngestParamMaxInflight:
+		getter = func(m *meta.Meta) (float64, bool, error) {
+			v, isNull, err := m.GetIngestMaxInflight()
+			return float64(v), isNull, err
+		}
+		setter = func(m *meta.Meta, value float64) error {
+			return m.SetIngestMaxInflight(int(value))
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxIngestInflight.Load()
+			intV := int(v)
+			local.CurrentMaxIngestInflight.Store(&intV)
+			return float64(*old)
+		}
+	default:
+		handler.WriteError(w, errors.Errorf("unsupported ingest parameter: %s", h.param))
+	}
+	switch req.Method {
+	case http.MethodGet:
+		var respValue float64
+		var respIsNull bool
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+		err := kv.RunInNewTxn(ctx, h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			var getErr error
+			respValue, respIsNull, getErr = getter(m)
+			return getErr
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+
+		data := map[string]any{
+			"value":   respValue,
+			"is_null": respIsNull,
+		}
+		handler.WriteData(w, data)
+	case http.MethodPost:
+		var payload struct {
+			Value float64 `json:"value"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		newValue := payload.Value
+		if newValue < 0 {
+			handler.WriteError(w, errors.New("value must be >= 0"))
+			return
+		}
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+		err := kv.RunInNewTxn(ctx, h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			return setter(m, newValue)
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		oldVal := updateGlobal(newValue)
+		logutil.BgLogger().Info("set ingest concurrency",
+			zap.String("param", string(h.param)),
+			zap.Float64("oldValue", oldVal),
+			zap.Float64("newValue", newValue))
+		handler.WriteData(w, map[string]string{"message": "success"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		handler.WriteError(w, errors.New("method not allowed"))
+	}
 }
