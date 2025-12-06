@@ -352,26 +352,43 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		count.MultiplyAll(increaseFactor)
 
 		// handling the out-of-range part
-		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+		// When using index statistics, we should only check if the entire concatenated predicate is out of range
+		// of the histogram bucket. We check the full encoded key against the index histogram.
+		outOfRangeOnLeft := outOfRangeOnIndex(idx, l)
+		outOfRangeOnRight := outOfRangeOnIndex(idx, r)
+		if (outOfRangeOnLeft && !(isSingleColIdx && lowIsNull)) || outOfRangeOnRight {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
 				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
-				// Retrieve column statistics for the 1st index column
-				c := coll.GetCol(colIDs[0])
-				// If this is single column predicate - use the column's information rather than index.
-				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
-				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
-				if isSingleColRange && c != nil && c.Histogram.NDV > 0 && c.Histogram.Len() > 0 {
-					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
-					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV))
+				// Find the column that has the range predicate
+				rangePosition := getOrdinalOfRangeCond(sc, indexRange)
+				histNDV -= int64(idx.TopN.Num())
+				colNDVForEstimation := histNDV
+				var c *statistics.Column
+				if rangePosition < len(colIDs) {
+					c = coll.GetCol(colIDs[rangePosition])
+					if c != nil && c.Histogram.NDV > 0 {
+						colNDVForEstimation = c.Histogram.NDV - int64(c.TopN.Num())
+					}
+				}
+				// If it's a single column range or the first column has the range predicate,
+				// and the column histogram has buckets, use column ranges; otherwise use index ranges
+				useColumnRanges := rangePosition == 0 && c != nil && c.Histogram.Len() > 0
+				var colIDForEstimation int64
+				if rangePosition < len(colIDs) {
+					colIDForEstimation = colIDs[rangePosition]
+				}
+				if useColumnRanges {
+					highIsOpenEnded := indexRange.HighVal[0].Kind() == types.KindMaxValue
+					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, colNDVForEstimation, highIsOpenEnded, colIDForEstimation))
 				} else {
-					// TODO: Extend original datatype out-of-range estimation to multi-column
-					histNDV -= int64(idx.TopN.Num())
-					count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV))
+					highIsOpenEnded := len(indexRange.HighVal) > 0 && indexRange.HighVal[len(indexRange.HighVal)-1].Kind() == types.KindMaxValue
+					count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, colNDVForEstimation, highIsOpenEnded, colIDForEstimation))
 				}
 			} else {
-				count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV))
+				highIsOpenEnded := len(indexRange.HighVal) > 0 && indexRange.HighVal[len(indexRange.HighVal)-1].Kind() == types.KindMaxValue
+				count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV, highIsOpenEnded, 0))
 			}
 		}
 

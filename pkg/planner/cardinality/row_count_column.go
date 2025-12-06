@@ -312,14 +312,19 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		cnt.MultiplyAll(increaseFactor)
 
 		// handling the out-of-range part
-		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
+		outOfRangeOnLeft := c.OutOfRange(lowVal)
+		outOfRangeOnRight := c.OutOfRange(highVal)
+		if (outOfRangeOnLeft && !lowVal.IsNull()) || outOfRangeOnRight {
 			histNDV := c.NDV
 			// Exclude the TopN
 			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
 			var count statistics.RowEstimate
-			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV))
+			highIsOpenEnded := highVal.Kind() == types.KindMaxValue
+			// Use histogram ID as column ID for date type checking
+			colID := c.Histogram.ID
+			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV, highIsOpenEnded, colID))
 			cnt.Add(count)
 		}
 
