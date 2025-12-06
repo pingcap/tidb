@@ -1422,3 +1422,10 @@ select @@global.tidb_stmt_summary_max_sql_length;
 32768
 set global tidb_enable_stmt_summary = DEFAULT;
 set global tidb_stmt_summary_refresh_interval = DEFAULT;
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int) partition by hash(a) partitions 2;
+insert into t1 value(1,1);
+insert into t2 value(1,1);
+delete t1, t2 from t1, t2 where t1.a = t2.a;
+drop table t1, t2;
