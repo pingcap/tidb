@@ -877,6 +877,11 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 		zap.Bool("runWorker", campaignOwner),
 		zap.Stringer("jobVersion", model.GetJobVerInUse()))
 
+	d.executor.startMode = startMode
+	failpoint.Inject("mockBRStartMode", func() {
+		d.executor.startMode = BR
+	})
+
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool
 	d.sysTblMgr = systable.NewManager(d.sessPool)
