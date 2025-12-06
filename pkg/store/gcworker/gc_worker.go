@@ -678,6 +678,8 @@ func (w *GCWorker) advanceTxnSafePoint(ctx context.Context, target uint64) (newT
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	txnSafePointInMillisec := oracle.ExtractPhysical(result.NewTxnSafePoint)
+	metrics.SafePointGauge.WithLabelValues("txn").Set(float64(txnSafePointInMillisec))
 
 	if result.NewTxnSafePoint <= result.OldTxnSafePoint {
 		logutil.BgLogger().Info("txn safe point not advanced, GC will be skipped. this may be caused by GC being blocked, or user enlarged GC life time.",
@@ -1385,6 +1387,8 @@ func (w *GCWorker) broadcastGCSafePoint(ctx context.Context, gcSafePoint uint64)
 			zap.Error(err))
 		return errors.Trace(err)
 	}
+	gcSafePointInMillisec := oracle.ExtractPhysical(result.NewGCSafePoint)
+	metrics.SafePointGauge.WithLabelValues("gc").Set(float64(gcSafePointInMillisec))
 
 	if result.NewGCSafePoint != gcSafePoint {
 		logutil.Logger(ctx).Warn("gc safe point not advanced to the expected value",
