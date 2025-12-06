@@ -55,6 +55,7 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/ranger",
+        "//pkg/util/slice",
         "//pkg/util/sqlexec",
         "@com_github_dolthub_swiss//:swiss",
         "@com_github_pingcap_errors//:errors",

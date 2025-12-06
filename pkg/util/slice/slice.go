@@ -49,3 +49,44 @@ func DeepClone[T interface{ Clone() T }](s []T) []T {
 	}
 	return cloned
 }
+
+// BinarySearchRangeFunc finds the index range [i, j) in slice x that corresponds to the value range [t1, t2).
+// It returns 'i' as the smallest index where cmp(x[i], t1) >= 0, and 'j' as the smallest index where cmp(x[j], t2) >= 0.
+func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) (i, j int) {
+	// Define cmp(x[-1], target) < 0 and cmp(x[n], target) >= 0 .
+	// Invariant: cmp(x[i - 1], target) < 0, cmp(x[j], target) >= 0.
+	// which is the same as slices.BinarySearchFunc.
+	i, j = 0, len(x)
+	for i < j {
+		h := int(uint(i+j) >> 1) // avoid overflow when computing h
+		// x[h] < t1 < t2
+		cmpt1 := cmp(x[h], t1)
+		if cmpt1 < 0 {
+			i = h + 1
+			continue
+		}
+		// t1 < t2 <= x[h]
+		cmpt2 := cmp(x[h], t2)
+		if cmpt2 >= 0 {
+			j = h
+			continue
+		}
+		// t1 <= x[h] < t2
+		iEnd := h
+		// If x[h] == t1, then h is a candidate for left point, so we must include it in the search [i, h+1)
+		if cmpt1 == 0 {
+			iEnd = h + 1
+		}
+		return BinarySearchByIndexFunc(x, t1, i, iEnd, cmp), BinarySearchByIndexFunc(x, t2, h+1, j, cmp)
+	}
+	// Not found, return [i, i)
+	return i, j
+}
+
+// BinarySearchByIndexFunc searches the sorted sub-slice x[start:end).
+// It returns the smallest index i in [start, end] such that cmp(x[i], target) >= 0.
+// // If no such index exists (i.e., all elements in x[start:end) are less than target), it returns end.
+func BinarySearchByIndexFunc[S ~[]E, E, T any](x S, target T, start, end int, cmp func(E, T) int) int {
+	idx, _ := slices.BinarySearchFunc(x[start:end], target, cmp)
+	return start + idx
+}
