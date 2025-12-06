@@ -147,3 +147,8 @@ func (uc *unicodeCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 func (uc *unicodeCICollator) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
 }
+
+// MaxLenOneByte implements Collator interface.
+func (uc *unicodeCICollator) MaxLenOneByte() int {
+	return 2
+}

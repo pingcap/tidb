@@ -149,6 +149,10 @@ type baseJoinProbe struct {
 	spilledIdx []int
 
 	probeCollision uint64
+
+	hashValueCounts    []int
+	serializedKeysLens []int
+	continuousMem      []byte
 }
 
 func (j *baseJoinProbe) GetProbeCollision() uint64 {
@@ -248,6 +252,11 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 
+	j.serializedKeysLens, j.continuousMem, err = codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.serializedKeysLens, j.continuousMem)
+	if err != nil {
+		return err
+	}
+
 	// generate serialized key
 	for i, index := range j.keyIndex {
 		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.keyTypes[i], index, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[i], j.serializedKeys)
@@ -312,6 +321,76 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	return
 }
 
+func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int, hashValueCol *chunk.Column, serializedKeysCol *chunk.Column) {
+	if cap(j.matchedRowsHeaders) >= logicalRowCount {
+		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRowCount]
+	} else {
+		j.matchedRowsHeaders = make([]taggedPtr, logicalRowCount)
+	}
+
+	if cap(j.matchedRowsHashValue) >= logicalRowCount {
+		j.matchedRowsHashValue = j.matchedRowsHashValue[:logicalRowCount]
+	} else {
+		j.matchedRowsHashValue = make([]uint64, logicalRowCount)
+	}
+
+	for i := range j.hashValueCounts {
+		j.hashValueCounts[i] = 0
+	}
+
+	for i := range int(j.ctx.partitionNumber) {
+		j.hashValues[i] = j.hashValues[i][:0]
+	}
+
+	if cap(j.serializedKeysLens) < logicalRowCount {
+		j.serializedKeysLens = make([]int, logicalRowCount)
+	} else {
+		j.serializedKeysLens = j.serializedKeysLens[:logicalRowCount]
+	}
+
+	for i := range j.serializedKeysLens {
+		j.serializedKeysLens[i] = 0
+	}
+
+	if cap(j.serializedKeys) >= logicalRowCount {
+		j.serializedKeys = j.serializedKeys[:logicalRowCount]
+		for i := range logicalRowCount {
+			j.serializedKeys[i] = j.serializedKeys[i][:0]
+		}
+	} else {
+		j.serializedKeys = make([][]byte, logicalRowCount)
+	}
+
+	j.spilledIdx = j.spilledIdx[:0]
+
+	totalMemUsage := 0
+	for _, idx := range j.usedRows {
+		oldHashValue := hashValueCol.GetUint64(idx)
+		newHashVal := rehash(oldHashValue, j.rehashBuf, j.hash)
+		j.matchedRowsHashValue[idx] = newHashVal
+		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
+		if !j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
+			j.hashValueCounts[partIndex]++
+			keyLen := serializedKeysCol.GetRawLength(idx)
+			j.serializedKeysLens[idx] = keyLen
+			totalMemUsage += keyLen
+		}
+	}
+
+	if cap(j.continuousMem) < totalMemUsage {
+		j.continuousMem = make([]byte, totalMemUsage)
+	} else {
+		j.continuousMem = j.continuousMem[:totalMemUsage]
+	}
+
+	start := 0
+	for _, idx := range j.usedRows {
+		keyLen := j.serializedKeysLens[idx]
+		j.serializedKeys[idx] = j.continuousMem[start : start : start+keyLen]
+		start += keyLen
+	}
+}
+
 func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	defer func() {
 		if j.ctx.spillHelper.areAllPartitionsSpilled() {
@@ -355,39 +434,11 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 
 	j.usedRows = j.selRows
 
-	if cap(j.matchedRowsHeaders) >= logicalRows {
-		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
-	} else {
-		j.matchedRowsHeaders = make([]taggedPtr, logicalRows)
-	}
-
-	if cap(j.matchedRowsHashValue) >= logicalRows {
-		j.matchedRowsHashValue = j.matchedRowsHashValue[:logicalRows]
-	} else {
-		j.matchedRowsHashValue = make([]uint64, logicalRows)
-	}
-
-	for i := range int(j.ctx.partitionNumber) {
-		j.hashValues[i] = j.hashValues[i][:0]
-	}
-
-	if cap(j.serializedKeys) >= logicalRows {
-		j.serializedKeys = j.serializedKeys[:logicalRows]
-	} else {
-		j.serializedKeys = make([][]byte, logicalRows)
-	}
-
-	for i := range logicalRows {
-		j.serializedKeys[i] = j.serializedKeys[i][:0]
-	}
-
-	j.spilledIdx = j.spilledIdx[:0]
+	j.preAllocForSetRestoredChunkForProbe(logicalRows, hashValueCol, serializedKeysCol)
 
 	// rehash all rows
 	for _, idx := range j.usedRows {
-		oldHashValue := hashValueCol.GetUint64(idx)
-		newHashVal := rehash(oldHashValue, j.rehashBuf, j.hash)
-		j.matchedRowsHashValue[idx] = newHashVal
+		newHashVal := j.matchedRowsHashValue[idx]
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		serializedKeysBytes := serializedKeysCol.GetBytes(idx)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
@@ -739,6 +790,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType plannerbase.JoinType
 		rightAsBuildSide:      rightAsBuildSide,
 		hash:                  fnv.New64(),
 		rehashBuf:             make([]byte, serialization.Uint64Len),
+		hashValueCounts:       make([]int, ctx.partitionNumber),
 	}
 
 	for i := range keyIndex {
