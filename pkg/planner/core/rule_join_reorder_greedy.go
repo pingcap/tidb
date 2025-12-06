@@ -155,8 +155,10 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 			bestIdx = whateverValidOneIdx
 			finalRemainOthers = remainOthersOfWhateverValidOne
 		}
+		// Apply retained selections that can be pushed down to this join
+		bestJoinPlan := s.basicJoinGroupInfo.applyRetainedSelections(bestJoin)
 		curJoinTree = &jrNode{
-			p:       bestJoin,
+			p:       bestJoinPlan,
 			cumCost: bestCost,
 		}
 		s.curJoinGroup = slices.Delete(s.curJoinGroup, bestIdx, bestIdx+1)
