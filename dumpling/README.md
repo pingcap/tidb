@@ -24,8 +24,7 @@ Any questions? Discord, Slack and other contact options can be found [here](http
 Building
 --------
 
-0. Under directory `tidb`
-1. Install Go 1.23.12 or above
+1. Under directory `tidb`
 2. Run `make build_dumpling` to compile. The output is in `bin/dumpling`.
 3. Run `make dumpling_unit_test` to run the unit tests.
 4. Run `make dumpling_integration_test` to run integration tests. For integration test:
