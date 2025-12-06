@@ -1417,10 +1417,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	// add partition info here.
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 
-	if tableInfo.TTLInfo != nil {
-		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
-		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
+	restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
+	var restoreCtx *parserformat.RestoreCtx
+	if tableInfo.TTLInfo != nil || tableInfo.IsActiveActive || tableInfo.SoftdeleteInfo != nil {
+		restoreCtx = parserformat.NewRestoreCtx(restoreFlags, buf)
+	}
 
+	if tableInfo.TTLInfo != nil {
 		restoreCtx.WritePlain(" ")
 		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
 			columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
@@ -1471,6 +1474,73 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			return err
 		}
 	}
+
+	if tableInfo.IsActiveActive {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
+			restoreCtx.WriteKeyWord("ACTIVE_ACTIVE")
+			restoreCtx.WritePlain("=")
+			if tableInfo.IsActiveActive {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+
+	if info := tableInfo.SoftdeleteInfo; info != nil {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE")
+			restoreCtx.WritePlain("=")
+			if info.Enable {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_RETENTION")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(info.Retention)
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_ENABLE")
+			restoreCtx.WritePlain("=")
+			if info.JobEnable {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(info.JobInterval)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1637,6 +1707,64 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	if dbInfo.PlacementPolicyRef != nil {
 		// add placement ref info here
 		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+	}
+
+	restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
+	restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
+	if dbInfo.IsActiveActive != "" {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
+			restoreCtx.WriteKeyWord("ACTIVE_ACTIVE")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(dbInfo.IsActiveActive)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if dbInfo.SoftDeleteEnable != "" {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(dbInfo.SoftDeleteEnable)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if dbInfo.SoftDeleteRetention != "" {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_RETENTION")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(dbInfo.SoftDeleteRetention)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if dbInfo.SoftDeleteJobEnable != "" {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_ENABLE")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(dbInfo.SoftDeleteJobEnable)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if dbInfo.SoftDeleteJobInterval != "" {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(dbInfo.SoftDeleteJobInterval)
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -328,3 +328,31 @@ func NewExtraCommitTSColInfo() *ColumnInfo {
 	colInfo.SetCollate(charset.CollationBin)
 	return colInfo
 }
+
+// NewExtraOriginTSColInfo mocks a column info for extra origin ts column.
+func NewExtraOriginTSColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		Name: ExtraOriginTSName,
+	}
+	colInfo.SetType(mysql.TypeLonglong)
+	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.SetFlen(flen)
+	colInfo.SetDecimal(decimal)
+	colInfo.SetCharset(charset.CharsetBin)
+	colInfo.SetCollate(charset.CollationBin)
+	return colInfo
+}
+
+// NewExtraSoftDeleteTimeColInfo mocks a column info for extra soft delete time column.
+func NewExtraSoftDeleteTimeColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		Name: ExtraSoftDeleteTimeName,
+	}
+	colInfo.SetType(mysql.TypeLonglong)
+	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.SetFlen(flen)
+	colInfo.SetDecimal(decimal)
+	colInfo.SetCharset(charset.CharsetBin)
+	colInfo.SetCollate(charset.CollationBin)
+	return colInfo
+}

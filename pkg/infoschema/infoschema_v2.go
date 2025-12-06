@@ -1532,6 +1532,20 @@ func applyModifySchemaDefaultPlacement(b *Builder, m meta.Reader, diff *model.Sc
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
 
+func applyModifySchemaActiveActive(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaActiveActiveV2(m, diff)
+	}
+	return b.applyModifySchemaActiveActive(m, diff)
+}
+
+func applyModifySchemaSoftDelete(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaSoftDeleteV2(m, diff)
+	}
+	return b.applyModifySchemaSoftDelete(m, diff)
+}
+
 func applyDropTable(b *Builder, diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
 	if b.enableV2 {
 		return b.applyDropTableV2(diff, dbInfo, tableID, affected)
@@ -1698,6 +1712,47 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m meta.Reader, diff *model
 	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	newDBInfo := oldDBInfo.Clone()
 	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	b.infoschemaV2.deleteDB(di, diff.Version)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
+}
+
+func (b *Builder) applyModifySchemaActiveActiveV2(m meta.Reader, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo := oldDBInfo.Clone()
+	newDBInfo.IsActiveActive = di.IsActiveActive
+	b.infoschemaV2.deleteDB(di, diff.Version)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
+}
+
+func (b *Builder) applyModifySchemaSoftDeleteV2(m meta.Reader, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo := oldDBInfo.Clone()
+	newDBInfo.SoftDeleteEnable = di.SoftDeleteEnable
+	newDBInfo.SoftDeleteRetention = di.SoftDeleteRetention
+	newDBInfo.SoftDeleteJobEnable = di.SoftDeleteJobEnable
+	newDBInfo.SoftDeleteJobInterval = di.SoftDeleteJobInterval
 	b.infoschemaV2.deleteDB(di, diff.Version)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil

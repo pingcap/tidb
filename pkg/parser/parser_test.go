@@ -7881,6 +7881,73 @@ func TestTTLTableOption(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestSoftDeleteAndActiveActive(t *testing.T) {
+	table := []testCase{
+		// SOFTDELETE table options
+		{"create table t (id int) softdelete = 'on'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE = 'ON'"},
+		{"create table t (id int) softdelete = 'off'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE = 'OFF'"},
+		{"create table t (id int) softdelete_retention = '7d'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE_RETENTION = '7d'"},
+		{"create table t (id int) softdelete_retention = '168h'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE_RETENTION = '168h'"},
+		{"create table t (id int) softdelete_retention '30d'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE_RETENTION = '30d'"},
+		{"create table t (id int) softdelete_job_interval = '1h'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE_JOB_INTERVAL = '1h'"},
+		{"create table t (id int) softdelete_job_interval = '24h'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE_JOB_INTERVAL = '24h'"},
+		{"create table t (id int) softdelete_job_enable = 'on'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE_JOB_ENABLE = 'ON'"},
+		{"create table t (id int) softdelete_job_enable = 'off'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE_JOB_ENABLE = 'OFF'"},
+		{"create table t (id int) softdelete = 'on' softdelete_retention = '7d' softdelete_job_interval = '1h'", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE = 'ON' SOFTDELETE_RETENTION = '7d' SOFTDELETE_JOB_INTERVAL = '1h'"},
+		{"create table t (id int) /*T![softdelete] softdelete = 'on' */", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE = 'ON'"},
+		{"create table t (id int) /*T![softdelete] softdelete_retention = '7d' */", true, "CREATE TABLE `t` (`id` INT) SOFTDELETE_RETENTION = '7d'"},
+		{"alter table t softdelete = 'on'", true, "ALTER TABLE `t` SOFTDELETE = 'ON'"},
+		{"alter table t softdelete = 'off'", true, "ALTER TABLE `t` SOFTDELETE = 'OFF'"},
+		{"alter table t softdelete_retention = '14d'", true, "ALTER TABLE `t` SOFTDELETE_RETENTION = '14d'"},
+		{"alter table t softdelete_job_interval = '2h'", true, "ALTER TABLE `t` SOFTDELETE_JOB_INTERVAL = '2h'"},
+		{"alter table t softdelete_job_enable = 'on'", true, "ALTER TABLE `t` SOFTDELETE_JOB_ENABLE = 'ON'"},
+		{"alter table t /*T![softdelete] softdelete = 'on' softdelete_retention = '7d' */", true, "ALTER TABLE `t` SOFTDELETE = 'ON' SOFTDELETE_RETENTION = '7d'"},
+
+		// ACTIVE_ACTIVE table options
+		{"create table t (id int) active_active = 'on'", true, "CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'ON'"},
+		{"create table t (id int) active_active = 'off'", true, "CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'OFF'"},
+		{"create table t (id int primary key, name varchar(50)) active_active = 'on'", true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`name` VARCHAR(50)) ACTIVE_ACTIVE = 'ON'"},
+		{"create table t (id int) /*T![active_active] active_active = 'on' */", true, "CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'ON'"},
+
+		// invalid settings
+		{"create table t (id int) softdelete = 'invalid'", false, ""},
+		{"create table t (id int) softdelete_retention = '@monthly'", false, ""},
+		{"create table t (id int) softdelete_retention = '10dayxx'", false, ""},
+		{"create table t (id int) softdelete_retention = '10.10.255d'", false, ""},
+		{"create table t (id int) softdelete_job_interval = 'invalid'", false, ""},
+		{"alter table t softdelete = 'yes'", false, ""},
+		{"create table t (id int) active_active = 'invalid'", false, ""},
+		{"create table t (id int) active_active = 'yes'", false, ""},
+		{"create table t (id int) active_active = 'true'", false, ""},
+
+		// SOFTDELETE db options
+		{"create database db1 softdelete_retention = '7d'", true, "CREATE DATABASE `db1` SOFTDELETE_RETENTION = '7d'"},
+		{"create database db1 softdelete_retention = '168h'", true, "CREATE DATABASE `db1` SOFTDELETE_RETENTION = '168h'"},
+		{"create database db1 softdelete_retention '30d'", true, "CREATE DATABASE `db1` SOFTDELETE_RETENTION = '30d'"},
+		{"create database db1 /*T![softdelete] softdelete_retention = '7d' */", true, "CREATE DATABASE `db1` SOFTDELETE_RETENTION = '7d'"},
+		{"alter database db1 softdelete_retention = '14d'", true, "ALTER DATABASE `db1` SOFTDELETE_RETENTION = '14d'"},
+		{"alter database db1 softdelete = 'on'", true, "ALTER DATABASE `db1` SOFTDELETE = 'ON'"},
+		{"alter database db1 softdelete = 'off'", true, "ALTER DATABASE `db1` SOFTDELETE = 'OFF'"},
+		{"alter database db1 softdelete_job_enable = 'on'", true, "ALTER DATABASE `db1` SOFTDELETE_JOB_ENABLE = 'ON'"},
+		{"alter database db1 softdelete_job_interval = '1h'", true, "ALTER DATABASE `db1` SOFTDELETE_JOB_INTERVAL = '1h'"},
+
+		// ACTIVE_ACTIVE db options
+		{"create database db1 active_active = 'on'", true, "CREATE DATABASE `db1` ACTIVE_ACTIVE = 'ON'"},
+		{"create database db1 active_active = 'off'", true, "CREATE DATABASE `db1` ACTIVE_ACTIVE = 'OFF'"},
+		{"create database db1 /*T![active_active] active_active = 'on' */", true, "CREATE DATABASE `db1` ACTIVE_ACTIVE = 'ON'"},
+		{"alter database db1 active_active = 'on'", true, "ALTER DATABASE `db1` ACTIVE_ACTIVE = 'ON'"},
+		{"alter database db1 active_active = 'off'", true, "ALTER DATABASE `db1` ACTIVE_ACTIVE = 'OFF'"},
+
+		// invalid settings
+		{"create database db1 softdelete_retention = '@monthly'", false, ""},
+		{"create database db1 softdelete_retention = '10dayxx'", false, ""},
+		{"create database db1 active_active = 'invalid'", false, ""},
+		{"alter database db1 active_active = 'yes'", false, ""},
+	}
+
+	RunTest(t, table, false)
+}
+
 func TestIssue45898(t *testing.T) {
 	p := parser.New()
 	p.ParseSQL("a.")
