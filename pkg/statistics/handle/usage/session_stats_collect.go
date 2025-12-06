@@ -81,8 +81,10 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
-	statsTbl := s.statsHandle.GetPartitionStatsByID(is, id)
-	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
+	// use GetNonPseudoPhysicalTableStats to avoid creating pseudo tables and dropping instantly
+	statsTable, found := s.statsHandle.GetNonPseudoPhysicalTableStats(id)
+	if !found || statsTable == nil || statsTable.RealtimeCount == 0 ||
+		float64(item.Count)/float64(statsTable.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
 	}
