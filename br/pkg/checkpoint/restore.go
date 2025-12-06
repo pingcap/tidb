@@ -135,8 +135,14 @@ func ExistsSnapshotRestoreCheckpoint(
 	ctx context.Context,
 	dom *domain.Domain,
 ) bool {
+	// we only check the existence of the checkpoint data table
+	// because the checkpoint metadata is not used for restore
 	return dom.InfoSchema().
+<<<<<<< HEAD
 		TableExists(pmodel.NewCIStr(SnapshotRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
+=======
+		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(checkpointDataTableName))
+>>>>>>> b41648482cb (compacted restore: fix the wrong initial configrations (#58050))
 }
 
 func RemoveCheckpointDataForSnapshotRestore(ctx context.Context, dom *domain.Domain, se glue.Session) error {

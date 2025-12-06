@@ -80,11 +80,114 @@ const maxSplitKeysOnce = 10240
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
 
+<<<<<<< HEAD
 // session count for repairing ingest indexes. Currently only one TiDB node executes adding index jobs
 // at the same time and the add-index job concurrency is about min(10, `TiDB CPUs / 4`).
 const defaultRepairIndexSessionCount uint = 10
 
 type LogClient struct {
+=======
+// LogRestoreManager is a comprehensive wrapper that encapsulates all logic related to log restoration,
+// including concurrency management, checkpoint handling, and file importing for efficient log processing.
+type LogRestoreManager struct {
+	fileImporter     *LogFileImporter
+	workerPool       *tidbutil.WorkerPool
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
+}
+
+func NewLogRestoreManager(
+	ctx context.Context,
+	fileImporter *LogFileImporter,
+	poolSize uint,
+	createCheckpointSessionFn func() (glue.Session, error),
+) (*LogRestoreManager, error) {
+	// for compacted reason, user only set --concurrency for log file restore speed.
+	log.Info("log restore worker pool", zap.Uint("size", poolSize))
+	l := &LogRestoreManager{
+		fileImporter: fileImporter,
+		workerPool:   tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
+	}
+	se, err := createCheckpointSessionFn()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if se != nil {
+		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return l, nil
+}
+
+func (l *LogRestoreManager) Close(ctx context.Context) {
+	if l.fileImporter != nil {
+		if err := l.fileImporter.Close(); err != nil {
+			log.Warn("failed to close file importer")
+		}
+	}
+	if l.checkpointRunner != nil {
+		l.checkpointRunner.WaitForFinish(ctx, true)
+	}
+}
+
+// SstRestoreManager is a comprehensive wrapper that encapsulates all logic related to sst restoration,
+// including concurrency management, checkpoint handling, and file importing(splitting) for efficient log processing.
+type SstRestoreManager struct {
+	restorer         restore.SstRestorer
+	workerPool       *tidbutil.WorkerPool
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+}
+
+func (s *SstRestoreManager) Close(ctx context.Context) {
+	if s.restorer != nil {
+		if err := s.restorer.Close(); err != nil {
+			log.Warn("failed to close file restorer")
+		}
+	}
+	if s.checkpointRunner != nil {
+		s.checkpointRunner.WaitForFinish(ctx, true)
+	}
+}
+
+func NewSstRestoreManager(
+	ctx context.Context,
+	snapFileImporter *snapclient.SnapFileImporter,
+	concurrencyPerStore uint,
+	storeCount uint,
+	createCheckpointSessionFn func() (glue.Session, error),
+) (*SstRestoreManager, error) {
+	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+	// This poolSize is similar to full restore, as both workflows are comparable.
+	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
+	poolSize := concurrencyPerStore * 32 * storeCount
+	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
+	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
+
+	s := &SstRestoreManager{
+		workerPool: tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
+	}
+	se, err := createCheckpointSessionFn()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if se != nil {
+		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
+	return s, nil
+}
+
+type LogClient struct {
+	*LogFileManager
+	logRestoreManager *LogRestoreManager
+	sstRestoreManager *SstRestoreManager
+
+>>>>>>> b41648482cb (compacted restore: fix the wrong initial configrations (#58050))
 	cipher        *backuppb.CipherInfo
 	pdClient      pd.Client
 	pdHTTPClient  pdhttp.Client
@@ -153,6 +256,73 @@ func (rc *LogClient) Close() {
 	log.Info("Restore client closed")
 }
 
+<<<<<<< HEAD
+=======
+func (rc *LogClient) RestoreCompactedSstFiles(
+	ctx context.Context,
+	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
+	rules map[int64]*restoreutils.RewriteRules,
+	importModeSwitcher *restore.ImportModeSwitcher,
+	onProgress func(int64),
+) error {
+	backupFileSets := make([]restore.BackupFileSet, 0, 8)
+	// Collect all items from the iterator in advance to avoid blocking during restoration.
+	// This approach ensures that we have all necessary data ready for processing,
+	// preventing any potential delays caused by waiting for the iterator to yield more items.
+	start := time.Now()
+	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+		i := r.Item
+		rewriteRules, ok := rules[i.Meta.TableId]
+		if !ok {
+			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.Meta.TableId))
+			continue
+		}
+		set := restore.BackupFileSet{
+			TableID:      i.Meta.TableId,
+			SSTFiles:     i.SstOutputs,
+			RewriteRules: rewriteRules,
+		}
+		backupFileSets = append(backupFileSets, set)
+	}
+	if len(backupFileSets) == 0 {
+		log.Info("[Compacted SST Restore] No SST files found for restoration.")
+		return nil
+	}
+	err := importModeSwitcher.GoSwitchToImportMode(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
+		if switchErr != nil {
+			log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
+		}
+	}()
+
+	log.Info("[Compacted SST Restore] Start to restore SST files",
+		zap.Int("sst-file-count", len(backupFileSets)), zap.Duration("iterate-take", time.Since(start)))
+	start = time.Now()
+	defer func() {
+		log.Info("[Compacted SST Restore] Restore SST files finished", zap.Duration("restore-take", time.Since(start)))
+	}()
+
+	// To optimize performance and minimize cross-region downloads,
+	// we are currently opting for a single restore approach instead of batch restoration.
+	// This decision is similar to the handling of raw and txn restores,
+	// where batch processing may lead to increased complexity and potential inefficiencies.
+	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
+	// while maintaining optimal performance and resource utilization.
+	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return rc.sstRestoreManager.restorer.WaitUntilFinish()
+}
+
+>>>>>>> b41648482cb (compacted restore: fix the wrong initial configrations (#58050))
 func (rc *LogClient) SetRawKVBatchClient(
 	ctx context.Context,
 	pdAddrs []string,
@@ -289,7 +459,67 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
+<<<<<<< HEAD
 	rc.fileImporter = NewLogFileImporter(metaClient, importCli, backend)
+=======
+
+	rc.logRestoreManager, err = NewLogRestoreManager(
+		ctx,
+		NewLogFileImporter(metaClient, importCli, backend),
+		concurrency,
+		createSessionFn,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var createCallBacks []func(*snapclient.SnapFileImporter) error
+	var closeCallBacks []func(*snapclient.SnapFileImporter) error
+	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
+		return importer.CheckMultiIngestSupport(ctx, stores)
+	})
+
+	opt := snapclient.NewSnapFileImporterOptions(
+		rc.cipher, metaClient, importCli, backend,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
+	)
+	snapFileImporter, err := snapclient.NewSnapFileImporter(
+		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rc.sstRestoreManager, err = NewSstRestoreManager(
+		ctx,
+		snapFileImporter,
+		concurrencyPerStore,
+		uint(len(stores)),
+		createSessionFn,
+	)
+	return errors.Trace(err)
+}
+
+func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
+	ctx context.Context,
+) (map[string]struct{}, error) {
+	sstCheckpointSets := make(map[string]struct{})
+
+	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
+		// we need to load the checkpoint data for the following restore
+		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
+		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+			sstCheckpointSets[v.Name] = struct{}{}
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		// initialize the checkpoint metadata since it is the first time to restore.
+		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return sstCheckpointSets, nil
+>>>>>>> b41648482cb (compacted restore: fix the wrong initial configrations (#58050))
 }
 
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(

@@ -154,6 +154,13 @@ func (client *fakeImporterClient) MultiIngest(
 	return &import_sstpb.IngestResponse{}, nil
 }
 
+func TestUnproperConfigSnapImporter(t *testing.T) {
+	ctx := context.Background()
+	opt := snapclient.NewSnapFileImporterOptionsForTest(nil, nil, nil, snapclient.RewriteModeKeyspace, 0)
+	_, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBFull, opt)
+	require.Error(t, err)
+}
+
 func TestSnapImporter(t *testing.T) {
 	ctx := context.Background()
 	splitClient := utiltest.NewFakeSplitClient()

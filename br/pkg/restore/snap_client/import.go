@@ -158,6 +158,7 @@ func NewSnapFileImporter(
 	rewriteMode RewriteMode,
 	concurrencyPerStore uint,
 ) (*SnapFileImporter, error) {
+<<<<<<< HEAD
 	kvMode := TiDB
 	if isRawKvMode {
 		kvMode = Raw
@@ -166,6 +167,11 @@ func NewSnapFileImporter(
 		kvMode = Txn
 	}
 
+=======
+	if options.concurrencyPerStore == 0 {
+		return nil, errors.New("concurrencyPerStore must be greater than 0")
+	}
+>>>>>>> b41648482cb (compacted restore: fix the wrong initial configrations (#58050))
 	fileImporter := &SnapFileImporter{
 		metaClient:          metaClient,
 		backend:             backend,
