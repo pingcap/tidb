@@ -159,7 +159,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	var noDBDigest string
 	var tableNames []*ast.TableName
 	if info == nil || info.TableNames == nil || info.NoDBDigest == "" {
-		_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
+		_, _, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
 		tableNames = CollectTableNames(stmtNode)
 		if info != nil {
 			info.NoDBDigest = noDBDigest
@@ -196,7 +196,7 @@ func noDBDigestFromBinding(binding *Binding) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, "", true)
+	_, _, bindingNoDBDigest := NormalizeStmtForBinding(stmt, "", true)
 	return bindingNoDBDigest, nil
 }
 
@@ -414,18 +414,17 @@ func RestoreDBForBinding(node ast.StmtNode, defaultDB string) string {
 // when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
-	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (originSQL, normalizedStmt, sqlDigest string) {
+	normalize := func(n ast.StmtNode) (normalizedSQL, normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
-		var normalizedSQL string
 		if !noDB {
 			normalizedSQL = utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text())
 		} else {
 			normalizedSQL = utilparser.RestoreWithoutDB(n)
 		}
 		normalizedStmt, digest = parser.NormalizeDigestForBinding(normalizedSQL)
-		return normalizedStmt, digest.String()
+		return normalizedSQL, normalizedStmt, digest.String()
 	}
 
 	switch x := stmtNode.(type) {
@@ -436,28 +435,28 @@ func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, noDB boo
 		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
 		// For these cases, we need return "" as normalize SQL and hash.
 		if len(x.Text()) == 0 {
-			return "", ""
+			return "", "", ""
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			normalizeSQL, digest := normalize(x.Stmt)
-			return normalizeSQL, digest
+			normalizedSQL, normalizedStmt, digest := normalize(x.Stmt)
+			return normalizedSQL, normalizedStmt, digest
 		case *ast.SetOprStmt:
-			normalizeExplainSQL, _ := normalize(x)
+			normalizeExplainSQL, normalizeExplainStmt, _ := normalize(x)
 
-			idx := strings.Index(normalizeExplainSQL, "select")
-			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
+			idx := strings.Index(normalizeExplainStmt, "select")
+			parenthesesIdx := strings.Index(normalizeExplainStmt, "(")
 			if parenthesesIdx != -1 && parenthesesIdx < idx {
 				idx = parenthesesIdx
 			}
 			// If the SQL is `EXPLAIN ((VALUES ROW ()) ORDER BY 1);`, the idx will be -1.
 			if idx == -1 {
-				hash := parser.DigestNormalized(normalizeExplainSQL)
-				return normalizeExplainSQL, hash.String()
+				hash := parser.DigestNormalized(normalizeExplainStmt)
+				return normalizeExplainSQL, normalizeExplainStmt, hash.String()
 			}
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestNormalized(normalizeSQL)
-			return normalizeSQL, hash.String()
+			normalizedSQL := normalizeExplainStmt[idx:]
+			hash := parser.DigestNormalized(normalizedSQL)
+			return normalizedSQL, normalizeExplainStmt, hash.String()
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		// This function is only used to find bind record.
@@ -466,12 +465,12 @@ func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, noDB boo
 		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
 		// For these cases, we need return "" as normalize SQL and hash.
 		if len(x.Text()) == 0 {
-			return "", ""
+			return "", "", ""
 		}
-		normalizedSQL, digest := normalize(x)
-		return normalizedSQL, digest
+		originSQL, normalizedStmt, sqlDigest = normalize(x)
+		return originSQL, normalizedStmt, sqlDigest
 	}
-	return "", ""
+	return "", "", ""
 }
 
 func eraseLastSemicolon(stmt ast.StmtNode) {

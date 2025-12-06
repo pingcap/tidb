@@ -80,9 +80,9 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bin
 		)
 		binding.CreateTime = now
 		binding.UpdateTime = now
-
+		_, digest := parser.NormalizeDigestForBinding(binding.OriginalSQL)
 		// update the BindMeta to the cache.
-		h.bindings[parser.DigestNormalized(binding.OriginalSQL).String()] = binding
+		h.bindings[digest.String()] = binding
 	}
 	return nil
 }
@@ -174,7 +174,8 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 		if err = prepareHints(sctx, record); err != nil {
 			return err
 		}
-		h.bindings[parser.DigestNormalized(record.OriginalSQL).String()] = record
+		_, digest := parser.NormalizeDigestForBinding(record.OriginalSQL)
+		h.bindings[digest.String()] = record
 	}
 	return nil
 }

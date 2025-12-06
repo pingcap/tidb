@@ -760,7 +760,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (base.Plan, error) {
 	var p *SQLBindPlan
 	if v.OriginNode != nil {
-		normdOrigSQL, sqlDigestWithDB := bindinfo.NormalizeStmtForBinding(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, false)
+		normdOrigSQL, _, sqlDigestWithDB := bindinfo.NormalizeStmtForBinding(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, false)
 		p = &SQLBindPlan{
 			IsGlobal:  v.GlobalScope,
 			SQLBindOp: OpSQLBindDrop,
@@ -797,7 +797,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (base.Plan, erro
 func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (base.Plan, error) {
 	var p *SQLBindPlan
 	if v.OriginNode != nil {
-		normdSQL, _ := bindinfo.NormalizeStmtForBinding(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, false)
+		normdSQL, _, _ := bindinfo.NormalizeStmtForBinding(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, false)
 		p = &SQLBindPlan{
 			SQLBindOp: OpSetBindingStatus,
 			Details: []*SQLBindOpDetail{{
@@ -970,7 +970,7 @@ func constructSQLBindOPFromPlanDigest(
 	}
 	bindSQL = bindinfo.RestoreDBForBinding(hintNode, schema)
 	db := utilparser.GetDefaultDB(originNode, schema)
-	normdOrigSQL, sqlDigestWithDBStr := bindinfo.NormalizeStmtForBinding(originNode, schema, false)
+	normdOrigSQL, _, sqlDigestWithDBStr := bindinfo.NormalizeStmtForBinding(originNode, schema, false)
 	if _, ok := handledSQLDigests[sqlDigestWithDBStr]; ok {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
 			planDigest + " is ignored because it corresponds to the same SQL digest as another Plan Digest",
@@ -1044,7 +1044,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (base.Plan, 
 
 	bindSQL := bindinfo.RestoreDBForBinding(v.HintedNode, b.ctx.GetSessionVars().CurrentDB)
 	db := utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
-	normdOrigSQL, sqlDigestWithDB := bindinfo.NormalizeStmtForBinding(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, false)
+	normdOrigSQL, _, sqlDigestWithDB := bindinfo.NormalizeStmtForBinding(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, false)
 	p := &SQLBindPlan{
 		IsGlobal:  v.GlobalScope,
 		SQLBindOp: OpSQLBindCreate,

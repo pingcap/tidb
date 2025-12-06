@@ -92,7 +92,7 @@ func TestSessionBinding(t *testing.T) {
 		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
 		require.NoErrorf(t, err, "testSQL %+v", testSQL)
 
-		_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		_, _, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		binding, matched := handle.MatchSessionBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.Truef(t, matched, "testSQL %+v", testSQL)
 		require.Equalf(t, testSQL.originSQL, binding.OriginalSQL, "testSQL %+v", testSQL)
@@ -129,7 +129,7 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoErrorf(t, err, "testSQL %+v", testSQL)
-		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		_, _, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		_, matched = handle.MatchSessionBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.Falsef(t, matched, "testSQL %+v", testSQL) // dropped
 	}

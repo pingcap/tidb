@@ -144,7 +144,7 @@ select @@last_plan_from_binding;
 1
 show global bindings where original_sql like '%planner__core__rule_join_reorder%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from ( `planner__core__rule_join_reorder` . `t1` join `planner__core__rule_join_reorder` . `t2` on `t1` . `a` = `t2` . `a` ) join `planner__core__rule_join_reorder` . `t3` on `t2` . `b` = `t3` . `b`	SELECT /*+ straight_join()*/ * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__rule_join_reorder	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	07450843a30e0679fcc588369b6a6c5247d1a004fbad485c759177227f45c21f	
+SELECT * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	SELECT /*+ straight_join()*/ * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__rule_join_reorder	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	07450843a30e0679fcc588369b6a6c5247d1a004fbad485c759177227f45c21f	
 drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 a	b	a	b	a	b
@@ -161,7 +161,7 @@ select @@last_plan_from_binding;
 1
 show global bindings where original_sql like '%planner__core__rule_join_reorder%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from ( `planner__core__rule_join_reorder` . `t1` join `planner__core__rule_join_reorder` . `t2` on `t1` . `a` = `t2` . `a` ) join `planner__core__rule_join_reorder` . `t3` on `t2` . `b` = `t3` . `b`	SELECT /*+ leading(`t3`)*/ * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__rule_join_reorder	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	07450843a30e0679fcc588369b6a6c5247d1a004fbad485c759177227f45c21f	
+SELECT * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	SELECT /*+ leading(`t3`)*/ * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__rule_join_reorder	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	07450843a30e0679fcc588369b6a6c5247d1a004fbad485c759177227f45c21f	
 drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
 a	b	a	b	a	b
@@ -178,4 +178,4 @@ select @@last_plan_from_binding;
 1
 show global bindings where original_sql like '%planner__core__rule_join_reorder%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from ( `planner__core__rule_join_reorder` . `t1` join `planner__core__rule_join_reorder` . `t2` on `t1` . `a` = `t2` . `a` ) left join `planner__core__rule_join_reorder` . `t3` on `t2` . `b` = `t3` . `b`	SELECT /*+ leading(`t2`)*/ * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) LEFT JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__rule_join_reorder	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	18f83ecaecd781fb67bd8b3e4a82b3c1cdb21813134712c735a56708b87f1709	
+SELECT * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) LEFT JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	SELECT /*+ leading(`t2`)*/ * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) LEFT JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__rule_join_reorder	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	18f83ecaecd781fb67bd8b3e4a82b3c1cdb21813134712c735a56708b87f1709	
