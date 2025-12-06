@@ -80,6 +80,8 @@ type Insert struct {
 	Schema4OnDuplicate *expression.Schema `plan-cache-clone:"shallow"`
 	Names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
 
+	ReplaceConflictIfExpr []expression.Expression
+
 	GenCols InsertGeneratedColumns
 
 	SelectPlan base.PhysicalPlan
@@ -143,6 +145,23 @@ func (p *Insert) MemoryUsage() (sum int64) {
 	}
 
 	return
+}
+
+// ExplainInfo returns the explain information of Insert.
+func (p *Insert) ExplainInfo() string {
+	if len(p.ReplaceConflictIfExpr) > 0 {
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+		return "ReplaceConflictIfExpr: " + string(expression.SortedExplainExpressionList(evalCtx, p.ReplaceConflictIfExpr))
+	}
+	return "N/A"
+}
+
+// ExplainNormalizedInfo returns the normalized explain information of Insert.
+func (p *Insert) ExplainNormalizedInfo() string {
+	if len(p.ReplaceConflictIfExpr) > 0 {
+		return "ReplaceConflictIfExpr: " + string(expression.SortedExplainNormalizedExpressionList(p.ReplaceConflictIfExpr))
+	}
+	return "N/A"
 }
 
 // Update represents Update plan.
@@ -392,6 +411,13 @@ func (p *Insert) ResolveIndices() (err error) {
 		}
 		asgn.Col = newCol.(*expression.Column)
 		asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+		if err != nil {
+			return err
+		}
+	}
+	// Resolve ReplaceConflictIfExpr for soft delete
+	for i, expr := range p.ReplaceConflictIfExpr {
+		p.ReplaceConflictIfExpr[i], err = expr.ResolveIndices(p.TableSchema)
 		if err != nil {
 			return err
 		}
