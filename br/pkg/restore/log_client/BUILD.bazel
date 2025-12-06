@@ -24,7 +24,6 @@ go_library(
         "//br/pkg/restore",
         "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/internal/import_client",
-        "//br/pkg/restore/internal/log_split",
         "//br/pkg/restore/internal/rawkv",
         "//br/pkg/restore/split",
         "//br/pkg/restore/tiflashrec",
