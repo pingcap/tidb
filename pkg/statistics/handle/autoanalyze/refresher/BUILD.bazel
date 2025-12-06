@@ -10,6 +10,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl/notifier",
+        "//pkg/disttask/framework/handle",
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/scheduler",
+        "//pkg/disttask/framework/taskexecutor",
+        "//pkg/disttask/txn",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/vardef",
@@ -21,6 +26,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
 )
