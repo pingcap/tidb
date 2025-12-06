@@ -9,10 +9,16 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 8,
+>>>>>>> 968e31fc3fe (ddl: cancel the job context before rolling back (#64130))
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/disttask/framework/proto",
         "//pkg/domain",
+        "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/testkit",
