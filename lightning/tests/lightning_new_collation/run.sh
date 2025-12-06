@@ -24,7 +24,7 @@ cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 # restart cluster with new collation enabled
 start_services --tidb-cfg $cur/tidb-new-collation.toml
 
-for BACKEND in local tidb; do
+for BACKEND in local tidb import-into; do
   # Start importing the tables.
   run_sql 'DROP DATABASE IF EXISTS nc'
 

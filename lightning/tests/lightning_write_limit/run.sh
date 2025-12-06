@@ -43,7 +43,7 @@ done
 set -x
 
 start=$(date +%s)
-run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config.toml"
+run_lightning --backend import-into -d "$TEST_DIR/data" --config "$CUR/config.toml"
 end=$(date +%s)
 take=$((end - start))
 
