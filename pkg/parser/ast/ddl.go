@@ -819,6 +819,33 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		case IndexVisibilityInvisible:
 			ctx.WriteKeyWord("INVISIBLE")
 		}
+<<<<<<< HEAD
+=======
+		hasPrevOption = true
+	}
+
+	if n.SplitOpt != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPresplit, func() error {
+			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
+			ctx.WritePlain(" = ")
+			if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
+				ctx.WritePlainf("%d", n.SplitOpt.Num)
+			} else {
+				ctx.WritePlain("(")
+				if err := n.SplitOpt.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while splicing IndexOption SplitOpt")
+				}
+				ctx.WritePlain(")")
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+>>>>>>> 3735ed55a39 (parser: support pre-split global index add special comment support for pre_split index option (#58408))
 	}
 	return nil
 }
