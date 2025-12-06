@@ -309,7 +309,17 @@ func ReadDataInRange(
 	start int64,
 	p []byte,
 ) (n int, err error) {
+	// Sanity check: reject obviously invalid offsets
+	if start < 0 {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"invalid negative start offset: %d", start)
+	}
 	end := start + int64(len(p))
+	// Detect overflow: if end wrapped around to negative, overflow occurred
+	if end < start {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"range calculation overflow: start=%d, len=%d", start, len(p))
+	}
 	rd, err := storage.Open(ctx, name, &ReaderOption{
 		StartOffset: &start,
 		EndOffset:   &end,
