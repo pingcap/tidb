@@ -450,7 +450,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.c=t2.c and t1.f=t2.f",
-        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,NULL]], Table(t))}(test.t.c,test.t.c)"
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.f)[[NULL,NULL]], Table(t))}(test.t.f,test.t.f)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a = t2.a and t1.f=t2.f",
