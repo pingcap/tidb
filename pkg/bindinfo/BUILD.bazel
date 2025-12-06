@@ -65,7 +65,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":bindinfo"],
     flaky = True,
-    shard_count = 47,
+    shard_count = 48,
     deps = [
         "//pkg/parser",
         "//pkg/parser/ast",

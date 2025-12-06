@@ -690,19 +690,28 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
+.PHONY: bazel_bin
+bazel_bin: ## Build importer/tidb binary files with Bazel build system
+	mkdir -p bin; \
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=false ;\
+ 	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
+ 	cp -f ${IMPORTER_PATH} ./bin/ ;
+
 .PHONY: bazel_build
 bazel_build: ## Build TiDB using Bazel build system
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG)
-	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server ./bin
-	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
-	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server-check_/tidb-server-check ./bin
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
+	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
+	cp -f ${IMPORTER_PATH} ./bin/ ; \
+	cp -f ${TIDB_SERVER_CHECK_PATH} ./bin/ ; \
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=$(BUILD_TAGS),enterprise
-	./bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server -V
+		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=$(BUILD_TAGS),enterprise; \
+	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
+	./bin/tidb-server -V
 
 .PHONY: bazel_fail_build
 bazel_fail_build:  failpoint-enable bazel_ci_prepare

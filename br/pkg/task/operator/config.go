@@ -15,18 +15,20 @@ import (
 )
 
 const (
-	flagTableConcurrency = "table-concurrency"
-	flagStorePatterns    = "stores"
-	flagTTL              = "ttl"
-	flagSafePoint        = "safepoint"
-	flagStorage          = "storage"
-	flagLoadCreds        = "load-creds"
-	flagJSON             = "json"
-	flagRecent           = "recent"
-	flagTo               = "to"
-	flagBase             = "base"
-	flagYes              = "yes"
-	flagDryRun           = "dry-run"
+	flagTableConcurrency  = "table-concurrency"
+	flagRestoredTS        = "restored-ts"
+	flagUpstreamClusterID = "upstream-cluster-id"
+	flagStorePatterns     = "stores"
+	flagTTL               = "ttl"
+	flagSafePoint         = "safepoint"
+	flagStorage           = "storage"
+	flagLoadCreds         = "load-creds"
+	flagJSON              = "json"
+	flagRecent            = "recent"
+	flagTo                = "to"
+	flagBase              = "base"
+	flagYes               = "yes"
+	flagDryRun            = "dry-run"
 )
 
 type PauseGcConfig struct {
@@ -225,12 +227,63 @@ type ChecksumWithRewriteRulesConfig struct {
 func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
+	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
+	f.Uint64(flagUpstreamClusterID, 0, "")
+}
+
+func DefineFlagsForChecksumUpstreamTableConfig(f *pflag.FlagSet) {
+	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
+		"including tableInfo/checksum and stats.")
+	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
+}
+
+func DefineFlagsForChecksumPitrTableConfig(f *pflag.FlagSet) {
+	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
+		"including tableInfo/checksum and stats.")
+	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
+	f.Uint64(flagUpstreamClusterID, 0, "The upstream cluster id of used pitr id map")
 }
 
 func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
 	if err != nil {
 		return
+	}
+	return cfg.Config.ParseFromFlags(flags)
+}
+
+type ChecksumWithPitrIdMapConfig struct {
+	task.RestoreConfig
+}
+
+func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
+	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RestoreTS, err = flags.GetUint64(flagRestoredTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.UpstreamClusterID, err = flags.GetUint64(flagUpstreamClusterID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return cfg.Config.ParseFromFlags(flags)
+}
+
+type ChecksumUpstreamConfig struct {
+	task.RestoreConfig
+}
+
+func (cfg *ChecksumUpstreamConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
+	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RestoreTS, err = flags.GetUint64(flagRestoredTS)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return cfg.Config.ParseFromFlags(flags)
 }

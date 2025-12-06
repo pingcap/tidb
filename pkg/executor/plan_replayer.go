@@ -303,15 +303,15 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
-func loadAllBindings(ctx sessionctx.Context, z *zip.Reader) error {
+func loadAllBindings(ctx sessionctx.Context, z *zip.Reader, databaseSets map[string]struct{}) error {
 	for _, f := range z.File {
 		if strings.Compare(f.Name, domain.PlanReplayerSessionBindingFile) == 0 {
-			err := loadBindings(ctx, f, true)
+			err := loadBindings(ctx, f, databaseSets, true)
 			if err != nil {
 				return err
 			}
 		} else if strings.Compare(f.Name, domain.PlanReplayerGlobalBindingFile) == 0 {
-			err := loadBindings(ctx, f, false)
+			err := loadBindings(ctx, f, databaseSets, false)
 			if err != nil {
 				return err
 			}
@@ -320,7 +320,7 @@ func loadAllBindings(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
-func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
+func loadBindings(ctx sessionctx.Context, f *zip.File, databaseSets map[string]struct{}, isSession bool) error {
 	r, err := f.Open()
 	if err != nil {
 		return errors.AddStack(err)
@@ -346,7 +346,12 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 			continue
 		}
 		bindingSQL := cols[1]
+		defaultDB := cols[2]
 		enabled := cols[3]
+		if _, ok := databaseSets[defaultDB]; defaultDB != "" && !ok {
+			// defaultDB is empty means it's a universal binding, which doesn't need to check databaseSets
+			continue
+		}
 		if strings.Compare(enabled, "enabled") == 0 {
 			sql := fmt.Sprintf("CREATE %s BINDING USING %s", func() string {
 				if isSession {
@@ -358,7 +363,6 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 			_, err = ctx.GetSQLExecutor().Execute(c, sql)
 			if err != nil {
 				logutil.BgLogger().Warn("load bindings failed", zap.Error(err), zap.String("sql", sql))
-				return err
 			}
 		}
 	}
@@ -468,7 +472,8 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	}
 
 	// build schema and table first
-	err = e.createTable(z)
+	var databaseSets map[string]struct{}
+	databaseSets, err = e.createTable(z)
 	if err != nil {
 		return err
 	}
@@ -501,14 +506,14 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 		}
 	}
 
-	err = loadAllBindings(e.Ctx, z)
+	err = loadAllBindings(e.Ctx, z, databaseSets)
 	if err != nil {
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
 	return nil
 }
 
-func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
+func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) (map[string]struct{}, error) {
 	originForeignKeyChecks := e.Ctx.GetSessionVars().ForeignKeyChecks
 	originPlacementMode := e.Ctx.GetSessionVars().PlacementMode
 	// We need to disable foreign key check when we create schema and tables.
@@ -519,17 +524,40 @@ func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
 		e.Ctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 		e.Ctx.GetSessionVars().PlacementMode = originPlacementMode
 	}()
+	databaseSets := make(map[string]struct{}, 0)
 	for _, zipFile := range z.File {
 		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
+			v, err := zipFile.Open()
+			if err != nil {
+				return nil, errors.AddStack(err)
+			}
+			//nolint: errcheck,all_revive,revive
+			defer v.Close()
+			buf := new(bytes.Buffer)
+			_, err = buf.ReadFrom(v)
+			if err != nil {
+				return nil, errors.AddStack(err)
+			}
+			rows := strings.Split(buf.String(), "\n")
+			for _, row := range rows {
+				metas := strings.Split(row, ";")
+				for _, m := range metas {
+					if m == "" {
+						continue
+					}
+					s := strings.Split(m, ".")
+					databaseSets[s[0]] = struct{}{}
+				}
+			}
 			continue
 		}
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
 			err := createSchemaAndItems(e.Ctx, zipFile)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
-	return nil
+	return databaseSets, nil
 }

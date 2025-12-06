@@ -345,6 +345,7 @@ test_cover_all_ddl() {
     
     # verify no "failed to load schema diff" errors in the logs
     check_not_contains "failed to load schema diff" "$restore_log_file"
+    cat "$restore_log_file"
 
     bash $CUR/sqls/check.sh
 

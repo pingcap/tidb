@@ -139,7 +139,16 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		req.StoreBatchSize = 0
 	}
 
-	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
+	boCtx := ctx
+	if req.MaxExecutionTime > 0 {
+		// If the request has a MaxExecutionTime, we need to set the deadline of the context.
+		var cancel context.CancelFunc
+		boCtx, cancel = context.WithTimeout(boCtx, time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		defer func() {
+			cancel()
+		}()
+	}
+	bo := backoff.NewBackofferWithVars(boCtx, copBuildTaskMaxBackoff, vars)
 	var (
 		tasks []*copTask
 		err   error
@@ -508,13 +517,6 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			rangesPerTaskLimit = v
 		}
 	})
-
-	if req.MaxExecutionTime > 0 {
-		// If the request has a MaxExecutionTime, we need to set the deadline of the context.
-		ctxWithTimeout, cancel := context.WithTimeout(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond)
-		defer cancel()
-		bo.TiKVBackoffer().SetCtx(ctxWithTimeout)
-	}
 
 	// TODO(youjiali1995): is there any request type that needn't be split by buckets?
 	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
@@ -1364,9 +1366,18 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		return resp
 	}
 	backoffermap := make(map[uint64]*Backoffer)
+	cancelFuncs := make([]context.CancelFunc, 0)
+	defer func() {
+		for _, cancel := range cancelFuncs {
+			cancel()
+		}
+	}()
 	for len(it.tasks) > 0 {
 		curTask := it.tasks[0]
-		bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
+		bo, cancel := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
+		if cancel != nil {
+			cancelFuncs = append(cancelFuncs, cancel)
+		}
 		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp = &copResponse{err: errors.Trace(err)}
@@ -1441,11 +1452,12 @@ func (it *copIterator) CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats {
 }
 
 // Associate each region with an independent backoffer. In this way, when multiple regions are
-// unavailable, TiDB can execute very quickly without blocking
-func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, worker *copIteratorWorker) *Backoffer {
+// unavailable, TiDB can execute very quickly without blocking, if the returned CancelFunc is not nil,
+// the caller must call it to avoid context leak.
+func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, worker *copIteratorWorker) (*Backoffer, context.CancelFunc) {
 	bo, ok := backoffermap[task.region.GetID()]
 	if ok {
-		return bo
+		return bo, nil
 	}
 	boMaxSleep := CopNextMaxBackoff
 	failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
@@ -1453,9 +1465,14 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 			boMaxSleep = 2
 		}
 	})
-	newbo := backoff.NewBackofferWithVars(ctx, boMaxSleep, worker.vars)
+	var cancel context.CancelFunc
+	boCtx := ctx
+	if worker.req.MaxExecutionTime > 0 {
+		boCtx, cancel = context.WithTimeout(boCtx, time.Duration(worker.req.MaxExecutionTime)*time.Millisecond)
+	}
+	newbo := backoff.NewBackofferWithVars(boCtx, boMaxSleep, worker.vars)
 	backoffermap[task.region.GetID()] = newbo
-	return newbo
+	return newbo, cancel
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
@@ -1473,9 +1490,18 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	}()
 	remainTasks := []*copTask{task}
 	backoffermap := make(map[uint64]*Backoffer)
+	cancelFuncs := make([]context.CancelFunc, 0)
+	defer func() {
+		for _, cancel := range cancelFuncs {
+			cancel()
+		}
+	}()
 	for len(remainTasks) > 0 {
 		curTask := remainTasks[0]
-		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
+		bo, cancel := chooseBackoffer(ctx, backoffermap, curTask, worker)
+		if cancel != nil {
+			cancelFuncs = append(cancelFuncs, cancel)
+		}
 		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
