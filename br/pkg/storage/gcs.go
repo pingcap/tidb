@@ -8,6 +8,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/url"
 	"os"
 	"path"
@@ -15,6 +16,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -571,6 +573,12 @@ type gcsObjectReader struct {
 
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
+	failpoint.Inject("GCSReadUnexpectedEOF", func(n failpoint.Value) {
+		if r.prefetchSize > 0 && r.pos > 0 && rand.Intn(2) == 0 {
+			log.Info("ingest error in gcs reader read")
+			failpoint.Return(n.(int), io.ErrUnexpectedEOF)
+		}
+	})
 	if r.reader == nil {
 		length := r.endPos - r.pos
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)
