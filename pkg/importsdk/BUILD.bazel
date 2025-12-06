@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
+        "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
