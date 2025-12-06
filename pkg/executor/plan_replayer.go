@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -336,34 +337,59 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, databaseSets map[string]s
 		return nil
 	}
 	bindings := strings.Split(buf.String(), "\n")
-	// The original SQL in our bind info is actually normalized SQL, which cannot be executed directly. This is
-	// especially true for function names that are not defined as keywords, such as count and ifnull. These will be
-	// treated as strings and used to calculate the digest. Therefore, the original SQL cannot be directly used to
-	// construct the create binding. As a result, we have to use `CREATE BINDING USING <bind sql>` to create the binding.
 	for _, binding := range bindings {
 		cols := strings.Split(binding, "\t")
 		if len(cols) < 3 {
 			continue
 		}
+		originSQL := cols[0]
 		bindingSQL := cols[1]
-		defaultDB := cols[2]
 		enabled := cols[3]
-		if _, ok := databaseSets[defaultDB]; defaultDB != "" && !ok {
-			// defaultDB is empty means it's a universal binding, which doesn't need to check databaseSets
+		if _, ok := databaseSets[cols[2]]; !ok {
 			continue
 		}
 		if strings.Compare(enabled, "enabled") == 0 {
-			sql := fmt.Sprintf("CREATE %s BINDING USING %s", func() string {
-				if isSession {
-					return "SESSION"
-				}
-				return "GLOBAL"
-			}(), bindingSQL)
 			c := context.Background()
-			_, err = ctx.GetSQLExecutor().Execute(c, sql)
-			if err != nil {
-				logutil.BgLogger().Warn("load bindings failed", zap.Error(err), zap.String("sql", sql))
+			if isSession {
+				b := &bindinfo.Binding{
+					OriginalSQL: originSQL,
+					BindSQL:     bindingSQL,
+					Db:          cols[2],
+					Charset:     cols[6],
+					Collation:   cols[7],
+					Status:      bindinfo.StatusEnabled,
+					Source:      cols[8],
+					SQLDigest:   cols[9],
+					PlanDigest:  cols[10],
+				}
+				handle := ctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
+				err = handle.CreateSessionBinding(ctx, []*bindinfo.Binding{b})
+				if err != nil {
+					logutil.BgLogger().Warn("load session bindings failed", zap.Error(err), zap.String("bind", binding))
+					return err
+				}
+			} else {
+				stmtNode, err := ctx.GetRestrictedSQLExecutor().ParseWithParams(c, `INSERT IGNORE INTO mysql.bind_info(
+ original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest
+) VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`, cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9], cols[10])
+				if err != nil {
+					logutil.BgLogger().Warn("load global bindings failed", zap.Error(err), zap.String("bind", binding))
+					return err
+				}
+				_, err = ctx.GetSQLExecutor().ExecuteStmt(c, stmtNode)
+				if err != nil {
+					logutil.BgLogger().Warn("load global bindings failed", zap.Error(err), zap.String("bind", binding))
+					return err
+				}
 			}
+		}
+	}
+	if !isSession {
+		c := context.Background()
+		_, err = ctx.GetSQLExecutor().Execute(c, "admin reload bindings")
+		if err != nil {
+			logutil.BgLogger().Warn("reload global bindings failed", zap.Error(err))
+			return err
 		}
 	}
 	return nil
