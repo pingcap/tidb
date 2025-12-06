@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -148,6 +149,14 @@ func (e *InsertValues) initInsertColumns() error {
 	} else {
 		// If e.Columns are empty, use all columns instead.
 		cols = tableCols
+		if e.Table.Meta().SoftdeleteInfo != nil ||
+			e.Table.Meta().IsActiveActive {
+			cols = slices.DeleteFunc(slices.Clone(cols), func(col *table.Column) bool {
+				return col.Name.L == model.ExtraSoftDeleteTimeName.L ||
+					col.Name.L == model.ExtraOriginTSName.L ||
+					col.Name.L == model.ExtraCommitTSName.L
+			})
+		}
 	}
 	for _, col := range cols {
 		if !col.IsGenerated() {

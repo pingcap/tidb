@@ -4230,12 +4230,41 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 
+	// Build ReplaceConflictIfExpr for soft delete tables
+	b.buildSoftDeleteReplaceExpr(insertPlan, tableInfo)
+
 	err = insertPlan.ResolveIndices()
 	if err != nil {
 		return nil, err
 	}
 	err = insertPlan.BuildOnInsertFKTriggers(b.ctx, b.is, tnW.DBInfo.Name.L)
 	return insertPlan, err
+}
+
+// buildSoftDeleteReplaceExpr builds the ReplaceConflictIfExpr for soft delete enabled tables.
+// It creates an expression: NOT(ISNULL(_tidb_softdelete_time)) to check if a row is soft-deleted.
+func (b *PlanBuilder) buildSoftDeleteReplaceExpr(insertPlan *physicalop.Insert, tableInfo *model.TableInfo) {
+	if tableInfo.SoftdeleteInfo == nil || !tableInfo.SoftdeleteInfo.Enable {
+		return
+	}
+
+	// Find the _tidb_softdelete_time column in the table schema
+	var softDeleteCol *expression.Column
+	for i, name := range insertPlan.TableColNames {
+		if name.ColName.L == model.ExtraSoftDeleteTimeName.L {
+			softDeleteCol = insertPlan.TableSchema.Columns[i]
+			break
+		}
+	}
+
+	// The soft delete time column should always exist when soft delete is enabled
+	intest.Assert(softDeleteCol != nil, "_tidb_softdelete_time column not found in schema when soft delete is enabled")
+
+	if softDeleteCol != nil {
+		// Build the expression: NOT(ISNULL(_tidb_softdelete_time))
+		notNullExpr := expression.BuildNotNullExpr(b.ctx.GetExprCtx(), softDeleteCol)
+		insertPlan.ReplaceConflictIfExpr = []expression.Expression{notNullExpr}
+	}
 }
 
 func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physicalop.Insert) (affectedValuesCols []*table.Column, err error) {
@@ -4259,6 +4288,14 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physic
 		// 1. `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,
 		// 2. `INSERT INTO tbl_name SELECT ...`.
 		affectedValuesCols = insertPlan.Table.VisibleCols()
+		if insertPlan.Table.Meta().SoftdeleteInfo != nil ||
+			insertPlan.Table.Meta().IsActiveActive {
+			affectedValuesCols = slices.DeleteFunc(slices.Clone(affectedValuesCols), func(col *table.Column) bool {
+				return col.Name.L == model.ExtraSoftDeleteTimeName.L ||
+					col.Name.L == model.ExtraOriginTSName.L ||
+					col.Name.L == model.ExtraCommitTSName.L
+			})
+		}
 	}
 	return affectedValuesCols, nil
 }
