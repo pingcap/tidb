@@ -17,7 +17,9 @@ package dbutil
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
 )
 
@@ -31,5 +33,21 @@ func FindColumnByName(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
 		}
 	}
 
+	return nil
+}
+
+// CheckTableModeIsNormal checks the table mode is TableModeNormal or not. Originally,
+// reads and writes to non-normal tables were prohibited during the optimize phase of
+// execution plan generation. However, the current approach relies on the `tableNameW`
+// recorded in the ResolveContext during the preprocessing phase to store the tables
+// involved in the statement,and then checks whether the table mode is normal. However,
+// for some statements, `tableNameW` is not recorded as those table might not exists,
+// such as for rename table DDL in the `ResolveContext`, so these statements
+// require special handling during the DDL execution phase.
+// Also, the check is used in optimize phase and build FK trigger phase.
+func CheckTableModeIsNormal(tableName pmodel.CIStr, tableMode model.TableMode) error {
+	if tableMode != model.TableModeNormal {
+		return infoschema.ErrProtectedTableMode.FastGenByArgs(tableName, tableMode)
+	}
 	return nil
 }

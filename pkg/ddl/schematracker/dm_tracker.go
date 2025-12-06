@@ -1111,6 +1111,11 @@ func (*SchemaTracker) UnlockTables(_ sessionctx.Context, _ []model.TableLockTpIn
 	return nil
 }
 
+// AlterTableMode implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) AlterTableMode(_ sessionctx.Context, _ *model.AlterTableModeArgs) error {
+	return nil
+}
+
 // CleanupTableLock implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) CleanupTableLock(_ sessionctx.Context, _ []*ast.TableName) error {
 	return nil
@@ -1183,5 +1188,10 @@ func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema 
 
 // CreatePlacementPolicyWithInfo implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.PolicyInfo, _ ddl.OnExist) error {
+	return nil
+}
+
+// RefreshMeta implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) RefreshMeta(_ sessionctx.Context, _ *model.RefreshMetaArgs) error {
 	return nil
 }

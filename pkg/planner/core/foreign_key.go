@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 )
 
 // FKCheck indicates the foreign key constraint checker.
@@ -383,6 +384,9 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 	fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
 	if fk == nil || fk.Version < 1 {
 		return nil, nil, nil
+	}
+	if err := dbutil.CheckTableModeIsNormal(childTable.Meta().Name, childTable.Meta().Mode); err != nil {
+		return nil, nil, err
 	}
 	var fkReferOption pmodel.ReferOptionType
 	if fk.State != model.StatePublic {

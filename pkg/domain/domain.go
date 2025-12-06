@@ -536,6 +536,16 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			}
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
+			if domainutil.RepairInfo.InRepairMode() && len(domainutil.RepairInfo.GetRepairTableList()) > 0 {
+				mustLoadReapirTableIDs := domainutil.RepairInfo.GetMustLoadRepairTableListByDB(di.Name.L, name2ID)
+				for _, id := range mustLoadReapirTableIDs {
+					tblInfo, err := m.GetTable(di.ID, id)
+					if err != nil {
+						return err
+					}
+					tables = append(tables, tblInfo)
+				}
+			}
 		} else {
 			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {

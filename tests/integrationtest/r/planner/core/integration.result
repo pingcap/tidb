@@ -3597,9 +3597,9 @@ Projection_16	10000.00	root		planner__core__integration.t1.a
           └─TableFullScan_24	20000000.00	cop[tikv]	table:two	keep order:false, stats:pseudo
 explain select rank() over (partition by table_name) from information_schema.tables;
 id	estRows	task	access object	operator info
-Projection_7	10000.00	root		Column#27->Column#28
+Projection_7	10000.00	root		Column#28->Column#29
 └─Shuffle_11	10000.00	root		execution info: concurrency:5, data sources:[MemTableScan_9]
-  └─Window_8	10000.00	root		rank()->Column#27 over(partition by Column#3)
+  └─Window_8	10000.00	root		rank()->Column#28 over(partition by Column#3)
     └─Sort_10	10000.00	root		Column#3
       └─ShuffleReceiver_12	10000.00	root		
         └─MemTableScan_9	10000.00	root	table:TABLES	
