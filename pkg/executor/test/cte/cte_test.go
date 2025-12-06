@@ -280,3 +280,61 @@ WHERE
 		"    └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:g keep order:false, stats:pseudo"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 }
+
+func TestCTEStrictModeDataTruncation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// The following query is expected to fail due to data truncation in the CTE.
+	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES'")
+	err := tk.QueryToErr(`
+		WITH RECURSIVE cte AS (
+			SELECT 'a' AS col, 1 AS n
+			UNION ALL
+			SELECT 'abc', n + 1
+			FROM cte
+			WHERE n < 2
+		)
+		SELECT * FROM cte
+	`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Data Too Long")
+
+	err = tk.QueryToErr(`
+		WITH RECURSIVE cte AS (
+			SELECT CAST('abcdefgh' AS CHAR(3)) AS short_str, 1 AS n
+			UNION ALL
+			SELECT short_str, n + 1
+			FROM cte
+			WHERE n < 2
+		)
+		SELECT * FROM cte
+	`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Data Too Long")
+
+	err = tk.QueryToErr(`
+		WITH RECURSIVE cte AS (
+			SELECT 'start' AS path, 1 AS level
+			UNION ALL
+			SELECT
+				CAST(CONCAT(path, '/', level) AS CHAR(10)) AS path,
+				level + 1
+			FROM cte
+			WHERE level < 3
+		)
+		SELECT * FROM cte
+	`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Data Too Long")
+
+	// Non-recursive CTE: constant folding happens during optimization phase before materialization,
+	// so no Data Too Long error occurs.
+	tk.MustQuery(`
+		WITH cte AS (
+			SELECT CAST('abcdefgh' AS CHAR(3)) AS short_str, 1 AS n
+		)
+		SELECT * FROM cte
+	`).Check(testkit.Rows("abc 1"))
+}
