@@ -233,3 +233,11 @@ CREATE TABLE `test_time` (
  `ts` TIMESTAMP,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+DROP TABLE IF EXISTS `sbtest`;
+CREATE TABLE `test`.`sbtest` (
+    `id` bigint NOT NULL PRIMARY KEY,
+    `k` bigint NOT NULL DEFAULT '0',
+    `c` char(16) DEFAULT '',
+    `pad` char(16) DEFAULT ''
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
