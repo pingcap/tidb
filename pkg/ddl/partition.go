@@ -1919,7 +1919,7 @@ func formatListPartitionValue(ctx expression.BuildContext, tblInfo *model.TableI
 			if colInfo == nil {
 				return nil, errors.Trace(dbterror.ErrFieldNotFoundPart)
 			}
-			colTps = append(colTps, colInfo.FieldType.Clone())
+			colTps = append(colTps, colInfo.FieldType.DeepClone())
 			cols = append(cols, colInfo)
 		}
 	}
