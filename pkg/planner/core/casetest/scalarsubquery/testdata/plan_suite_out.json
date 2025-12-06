@@ -92,7 +92,7 @@
           "      └─Limit cop[tikv]  offset:0, count:1",
           "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
           "ScalarSubQuery root  Output: ScalarQueryCol#15",
-          "└─Selection root  eq(cast(test.t2.a, double BINARY), cast(ScalarQueryCol#13, double BINARY)), eq(cast(test.t2.b, double BINARY), cast(ScalarQueryCol#13, double BINARY))",
+          "└─Selection root  eq(cast(test.t2.a, double BINARY), cast(ScalarQueryCol#13, double BINARY))",
           "  └─TableReader root  data:Selection",
           "    └─Selection cop[tikv]  eq(test.t2.b, test.t2.a)",
           "      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
