@@ -840,8 +840,7 @@ func bootstrap(s sessionapi.Session) {
 	startTime := time.Now()
 	err := InitMDLVariableForBootstrap(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock error",
-			zap.Error(err))
+		logutil.BgLogger().Fatal("[bootstrap] init metadata lock failed", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
 	bootLogger := logutil.SampleLoggerFactory(30*time.Second, 1)()
