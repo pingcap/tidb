@@ -59,7 +59,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 33,
+=======
+    shard_count = 43,
+>>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
     deps = [
         "//pkg/config",
         "//pkg/domain",

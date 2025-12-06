@@ -49,6 +49,7 @@ go_library(
         "//pkg/util/hack",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/ranger",
         "//pkg/util/sqlexec",

@@ -332,12 +332,21 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	path.CountAfterAccess, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
 	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+=======
+	var countEst statistics.RowEstimate
+	countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
+	path.CountAfterAccess = countEst.Est
+	if !isIm {
+		// Check if we need to apply a lower bound to CountAfterAccess
+		adjustCountAfterAccess(ds, path)
+>>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 	}
 	return err
 }
