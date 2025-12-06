@@ -650,6 +650,17 @@ func TestShowBindingDigestField(t *testing.T) {
 	require.Equal(t, len(result.Rows()), 0)
 }
 
+func TestIssue64558(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`create global binding using select * from t`)
+	sqlDigest := tk.MustQuery(`show global bindings`).Rows()[0][9].(string)
+	tk.MustExec(fmt.Sprintf(`set binding disabled for sql digest '%s'`, sqlDigest))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+}
+
 func TestOptimizeOnlyOnce(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
