@@ -907,9 +907,15 @@ func (*pushDownJoin) predicatePushDown(
 		copy(remainCond, predicates)
 		nullSensitive := join.JoinType == logicalop.AntiLeftOuterSemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin
 		if join.JoinType == logicalop.RightOuterJoin {
+<<<<<<< HEAD:pkg/planner/cascades/transformation_rules.go
 			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
 		} else {
 			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
+=======
+			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive, nil)
+		} else {
+			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive, nil)
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388)):pkg/planner/cascades/old/transformation_rules.go
 		}
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)

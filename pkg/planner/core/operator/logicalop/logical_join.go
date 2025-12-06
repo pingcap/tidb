@@ -206,7 +206,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+<<<<<<< HEAD
 		predicates = p.outerJoinPropConst(predicates)
+=======
+		predicates = p.outerJoinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
+		predicates = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), predicates,
+			p.Children()[0].Schema(), p.Children()[1].Schema(), false, nil)
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388))
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -225,7 +231,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
+<<<<<<< HEAD
 		predicates = p.outerJoinPropConst(predicates)
+=======
+		predicates = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), predicates,
+			p.Children()[0].Schema(), p.Children()[1].Schema(), true, nil)
+		predicates = p.outerJoinPropConst(predicates, p.isVaildConstantPropagationExpressionForRightOuterJoin)
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388))
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -251,7 +263,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
+<<<<<<< HEAD
 		tempCond = expression.PropagateConstant(p.SCtx().GetExprCtx(), tempCond)
+=======
+		tempCond = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), tempCond,
+			p.Children()[0].Schema(), p.Children()[1].Schema(),
+			true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388))
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -266,7 +284,14 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
+<<<<<<< HEAD
 		predicates = expression.PropagateConstant(p.SCtx().GetExprCtx(), predicates)
+=======
+		predicates = p.outerJoinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
+		predicates = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), predicates,
+			p.Children()[0].Schema(), p.Children()[1].Schema(), true,
+			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388))
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -1744,10 +1769,18 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	return proj
 }
 
+<<<<<<< HEAD
 // outerJoinPropConst propagates constant equal and column equal conditions over outer join.
 func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []expression.Expression {
 	outerTable := p.Children()[0]
 	innerTable := p.Children()[1]
+=======
+// outerJoinPropConst propagates constant equal and column equal conditions over outer join or anti semi join.
+func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression, vaildExprFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
+	children := p.Children()
+	innerTable := children[1]
+	outerTable := children[0]
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388))
 	if p.JoinType == RightOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
 	}
@@ -1767,7 +1800,12 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	exprCtx := p.SCtx().GetExprCtx()
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
+<<<<<<< HEAD
 	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
+=======
+	joinConds, predicates = expression.PropConstForOuterJoin(exprCtx, joinConds, predicates, outerTableSchema,
+		innerTableSchema, nullSensitive, vaildExprFunc)
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388))
 	p.AttachOnConds(joinConds)
 	return predicates
 }
