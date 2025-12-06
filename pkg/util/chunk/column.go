@@ -133,7 +133,7 @@ func newFixedLenColumn(elemLen, capacity int) *Column {
 func newVarLenColumn(capacity int) *Column {
 	return &Column{
 		offsets:    make([]int64, 1, getOffsetsCap(capacity)),
-		data:       make([]byte, 0, getDataMemCap(estimatedElemLen, capacity)),
+		data:       make([]byte, 0, getDataMemCap(capacity, estimatedElemLen)),
 		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
 	}
 }
@@ -243,6 +243,70 @@ func (c *Column) appendNullBitmap(notNull bool) {
 		pos := uint(c.length) & 7
 		c.nullBitmap[idx] |= byte(1 << pos)
 	}
+}
+
+// Reserve allocates some memory for the column
+func (c *Column) Reserve(nullBitmapExpectedCap int64, dataExpectedCap int64, offsetExpectedCap int64) {
+	currentNullBitmapLen := int64(len(c.nullBitmap))
+	nullBitmapExpectedCap += currentNullBitmapLen
+	if int64(cap(c.nullBitmap)) < nullBitmapExpectedCap {
+		if currentNullBitmapLen > 0 {
+			tmp := make([]byte, currentNullBitmapLen, nullBitmapExpectedCap)
+			copy(tmp[:currentNullBitmapLen], c.nullBitmap[:currentNullBitmapLen])
+			c.nullBitmap = tmp
+		} else {
+			c.nullBitmap = make([]byte, 0, nullBitmapExpectedCap)
+		}
+	}
+
+	currentDataLen := int64(len(c.data))
+	dataExpectedCap += currentDataLen
+	if int64(cap(c.data)) < dataExpectedCap {
+		if currentDataLen > 0 {
+			tmp := make([]byte, currentDataLen, dataExpectedCap)
+			copy(tmp[:currentDataLen], c.data[:currentDataLen])
+			c.data = tmp
+		} else {
+			c.data = make([]byte, 0, dataExpectedCap)
+		}
+	}
+
+	currentOffsetLen := int64(len(c.offsets))
+	offsetExpectedCap += currentOffsetLen
+	if int64(cap(c.offsets)) < offsetExpectedCap {
+		if currentOffsetLen > 0 {
+			tmp := make([]int64, currentOffsetLen, offsetExpectedCap)
+			copy(tmp[:currentOffsetLen], c.offsets[:currentOffsetLen])
+			c.offsets = tmp
+		} else {
+			c.offsets = make([]int64, 0, offsetExpectedCap)
+		}
+	}
+}
+
+// CalculateLenDeltaForAppendCellNTimes calculate the memory usage for `AppendCellNTimes` function
+func (c *Column) CalculateLenDeltaForAppendCellNTimes(src *Column, pos, times int) (nullBitMapLenDelta int64, dataLenDelta int64, offsetLenDelta int64) {
+	nullBitMapLenDelta = 0
+	dataLenDelta = 0
+	offsetLenDelta = 0
+
+	if times == 1 {
+		if c.length>>3 >= len(c.nullBitmap) {
+			nullBitMapLenDelta++
+		}
+	} else {
+		nullBitMapLenDelta += int64(((c.length + times + 7) >> 3) - len(c.nullBitmap))
+	}
+
+	if c.isFixed() {
+		elemLen := len(src.elemBuf)
+		dataLenDelta += int64(elemLen * times)
+	} else {
+		start, end := src.offsets[pos], src.offsets[pos+1]
+		dataLenDelta += (end - start) * int64(times)
+		offsetLenDelta += int64(times)
+	}
+	return
 }
 
 // AppendCellNTimes append the pos-th Cell in source column to target column N times
