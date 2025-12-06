@@ -63,8 +63,8 @@ func (lt *LogicalTopN) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range lt.ByItems {
-		ruleutil.ResolveExprAndReplace(byItem.Expr, replace)
+	for i, byItem := range lt.ByItems {
+		lt.ByItems[i].Expr = ruleutil.ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 

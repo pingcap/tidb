@@ -179,17 +179,17 @@ func (p *LogicalJoin) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, equalExpr := range p.EqualConditions {
-		ruleutil.ResolveExprAndReplace(equalExpr, replace)
+	for i, equalExpr := range p.EqualConditions {
+		p.EqualConditions[i] = ruleutil.ResolveExprAndReplace(equalExpr, replace).(*expression.ScalarFunction)
 	}
-	for _, leftExpr := range p.LeftConditions {
-		ruleutil.ResolveExprAndReplace(leftExpr, replace)
+	for i, leftExpr := range p.LeftConditions {
+		p.LeftConditions[i] = ruleutil.ResolveExprAndReplace(leftExpr, replace)
 	}
-	for _, rightExpr := range p.RightConditions {
-		ruleutil.ResolveExprAndReplace(rightExpr, replace)
+	for i, rightExpr := range p.RightConditions {
+		p.RightConditions[i] = ruleutil.ResolveExprAndReplace(rightExpr, replace)
 	}
-	for _, otherExpr := range p.OtherConditions {
-		ruleutil.ResolveExprAndReplace(otherExpr, replace)
+	for i, otherExpr := range p.OtherConditions {
+		p.OtherConditions[i] = ruleutil.ResolveExprAndReplace(otherExpr, replace)
 	}
 }
 
