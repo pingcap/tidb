@@ -295,6 +295,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+<<<<<<< HEAD
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
 		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
@@ -302,6 +303,15 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
 		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
 
+=======
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
+		`Projection 1.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─MergeJoin 1.25 root  inner join, left key:test.t2.a, right key:test.t1.a`,
+		`  ├─TableReader(Build) 10.00 root  data:TableRangeScan`,
+		`  │ └─TableRangeScan 10.00 cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo`,
+		`  └─Selection(Probe) 1.00 root  1`,
+		`    └─Point_Get 1.00 root table:t2, index:idx_a(a) `))
+>>>>>>> 5fac8052721 (planner: always keep join keys by default (#63470))
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
@@ -309,12 +319,22 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+<<<<<<< HEAD
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
 		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
 		`  ├─Point_Get_12(Build) 1.00 root table:t2, index:idx_a(a) `,
 		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
 		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
+=======
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
+		`Projection 1.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─MergeJoin 1.25 root  inner join, left key:test.t2.a, right key:test.t1.a`,
+		`  ├─TableReader(Build) 10.00 root  data:TableRangeScan`,
+		`  │ └─TableRangeScan 10.00 cop[tikv] table:t1 range:[2,2], keep order:true, stats:pseudo`,
+		`  └─Selection(Probe) 1.00 root  1`,
+		`    └─Point_Get 1.00 root table:t2, index:idx_a(a) `))
+>>>>>>> 5fac8052721 (planner: always keep join keys by default (#63470))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
