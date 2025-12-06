@@ -668,6 +668,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	requestFactor := getTaskRequestFactorVer2(p, taskType)
+	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	buildFilterCost := filterCostVer2(option, buildRows, buildFilters, cpuFactor)
 	buildChildCost, err := build.GetPlanCostVer2(taskType, option)
@@ -714,13 +715,19 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 		doubleReadCost = costusage.MulCostVer2(doubleReadCost, p.SCtx().GetSessionVars().IndexJoinDoubleReadPenaltyCostRate)
 	}
 
-	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	// consider the seeking cost of the probe side of index join,
+	// since this part of cost might be magnified by index join, see #62499.
+	numRanges := getNumberOfRanges(probe)
+	seekingCost := indexJoinSeekingCostVer2(option, buildRows, float64(numRanges), scanFactor)
+
+	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 
+<<<<<<< HEAD
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + build-filter-cost +
 // (probe-cost + probe-filter-cost) / concurrency
@@ -740,6 +747,30 @@ func (p *PhysicalIndexMergeJoin) GetPlanCostVer2(taskType property.TaskType, opt
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+=======
+// getNumberOfRanges returns the total number of ranges of a physical plan tree.
+// Some queries with large IN list like `a in (1, 2, 3...)` could generate a large number of ranges, which may slow down the query performance.
+func getNumberOfRanges(pp base.PhysicalPlan) (totNumRanges int) {
+	switch p := pp.(type) {
+	case *physicalop.PhysicalTableReader:
+		return getNumberOfRanges(p.TablePlan)
+	case *physicalop.PhysicalIndexReader:
+		return getNumberOfRanges(p.IndexPlan)
+	case *physicalop.PhysicalIndexLookUpReader:
+		return getNumberOfRanges(p.IndexPlan) + getNumberOfRanges(p.TablePlan)
+	case *physicalop.PhysicalTableScan:
+		return len(p.Ranges)
+	case *physicalop.PhysicalIndexScan:
+		return len(p.Ranges)
+	}
+	for _, child := range pp.Children() {
+		totNumRanges += getNumberOfRanges(child)
+	}
+	return totNumRanges
+}
+
+// getPlanCostVer24PhysicalApply returns the plan-cost of this sub-plan, which is:
+>>>>>>> a24f3d772f9 (planner: consider magnified seeking cost in IndexJoin (#63568))
 // plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
 // probe-cost = probe-child-cost * build-rows
 func (p *PhysicalApply) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
@@ -874,6 +905,19 @@ func (p *PhysicalCTE) GetPlanCostVer2(taskType property.TaskType, option *optimi
 	p.PlanCostVer2 = projCost
 	p.PlanCostInit = true
 	return p.PlanCostVer2, nil
+}
+
+func indexJoinSeekingCostVer2(option *optimizetrace.PlanCostOption, buildRows, numRanges float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
+	if buildRows <= 1 || numRanges <= 1 { // ignore seeking cost
+		return costusage.ZeroCostVer2
+	}
+	// Large IN lists like `a in (1, 2, 3...)` could generate a large number of ranges and seeking operations, which could be magnified by IndexJoin
+	// and slow down the query performance obviously, we need to consider this part of cost. Please see a case in issue #62499.
+	// To simplify the calculation of seeking cost, we treat a seeking operation as a scan of 10 rows with 8 row-width.
+	// 10 is based on a simple experiment, please see https://github.com/pingcap/tidb/issues/62499#issuecomment-3301796153.
+	return costusage.NewCostVer2(option, scanFactor,
+		buildRows*10*math.Log2(8)*numRanges*scanFactor.Value,
+		func() string { return fmt.Sprintf("seeking(%v*%v*10*log2(8)*%v)", buildRows, numRanges, scanFactor) })
 }
 
 func scanCostVer2(option *optimizetrace.PlanCostOption, rows, rowSize float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
