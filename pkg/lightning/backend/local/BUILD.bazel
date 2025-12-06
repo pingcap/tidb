@@ -49,11 +49,7 @@ go_library(
         "//pkg/lightning/mydump",
         "//pkg/lightning/tikv",
         "//pkg/lightning/verification",
-<<<<<<< HEAD
-=======
         "//pkg/meta",
-        "//pkg/meta/model",
->>>>>>> 86ed1cab628 (backend/local: add rate limiter for split region and ingest data (#61555))
         "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

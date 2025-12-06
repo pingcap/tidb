@@ -1397,12 +1397,12 @@ func (m *Meta) GetHistoryDDLCount() (uint64, error) {
 }
 
 // SetIngestMaxBatchSplitRanges sets the ingest max_batch_split_ranges.
-func (m *Mutator) SetIngestMaxBatchSplitRanges(val int) error {
+func (m *Meta) SetIngestMaxBatchSplitRanges(val int) error {
 	return errors.Trace(m.txn.Set(mIngestMaxBatchSplitRangesKey, []byte(strconv.Itoa(val))))
 }
 
 // GetIngestMaxBatchSplitRanges gets the ingest max_batch_split_ranges.
-func (m *Mutator) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) {
+func (m *Meta) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) {
 	sVal, err := m.txn.Get(mIngestMaxBatchSplitRangesKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
@@ -1415,12 +1415,12 @@ func (m *Mutator) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err erro
 }
 
 // SetIngestMaxSplitRangesPerSec sets the max_split_ranges_per_sec.
-func (m *Mutator) SetIngestMaxSplitRangesPerSec(val float64) error {
+func (m *Meta) SetIngestMaxSplitRangesPerSec(val float64) error {
 	return errors.Trace(m.txn.Set(mIngestMaxSplitRangesPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
 }
 
 // GetIngestMaxSplitRangesPerSec gets the max_split_ranges_per_sec.
-func (m *Mutator) GetIngestMaxSplitRangesPerSec() (val float64, isNull bool, err error) {
+func (m *Meta) GetIngestMaxSplitRangesPerSec() (val float64, isNull bool, err error) {
 	sVal, err := m.txn.Get(mIngestMaxSplitRangesPerSecKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
@@ -1433,12 +1433,12 @@ func (m *Mutator) GetIngestMaxSplitRangesPerSec() (val float64, isNull bool, err
 }
 
 // SetIngestMaxInflight sets the max_ingest_concurrency.
-func (m *Mutator) SetIngestMaxInflight(val int) error {
+func (m *Meta) SetIngestMaxInflight(val int) error {
 	return errors.Trace(m.txn.Set(mIngestMaxInflightKey, []byte(strconv.Itoa(val))))
 }
 
 // GetIngestMaxInflight gets the max_ingest_concurrency.
-func (m *Mutator) GetIngestMaxInflight() (val int, isNull bool, err error) {
+func (m *Meta) GetIngestMaxInflight() (val int, isNull bool, err error) {
 	sVal, err := m.txn.Get(mIngestMaxInflightKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
@@ -1451,12 +1451,12 @@ func (m *Mutator) GetIngestMaxInflight() (val int, isNull bool, err error) {
 }
 
 // SetIngestMaxPerSec sets the max_ingest_per_sec.
-func (m *Mutator) SetIngestMaxPerSec(val float64) error {
+func (m *Meta) SetIngestMaxPerSec(val float64) error {
 	return errors.Trace(m.txn.Set(mIngestMaxPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
 }
 
 // GetIngestMaxPerSec gets the max_ingest_per_sec.
-func (m *Mutator) GetIngestMaxPerSec() (val float64, isNull bool, err error) {
+func (m *Meta) GetIngestMaxPerSec() (val float64, isNull bool, err error) {
 	sVal, err := m.txn.Get(mIngestMaxPerSecKey)
 	if err != nil {
 		return 0, false, errors.Trace(err)
