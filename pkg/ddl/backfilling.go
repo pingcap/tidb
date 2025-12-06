@@ -870,14 +870,14 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 
 			concurrency := reorgInfo.ReorgMeta.GetConcurrency()
 			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
-			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
+			currentReaderCnt, currentWriterCnt := reader.GetPoolSize(), writer.GetPoolSize()
 			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
-				reader.TuneWorkerPoolSize(int32(targetReaderCnt), false)
-				writer.TuneWorkerPoolSize(int32(targetWriterCnt), false)
+				reader.TunePoolSize(int32(targetReaderCnt), false)
+				writer.TunePoolSize(int32(targetWriterCnt), false)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
 					zap.Int64("jobID", reorgInfo.ID),
-					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
-					zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
+					zap.Int32("table scan operator count", reader.GetPoolSize()),
+					zap.Int32("index ingest operator count", writer.GetPoolSize()))
 			}
 			failpoint.InjectCall("checkReorgConcurrency", reorgInfo.Job)
 		}
