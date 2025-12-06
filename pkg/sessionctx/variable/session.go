@@ -1088,6 +1088,10 @@ type SessionVars struct {
 	IndexJoinCostFactor        float64
 	SelectivityFactor          float64
 
+	// MaxEstimatedCost is the maximum estimated cost for a DML statement.
+	// If the value is 0.0, then not enabled.
+	MaxEstimatedCost float64
+
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
 

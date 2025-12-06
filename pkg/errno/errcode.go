@@ -1150,6 +1150,7 @@ const (
 	ErrGlobalIndexNotExplicitlySet = 8264
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
+	ErrMaxEstimatedCostExceeded           = 8266
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
