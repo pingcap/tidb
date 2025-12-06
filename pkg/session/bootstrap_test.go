@@ -2110,7 +2110,10 @@ func TestTiDBUpgradeToVer176(t *testing.T) {
 	ver, err = getBootstrapVersion(seV175)
 	require.NoError(t, err)
 	require.Less(t, int64(ver175), ver)
-	MustExec(t, seV175, "SELECT * from mysql.tidb_global_task_history")
+	// Avoid reusing the old session when checking the new table.
+	// Otherwise it may access the previous domain, which has already been closed.
+	newSession := CreateSessionAndSetID(t, store)
+	MustExec(t, newSession, "SELECT * from mysql.tidb_global_task_history")
 	dom.Close()
 }
 
@@ -2141,7 +2144,10 @@ func TestTiDBUpgradeToVer177(t *testing.T) {
 	ver, err = getBootstrapVersion(seV176)
 	require.NoError(t, err)
 	require.Less(t, int64(ver176), ver)
-	MustExec(t, seV176, "SELECT * from mysql.dist_framework_meta")
+	// Avoid reusing the old session when checking the new table.
+	// Otherwise it may access the previous domain, which has already been closed.
+	newSession := CreateSessionAndSetID(t, store)
+	MustExec(t, newSession, "SELECT * from mysql.dist_framework_meta")
 	dom.Close()
 }
 
