@@ -48,7 +48,7 @@ After changing `t` or changing optimizer plans, `r` need to be updated.
 
    ```shell
    # cd clusterintegrationtest
-   GOBIN=$(realpath .)/gobin go install github.com/pingcap/mysql-tester/src@314107b26aa8fce86beb0dd48e75827fb269b365
+   GOBIN=$(realpath .)/gobin go install github.com/pingcap/mysql-tester/src@12f37562a884a2d680d5ca619df80c8d0a080aff
    ./gobin/src -retry-connection-count 5 -record
    ```
 
