@@ -1,0 +1,59 @@
+drop database if exists test_aa;
+create database test_aa active_active = 'ON';
+show create database test_aa;
+Database	Create Database
+test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='ON' */
+alter database test_aa active_active = 'OFF' softdelete = 'ON';
+show create database test_aa;
+Database	Create Database
+test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='OFF' */ /*T![softdelete] SOFTDELETE='ON' */
+alter database test_aa active_active = 'ON' softdelete = 'ON';
+show create database test_aa;
+Database	Create Database
+test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE='ON' */
+use test_aa;
+create table t1 (id int primary key, name varchar(50));
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_commit_ts` bigint DEFAULT NULL,
+  `_tidb_origin_ts` bigint DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+alter database test_aa active_active = 'OFF' softdelete = 'OFF';
+show create database test_aa;
+Database	Create Database
+test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='OFF' */ /*T![softdelete] SOFTDELETE='OFF' */
+create table t2 (id int primary key, name varchar(50)) active_active = 'ON' softdelete = 'on';
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_commit_ts` bigint DEFAULT NULL,
+  `_tidb_origin_ts` bigint DEFAULT NULL,
+  `_tidb_softdelete_time` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+create table t3 (id int primary key, name varchar(50)) active_active = 'OFF';
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create table t4 (id int primary key, name varchar(50)) active_active = 'ON';
+Error 8274 (HY000): Cannot set ACTIVE_ACTIVE on a table without SOFTDELETE config
+create table t4 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
+Error 8274 (HY000): Cannot set SOFTDELETE on a table without SOFTDELETE config
+alter table t3 active_active = 'ON';
+Error 8200 (HY000): This type of ALTER TABLE is currently unsupported
+alter database test_aa active_active = 'INVALID';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 48 near ""The ACTIVE_ACTIVE option must be 'ON' or 'OFF' 
+create table t4 (id int) active_active = 'YES';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 46 near ""The ACTIVE_ACTIVE option must be 'ON' or 'OFF' 
+drop database test_aa;

@@ -159,7 +159,7 @@ func (e *tableScanExec) Process(key, value []byte) error {
 		return errors.Trace(err)
 	}
 
-	err = e.decoder.DecodeToChunk(value, handle, e.chk)
+	err = e.decoder.DecodeToChunk(value, 0, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}

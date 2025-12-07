@@ -1,0 +1,35 @@
+drop database if exists test_aa;
+create database test_aa active_active = 'ON';
+show create database test_aa;
+alter database test_aa active_active = 'OFF' softdelete = 'ON';
+show create database test_aa;
+alter database test_aa active_active = 'ON' softdelete = 'ON';
+show create database test_aa;
+use test_aa;
+
+create table t1 (id int primary key, name varchar(50));
+show create table t1;
+alter database test_aa active_active = 'OFF' softdelete = 'OFF';
+show create database test_aa;
+
+create table t2 (id int primary key, name varchar(50)) active_active = 'ON' softdelete = 'on';
+show create table t2;
+create table t3 (id int primary key, name varchar(50)) active_active = 'OFF';
+show create table t3;
+
+-- error 8274
+create table t4 (id int primary key, name varchar(50)) active_active = 'ON';
+-- error 8274
+create table t4 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
+
+# Alter table should fail
+-- error 8200
+alter table t3 active_active = 'ON';
+
+# Invalid value
+-- error 1064
+alter database test_aa active_active = 'INVALID';
+-- error 1064
+create table t4 (id int) active_active = 'YES';
+
+drop database test_aa;
