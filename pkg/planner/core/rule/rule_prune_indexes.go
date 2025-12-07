@@ -221,6 +221,10 @@ func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScor
 				if i == score.consecutiveWhereCount {
 					score.consecutiveWhereCount++
 				}
+				// Incrementing consecutiveJoinCount here is intentional - it is intended to count both
+				// WHERE and JOIN columns that are consecutive for an index join.
+				// This can double count join columns - which is why join indexes and where indexes are
+				// treated separately in the score calculation.
 				if score.consecutiveJoinCount > 0 && i == score.consecutiveJoinCount+score.consecutiveWhereCount {
 					score.consecutiveJoinCount++
 				}

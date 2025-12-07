@@ -139,7 +139,7 @@ type DataSource struct {
 	// OrderingColumns stores columns that require ordered access from this DataSource.
 	// This includes columns used in:
 	//   - ORDER BY clauses (need sorted data)
-	//   - MIN/MAX/FIRST_VALUE aggregates (can benefit from ordered data)
+	//   - MIN/MAX aggregates (can benefit from ordered data)
 	// Indexes on these columns can eliminate sorting or enable efficient min/max retrieval.
 	// NOTE: This list does not differentiate the ordering requirement of the columns.
 	// It is used in index pruning early in the planning phase - which is an approximate heuristic.
