@@ -357,63 +357,6 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 
 	remaining := maxToKeep
 	hasNonZeroScore := false
-	// Track the best WHERE and JOIN column counts for each first column ID to avoid adding indexes
-	// with only 1 interesting column when we've already added a better index with the same first column
-	firstColIDToBestWhereCount := make(map[int64]int)
-	firstColIDToBestJoinCount := make(map[int64]int)
-
-	// Helper function to get the first column ID from a path
-	getFirstColID := func(path *util.AccessPath) (int64, bool) {
-		if path == nil || path.FullIdxCols == nil || len(path.FullIdxCols) == 0 {
-			return 0, false
-		}
-		if path.FullIdxCols[0] == nil {
-			return 0, false
-		}
-		return path.FullIdxCols[0].UniqueID, true
-	}
-
-	// Helper function to check if we should skip a WHERE index
-	shouldSkipWhereIndex := func(entry scoredIndex, path *util.AccessPath) bool {
-		// Only apply this filter when we've reached 50% of the threshold
-		if remaining > maxToKeep/2 {
-			return false
-		}
-		// Only skip indexes with exactly 1 WHERE column
-		if entry.info.whereCount != 1 {
-			return false
-		}
-		// Check if there's already an index with the same first column that has more WHERE columns
-		firstColID, ok := getFirstColID(path)
-		if !ok {
-			return false
-		}
-		if bestWhereCount, exists := firstColIDToBestWhereCount[firstColID]; exists && bestWhereCount > 1 {
-			return true
-		}
-		return false
-	}
-
-	// Helper function to check if we should skip a JOIN index
-	shouldSkipJoinIndex := func(entry scoredIndex, path *util.AccessPath) bool {
-		// Only apply this filter when we've reached 50% of the threshold
-		if remaining > maxToKeep/2 {
-			return false
-		}
-		// Only skip indexes with exactly 1 JOIN column
-		if entry.info.joinCount != 1 {
-			return false
-		}
-		// Check if there's already an index with the same first column that has more JOIN columns
-		firstColID, ok := getFirstColID(path)
-		if !ok {
-			return false
-		}
-		if bestJoinCount, exists := firstColIDToBestJoinCount[firstColID]; exists && bestJoinCount > 1 {
-			return true
-		}
-		return false
-	}
 
 	if len(whereScored) > 0 && remaining > 0 {
 		for _, entry := range whereScored {
@@ -428,20 +371,10 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 			if hasNonZeroScore && entry.score == 0 {
 				continue
 			}
-			// Skip indexes with only 1 WHERE column if we already have a better index with the same first column
-			if shouldSkipWhereIndex(entry, path) {
-				continue
-			}
 			result = append(result, path)
 			added[path] = struct{}{}
 			if entry.score > 0 {
 				hasNonZeroScore = true
-			}
-			// Update the best WHERE column count for this first column
-			if firstColID, ok := getFirstColID(path); ok {
-				if bestWhereCount, exists := firstColIDToBestWhereCount[firstColID]; !exists || entry.info.whereCount > bestWhereCount {
-					firstColIDToBestWhereCount[firstColID] = entry.info.whereCount
-				}
 			}
 			remaining--
 		}
@@ -455,17 +388,6 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 			added[bestJoinPath] = struct{}{}
 			if maxJoinScore > 0 {
 				hasNonZeroScore = true
-			}
-			// Update the best WHERE and JOIN column counts for this first column
-			if firstColID, ok := getFirstColID(bestJoinPath); ok {
-				whereCount := joinScored[0].info.whereCount
-				joinCount := joinScored[0].info.joinCount
-				if bestWhereCount, exists := firstColIDToBestWhereCount[firstColID]; !exists || whereCount > bestWhereCount {
-					firstColIDToBestWhereCount[firstColID] = whereCount
-				}
-				if bestJoinCount, exists := firstColIDToBestJoinCount[firstColID]; !exists || joinCount > bestJoinCount {
-					firstColIDToBestJoinCount[firstColID] = joinCount
-				}
 			}
 			if remaining > 0 {
 				remaining--
@@ -488,25 +410,10 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 				if hasNonZeroScore && entry.score == 0 {
 					continue
 				}
-				// Skip indexes with only 1 JOIN column if we already have a better index with the same first column
-				if shouldSkipJoinIndex(entry, path) {
-					continue
-				}
 				result = append(result, path)
 				added[path] = struct{}{}
 				if entry.score > 0 {
 					hasNonZeroScore = true
-				}
-				// Update the best WHERE and JOIN column counts for this first column
-				if firstColID, ok := getFirstColID(path); ok {
-					whereCount := entry.info.whereCount
-					joinCount := entry.info.joinCount
-					if bestWhereCount, exists := firstColIDToBestWhereCount[firstColID]; !exists || whereCount > bestWhereCount {
-						firstColIDToBestWhereCount[firstColID] = whereCount
-					}
-					if bestJoinCount, exists := firstColIDToBestJoinCount[firstColID]; !exists || joinCount > bestJoinCount {
-						firstColIDToBestJoinCount[firstColID] = joinCount
-					}
 				}
 				remaining--
 			}
