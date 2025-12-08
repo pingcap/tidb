@@ -47,10 +47,11 @@ import (
 // InsertExec represents an insert executor.
 type InsertExec struct {
 	*InsertValues
-	OnDuplicate    []*expression.Assignment
-	evalBuffer4Dup chunk.MutRow
-	curInsertVals  chunk.MutRow
-	row4Update     []types.Datum
+	OnDuplicate       []*expression.Assignment
+	evalBuffer4Dup    chunk.MutRow
+	curInsertVals     chunk.MutRow
+	row4Update        []types.Datum
+	replaceConflictIf func(expression.EvalContext, []types.Datum) (bool, error)
 
 	Priority mysql.PriorityEnum
 }
