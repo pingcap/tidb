@@ -85,12 +85,6 @@ type streamMetadataHelper interface {
 	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
 }
 
-type logFilesStatistic struct {
-	NumEntries int64
-	NumFiles   uint64
-	Size       uint64
-}
-
 // LogFileManager is the manager for log files of a certain restoration,
 // which supports read / filter from the log backup archive with static start TS / restore TS.
 type LogFileManager struct {
