@@ -684,6 +684,25 @@ timezone.*
    ```
 
    ```shell
-   $curl -X POST http://127.0.0.1:10080/upgrade/start
+   $curl -X POST http://{TiDBIP}:10080/upgrade/start
    "success!"
-   ```
+
+1. Set split & scatter regions concurrency before ingest, and ingest request concurrency. Value ranges:
+    - `max-batch-split-ranges`: `[1, 9223372036854775807]`, default `2048`
+    - `max-split-ranges-per-sec`: `[0, 9223372036854775807]`, default `0` (no limit)
+    - `max-ingest-per-sec`: `[0, 9223372036854775807]`, default `0` (no limit)
+    - `max-ingest-inflight`: `[0, 9223372036854775807]`, default `0` (no limit)
+
+    ```shell
+    curl http://{TiDBIP}:10080/ingest/max-batch-split-ranges
+    curl http://{TiDBIP}:10080/ingest/max-split-ranges-per-sec
+    curl http://{TiDBIP}:10080/ingest/max-ingest-per-sec
+    curl http://{TiDBIP}:10080/ingest/max-ingest-inflight
+    ```
+
+    ```shell
+    curl http://{TiDBIP}:10080/ingest/max-batch-split-ranges -X POST -d "{\"value\": 1024}"
+    curl http://{TiDBIP}:10080/ingest/max-split-ranges-per-sec -X POST -d "{\"value\": 16}"
+    curl http://{TiDBIP}:10080/ingest/max-ingest-per-sec -X POST -d "{\"value\": 0.5}"
+    curl http://{TiDBIP}:10080/ingest/max-ingest-inflight -X POST -d "{\"value\": 2}"
+    ```
