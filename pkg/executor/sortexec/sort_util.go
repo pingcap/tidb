@@ -76,6 +76,14 @@ func injectParallelSortRandomFail(triggerFactor int32) {
 	})
 }
 
+func injectPanicForIssue63216() {
+	failpoint.Inject("Issue63216", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("issue 63216 panic")
+		}
+	})
+}
+
 // It's used only when spill is triggered
 type dataCursor struct {
 	chkID     int
