@@ -44,10 +44,6 @@ go_test(
     ],
     embed = [":cache"],
     flaky = True,
-<<<<<<< HEAD
-=======
-    shard_count = 3,
->>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
     deps = [
         "//pkg/config",
         "//pkg/statistics",
