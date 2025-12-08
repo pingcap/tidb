@@ -16,6 +16,7 @@ package utils_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -397,16 +398,49 @@ func TestGetRewriteRulesMap(t *testing.T) {
 }
 
 func TestGetRewriteRuleOfTable(t *testing.T) {
+	// Test basic table prefix rewrite without detailed rules
 	{
-		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, map[int64]int64{1: 1, 2: 2}, false)
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, map[int64]int64{1: 1, 2: 2}, false)
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(2), rewriteRules), tablecodec.EncodeTablePrefix(1))
+		require.Len(t, rewriteRules.Data, 1) // Only one rule for table prefix
+		require.Equal(t, rewriteRules.NewTableID, int64(1))
 	}
 
+	// Test detailed rules including record and index prefixes
 	{
-		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, map[int64]int64{1: 1, 2: 2}, true)
+		indexIDs := map[int64]int64{1: 1, 2: 2}
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, indexIDs, true)
+		// Check record prefix
 		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(2), rewriteRules), tablecodec.GenTableRecordPrefix(1))
+		// Check index prefixes
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 1), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 1))
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 2), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 2))
+		// Verify number of rules (1 record + 2 index rules)
+		require.Len(t, rewriteRules.Data, 3)
+	}
+
+	// Test timestamp fields
+	{
+		shiftStartTs := uint64(30)
+		startTs := uint64(50)
+		restoredTs := uint64(100)
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, map[int64]int64{1: 1}, true)
+		rewriteRules.SetTsRange(shiftStartTs, startTs, restoredTs)
+
+		// Verify timestamp fields in RewriteRules
+		require.Equal(t, restoredTs, rewriteRules.RestoredTs)
+		require.Equal(t, startTs, rewriteRules.StartTs)
+		require.Equal(t, shiftStartTs, rewriteRules.ShiftStartTs)
+
+		// Verify NewTableID
+		require.Equal(t, int64(1), rewriteRules.NewTableID)
+	}
+
+	// Test with empty index IDs
+	{
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, map[int64]int64{}, true)
+		require.Len(t, rewriteRules.Data, 1) // Only record rule, no index rules
+		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(2), rewriteRules), tablecodec.GenTableRecordPrefix(1))
 	}
 }
 
@@ -431,7 +465,7 @@ func rewriteKey(key kv.Key, rule *import_sstpb.RewriteRule) kv.Key {
 }
 
 func TestFindMatchedRewriteRule(t *testing.T) {
-	rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 0, map[int64]int64{1: 10}, true)
+	rewriteRules := utils.GetRewriteRuleOfTable(2, 1, map[int64]int64{1: 10}, true)
 	{
 		applyFile := fakeApplyFile{
 			StartKey: tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(100)),
@@ -480,4 +514,171 @@ func TestGetRewriteKeyWithDifferentTable(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = utils.GetRewriteEncodedKeys(applyFile, nil)
 	require.Error(t, err)
+}
+
+func TestSetTimeRangeFilter(t *testing.T) {
+	testCases := []struct {
+		name        string
+		rules       *utils.RewriteRules
+		cfName      string
+		expectError bool
+	}{
+		{
+			name: "default cf with valid timestamps",
+			rules: &utils.RewriteRules{
+				Data: []*import_sstpb.RewriteRule{
+					{OldKeyPrefix: []byte("old"), NewKeyPrefix: []byte("new")},
+				},
+				ShiftStartTs: 50, // Less than StartTs
+				StartTs:      100,
+				RestoredTs:   200,
+			},
+			cfName:      "default",
+			expectError: false,
+		},
+		{
+			name: "write cf with valid timestamps",
+			rules: &utils.RewriteRules{
+				Data: []*import_sstpb.RewriteRule{
+					{OldKeyPrefix: []byte("old"), NewKeyPrefix: []byte("new")},
+				},
+				ShiftStartTs: 50, // Less than StartTs
+				StartTs:      100,
+				RestoredTs:   200,
+			},
+			cfName:      "write",
+			expectError: false,
+		},
+		{
+			name: "invalid shift start ts (greater than start ts)",
+			rules: &utils.RewriteRules{
+				Data: []*import_sstpb.RewriteRule{
+					{OldKeyPrefix: []byte("old"), NewKeyPrefix: []byte("new")},
+				},
+				ShiftStartTs: 150, // Greater than StartTs
+				StartTs:      100,
+				RestoredTs:   200,
+			},
+			cfName:      "default",
+			expectError: false,
+		},
+		{
+			name: "write cf valid shift start ts (greater than start ts)",
+			rules: &utils.RewriteRules{
+				Data: []*import_sstpb.RewriteRule{
+					{OldKeyPrefix: []byte("old"), NewKeyPrefix: []byte("new")},
+				},
+				ShiftStartTs: 150, // Greater than StartTs
+				StartTs:      100,
+				RestoredTs:   200,
+			},
+			cfName:      "write",
+			expectError: false,
+		},
+		{
+			name: "invalid cf name",
+			rules: &utils.RewriteRules{
+				Data: []*import_sstpb.RewriteRule{
+					{OldKeyPrefix: []byte("old"), NewKeyPrefix: []byte("new")},
+				},
+				ShiftStartTs: 50,
+				StartTs:      100,
+				RestoredTs:   200,
+			},
+			cfName:      "invalid",
+			expectError: true,
+		},
+		{
+			name: "zero timestamps should skip filter",
+			rules: &utils.RewriteRules{
+				Data: []*import_sstpb.RewriteRule{
+					{OldKeyPrefix: []byte("old"), NewKeyPrefix: []byte("new")},
+				},
+				StartTs:      0,
+				RestoredTs:   0,
+				ShiftStartTs: 0,
+			},
+			cfName:      "default",
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rule := &import_sstpb.RewriteRule{}
+			err := utils.SetTimeRangeFilter(tc.rules, rule, tc.cfName)
+			if tc.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			if tc.rules.StartTs == 0 || tc.rules.RestoredTs == 0 {
+				// Should not modify rules when timestamps are zero
+				for _, rule := range tc.rules.Data {
+					require.Zero(t, rule.IgnoreBeforeTimestamp)
+					require.Zero(t, rule.IgnoreAfterTimestamp)
+				}
+				return
+			}
+
+			// Verify timestamps are set correctly
+			require.Equal(t, tc.rules.RestoredTs, rule.IgnoreAfterTimestamp)
+
+			if strings.Contains(tc.cfName, "default") {
+				if tc.rules.ShiftStartTs < tc.rules.StartTs {
+					require.Equal(t, tc.rules.ShiftStartTs, rule.IgnoreBeforeTimestamp)
+				} else {
+					require.Equal(t, tc.rules.StartTs, rule.IgnoreBeforeTimestamp)
+				}
+			} else if strings.Contains(tc.cfName, "write") {
+				require.Equal(t, tc.rules.StartTs, rule.IgnoreBeforeTimestamp)
+			}
+		})
+	}
+}
+
+func TestSetTimeRangeFilterRace(t *testing.T) {
+	// Create a shared rules object that will be read by multiple goroutines
+	rules := &utils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{OldKeyPrefix: []byte("old"), NewKeyPrefix: []byte("new")},
+		},
+		ShiftStartTs: 50,
+		StartTs:      100,
+		RestoredTs:   200,
+	}
+
+	// Number of concurrent goroutines
+	numGoroutines := 100
+	// Channel to collect results
+	resultChan := make(chan *import_sstpb.RewriteRule, numGoroutines)
+
+	// Launch multiple goroutines to concurrently call SetTimeRangeFilter
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			// Each goroutine creates its own rule
+			rule := &import_sstpb.RewriteRule{}
+			err := utils.SetTimeRangeFilter(rules, rule, "default")
+			if err != nil {
+				resultChan <- nil
+				return
+			}
+			resultChan <- rule
+		}()
+	}
+
+	// Wait for all goroutines to complete and check results
+	for i := 0; i < numGoroutines; i++ {
+		rule := <-resultChan
+		require.NotNil(t, rule)
+		// Verify the rule was correctly modified
+		require.Equal(t, uint64(50), rule.IgnoreBeforeTimestamp) // Should be ShiftStartTs for default cf
+		require.Equal(t, uint64(200), rule.IgnoreAfterTimestamp) // Should be RestoredTs
+	}
+
+	// Verify the rules were not modified
+	require.Equal(t, uint64(50), rules.ShiftStartTs)
+	require.Equal(t, uint64(100), rules.StartTs)
+	require.Equal(t, uint64(200), rules.RestoredTs)
 }

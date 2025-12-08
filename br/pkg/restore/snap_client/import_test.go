@@ -22,10 +22,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -74,7 +75,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 	require.Equal(t, []byte(""), end)
 
 	// normal kv: the keys must be encoded.
-	testFn := snapclient.GetKeyRangeByMode(snapclient.TiDB)
+	testFn := snapclient.GetKeyRangeByMode(snapclient.TiDBFull)
 	start, end, err = testFn(file, rule)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, []byte("t2a")), start)
@@ -154,14 +155,22 @@ func (client *fakeImporterClient) MultiIngest(
 	return &import_sstpb.IngestResponse{}, nil
 }
 
+func TestUnproperConfigSnapImporter(t *testing.T) {
+	ctx := context.Background()
+	opt := snapclient.NewSnapFileImporterOptionsForTest(nil, nil, nil, snapclient.RewriteModeKeyspace, 0)
+	_, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBFull, opt)
+	require.Error(t, err)
+}
+
 func TestSnapImporter(t *testing.T) {
 	ctx := context.Background()
-	splitClient := utiltest.NewFakeSplitClient()
+	splitClient := split.NewFakeSplitClient()
 	for _, region := range generateRegions() {
 		splitClient.AppendPdRegion(region)
 	}
 	importClient := newFakeImporterClient()
-	importer, err := snapclient.NewSnapFileImporter(ctx, splitClient, importClient, nil, false, false, generateStores(), snapclient.RewriteModeKeyspace, 10)
+	opt := snapclient.NewSnapFileImporterOptionsForTest(splitClient, importClient, generateStores(), snapclient.RewriteModeKeyspace, 10)
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBFull, opt)
 	require.NoError(t, err)
 	err = importer.SetDownloadSpeedLimit(ctx, 1, 5)
 	require.NoError(t, err)
@@ -170,8 +179,8 @@ func TestSnapImporter(t *testing.T) {
 	require.Error(t, err)
 	files, rules := generateFiles()
 	for _, file := range files {
-		importer.WaitUntilUnblock()
-		err = importer.ImportSSTFiles(ctx, []snapclient.TableIDWithFiles{{Files: []*backuppb.File{file}, RewriteRules: rules}}, nil, kvrpcpb.APIVersion_V1)
+		importer.PauseForBackpressure()
+		err = importer.Import(ctx, restore.BackupFileSet{SSTFiles: []*backuppb.File{file}, RewriteRules: rules})
 		require.NoError(t, err)
 	}
 	err = importer.Close()
@@ -180,19 +189,20 @@ func TestSnapImporter(t *testing.T) {
 
 func TestSnapImporterRaw(t *testing.T) {
 	ctx := context.Background()
-	splitClient := utiltest.NewFakeSplitClient()
+	splitClient := split.NewFakeSplitClient()
 	for _, region := range generateRegions() {
 		splitClient.AppendPdRegion(region)
 	}
 	importClient := newFakeImporterClient()
-	importer, err := snapclient.NewSnapFileImporter(ctx, splitClient, importClient, nil, true, false, generateStores(), snapclient.RewriteModeKeyspace, 10)
+	opt := snapclient.NewSnapFileImporterOptionsForTest(splitClient, importClient, generateStores(), snapclient.RewriteModeKeyspace, 10)
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.Raw, opt)
 	require.NoError(t, err)
 	err = importer.SetRawRange([]byte(""), []byte(""))
 	require.NoError(t, err)
 	files, rules := generateFiles()
 	for _, file := range files {
-		importer.WaitUntilUnblock()
-		err = importer.ImportSSTFiles(ctx, []snapclient.TableIDWithFiles{{Files: []*backuppb.File{file}, RewriteRules: rules}}, nil, kvrpcpb.APIVersion_V1)
+		importer.PauseForBackpressure()
+		err = importer.Import(ctx, restore.BackupFileSet{SSTFiles: []*backuppb.File{file}, RewriteRules: rules})
 		require.NoError(t, err)
 	}
 	err = importer.Close()

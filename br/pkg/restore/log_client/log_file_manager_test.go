@@ -235,6 +235,8 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 			RestoreTS: c.endTS,
 			Storage:   loc,
 
+			MigrationsBuilder:         logclient.NewMigrationBuilder(0, c.startTS, c.endTS),
+			Migrations:                emptyMigrations(),
 			MetadataDownloadBatchSize: 32,
 		}
 		cli, err := logclient.CreateLogFileManager(ctx, init)
@@ -244,7 +246,7 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 		req.NoError(err)
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
-			actualStoreIDs = append(actualStoreIDs, meta.StoreId)
+			actualStoreIDs = append(actualStoreIDs, meta.Meta().StoreId)
 		}
 		expectedStoreIDs := make([]int64, 0, len(c.expected))
 		for _, meta := range c.expected {
@@ -469,6 +471,8 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 			RestoreTS: end,
 			Storage:   loc,
 
+			MigrationsBuilder:         logclient.NewMigrationBuilder(0, start, end),
+			Migrations:                emptyMigrations(),
 			MetadataDownloadBatchSize: 32,
 		})
 		req.NoError(err)
@@ -487,15 +491,8 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 				),
 			).Item
 		} else {
-			var counter *int
-			if c.DMLFileCount != nil {
-				counter = new(int)
-			}
-			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx, counter)
+			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx)
 			req.NoError(err)
-			if counter != nil {
-				req.Equal(*c.DMLFileCount, *counter)
-			}
 			r = data
 		}
 		dataFileInfoMatches(t, r, c.Requires...)
@@ -528,6 +525,8 @@ func TestFilterDataFiles(t *testing.T) {
 		RestoreTS: 10,
 		Storage:   loc,
 
+		MigrationsBuilder:         logclient.NewMigrationBuilder(0, 0, 10),
+		Migrations:                emptyMigrations(),
 		MetadataDownloadBatchSize: 32,
 	})
 	req.NoError(err)
@@ -536,7 +535,9 @@ func TestFilterDataFiles(t *testing.T) {
 		m2(wr(1, 1, 1), wr(2, 2, 2), wr(3, 3, 3), wr(4, 4, 4), wr(5, 5, 5)),
 		m2(wr(1, 1, 1), wr(2, 2, 2)),
 	}
-	metaIter := iter.FromSlice(metas)
+	metaIter := iter.Map(iter.FromSlice(metas), func(meta logclient.Meta) *logclient.MetaName {
+		return logclient.NewMetaName(meta, "")
+	})
 	files := iter.CollectAll(ctx, fm.FilterDataFiles(metaIter)).Item
 	check := func(file *logclient.LogDataFileInfo, metaKey string, goff, foff int) {
 		req.Equal(file.MetaDataGroupName, metaKey)

@@ -17,11 +17,9 @@ package checkpoint
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -39,20 +37,11 @@ type LogRestoreValueType struct {
 	Foff int
 }
 
-func (l LogRestoreValueType) IdentKey() []byte {
-	return []byte(fmt.Sprint(l.Goff, '.', l.Foff, '.', l.TableID))
-}
-
 type LogRestoreValueMarshaled struct {
 	// group index in the metadata
 	Goff int `json:"goff"`
 	// downstream table id -> file indexes in the group
 	Foffs map[int64][]int `json:"foffs"`
-}
-
-func (l LogRestoreValueMarshaled) IdentKey() []byte {
-	log.Fatal("unimplement!")
-	return nil
 }
 
 // valueMarshalerForLogRestore convert the checkpoint data‘s format to an smaller space-used format
@@ -299,7 +288,7 @@ func TryToGetCheckpointTaskInfo(
 			return nil, errors.Trace(err)
 		}
 	}
-	hasSnapshotMetadata := ExistsSnapshotRestoreCheckpoint(ctx, dom)
+	hasSnapshotMetadata := ExistsSstRestoreCheckpoint(ctx, dom, SnapshotRestoreCheckpointDatabaseName)
 
 	return &CheckpointTaskInfoForLogRestore{
 		Metadata:            metadata,

@@ -19,6 +19,7 @@ import (
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/task"
 	utiltest "github.com/pingcap/tidb/br/pkg/utiltest"
@@ -58,7 +59,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		},
 	}
 
-	pdClient := utiltest.NewFakePDClient(mockStores, false, nil)
+	pdClient := split.NewFakePDClient(mockStores, false, nil)
 
 	tables := make([]*metautil.Table, 4)
 	for i := 0; i < len(tables); i++ {
