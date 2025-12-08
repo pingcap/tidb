@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -96,14 +97,8 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-<<<<<<< HEAD
-		if _, e.kvRanges, _, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is); err != nil {
-			return nil
-		}
-=======
-		_, e.kvRanges, _, err = physicalop.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is)
+		_, e.kvRanges, _, err = core.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is)
 		return err
->>>>>>> c7212e00d50 (executor: fix goroutine leak when reading cache table with tiflash storage is designated (#64004))
 	}
 	planIDs := collectPlanIDs(e.originalPlan, nil)
 	if e.mppExec, err = mpp.NewExecutorWithRetry(ctx, e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.is); err != nil {

@@ -8,11 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 50,
-=======
-    shard_count = 49,
->>>>>>> c7212e00d50 (executor: fix goroutine leak when reading cache table with tiflash storage is designated (#64004))
     deps = [
         "//pkg/config",
         "//pkg/ddl",
