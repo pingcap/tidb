@@ -22,7 +22,7 @@
           "├─IndexLookUp 10000.00 root  ",
           "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -34,10 +34,10 @@
         "SQL": "select /*+ use_index(t partition(p_non_exist)) */ * from t partition(p1,p2)",
         "Plan": [
           "PartitionUnion 20000.00 root  ",
-          "├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -55,7 +55,7 @@
           "├─IndexLookUp 10000.00 root  ",
           "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -65,13 +65,13 @@
         "SQL": "select /*+ ignore_index(t partition(p0, p1) b, c) */ * from t",
         "Plan": [
           "PartitionUnion 30000.00 root  ",
-          "├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -82,23 +82,23 @@
         "Plan": [
           "HashJoin 37500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─PartitionUnion(Build) 30000.00 root  ",
-          "│ ├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│ ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│ │   └─TableFullScan 10000.00 mpp[tiflash] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "│ ├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│ ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│ │   └─TableFullScan 10000.00 mpp[tiflash] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "│ └─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│ └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│   └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│     └─TableFullScan 10000.00 mpp[tiflash] table:t2, partition:p2 keep order:false, stats:pseudo",
           "└─PartitionUnion(Probe) 30000.00 root  ",
-          "  ├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
-          "  └─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -114,10 +114,10 @@
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[1,1], keep order:false, stats:pseudo",
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 19.99 root  MppVersion: 2, data:ExchangeSender",
+          "├─TableReader 19.99 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 19.99 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 19.99 mpp[tiflash] table:t, partition:p1 pushed down filter:or(eq(test.t.b, 1), eq(test.t.c, \"8\")), keep order:false, stats:pseudo",
-          "└─TableReader 19.99 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 19.99 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 19.99 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 19.99 mpp[tiflash] table:t, partition:p2 pushed down filter:or(eq(test.t.b, 1), eq(test.t.c, \"8\")), keep order:false, stats:pseudo"
         ],
@@ -135,7 +135,7 @@
           "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p1 range:[1,1], keep order:false, stats:pseudo",
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 11.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 11.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 11.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 11.00 mpp[tiflash] table:t, partition:p2 pushed down filter:or(eq(test.t.a, 1), eq(test.t.b, 2)), keep order:false, stats:pseudo"
         ],
@@ -148,7 +148,7 @@
           "├─IndexLookUp 10000.00 root  ",
           "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p0, index:b(b) keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo"
         ],
@@ -233,7 +233,7 @@
           "HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "│   └─TableFullScan 10000.00 cop[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "│   └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  data:Selection",
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
@@ -313,7 +313,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -335,7 +335,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -357,7 +357,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -377,7 +377,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -397,7 +397,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -438,7 +438,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -477,7 +477,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -516,7 +516,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -555,7 +555,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t3.b, right key:test.t2.b",
@@ -603,7 +603,7 @@
           "│   ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│   │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "│   └─HashJoin(Probe) 19492.21 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "│     ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│     ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│     │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│     │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "│     └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
@@ -617,7 +617,7 @@
           "│         └─TableReader(Probe) 9990.00 root  data:Selection",
           "│           └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "│             └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -633,7 +633,7 @@
           "│     ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│     │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "│     └─HashJoin(Probe) 19492.21 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "│       ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│       ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│       │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│       │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "│       └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
@@ -647,7 +647,7 @@
           "│           └─TableReader(Probe) 9990.00 root  data:Selection",
           "│             └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "│               └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -737,7 +737,7 @@
           "HashJoin 12500.00 root  inner join, equal:[eq(test.t.a, test.t1.a)]",
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -752,10 +752,10 @@
           "│   └─HashAgg 7992.00 cop[tikv]  group by:test.t1.b, ",
           "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
           "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -778,7 +778,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v7, v7), merge(@qb_v7) */ * from v7;",
         "Plan": [
-          "TableReader 3544.89 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 3544.89 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 3544.89 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 3544.89 mpp[tiflash]  Column#14, Column#15",
           "    └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, funcs:firstrow(Column#14)->Column#14, funcs:firstrow(Column#15)->Column#15",
@@ -787,39 +787,43 @@
           "          └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, ",
           "            └─Union 4431.11 mpp[tiflash]  ",
           "              ├─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
-          "              │ └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "              │ └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "              └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v8, v8), merge(@qb_v8) */ * from v8;",
         "Plan": [
-          "HashAgg 16000.00 root  group by:Column#41, funcs:firstrow(Column#41)->Column#41",
+          "HashAgg 16000.00 root  group by:Column#21, funcs:firstrow(Column#21)->Column#21",
           "└─Union 1000000010000.00 root  ",
           "  ├─HashJoin 1000000000000.00 root  CARTESIAN inner join",
-          "  │ ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
-          "  │ │ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
-          "  │ └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
-          "  │   ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
-          "  │   │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
-          "  │   └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │ └─CTEFullScan(Probe) 100000000.00 root CTE:cte2 data:CTE_1",
           "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "CTE_1 100000000.00 root  Non-Recursive CTE",
+          "└─HashJoin(Seed Part) 100000000.00 root  CARTESIAN inner join",
+          "  ├─CTEFullScan(Build) 10000.00 root CTE:cte4 data:CTE_3",
+          "  └─CTEFullScan(Probe) 10000.00 root CTE:cte3 data:CTE_2",
+          "CTE_3 10000.00 root  Non-Recursive CTE",
+          "└─IndexReader(Seed Part) 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
+          "CTE_2 10000.00 root  Non-Recursive CTE",
+          "└─IndexReader(Seed Part) 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#6)->Column#4",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#6",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#9",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:sum(Column#5)->Column#4",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:sum(test.t.a)->Column#5",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -827,30 +831,22 @@
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v10, v10), LIMIT_TO_COP(@qb_v10) */ * from v10;",
         "Plan": [
           "TopN 1.00 root  test.t.b, offset:0, count:1",
-<<<<<<< HEAD
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TopN 1.00 mpp[tiflash]  test.t.b, offset:0, count:1",
-          "      └─Selection 3333.33 mpp[tiflash]  gt(test.t.a, 10)",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
-=======
           "└─TableReader 1.00 root  data:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.b, offset:0, count:1",
           "    └─Selection 3333.33 cop[tikv]  gt(test.t.a, 10)",
           "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
->>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_1PHASE_AGG(@qb) */ * from v11;",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#4",
           "    └─Projection 8000.00 mpp[tiflash]  Column#4, test.t.a",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#7, funcs:sum(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.a",
-          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#5, test.t.a->Column#6, test.t.a->Column#7",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#6, funcs:sum(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.a",
+          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#5, test.t.a->Column#6",
           "          └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -860,7 +856,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_2PHASE_AGG(@qb) */ * from v11;",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#4",
           "    └─Projection 8000.00 mpp[tiflash]  Column#4, test.t.a",
@@ -876,7 +872,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), shuffle_join(t1@qb, t@qb) */ * from v12;",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12500.00 mpp[tiflash]  test.t.a, test.t.b",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
@@ -892,7 +888,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), broadcast_join(t1@qb, t@qb) */ * from v12;",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12500.00 mpp[tiflash]  test.t.a, test.t.b",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
@@ -947,10 +943,9 @@
         "Plan": [
           "Projection 15593.77 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "└─MergeJoin 15593.77 root  inner join, left key:test.t2.a, right key:test.t1.a",
-          "  ├─Projection(Build) 10000.00 root  test.t1.a, test.t1.b",
-          "  │ └─IndexLookUp 10000.00 root  ",
-          "  │   ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "  │   └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  ├─Sort(Build) 10000.00 root  test.t1.a",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─Sort(Probe) 12475.01 root  test.t2.a",
           "    └─HashJoin 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
           "      ├─TableReader(Build) 9980.01 root  data:Selection",
@@ -970,15 +965,14 @@
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t2.b, right key:test.t3.b",
-          "    ├─Projection(Build) 9990.00 root  test.t3.a, test.t3.b",
-          "    │ └─IndexLookUp 9990.00 root  ",
-          "    │   ├─IndexFullScan(Build) 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:true, stats:pseudo",
-          "    │   └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "    └─Projection(Probe) 9980.01 root  test.t2.a, test.t2.b",
-          "      └─IndexLookUp 9980.01 root  ",
-          "        ├─IndexFullScan(Build) 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "        └─Selection(Probe) 9980.01 cop[tikv]  not(isnull(test.t2.a))",
-          "          └─TableRowIDScan 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "    ├─Sort(Build) 9990.00 root  test.t3.b",
+          "    │ └─TableReader 9990.00 root  data:Selection",
+          "    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─Sort(Probe) 9980.01 root  test.t2.b",
+          "      └─TableReader 9980.01 root  data:Selection",
+          "        └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1090,88 +1084,88 @@
       {
         "SQL": "explain format = 'brief' select /*+ leading(t6), shuffle_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t4.a, collate: binary]",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
           "      └─ExchangeReceiver(Probe) 12475.01 mpp[tiflash]  ",
           "        └─ExchangeSender 12475.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t5.a, collate: binary]",
           "          └─HashJoin 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t6.b, test.t5.b)]",
           "            ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "            │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "            │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 pushed down filter:empty, keep order:false, stats:pseudo",
+          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 keep order:false, stats:pseudo",
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t6.b))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t6 pushed down filter:empty, keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t6 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select /*+ leading(t5), shuffle_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t6.b))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 keep order:false, stats:pseudo",
           "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
           "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t5.a, collate: binary]",
           "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 keep order:false, stats:pseudo",
           "        └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "          └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t4.a, collate: binary]",
           "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 pushed down filter:empty, keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select /*+ leading(t6), broadcast_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
           "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t6.b, test.t5.b)]",
           "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 keep order:false, stats:pseudo",
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t6.b))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t6 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t6 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select /*+ leading(t5), broadcast_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t6.b))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 keep order:false, stats:pseudo",
           "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
           "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 keep order:false, stats:pseudo",
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t4 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1182,7 +1176,7 @@
           "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  └─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.b, test.t3.b)]",
           "    ├─TableReader(Build) 9990.00 root  data:Selection",
           "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
           "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
@@ -1199,7 +1193,7 @@
           "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  └─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.b, test.t3.b)]",
           "    ├─TableReader(Build) 9990.00 root  data:Selection",
           "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
           "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
@@ -1213,11 +1207,10 @@
         "SQL": "explain format = 'brief' select /*+ leading(t3), merge_join(t1) */ * from t1 right join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
         "Plan": [
           "Projection 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─MergeJoin 15609.38 root  right outer join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─Projection(Build) 10000.00 root  test.t1.a, test.t1.b",
-          "  │ └─IndexLookUp 10000.00 root  ",
-          "  │   ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "  │   └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─MergeJoin 15609.38 root  right outer join, left side:Sort, left key:test.t1.a, right key:test.t2.a",
+          "  ├─Sort(Build) 10000.00 root  test.t1.a",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─Sort(Probe) 12487.50 root  test.t2.a",
           "    └─HashJoin 12487.50 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
           "      ├─TableReader(Build) 9990.00 root  data:Selection",
@@ -1232,18 +1225,18 @@
       {
         "SQL": "explain format = 'brief' select /*+ leading(t2), merge_join(t2) */ * from t1 right join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
         "Plan": [
-          "HashJoin 15609.38 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "HashJoin 15609.38 root  right outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─MergeJoin(Probe) 12487.50 root  inner join, left key:test.t2.b, right key:test.t3.b",
-          "  ├─Projection(Build) 9990.00 root  test.t3.a, test.t3.b",
-          "  │ └─IndexLookUp 9990.00 root  ",
-          "  │   ├─IndexFullScan(Build) 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:true, stats:pseudo",
-          "  │   └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─Projection(Probe) 9990.00 root  test.t2.a, test.t2.b",
-          "    └─IndexLookUp 9990.00 root  ",
-          "      ├─IndexFullScan(Build) 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "  ├─Sort(Build) 9990.00 root  test.t3.b",
+          "  │ └─TableReader 9990.00 root  data:Selection",
+          "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─Sort(Probe) 9990.00 root  test.t2.b",
+          "    └─TableReader 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1385,104 +1378,102 @@
         "Warn": null
       },
       {
-        "SQL": "explain with tt as (select /*+ leading(t3), merge_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+        "SQL": "explain format = 'brief' with tt as (select /*+ leading(t3), merge_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
         "Plan": [
-          "HashJoin_113 24316.55 root  inner join, equal:[eq(test.t1.a, test.t1.a)]",
-          "├─Selection_117(Build) 12475.01 root  not(isnull(test.t1.a))",
-          "│ └─CTEFullScan_118 15593.77 root CTE:tt AS t2 data:CTE_0",
-          "└─Selection_115(Probe) 12475.01 root  not(isnull(test.t1.a))",
-          "  └─CTEFullScan_116 15593.77 root CTE:tt AS t1 data:CTE_0",
+          "HashJoin 24316.55 root  inner join, equal:[eq(test.t1.a, test.t1.a)]",
+          "├─Selection(Build) 12475.01 root  not(isnull(test.t1.a))",
+          "│ └─CTEFullScan 15593.77 root CTE:tt AS t2 data:CTE_0",
+          "└─Selection(Probe) 12475.01 root  not(isnull(test.t1.a))",
+          "  └─CTEFullScan 15593.77 root CTE:tt AS t1 data:CTE_0",
           "CTE_0 15593.77 root  Non-Recursive CTE",
-          "└─MergeJoin_22(Seed Part) 15593.77 root  inner join, left key:test.t2.a, right key:test.t1.a",
-          "  ├─IndexReader_110(Build) 10000.00 root  index:IndexFullScan_109",
-          "  │ └─IndexFullScan_109 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "  └─Sort_108(Probe) 12475.01 root  test.t2.a",
-          "    └─HashJoin_81 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "      ├─IndexReader_91(Build) 9990.00 root  index:IndexFullScan_90",
-          "      │ └─IndexFullScan_90 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
-          "      └─TableReader_96(Probe) 9980.01 root  data:Selection_95",
-          "        └─Selection_95 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "          └─TableFullScan_94 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─MergeJoin(Seed Part) 15593.77 root  inner join, left key:test.t2.a, right key:test.t1.a",
+          "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
+          "  └─Sort(Probe) 12475.01 root  test.t2.a",
+          "    └─HashJoin 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
+          "      ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9980.01 root  data:Selection",
+          "        └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain with tt as (select /*+ leading(t2), inl_join(t2) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+        "SQL": "explain format = 'brief' with tt as (select /*+ leading(t2), inl_join(t2) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
         "Plan": [
-          "HashJoin_112 24316.55 root  inner join, equal:[eq(test.t1.a, test.t1.a)]",
-          "├─Selection_116(Build) 12475.01 root  not(isnull(test.t1.a))",
-          "│ └─CTEFullScan_117 15593.77 root CTE:tt AS t2 data:CTE_0",
-          "└─Selection_114(Probe) 12475.01 root  not(isnull(test.t1.a))",
-          "  └─CTEFullScan_115 15593.77 root CTE:tt AS t1 data:CTE_0",
+          "HashJoin 24316.55 root  inner join, equal:[eq(test.t1.a, test.t1.a)]",
+          "├─Selection(Build) 12475.01 root  not(isnull(test.t1.a))",
+          "│ └─CTEFullScan 15593.77 root CTE:tt AS t2 data:CTE_0",
+          "└─Selection(Probe) 12475.01 root  not(isnull(test.t1.a))",
+          "  └─CTEFullScan 15593.77 root CTE:tt AS t1 data:CTE_0",
           "CTE_0 15593.77 root  Non-Recursive CTE",
-          "└─HashJoin_32(Seed Part) 15593.77 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─IndexReader_109(Build) 10000.00 root  index:IndexFullScan_108",
-          "  │ └─IndexFullScan_108 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
-          "  └─IndexJoin_95(Probe) 12475.01 root  inner join, inner:IndexLookUp_94, outer key:test.t3.b, inner key:test.t2.b, equal cond:eq(test.t3.b, test.t2.b)",
-          "    ├─IndexReader_74(Build) 9990.00 root  index:IndexFullScan_73",
-          "    │ └─IndexFullScan_73 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
-          "    └─IndexLookUp_94(Probe) 12475.01 root  ",
-          "      ├─Selection_92(Build) 12487.50 cop[tikv]  not(isnull(test.t2.b))",
-          "      │ └─IndexRangeScan_90 12500.00 cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t3.b)], keep order:false, stats:pseudo",
-          "      └─Selection_93(Probe) 12475.01 cop[tikv]  not(isnull(test.t2.a))",
-          "        └─TableRowIDScan_91 12487.50 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─HashJoin(Seed Part) 15593.77 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
+          "  └─IndexJoin(Probe) 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t3.b, inner key:test.t2.b, equal cond:eq(test.t3.b, test.t2.b)",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
+          "    └─IndexLookUp(Probe) 12475.01 root  ",
+          "      ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t2.b))",
+          "      │ └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t3.b)], keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 12475.01 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableRowIDScan 12487.50 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain with tt as (select /*+ merge(), leading(t3), inl_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+        "SQL": "explain format = 'brief' with tt as (select /*+ merge(), leading(t3), inl_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
         "Plan": [
-          "HashJoin_48 30395.69 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "├─IndexReader_169(Build) 9990.00 root  index:IndexFullScan_168",
-          "│ └─IndexFullScan_168 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
-          "└─HashJoin_68(Probe) 24316.55 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  ├─TableReader_159(Build) 9980.01 root  data:Selection_158",
-          "  │ └─Selection_158 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "  │   └─TableFullScan_157 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─IndexJoin_150(Probe) 19492.21 root  inner join, inner:IndexReader_149, outer key:test.t1.a, inner key:test.t1.a, equal cond:eq(test.t1.a, test.t1.a)",
-          "    ├─IndexJoin_84(Build) 15593.77 root  inner join, inner:IndexReader_83, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
-          "    │ ├─HashJoin_119(Build) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "    │ │ ├─IndexReader_140(Build) 9990.00 root  index:IndexFullScan_139",
-          "    │ │ │ └─IndexFullScan_139 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
-          "    │ │ └─TableReader_130(Probe) 9980.01 root  data:Selection_129",
-          "    │ │   └─Selection_129 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "    │ │     └─TableFullScan_128 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    │ └─IndexReader_83(Probe) 15593.77 root  index:IndexRangeScan_82",
-          "    │   └─IndexRangeScan_82 15593.77 cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo",
-          "    └─IndexReader_149(Probe) 19492.21 root  index:IndexRangeScan_148",
-          "      └─IndexRangeScan_148 19492.21 cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t1.a, test.t1.a)], keep order:false, stats:pseudo"
+          "HashJoin 30395.69 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 24316.55 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─IndexJoin(Probe) 19492.21 root  inner join, inner:IndexReader, outer key:test.t1.a, inner key:test.t1.a, equal cond:eq(test.t1.a, test.t1.a)",
+          "    ├─IndexJoin(Build) 15593.77 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "    │ ├─HashJoin(Build) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "    │ │ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ │ │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
+          "    │ │ └─TableReader(Probe) 9980.01 root  data:Selection",
+          "    │ │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    │ │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    │ └─IndexReader(Probe) 15593.77 root  index:IndexRangeScan",
+          "    │   └─IndexRangeScan 15593.77 cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo",
+          "    └─IndexReader(Probe) 19492.21 root  index:IndexRangeScan",
+          "      └─IndexRangeScan 19492.21 cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t1.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {
-        "SQL": "explain with tt as (select /*+ leading(t2), merge_join(t2), merge() */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+        "SQL": "explain format = 'brief' with tt as (select /*+ leading(t2), merge_join(t2), merge() */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
         "Plan": [
-          "HashJoin_48 30395.69 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
-          "├─IndexReader_145(Build) 9990.00 root  index:IndexFullScan_144",
-          "│ └─IndexFullScan_144 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
-          "└─MergeJoin_142(Probe) 24316.55 root  inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─Projection_92(Build) 9980.01 root  test.t2.a, test.t2.b",
-          "  │ └─IndexLookUp_91 9980.01 root  ",
-          "  │   ├─IndexFullScan_88(Build) 9990.00 cop[tikv] table:t2, index:idx_a(a) keep order:true, stats:pseudo",
-          "  │   └─Selection_90(Probe) 9980.01 cop[tikv]  not(isnull(test.t2.b))",
-          "  │     └─TableRowIDScan_89 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─MergeJoin_53(Probe) 19492.21 root  inner join, left key:test.t1.a, right key:test.t1.a",
-          "    ├─IndexReader_87(Build) 10000.00 root  index:IndexFullScan_86",
-          "    │ └─IndexFullScan_86 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "    └─MergeJoin_54(Probe) 15593.77 root  inner join, left key:test.t2.a, right key:test.t1.a",
-          "      ├─IndexReader_85(Build) 10000.00 root  index:IndexFullScan_84",
-          "      │ └─IndexFullScan_84 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "      └─Sort_75(Probe) 12475.01 root  test.t2.a",
-          "        └─MergeJoin_66 12475.01 root  inner join, left key:test.t2.b, right key:test.t3.b",
-          "          ├─IndexReader_74(Build) 9990.00 root  index:IndexFullScan_73",
-          "          │ └─IndexFullScan_73 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:true, stats:pseudo",
-          "          └─Projection_72(Probe) 9980.01 root  test.t2.a, test.t2.b",
-          "            └─IndexLookUp_71 9980.01 root  ",
-          "              ├─IndexFullScan_68(Build) 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "              └─Selection_70(Probe) 9980.01 cop[tikv]  not(isnull(test.t2.a))",
-          "                └─TableRowIDScan_69 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "HashJoin 30395.69 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
+          "└─MergeJoin(Probe) 24316.55 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─Sort(Build) 9980.01 root  test.t2.a",
+          "  │ └─TableReader 9980.01 root  data:Selection",
+          "  │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─MergeJoin(Probe) 19492.21 root  inner join, left key:test.t1.a, right key:test.t1.a",
+          "    ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
+          "    └─MergeJoin(Probe) 15593.77 root  inner join, left key:test.t2.a, right key:test.t1.a",
+          "      ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
+          "      └─Sort(Probe) 12475.01 root  test.t2.a",
+          "        └─MergeJoin 12475.01 root  inner join, left key:test.t2.b, right key:test.t3.b",
+          "          ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "          │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:idx_b(b) keep order:true, stats:pseudo",
+          "          └─Sort(Probe) 9980.01 root  test.t2.b",
+          "            └─TableReader 9980.01 root  data:Selection",
+          "              └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "                └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
@@ -1491,20 +1482,18 @@
       {
         "SQL": "explain format = 'brief' SELECT /*+ leading(t2@sel_2), merge_join(t) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.b = t1.b);",
         "Plan": [
-          "HashJoin 9990.00 root  semi join, equal:[eq(test.t1.b, test.t2.b)]",
+          "HashJoin 9990.00 root  semi join, left side:Projection, equal:[eq(test.t1.b, test.t2.b)]",
           "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
           "└─Projection(Probe) 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
           "  └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t.a",
-          "    ├─Projection(Build) 10000.00 root  test.t.a, test.t.b",
-          "    │ └─IndexLookUp 10000.00 root  ",
-          "    │   ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:true, stats:pseudo",
-          "    │   └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "    └─Projection(Probe) 9990.00 root  test.t1.a, test.t1.b",
-          "      └─IndexLookUp 9990.00 root  ",
-          "        ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "        └─Selection(Probe) 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "          └─TableRowIDScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    ├─Sort(Build) 10000.00 root  test.t.a",
+          "    │ └─TableReader 10000.00 root  data:TableFullScan",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─Sort(Probe) 9990.00 root  test.t1.a",
+          "      └─TableReader 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]leading hint is inapplicable, check the join type or the join algorithm hint"
@@ -1513,7 +1502,7 @@
       {
         "SQL": "explain format = 'brief' SELECT /*+ leading(t1), inl_join(t1) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.b = t1.b);",
         "Plan": [
-          "HashJoin 9990.00 root  semi join, equal:[eq(test.t1.b, test.t2.b)]",
+          "HashJoin 9990.00 root  semi join, left side:Projection, equal:[eq(test.t1.b, test.t2.b)]",
           "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
           "└─Projection(Probe) 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
@@ -1532,10 +1521,9 @@
         "Plan": [
           "Projection 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
           "└─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t.a",
-          "  ├─Projection(Build) 10000.00 root  test.t.a, test.t.b",
-          "  │ └─IndexLookUp 10000.00 root  ",
-          "  │   ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:true, stats:pseudo",
-          "  │   └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  ├─Sort(Build) 10000.00 root  test.t.a",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
           "  └─Sort(Probe) 9990.00 root  test.t1.a",
           "    └─HashJoin 9990.00 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
           "      ├─StreamAgg(Build) 7992.00 root  group by:test.t2.b, funcs:firstrow(test.t2.b)->test.t2.b",
@@ -1572,21 +1560,19 @@
         "Plan": [
           "Projection 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
           "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)], other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
-          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#24)->Column#10, funcs:firstrow(test.t2.b)->test.t2.b",
+          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#36)->Column#10, funcs:firstrow(test.t2.b)->test.t2.b",
           "  │ └─TableReader 7992.00 root  data:HashAgg",
-          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#24",
+          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#36",
           "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "  │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─MergeJoin(Probe) 12487.50 root  inner join, left key:test.t1.a, right key:test.t.a",
-          "    ├─Projection(Build) 10000.00 root  test.t.a, test.t.b",
-          "    │ └─IndexLookUp 10000.00 root  ",
-          "    │   ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:true, stats:pseudo",
-          "    │   └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "    └─Projection(Probe) 9990.00 root  test.t1.a, test.t1.b",
-          "      └─IndexLookUp 9990.00 root  ",
-          "        ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "        └─Selection(Probe) 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "          └─TableRowIDScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    ├─Sort(Build) 10000.00 root  test.t.a",
+          "    │ └─TableReader 10000.00 root  data:TableFullScan",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─Sort(Probe) 9990.00 root  test.t1.a",
+          "      └─TableReader 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2) */. Maybe you can use the table alias name"
@@ -1597,9 +1583,9 @@
         "Plan": [
           "Projection 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
           "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)], other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
-          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#28)->Column#10, funcs:firstrow(test.t2.b)->test.t2.b",
+          "  ├─HashAgg(Build) 7992.00 root  group by:test.t2.b, funcs:sum(Column#33)->Column#10, funcs:firstrow(test.t2.b)->test.t2.b",
           "  │ └─TableReader 7992.00 root  data:HashAgg",
-          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#28",
+          "  │   └─HashAgg 7992.00 cop[tikv]  group by:test.t2.b, funcs:sum(test.t2.a)->Column#33",
           "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "  │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─IndexJoin(Probe) 12487.50 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)",
@@ -1618,14 +1604,12 @@
           "Projection 12500.00 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
           "└─Apply 12500.00 root  CARTESIAN inner join, other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
           "  ├─MergeJoin(Build) 12500.00 root  inner join, left key:test.t.a, right key:test.t1.a",
-          "  │ ├─Projection(Build) 10000.00 root  test.t1.a, test.t1.b",
-          "  │ │ └─IndexLookUp 10000.00 root  ",
-          "  │ │   ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
-          "  │ │   └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  │ └─Projection(Probe) 10000.00 root  test.t.a, test.t.b",
-          "  │   └─IndexLookUp 10000.00 root  ",
-          "  │     ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:true, stats:pseudo",
-          "  │     └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  │ ├─Sort(Build) 10000.00 root  test.t1.a",
+          "  │ │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │ │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │ └─Sort(Probe) 10000.00 root  test.t.a",
+          "  │   └─TableReader 10000.00 root  data:TableFullScan",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 12500.00 root  ",
           "    └─StreamAgg 12500.00 root  funcs:sum(Column#25)->Column#10",
           "      └─Projection 125000.00 root  cast(test.t2.a, decimal(10,0) BINARY)->Column#25",
@@ -1703,10 +1687,10 @@
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t5.b)]",
-          "    ├─TableReader(Build) 9980.01 root  MppVersion: 2, data:ExchangeSender",
+          "    ├─TableReader(Build) 9980.01 root  MppVersion: 3, data:ExchangeSender",
           "    │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: PassThrough",
           "    │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) 9990.00 root  data:Selection",
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t6.b))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo"
@@ -1718,15 +1702,15 @@
         "Plan": [
           "Projection 15593.77 root  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t5.b, test.t6.b)]",
-          "  ├─TableReader(Build) 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t6.b))",
-          "  │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 pushed down filter:empty, keep order:false, stats:pseudo",
+          "  │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t5.a, test.t4.a)]",
-          "    ├─TableReader(Build) 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "    ├─TableReader(Build) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 pushed down filter:empty, keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) 9980.01 root  data:Selection",
           "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t5 keep order:false, stats:pseudo"
@@ -1736,42 +1720,42 @@
       {
         "SQL": "explain format = 'brief' select /*+ read_from_storage(tiflash[t4, t6]), leading(t6), hash_join_build(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
           "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t6.b, test.t5.b)]",
           "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 keep order:false, stats:pseudo",
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t6.b))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t6 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t6 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select /*+ read_from_storage(tiflash[t5]), leading(t5), hash_join_probe(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
           "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t6.b))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 keep order:false, stats:pseudo",
           "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
           "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
-          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 pushed down filter:empty, keep order:false, stats:pseudo",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
           "        └─Selection(Probe) 9980.01 mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t5 pushed down filter:empty, keep order:false, stats:pseudo"
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t5 keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -1822,7 +1806,7 @@
       {
         "SQL": "explain format = 'brief' select * from t",
         "Plan": [
-          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1831,7 +1815,7 @@
       {
         "SQL": "explain format = 'brief' select * from t use index();",
         "Plan": [
-          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1840,20 +1824,65 @@
       {
         "SQL": "explain format = 'brief' select /*+ use_index(t, idx)*/ * from t",
         "Plan": [
-          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "TiDB doesn't support index in the isolation read engines(value: 'tiflash')"
+          "TiDB doesn't support index 'idx' in the isolation read engines(value: 'tiflash')"
         ]
       },
       {
         "SQL": "explain format = 'brief' select /*+ use_index(t)*/ * from t",
         "Plan": [
-          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, PRIMARY)*/ * from t",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "TiDB doesn't support index 'PRIMARY' in the isolation read engines(value: 'tiflash')"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, idx_vec)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
+        "Plan": [
+          "TopN 1.00 root  Column#5, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1",
+          "      └─TableFullScan 1.00 mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#5"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, idx_v)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
+        "Plan": [
+          "TopN 1.00 root  Column#5, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1",
+          "      └─TableFullScan 1.00 mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#5"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ignore_index(t, idx_vec)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
+        "Plan": [
+          "TopN 1.00 root  Column#4, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#4, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t.a, vec_cosine_distance(test.t.vec, [1,2,3])->Column#4",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -1895,6 +1924,22 @@
         "Warn": [
           "Warning 1815 leading hint is inapplicable, check if the leading hint table has join conditions with other tables"
         ]
+      }
+    ]
+  },
+  {
+    "Name": "TestQBHintHandlerDuplicateObjects",
+    "Cases": [
+      {
+        "SQL": "EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;",
+        "Plan": [
+          "IndexJoin_18 12500.00 root  inner join, inner:IndexReader_34, outer key:test.t_employees.store_id, inner key:test.t_employees.department_id, equal cond:eq(test.t_employees.store_id, test.t_employees.department_id)",
+          "├─TableReader_32(Build) 10000.00 root  data:TableFullScan_31",
+          "│ └─TableFullScan_31 10000.00 cop[tikv] table:em keep order:false, stats:pseudo",
+          "└─IndexReader_34(Probe) 12500.00 root  index:IndexRangeScan_33",
+          "  └─IndexRangeScan_33 12500.00 cop[tikv] table:e, index:idx(department_id) range: decided by [eq(test.t_employees.department_id, test.t_employees.store_id)], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   }

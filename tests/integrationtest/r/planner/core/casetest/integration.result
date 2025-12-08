@@ -1147,6 +1147,7 @@ TableReader_7	3.00	130.42	root		data:Selection_6
   └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
+<<<<<<< HEAD
 Limit_11	0.00	98.74	root		offset:0, count:1
 └─TableReader_24	0.00	98.74	root		data:Limit_23
   └─Limit_23	0.00	1386.04	cop[tikv]		offset:0, count:1
@@ -1159,6 +1160,20 @@ Limit_8	0.00	98.74	root		offset:0, count:1
   └─Limit_12	0.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_11	0.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false
+=======
+Limit_13	1.00	105.07	root		offset:0, count:1
+└─TableReader_33	1.00	105.07	root		data:Limit_32
+  └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
+explain format = 'verbose' select * from t where b = 6 limit 1;
+id	estRows	estCost	task	access object	operator info
+Limit_9	1.00	105.07	root		offset:0, count:1
+└─TableReader_16	1.00	105.07	root		data:Limit_15
+  └─Limit_15	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_14	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_13	5.00	1136.54	cop[tikv]	table:t	keep order:false
+>>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
 set tidb_opt_prefer_range_scan = 1;
 explain format = 'verbose' select * from t where b > 5;
 id	estRows	estCost	task	access object	operator info
@@ -1169,6 +1184,7 @@ Level	Code	Message
 Note	1105	[idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
+<<<<<<< HEAD
 TopN_9	0.00	1956.63	root		planner__core__casetest__integration.t.a, offset:0, count:1
 └─IndexLookUp_16	0.00	1951.83	root		
   ├─TopN_15(Build)	0.00	206.70	cop[tikv]		planner__core__casetest__integration.t.a, offset:0, count:1
@@ -1184,6 +1200,20 @@ IndexLookUp_13	0.00	1170.97	root		limit embedded(offset:0, count:1)
 └─TableRowIDScan_11(Probe)	0.00	186.61	cop[tikv]	table:t	keep order:false
 Level	Code	Message
 Note	1105	[idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copMultiReadTask}
+=======
+Limit_13	1.00	105.07	root		offset:0, count:1
+└─TableReader_33	1.00	105.07	root		data:Limit_32
+  └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
+explain format = 'verbose' select * from t where b = 6 limit 1;
+id	estRows	estCost	task	access object	operator info
+Limit_9	1.00	105.07	root		offset:0, count:1
+└─TableReader_16	1.00	105.07	root		data:Limit_15
+  └─Limit_15	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_14	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_13	5.00	1136.54	cop[tikv]	table:t	keep order:false
+>>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
 set @@tidb_enable_chunk_rpc = default;
 set tidb_opt_prefer_range_scan = default;
 drop table if exists t;
