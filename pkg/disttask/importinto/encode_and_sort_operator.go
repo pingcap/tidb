@@ -127,7 +127,7 @@ func newChunkWorker(
 				SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
-			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
+			writerID := path.Join("index", external.IndexID2KVGroup(indexID), workerUUID)
 			writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 			return writer, nil
 		}
@@ -143,7 +143,7 @@ func newChunkWorker(
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
-		writerID := path.Join("data", workerUUID)
+		writerID := path.Join(external.DataKVGroup, workerUUID)
 		writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 		w.dataWriter = external.NewEngineWriter(writer)
 

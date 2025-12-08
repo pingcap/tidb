@@ -175,6 +175,42 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 		require.Contains(t, meter.recorders, int64(1))
 		require.True(t, ctrl.Satisfied())
 	})
+
+	t.Run("if we register again after unregister, data should be start from zero", func(t *testing.T) {
+		meter := newMeterWithWriter(logger, mockWriter)
+		setupMeterForTest(t, meter)
+		r := RegisterRecorder(&proto.TaskBase{ID: 1})
+		r.clusterTraffic.Read.Add(123456789)
+		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
+			md := data.(*common.MeteringData)
+			require.EqualValues(t, 123456789, md.Data[0][clusterReadBytesField])
+			require.NotContains(t, md.Data[0], putRequestsField)
+			UnregisterRecorder(1)
+			require.True(t, meter.recorders[1].unregistered)
+			return nil
+		})
+		meter.flush(ctx, 1000000)
+		require.NotContains(t, meter.lastFlushedData, int64(1))
+		require.NotContains(t, meter.recorders, int64(1))
+
+		// register again, data should start from zero
+		r = RegisterRecorder(&proto.TaskBase{ID: 1})
+		r.clusterTraffic.Read.Add(123)
+		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
+			md := data.(*common.MeteringData)
+			require.EqualValues(t, 123, md.Data[0][clusterReadBytesField])
+			require.False(t, meter.recorders[1].unregistered)
+			return nil
+		})
+		meter.flush(ctx, 1000000)
+		require.Contains(t, meter.lastFlushedData, int64(1))
+		require.Contains(t, meter.recorders, int64(1))
+
+		UnregisterRecorder(1)
+		meter.flush(ctx, 1000000)
+		require.NotContains(t, meter.lastFlushedData, int64(1))
+		require.NotContains(t, meter.recorders, int64(1))
+	})
 }
 
 func checkMeterData(t *testing.T, expected, got map[string]any) {

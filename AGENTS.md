@@ -111,4 +111,4 @@ The PR title **must** strictly adhere to the following format. It uses the packa
 
 ### PR description
 
-The PR description **must** strictly follow the template located at @.github/pull_request_template.md and **must** keep HTML comment elements in the pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.
+The PR description **must** strictly follow the template located at @.github/pull_request_template.md and **must** keep the HTML comment elements like `Tests <!-- At least one of them must be included. -->` unchanged in the pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.

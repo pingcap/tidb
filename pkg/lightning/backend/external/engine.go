@@ -205,7 +205,11 @@ func NewExternalEngine(
 ) *Engine {
 	memLimit := getEngineMemoryLimit(memCapacity)
 	logutil.Logger(ctx).Info("create external engine",
-		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
+		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))),
+		zap.Int("dataFileCount", len(dataFiles)),
+		zap.Int("jobKeysCount", len(jobKeys)),
+		zap.Int("splitKeysCount", len(splitKeys)),
+	)
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:    storage,

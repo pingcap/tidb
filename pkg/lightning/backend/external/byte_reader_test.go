@@ -261,7 +261,7 @@ func TestSwitchMode(t *testing.T) {
 				modeUseCon = true
 			}
 		}
-		key, val, err := kvReader.nextKV()
+		key, val, err := kvReader.NextKV()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}

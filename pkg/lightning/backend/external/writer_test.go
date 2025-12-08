@@ -149,12 +149,12 @@ func TestWriter(t *testing.T) {
 	kvReader, err := NewKVReader(ctx, kvAndStat[0], memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
@@ -570,7 +570,7 @@ func readKVFile(t *testing.T, store storage.ExternalStorage, filename string) []
 	require.NoError(t, err)
 	kvs := make([]KVPair, 0)
 	for {
-		key, value, err := reader.nextKV()
+		key, value, err := reader.NextKV()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
