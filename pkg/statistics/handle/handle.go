@@ -21,14 +21,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-=======
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/syssession"
->>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -44,11 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-<<<<<<< HEAD
 	pkgutil "github.com/pingcap/tidb/pkg/util"
-=======
 	"github.com/pingcap/tidb/pkg/util/filter"
->>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -256,7 +248,7 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 
 		// In some test environments, the session pool may be nil.
 		// In such cases, we cannot determine if it's a system table, so we skip the check.
-		if se, ok := h.SPool().(*syssession.AdvancedSessionPool); ok && se == nil {
+		if se, ok := h.SPool().(*pkgutil.DestroyablePool); ok && se == nil {
 			skipSystemTableCheck = true
 		}
 		if skipSystemTableCheck {
@@ -301,18 +293,27 @@ func (h *Handle) isSystemTable(physicalTableID int64, tblInfo *model.TableInfo) 
 	}
 
 	isSystemTable := false
-	err := h.SPool().WithSession(func(session *syssession.Session) error {
-		return session.WithSessionContext(func(sctx sessionctx.Context) error {
-			is := sctx.GetLatestInfoSchema()
-			db, ok := is.SchemaByID(dbID)
-			// 1 is used for some unit tests where the database is not created but directly injected.
-			intest.Assert(ok || dbID == 1, "cannot find db for table %d, dbID %d", physicalTableID, dbID)
-			if ok && filter.IsSystemSchema(db.Name.L) {
-				isSystemTable = true
-			}
-			return nil
-		})
-	})
+	se, err := h.SPool().Get()
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if err == nil { // only recycle when no error
+			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
+		}
+	}()
+
+	sctx := se.(sessionctx.Context)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	db, ok := is.SchemaByID(dbID)
+	// 1 is used for some unit tests where the database is not created but directly injected.
+	intest.Assert(ok || dbID == 1, "cannot find db for table %d, dbID %d", physicalTableID, dbID)
+	if ok && filter.IsSystemSchema(db.Name.L) {
+		isSystemTable = true
+	}
 	if err != nil {
 		intest.Assert(err == nil, "unexpected error: %v, tableID %d, dbID %d", err, physicalTableID, dbID)
 		return false, err
