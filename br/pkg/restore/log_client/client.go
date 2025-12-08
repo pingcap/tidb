@@ -270,6 +270,14 @@ func (rc *LogClient) Close(ctx context.Context) {
 	log.Info("Restore client closed")
 }
 
+func (rc *LogClient) rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
+	// Need to set ts range for compacted sst to filter out irrelevant data.
+	if sst.Type() == CompactedSSTsType && !rules.HasSetTs() {
+		rules.SetTsRange(rc.shiftStartTS, rc.startTS, rc.restoreTS)
+	}
+	return rules, nil
+}
+
 func (rc *LogClient) RestoreSSTFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[SSTs],
@@ -292,11 +300,15 @@ func (rc *LogClient) RestoreSSTFiles(
 			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
 			continue
 		}
+		newRules, err := rc.rewriteRulesFor(i, rewriteRules)
+		if err != nil {
+			return err
+		}
 
 		set := restore.BackupFileSet{
 			TableID:      i.TableID(),
 			SSTFiles:     i.GetSSTs(),
-			RewriteRules: rewriteRules,
+			RewriteRules: newRules,
 		}
 		backupFileSets = append(backupFileSets, set)
 	}
