@@ -36,7 +36,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func newRegionJobOperatorForTest(
+func newRegionJobWorkerPoolForTest(
 	workerCtx context.Context,
 	preRunJobFn func(ctx context.Context, job *regionJob) error,
 	writeFn func(ctx context.Context, job *regionJob) (*tikvWriteResult, error),
@@ -120,7 +120,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 			"github.com/pingcap/tidb/pkg/lightning/backend/local/mockJobWgDone",
 			fmt.Sprintf("return(%d)", generateCount))
 		workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
-		pool, jobWg, jobInCh, jobOutCh := newRegionJobOperatorForTest(workerCtx, preRunFn, writeFn, ingestFn)
+		pool, jobWg, jobInCh, jobOutCh := newRegionJobWorkerPoolForTest(workerCtx, preRunFn, writeFn, ingestFn)
 
 		wctx := workerpool.NewContext(workerCtx)
 		workGroup.Go(func() error {

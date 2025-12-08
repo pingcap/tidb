@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
@@ -623,10 +624,6 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 }
 
 func TestWorkerPoolWithErrors(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip this test on next-gen kernel")
-	}
-
 	generator := func(
 		ctx context.Context,
 		jobToWorkerCh chan<- *regionJob,
@@ -697,6 +694,8 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 			BackendConfig: BackendConfig{
 				WorkerConcurrency: toAtomic(4),
 			},
+			tls:       &common.TLS{},
+			engineMgr: &engineManager{},
 		}
 
 		pool := getRegionJobWorkerPool(

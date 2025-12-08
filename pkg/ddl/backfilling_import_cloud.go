@@ -255,7 +255,7 @@ func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource 
 		return err
 	}
 
-	e.backend.SetConcurrency(newConcurrency)
+	e.backend.SetWorkerConcurrency(newConcurrency)
 	return nil
 }
 

@@ -520,8 +520,8 @@ func (c *BackendConfig) GetWorkerConcurrency() int {
 	return int(c.WorkerConcurrency.Load())
 }
 
-// SetConcurrency sets the current concurrency of the backend
-func (c *BackendConfig) SetConcurrency(concurrency int) {
+// SetWorkerConcurrency sets the current concurrency of the backend
+func (c *BackendConfig) SetWorkerConcurrency(concurrency int) {
 	c.WorkerConcurrency.Store(int32(concurrency))
 }
 
@@ -1463,7 +1463,7 @@ func (local *Backend) doImport(
 	//      1.2 The error is then broadcasted to the workGroup.
 	//      1.3 All other components exit due to canceled context. No need to close channels.
 	//
-	// 2. Error occuers in other components (e.g. retryer, dispatcher,)
+	// 2. Error occurs in other components (e.g. retryer, dispatcher)
 	//      2.1 The error component exits and causes workGroup's context to be canceled.
 	//      2.2 All other components will exit because of the canceled context. No need to
 	//          close channels.
@@ -1522,7 +1522,7 @@ func (local *Backend) doImport(
 	wctx := workerpool.NewContext(workerCtx)
 
 	if e, ok := engine.(*external.Engine); ok {
-		e.SetWorker(pool)
+		e.SetWorkerPool(pool)
 	}
 
 	failpoint.Inject("skipStartWorker", func() {

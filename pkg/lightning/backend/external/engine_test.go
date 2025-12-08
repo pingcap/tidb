@@ -351,7 +351,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 			workerConcurrency: *atomic.NewInt32(4),
 			readyCh:           make(chan struct{}),
 		}
-		e.SetWorker(&dummyWorker{})
+		e.SetWorkerPool(&dummyWorker{})
 
 		// Load and consume the data
 		eg.Go(func() error {
@@ -399,7 +399,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 	t.Run("increase concurrency after loading all data", func(t *testing.T) {
 		resetFn()
 		close(updatedCh)
-		// Wait all of the data being processed
+		// Wait all the data being processed
 		require.Eventually(t, func() bool {
 			return finished.Load() >= 16
 		}, 3*time.Second, 10*time.Millisecond)
