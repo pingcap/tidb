@@ -714,7 +714,7 @@ func buildOneRowTableScan(
 	limit uint64,
 	desc bool,
 ) (distsql.SelectResult, error) {
-	distSQLCtx := newDefaultReorgDistSQLCtx(store.GetClient(), contextutil.NewStaticWarnHandler(0))
+	distSQLCtx := newDefaultReorgDistSQLCtx(store.GetClient(), contextutil.NewStaticWarnHandler(0), 0)
 	dagPB, err := buildOneRowTableScanDAG(distSQLCtx, tbl, handleCols, limit, desc)
 	if err != nil {
 		return nil, errors.Trace(err)

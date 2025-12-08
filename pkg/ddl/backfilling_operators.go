@@ -552,6 +552,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		if err != nil {
 			return err
 		}
+		failpoint.InjectCall("checkReorgDistSQLCtxMemTracker", distsqlCtx.SessionMemTracker.GetBytesLimit())
 		rs, conditionPushed, err := buildTableScan(scanCtx, w.copCtx.GetBase(), distsqlCtx, startTS, task.Start, task.End, selExpr)
 		if err != nil {
 			return err
