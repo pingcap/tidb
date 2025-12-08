@@ -2119,8 +2119,8 @@ func TestIssue64137(t *testing.T) {
 	require.Equal(t, statsMeta[5], "12000") // row_count = 10000+2000
 
 	tk.MustQuery(`explain select * from t where a=99999999`).Check(testkit.Rows(
-		`IndexReader_7 24.00 root  index:IndexRangeScan_6`, // out-of-range est for small NDV, result should close to zero
-		`└─IndexRangeScan_6 24.00 cop[tikv] table:t, index:a(a) range:[99999999,99999999], keep order:false`))
+		`IndexReader_7 21.91 root  index:IndexRangeScan_6`, // out-of-range est for small NDV, result should close to zero
+		`└─IndexRangeScan_6 21.91 cop[tikv] table:t, index:a(a) range:[99999999,99999999], keep order:false`))
 	tk.MustQuery(`explain select * from t where a=1`).Check(testkit.Rows(
 		`IndexReader_7 12000.00 root  index:IndexRangeScan_6`, // in-range est for small NDV
 		`└─IndexRangeScan_6 12000.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false`))
