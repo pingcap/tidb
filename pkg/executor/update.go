@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	mmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -279,6 +280,16 @@ func (e *UpdateExec) exec(
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
 		flags := bAssignFlag[content.Start:content.End]
+
+		if tbl.Meta().IsActiveActive {
+			// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+			// should be set to null rather than copy the old value.
+			for _, col := range tbl.Cols() {
+				if col.Name.Equals(&model.ExtraOriginTSName) {
+					newTableData[col.Offset].SetNull()
+				}
+			}
+		}
 
 		// Evaluate generated columns and write to table.
 		// Evaluated values will be stored in newRow.

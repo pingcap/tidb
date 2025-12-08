@@ -1285,28 +1285,13 @@ func TestDupKeyCheckMode(t *testing.T) {
 	})
 }
 
-func testActiveActiveTableSetCommitWaitUntilTSO(t *testing.T, tk *testkit.TestKit, tc string) {
-	resetState := func(t *testing.T, tc string) uint64 {
-		tk.MustExec("truncate table t")
-		var originTS uint64
-		switch tc {
-		case "clockDriftNone":
-			tk.MustExec("begin; insert into t (id, v, _tidb_origin_ts) values (1, 1, tidb_current_tso()); commit")
-			rows := tk.MustQuery("select _tidb_origin_ts from t where id = 1").Rows()
-			val := rows[0][0].(string)
-			var err error
-			originTS, err = strconv.ParseUint(val, 10, 64)
-			require.NoError(t, err)
-		case "clockDriftSmall":
-			originTS := oracle.GoTimeToTS(time.Now().Add(300 * time.Millisecond))
-			tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, ?)", originTS)
-		case "clockDriftLarge":
-			originTS := oracle.GoTimeToTS(time.Now().Add(5 * time.Second))
-			tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, ?)", originTS)
-		}
-		return originTS
-	}
+type testCase struct {
+	name       string
+	resetState func(t *testing.T, tk *testkit.TestKit) uint64
+	execToErr  bool
+}
 
+func testActiveActiveTableSetCommitWaitUntilTSO(t *testing.T, tk *testkit.TestKit, tc testCase) {
 	checkUpdated := func(t *testing.T, originTS uint64) {
 		// _tidb_commit_ts should be greater than origin ts
 		rows := tk.MustQuery("select _tidb_commit_ts from t where id = 1").Rows()
@@ -1315,45 +1300,61 @@ func testActiveActiveTableSetCommitWaitUntilTSO(t *testing.T, tk *testkit.TestKi
 		require.NoError(t, err)
 		require.True(t, commitTS > originTS)
 		// origin ts should be reset
-		tk.MustQuery("select _tidb_origin_ts from t where id = 1").Check(testkit.Rows("NULL"))
+		tk.MustQuery("select _tidb_origin_ts from t where id = 1").Check(testkit.Rows("<nil>"))
 	}
 
-	t.Run(tc, func(t *testing.T) {
+	t.Run(tc.name, func(t *testing.T) {
 		{
-			originTS := resetState(t, tc)
+			originTS := tc.resetState(t, tk)
 			// insert
 			err := tk.ExecToErr("insert into t (id, v) value (1, 2)")
 			require.Error(t, err)
 			// insert ignore
 			tk.MustExec("insert ignore into t (id, v) value (1, 2)")
 			tk.MustQuery("select id, v from t").Check(testkit.Rows("1 1"))
-			// insert on duplicate success
-			tk.MustExec("insert into t (id, v) value (1, 3) on duplicate key update v = 3")
-			tk.MustQuery("select id, v from t").Check(testkit.Rows("1 3"))
-			checkUpdated(t, originTS)
+			// insert on duplicate
+			if tc.execToErr {
+				require.Error(t, tk.ExecToErr("insert into t (id, v) value (1, 3) on duplicate key update v = 3"))
+			} else {
+				tk.MustExec("insert into t (id, v) value (1, 3) on duplicate key update v = 3")
+				tk.MustQuery("select id, v from t").Check(testkit.Rows("1 3"))
+				checkUpdated(t, originTS)
+			}
 		}
 
 		{
-			originTS := resetState(t, tc)
+			originTS := tc.resetState(t, tk)
 			// replace
-			tk.MustExec("replace into t (id, v) value (1, 4)")
-			tk.MustQuery("select id, v from t").Check(testkit.Rows("1 4"))
-			checkUpdated(t, originTS)
+			if tc.execToErr {
+				require.Error(t, tk.ExecToErr("replace into t (id, v) value (1, 4)"))
+			} else {
+				tk.MustExec("replace into t (id, v) value (1, 4)")
+				tk.MustQuery("select id, v from t").Check(testkit.Rows("1 4"))
+				checkUpdated(t, originTS)
+			}
 		}
 
 		{
-			originTS := resetState(t, tc)
+			originTS := tc.resetState(t, tk)
 			// update
-			tk.MustExec("update t set v = 5 where id = 1")
-			tk.MustQuery("select id, v from t").Check(testkit.Rows("1 5"))
-			checkUpdated(t, originTS)
+			if tc.execToErr {
+				require.Error(t, tk.ExecToErr("update t set v = 5 where id = 1"))
+			} else {
+				tk.MustExec("update t set v = 5 where id = 1")
+				tk.MustQuery("select id, v from t").Check(testkit.Rows("1 5"))
+				checkUpdated(t, originTS)
+			}
 		}
 
 		{
-			resetState(t, tc)
+			tc.resetState(t, tk)
 			// delete
-			tk.MustExec("delete from t where id = 1")
-			tk.MustQuery("select id, v from t").Check(testkit.Rows())
+			if tc.execToErr {
+				require.Error(t, tk.ExecToErr("delete from t where id = 1"))
+			} else {
+				tk.MustExec("delete from t where id = 1")
+				tk.MustQuery("select id, v from t").Check(testkit.Rows())
+			}
 		}
 	})
 }
@@ -1366,7 +1367,77 @@ func TestActiveActiveTableSetCommitWaitUntilTSO(t *testing.T) {
 	// TODO: remove this line when DDL is fixed
 	tk.MustExec("alter table t drop column _tidb_commit_ts")
 
-	for _, tc := range []string{"clockDriftNone", "clockDriftSmall", "clockDriftLarge"} {
+	resetStateclockDriftNone := func(t *testing.T, tk *testkit.TestKit) uint64 {
+		tk.MustExec("truncate table t")
+		tk.MustExec("begin; insert into t (id, v, _tidb_origin_ts) values (1, 1, tidb_current_tso()); commit")
+		rows := tk.MustQuery("select _tidb_origin_ts from t where id = 1").Rows()
+		val := rows[0][0].(string)
+		var err error
+		originTS, err := strconv.ParseUint(val, 10, 64)
+		require.NoError(t, err)
+		return originTS
+	}
+	resetStateClockDriftSmall := func(t *testing.T, tk *testkit.TestKit) uint64 {
+		tk.MustExec("truncate table t")
+		originTS := oracle.GoTimeToTS(time.Now().Add(300 * time.Millisecond))
+		tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, ?)", originTS)
+		return originTS
+	}
+	resetStateClockDriftLarge := func(t *testing.T, tk *testkit.TestKit) uint64 {
+		tk.MustExec("truncate table t")
+		originTS := oracle.GoTimeToTS(time.Now().Add(5 * time.Second))
+		tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, ?)", originTS)
+		return originTS
+	}
+
+	tc := []testCase{
+		{"clockDriftNone", resetStateclockDriftNone, false},
+		{"clockDriftSmall", resetStateClockDriftSmall, false},
+		{"clockDriftLarge", resetStateClockDriftLarge, true},
+	}
+	for _, tc := range tc {
 		testActiveActiveTableSetCommitWaitUntilTSO(t, tk, tc)
 	}
+}
+
+func TestActiveActiveUpdateOriginTSColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int) softdelete = 'on', active_active = 'on'")
+	// TODO: remove this line when DDL is fixed
+	tk.MustExec("alter table t drop column _tidb_commit_ts")
+	tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205)")
+
+	// When duplicate key update involves multiple rows, the conflict rows should update their origin ts to <nil>
+	tk.MustExec("insert into t (id, v) values (2, 22), (3, 33), (4, 44) on duplicate key update v = 42")
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id in (1, 2, 3, 4)").Check(
+		testkit.Rows("1 1 123456", "2 42 <nil>", "3 42 <nil>", "4 44 <nil>"))
+
+	// reset
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205)")
+	// insert _tidb_origin_ts is leagal
+	// when conflict, _tidb_origin_ts should not be updated?
+	tk.MustExec("insert into t (id, _tidb_origin_ts) values (1, 11111111) on duplicate key update v = 42")
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows("1 42 <nil>"))
+	// on duplicate, update _tidb_origin_ts is leagal, and _tidb_origin_ts should be updated
+	tk.MustExec("insert into t (id, v) values (2, 22) on duplicate key update _tidb_origin_ts = 22222222")
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 2").Check(testkit.Rows("2 2 22222222"))
+
+	// reset
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205)")
+	tk.MustExec("create table t1 (id int primary key, v int) softdelete = 'on', active_active = 'on'")
+	tk.MustExec("insert into t1 (id, v) values (1, 101)")
+
+	// FIXME: update join involve multiple tables, all _tidb_origin_ts should be updated
+	// Currently the following test report [planner:1060]Duplicate column name '_tidb_commit_ts'
+	//
+	// tk.MustExec("update t, t1 set t.v = t1.v, t1.v = 666 where t.id = t1.id")
+	// tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows("1 101 <nil>"))
+	// tk.MustQuery("select id, v, _tidb_origin_ts from t1 where id = 1").Check(testkit.Rows("1 666 <nil>"))
+	// update join _tidb_origin_ts is leagal, and _tidb_origin_ts should be updated
+	// tk.MustExec("update t, t1 set t1._tidb_origin_ts = 9876543 where t.id = t1.id")
+	// tk.MustQuery("select id, v, _tidb_origin_ts from t1 where id = 1").Check(testkit.Rows("1 666 9876543"))
 }
