@@ -496,6 +496,15 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		} else {
 			value = newData[col.Offset]
 		}
+
+		if t.Meta().IsActiveActive && col.Name.Equals(&model.ExtraOriginTSName) {
+			oldVal := oldData[col.Offset]
+			if !oldVal.IsNull() && value.IsNull() {
+				newData[col.Offset].SetNull()
+				txn.SetOption(kv.CommitWaitUntilTSO, oldVal.GetUint64())
+			}
+		}
+
 		if !t.canSkip(col, &value) {
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
@@ -1138,12 +1147,24 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 		return err
 	}
 
-	if m := t.Meta(); m.TempTableType != model.TempTableNone {
+	m := t.Meta()
+	if m.TempTableType != model.TempTableNone {
 		if tmpTable, sizeLimit, ok := addTemporaryTable(ctx, m); ok {
 			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
+	}
+	if m.IsActiveActive {
+		for _, col := range t.Columns {
+			if col.State == model.StatePublic && col.Name == model.ExtraOriginTSName {
+				value := r[col.Offset]
+				if !value.IsNull() {
+					txn.SetOption(kv.CommitWaitUntilTSO, value.GetUint64())
+				}
+				break
+			}
 		}
 	}
 
