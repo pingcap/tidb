@@ -1007,6 +1007,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onLockTables(jobCtx, job)
 	case model.ActionUnlockTable:
 		ver, err = onUnlockTables(jobCtx, job)
+	case model.ActionAlterTableMode:
+		ver, err = onAlterTableMode(jobCtx, job)
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(jobCtx, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
@@ -1060,6 +1062,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onDropCheckConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
+	case model.ActionRefreshMeta:
+		ver, err = onRefreshMeta(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
