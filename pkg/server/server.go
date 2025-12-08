@@ -908,6 +908,13 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		conn.setStatus(connStatusWaitShutdown)
+		if conn.bufReadConn != nil {
+			// When attempting to 'kill connection' and TiDB is stuck in the network stack while writing packets,
+			// we can quickly exit the network stack and terminate the SQL execution by setting WriteDeadline.
+			if err := conn.bufReadConn.SetWriteDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting write deadline for kill.", zap.Error(err))
+			}
+		}
 	}
 	killQuery(conn, maxExecutionTime)
 }
@@ -941,6 +948,7 @@ func killQuery(conn *clientConn, maxExecutionTime bool) {
 			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 		}
 	}
+	sessVars.SQLKiller.FinishResultSet()
 }
 
 // KillSysProcesses kill sys processes such as auto analyze.
