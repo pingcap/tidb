@@ -727,7 +727,6 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	return p.PlanCostVer2, nil
 }
 
-<<<<<<< HEAD
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + build-filter-cost +
 // (probe-cost + probe-filter-cost) / concurrency
@@ -746,21 +745,19 @@ func (p *PhysicalIndexMergeJoin) GetPlanCostVer2(taskType property.TaskType, opt
 	return p.getIndexJoinCostVer2(taskType, option, 2)
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-=======
 // getNumberOfRanges returns the total number of ranges of a physical plan tree.
 // Some queries with large IN list like `a in (1, 2, 3...)` could generate a large number of ranges, which may slow down the query performance.
 func getNumberOfRanges(pp base.PhysicalPlan) (totNumRanges int) {
 	switch p := pp.(type) {
-	case *physicalop.PhysicalTableReader:
-		return getNumberOfRanges(p.TablePlan)
-	case *physicalop.PhysicalIndexReader:
-		return getNumberOfRanges(p.IndexPlan)
-	case *physicalop.PhysicalIndexLookUpReader:
-		return getNumberOfRanges(p.IndexPlan) + getNumberOfRanges(p.TablePlan)
-	case *physicalop.PhysicalTableScan:
+	case *PhysicalTableReader:
+		return getNumberOfRanges(p.tablePlan)
+	case *PhysicalIndexReader:
+		return getNumberOfRanges(p.indexPlan)
+	case *PhysicalIndexLookUpReader:
+		return getNumberOfRanges(p.indexPlan) + getNumberOfRanges(p.tablePlan)
+	case *PhysicalTableScan:
 		return len(p.Ranges)
-	case *physicalop.PhysicalIndexScan:
+	case *PhysicalIndexScan:
 		return len(p.Ranges)
 	}
 	for _, child := range pp.Children() {
@@ -769,8 +766,7 @@ func getNumberOfRanges(pp base.PhysicalPlan) (totNumRanges int) {
 	return totNumRanges
 }
 
-// getPlanCostVer24PhysicalApply returns the plan-cost of this sub-plan, which is:
->>>>>>> a24f3d772f9 (planner: consider magnified seeking cost in IndexJoin (#63568))
+// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
 // probe-cost = probe-child-cost * build-rows
 func (p *PhysicalApply) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
