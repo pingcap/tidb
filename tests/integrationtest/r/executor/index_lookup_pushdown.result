@@ -269,26 +269,15 @@ b	1	6040	400	60
 B	2	5050	500	50
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-TopN_8	4.00	root		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
-└─IndexLookUp_15	4.00	root		
-  ├─LocalIndexLookUp_17(Build)	4.00	cop[tikv]		index handle offsets:[]
-  │ ├─TopN_14(Build)	4.00	cop[tikv]		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
-  │ │ └─IndexFullScan_12	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
-  │ └─TableRowIDScan_16(Probe)	4.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableRowIDScan_13(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-select /*+ index_lookup_pushdown(t2, i) */ * from t2 order by a desc, b desc limit 4;
-=======
-TopN_10	4.00	root		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
-└─IndexLookUp_20	4.00	root		
-  ├─LocalIndexLookUp_22(Build)	4.00	cop[tikv]		index handle offsets:[]
-  │ ├─TopN_19(Build)	4.00	cop[tikv]		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
-  │ │ └─Selection_18	6656.67	cop[tikv]		ne(executor__index_lookup_pushdown.t2.b, 3)
-  │ │   └─IndexFullScan_16	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
-  │ └─TableRowIDScan_21(Probe)	4.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableRowIDScan_17(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+TopN_9	4.00	root		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
+└─IndexLookUp_17	4.00	root		
+  ├─LocalIndexLookUp_19(Build)	4.00	cop[tikv]		index handle offsets:[]
+  │ ├─TopN_16(Build)	4.00	cop[tikv]		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
+  │ │ └─Selection_15	6656.67	cop[tikv]		ne(executor__index_lookup_pushdown.t2.b, 3)
+  │ │   └─IndexFullScan_13	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
+  │ └─TableRowIDScan_18(Probe)	4.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
->>>>>>> 5d1f8dde490 (test: optimize the test for TopN in index lookup pushdown. (#64867))
 a	b	c	d	e
 C	2	2080	800	20
 c	1	3070	700	30
