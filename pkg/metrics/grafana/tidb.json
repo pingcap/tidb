@@ -14770,7 +14770,12 @@
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
-          "seriesOverrides": [],
+          "seriesOverrides": [
+            {
+              "alias": "/table_id.*/",
+              "yaxis": 2
+            }
+          ],
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
@@ -14788,6 +14793,31 @@
               "intervalFactor": 1,
               "legendFormat": "{{instance}}-{{type}}",
               "refId": "B"
+            },
+            {
+              "expr": "sum by (table_id) (tidb_ddl_temp_index_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})",
+              "instant": false,
+              "legendFormat": "write-table_id_{{table_id}}",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "expr": "tidb_ddl_temp_index_merge{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "legendFormat": "{{instance}}-merged-table_id_{{table_id}}",
+              "range": true,
+              "refId": "D"
+            },
+            {
+              "expr": "tidb_ddl_temp_index_scan{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "legendFormat": "{{instance}}-scanned-table_id_{{table_id}}",
+              "range": true,
+              "refId": "E"
+            },
+            {
+              "expr": "sum by (table_id) (tidb_ddl_temp_index_double_write{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})",
+              "legendFormat": "double-write-table_id_{{table_id}}",
+              "range": true,
+              "refId": "F"
             }
           ],
           "thresholds": [],
@@ -14810,19 +14840,28 @@
           },
           "yaxes": [
             {
+<<<<<<< HEAD
               "format": "short",
               "label": null,
+=======
+              "format": "percent",
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
               "logBase": 1,
               "max": null,
               "min": "0",
+              "max": "100",
               "show": true
             },
             {
               "format": "short",
               "label": null,
               "logBase": 1,
+<<<<<<< HEAD
               "max": null,
               "min": null,
+=======
+              "min": "0",
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
               "show": true
             }
           ],
