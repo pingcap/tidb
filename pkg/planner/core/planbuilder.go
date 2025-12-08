@@ -4288,13 +4288,21 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physic
 		// 1. `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,
 		// 2. `INSERT INTO tbl_name SELECT ...`.
 		affectedValuesCols = insertPlan.Table.VisibleCols()
-		if insertPlan.Table.Meta().SoftdeleteInfo != nil ||
-			insertPlan.Table.Meta().IsActiveActive {
-			affectedValuesCols = slices.DeleteFunc(slices.Clone(affectedValuesCols), func(col *table.Column) bool {
-				return col.Name.L == model.ExtraSoftDeleteTimeName.L ||
-					col.Name.L == model.ExtraOriginTSName.L ||
-					col.Name.L == model.ExtraCommitTSName.L
-			})
+		tblInfo := insertPlan.Table.Meta()
+		if tblInfo.SoftdeleteInfo != nil || tblInfo.IsActiveActive {
+			affectedValuesCols = slices.Clone(affectedValuesCols)
+			if tblInfo.SoftdeleteInfo != nil {
+				affectedValuesCols = slices.DeleteFunc(affectedValuesCols, func(col *table.Column) bool {
+					return col.Name.L == model.ExtraSoftDeleteTimeName.L ||
+						col.Name.L == model.ExtraCommitTSName.L
+				})
+			}
+			if tblInfo.IsActiveActive {
+				affectedValuesCols = slices.DeleteFunc(affectedValuesCols, func(col *table.Column) bool {
+					return col.Name.L == model.ExtraOriginTSName.L ||
+						col.Name.L == model.ExtraCommitTSName.L
+				})
+			}
 		}
 	}
 	return affectedValuesCols, nil

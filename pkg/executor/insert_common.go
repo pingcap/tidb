@@ -149,13 +149,21 @@ func (e *InsertValues) initInsertColumns() error {
 	} else {
 		// If e.Columns are empty, use all columns instead.
 		cols = tableCols
-		if e.Table.Meta().SoftdeleteInfo != nil ||
-			e.Table.Meta().IsActiveActive {
-			cols = slices.DeleteFunc(slices.Clone(cols), func(col *table.Column) bool {
-				return col.Name.L == model.ExtraSoftDeleteTimeName.L ||
-					col.Name.L == model.ExtraOriginTSName.L ||
-					col.Name.L == model.ExtraCommitTSName.L
-			})
+		tblInfo := e.Table.Meta()
+		if tblInfo.SoftdeleteInfo != nil || tblInfo.IsActiveActive {
+			cols = slices.Clone(cols)
+			if tblInfo.SoftdeleteInfo != nil {
+				cols = slices.DeleteFunc(cols, func(col *table.Column) bool {
+					return col.Name.L == model.ExtraSoftDeleteTimeName.L ||
+						col.Name.L == model.ExtraCommitTSName.L
+				})
+			}
+			if tblInfo.IsActiveActive {
+				cols = slices.DeleteFunc(cols, func(col *table.Column) bool {
+					return col.Name.L == model.ExtraOriginTSName.L ||
+						col.Name.L == model.ExtraCommitTSName.L
+				})
+			}
 		}
 	}
 	for _, col := range cols {
