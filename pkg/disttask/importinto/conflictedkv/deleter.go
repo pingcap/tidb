@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kvconflicts
+package conflictedkv
 
 import (
 	"context"
+	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -31,13 +33,24 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// (1+2+4+8)*0.1s + (10-4)*1s = 7.5s
+	storeOpMinBackoff  = 100 * time.Millisecond
+	storeOpMaxBackoff  = time.Second
+	storeOpMaxRetryCnt = 10
+	// we define those limit to be within how client define big transaction, see
+	// https://github.com/tikv/client-go/blob/3150e385e39fbbb324fe975d68abe4fdf5dbd6ba/txnkv/transaction/2pc.go#L695-L696
+	bufferedKeySizeLimit  = 2 * units.MiB
+	bufferedKeyCountLimit = 9600
+)
+
 // Deleter deletes KVs related to conflicted KVs from TiKV.
 type Deleter struct {
-	handler  handler
+	handler  Handler
 	keysCh   chan []tidbkv.Key
 	store    tidbkv.Storage
 	logger   *zap.Logger
-	snapshot *lazyRefreshedSnapshot
+	snapshot *LazyRefreshedSnapshot
 
 	// we delete keys in batch
 	bufferedKeys []tidbkv.Key
@@ -56,20 +69,14 @@ func NewDeleter(
 		keysCh:   make(chan []tidbkv.Key),
 		store:    store,
 		logger:   logger,
-		snapshot: &lazyRefreshedSnapshot{store: store},
+		snapshot: NewLazyRefreshedSnapshot(store),
 	}
-	base := &baseHandler{
-		targetTable:       targetTbl,
-		logger:            logger,
-		kvGroup:           kvGroup,
-		encoder:           encoder,
-		encodedRowHandler: deleter,
-	}
-	var h handler
+	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, logger)
+	var h Handler
 	if kvGroup == external.DataKVGroup {
-		h = newDataKVHandler(base)
+		h = NewDataKVHandler(base)
 	} else {
-		h = newIndexKVHandler(base, &lazyRefreshedSnapshot{store: store}, nil)
+		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store), nil)
 	}
 	deleter.handler = h
 	return deleter
@@ -85,7 +92,7 @@ func (d *Deleter) Run(ctx context.Context, ch chan *external.KVPair) error {
 
 	eg.Go(func() (err error) {
 		defer func() {
-			err2 := d.handler.close(egCtx)
+			err2 := d.handler.Close(egCtx)
 			if err == nil {
 				err = err2
 			}
@@ -96,10 +103,10 @@ func (d *Deleter) Run(ctx context.Context, ch chan *external.KVPair) error {
 			close(d.keysCh)
 		}()
 
-		if err = d.handler.preRun(); err != nil {
+		if err = d.handler.PreRun(); err != nil {
 			return err
 		}
-		return d.handler.run(egCtx, ch)
+		return d.handler.Run(egCtx, ch)
 	})
 
 	return eg.Wait()
@@ -151,7 +158,8 @@ func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) err
 	return nil
 }
 
-func (d *Deleter) handleEncodedRow(ctx context.Context, _ tidbkv.Handle, _ []types.Datum, kvPairs *kv.Pairs) error {
+// HandleEncodedRow implements the EncodedRowHandler interface.
+func (d *Deleter) HandleEncodedRow(ctx context.Context, _ tidbkv.Handle, _ []types.Datum, kvPairs *kv.Pairs) error {
 	return d.gatherAndDeleteKeysWithRetry(ctx, kvPairs.Pairs)
 }
 
