@@ -637,6 +637,7 @@ func SubTestHistogramProtoConversion() func(*testing.T) {
 }
 
 func TestPruneTopN(t *testing.T) {
+	//nolint:prealloc
 	var topnIn, topnOut []TopNWithRange
 	var totalNDV, nullCnt, sampleRows, totalRows int64
 
