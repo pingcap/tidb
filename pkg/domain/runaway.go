@@ -18,14 +18,18 @@ import (
 	"context"
 	"net"
 	"strconv"
+<<<<<<< HEAD
 	"strings"
 	"sync"
 	"time"
+=======
+>>>>>>> 2d0da8ee789 (fix(runaway): resolve the dead channel in UpdateNewAndDoneWatch (#61795))
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -37,11 +41,15 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+=======
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+>>>>>>> 2d0da8ee789 (fix(runaway): resolve the dead channel in UpdateNewAndDoneWatch (#61795))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
+<<<<<<< HEAD
 	"go.uber.org/zap"
 )
 
@@ -56,6 +64,8 @@ const (
 
 	maxIDRetries                     = 3
 	runawayLoopLogErrorIntervalCount = 1800
+=======
+>>>>>>> 2d0da8ee789 (fix(runaway): resolve the dead channel in UpdateNewAndDoneWatch (#61795))
 )
 
 var systemSchemaCIStr = model.NewCIStr("mysql")
@@ -140,6 +150,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 		}
 	}
 }
+<<<<<<< HEAD
 
 func (do *Domain) runawayStartLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayStartLoop", nil, false)
@@ -657,3 +668,5 @@ func (*SystemTableReader) Read(exec sqlexec.RestrictedSQLExecutor, genFn func() 
 	)
 	return rows, err
 }
+=======
+>>>>>>> 2d0da8ee789 (fix(runaway): resolve the dead channel in UpdateNewAndDoneWatch (#61795))
