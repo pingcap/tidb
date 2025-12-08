@@ -237,12 +237,14 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 			") charset=" + charset + " collate=" + collation)
 		tk.MustExec("insert into " + v.tableName + " values " +
 			"('abcA', 1, 99, 199), " +
-			"('aBCE', 2, 98, 198), " +
+			"('abCE', 2, 98, 198), " +
 			"('ABdd', 1, 97, 197), " +
-			"('abdc', 2, 96, 196), " +
+			"('aBdc', 2, 96, 196), " +
 			"('Defb', 1, 95, 195), " +
 			"('defa', 2, 94, 194), " +
-			"('efga', 1, 93, 193)",
+			"('efga', 1, 93, 193), " +
+			"('aabb', 1, NULL, 192), " +
+			"('bbaa', 2, NULL, 191)",
 		)
 	}
 
@@ -263,27 +265,26 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 				prepareTable(v, unique, charset, collation, "id1, id2")
 				v.RunSelectWithCheck("1", 0, -1)
 				v.RunSelectWithCheck("a > 93 and b < 199", 0, 10)
-				v.RunSelectWithCheck("a > 93 and b < 199 and id1 != 'abd'", 0, 10)
+				v.RunSelectWithCheck("a > 93 and b < 199 and id1 != 'abdc'", 0, 10)
 				// check the TopN push down
-				result := v.RunSelectWithCheck("1 order by id2, id1", 0, 5)
+				result := v.RunSelectWithCheck("a > 0 and id1 not in ('efga', 'ABdd') order by id2, id1", 0, 4)
 				require.Contains(t, result.AnalyzeRows[2][0], "LocalIndexLookUp")
 				require.Contains(t, result.AnalyzeRows[3][0], "TopN")
+				require.Contains(t, result.AnalyzeRows[4][0], "Selection")
 				require.Equal(t, "cop[tikv]", result.AnalyzeRows[3][3])
 				if strings.Contains(collation, "_ci") {
 					require.Equal(t, [][]any{
 						{"abcA", "1", "99", "199"},
-						{"ABdd", "1", "97", "197"},
 						{"Defb", "1", "95", "195"},
-						{"efga", "1", "93", "193"},
-						{"aBCE", "2", "98", "198"},
+						{"abCE", "2", "98", "198"},
+						{"aBdc", "2", "96", "196"},
 					}, result.Rows)
 				} else {
 					require.Equal(t, [][]any{
-						{"ABdd", "1", "97", "197"},
 						{"Defb", "1", "95", "195"},
 						{"abcA", "1", "99", "199"},
-						{"efga", "1", "93", "193"},
-						{"aBCE", "2", "98", "198"},
+						{"aBdc", "2", "96", "196"},
+						{"abCE", "2", "98", "198"},
 					}, result.Rows)
 				}
 			})
