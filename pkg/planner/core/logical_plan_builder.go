@@ -4635,7 +4635,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			handleCols = util.NewIntHandleCols(newCol)
 		}
 		if (tableInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
-			(tableInfo.IsActiveActive == true && col.Name.L == model.ExtraOriginTSName.L) {
+			(tableInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L) {
 			newCol.IsInvisible = true
 		}
 		schema.Append(newCol)
