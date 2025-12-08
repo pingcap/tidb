@@ -578,9 +578,6 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
 		return math.Min(result, lowEqual+ndvAvg)
 	}
-<<<<<<< HEAD
-	return rangeEst
-=======
 	// LessCounts are equal only if no valid buckets or both values are out of range
 	isInValidBucket := lessCountA != lessCountB
 	// If values in the same bucket, use skewRatio to adjust the range estimate to account for potential skew.
@@ -660,7 +657,6 @@ func (r *RowEstimate) DivideAll(f float64) {
 	r.Est /= f
 	r.MinEst /= f
 	r.MaxEst /= f
->>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 }
 
 // Clamp clamps all three fields of the RowEstimate to the given min and max values.
@@ -1040,14 +1036,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return 0
 	}
 
-<<<<<<< HEAD
-	// If there are no modifications to the table, return 0 - since all of this logic is
-	// redundant if we get to the end and return the min - which includes zero,
-	// TODO: The execution here is if we are out of range due to sampling of the histograms - which
-	// may miss the lowest/highest values - and we are out of range without any modifications.
-	if modifyCount == 0 {
-		return 0
-=======
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
 	oneValue := float64(0)
 	if histNDV > 0 {
@@ -1059,7 +1047,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
 	if !allowUseModifyCount {
 		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
->>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 	}
 
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
@@ -1177,38 +1164,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
-<<<<<<< HEAD
-	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	rowCount = totalPercent * hg.NotNullCount()
-
-	// oneValue assumes "one value qualies", and is used as either an Upper & lower bound.
-	oneValue := rowCount
-	if histNDV > 0 {
-		oneValue = hg.NotNullCount() / float64(histNDV)
-	}
-
-	if !allowUseModifyCount {
-		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
-		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
-		// We use 1/NDV here to assume that at most 1 value qualifies.
-		return min(rowCount, oneValue)
-	}
-
-	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
-	addedPct := addedRows / float64(realtimeRowCount)
-	// If the newly added rows is larger than the percentage that we've estimated that we're
-	// searching for out of the range, rowCount may need to be adjusted.
-	if addedPct > totalPercent {
-		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
-		// Attempt to account for the added rows - but not more than the totalPercent
-		outOfRangeAdded := addedRows * totalPercent
-		// Return the max of each estimate - with a minimum of one value.
-		rowCount = max(rowCount, outOfRangeAdded, oneValue)
-	}
-
-	// Use modifyCount as a final bound
-	return min(rowCount, float64(modifyCount))
-=======
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
@@ -1256,7 +1211,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		MinEst: 1, // Assume a minimum of 1 row qualifies
 		MaxEst: maxEst,
 	}
->>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 }
 
 // Copy deep copies the histogram.
@@ -1598,17 +1552,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
-<<<<<<< HEAD
-	// minValue is used to calc the bucket lower.
-	var minValue *types.Datum
-	// The empty hists is danger to merge. we cannot get the table information from histograms
-	// The empty hists is very rare. The DDL event was not processed, and in the previous analyze,
-	// this column was not marked as "predict," resulting in it not being analyzed.
-=======
 	// This only occurs when there are no histogram records in the histogram system table.
 	// It happens only to tables whose DDL events haven't been processed yet and that have no indexes or keys,
 	// with the predicate column feature enabled.
->>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 	if len(hists) == 0 {
 		return nil, nil
 	}
