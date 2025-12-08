@@ -352,7 +352,9 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	}
 	// Optimization: If there are no AccessConds, the ranges will be full range and the count will be the full table count.
 	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
-	if lenAccessConds == 0 {
+	// Current code will exclude partitioned tables from this optimization.
+	// TODO: Enhance this optimization to support partitioned tables.
+	if lenAccessConds == 0 && ds.Table.GetPartitionedTable() == nil {
 		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	} else {
 		var countEst statistics.RowEstimate
