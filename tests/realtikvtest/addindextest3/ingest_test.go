@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
+	goatomic "sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 func init() {
@@ -237,7 +238,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum", `return(true)`))
 	done := make(chan error, 1)
-	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, 2)
+	goatomic.StoreInt32(&ddl.TestCheckWorkerNumber, 2)
 	testutil.SessionExecInGoroutine(store, "addindexlit", "alter table t add index idx(a);", done)
 
 	running := true
@@ -251,7 +252,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 		case wg := <-ddl.TestCheckWorkerNumCh:
 			offset = (offset + 1) % 3
 			tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", cnt[offset]))
-			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset]/2+2))
+			goatomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset]/2+2))
 			wg.Done()
 		}
 	}

@@ -16,8 +16,12 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	goerrors "errors"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -45,6 +49,9 @@ type cloudImportExecutor struct {
 	metric        *lightningmetric.Common
 	backendCtx    ingest.BackendCtx
 	backend       *local.Backend
+
+	taskConcurrency int
+	engine          atomic.Pointer[external.Engine]
 }
 
 func newCloudImportExecutor(
@@ -131,8 +138,18 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	local.WorkerConcurrency = int(m.GetResource().CPU.Capacity()) * 2
+	local.WorkerConcurrency.Store(int32(m.GetResource().CPU.Capacity()) * 2)
+	eng := local.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	m.engine.Store(eng)
+	defer m.engine.Store(nil)
+
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
+		err = context.DeadlineExceeded
+	})
 	if err == nil {
 		return nil
 	}
@@ -184,13 +201,41 @@ func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *
 }
 
 // TaskMetaModified changes the max write speed for ingest
-func (*cloudImportExecutor) TaskMetaModified(_ context.Context, _ []byte) error {
-	// Will be added in the future PR
+func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	logutil.Logger(ctx).Info("cloud import executor update task meta")
+	newTaskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+
+	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+	if newMaxWriteSpeed != e.job.ReorgMeta.GetMaxWriteSpeedOrDefault() {
+		e.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+		if e.backend != nil {
+			e.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+		}
+	}
 	return nil
 }
 
 // ResourceModified change the concurrency for ingest
-func (*cloudImportExecutor) ResourceModified(_ context.Context, _ *proto.StepResource) error {
-	// Will be added in the future PR
+func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	logutil.Logger(ctx).Info("cloud import executor update resource")
+	newConcurrency := int(newResource.CPU.Capacity())
+	if newConcurrency == e.backend.GetWorkerConcurrency() {
+		return nil
+	}
+
+	eng := e.engine.Load()
+	if eng == nil {
+		// let framework retry
+		return goerrors.New("engine not started")
+	}
+
+	if err := eng.UpdateResource(ctx, newConcurrency, newResource.Mem.Capacity()); err != nil {
+		return err
+	}
+
+	e.backend.SetWorkerConcurrency(newConcurrency)
 	return nil
 }

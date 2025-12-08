@@ -321,7 +321,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.EndKey,
 			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			em.WorkerConcurrency,
+			int(em.WorkerConcurrency.Load()),
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
@@ -426,7 +426,8 @@ func (em *engineManager) resetEngine(
 	if localEngine == nil {
 		if engineI, ok := em.externalEngine[engineUUID]; ok {
 			extEngine := engineI.(*external.Engine)
-			return extEngine.Reset()
+			extEngine.Reset()
+			return nil
 		}
 
 		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
