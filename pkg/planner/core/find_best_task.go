@@ -746,8 +746,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
-<<<<<<< HEAD
-=======
 	// predicateResult is separated out. An index may "win" because it has a better
 	// accessResult - but that access has high risk.
 	// accessResult does not differentiate between range or equal/IN predicates.
@@ -756,7 +754,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// tiebreaker or equalizer.
 	predicateResult := accessResult + riskResult + eqOrInResult
 
->>>>>>> e10a603ea1b (planner: Adjust risk assessment for plan choice (#64419))
 	// totalSum is the aggregate score of all comparison metrics
 	// riskResult is excluded because more work is required.
 	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
