@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -38,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -50,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
@@ -1357,6 +1361,88 @@ func TestIssue39593(t *testing.T) {
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table, use range to reduce test flakiness
 	require.InDelta(t, float64(3702.6), countResult.Est, float64(1))
+}
+
+func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int primary key, b int)")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock the statistics table with a specific RealtimeCount
+	expectedRowCount := int64(1000)
+	statsTbl := mockStatsTable(tblInfo, expectedRowCount)
+	// Set required fields for the stats table
+	statsTbl.PhysicalID = tblInfo.ID
+	statsTbl.Version = 2
+	statsTbl.ColAndIdxExistenceMap = statistics.NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices))
+
+	// Set the mock statistics in the stats handle
+	h := dom.StatsHandle()
+	h.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
+
+	// Create a DataSource by building a logical plan for a query with no WHERE conditions
+	ctx := context.Background()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("select * from t", "", "")
+	require.NoError(t, err)
+
+	sctx := testKit.Session()
+	ret := &plannercore.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	err = plannercore.Preprocess(ctx, sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
+	require.NoError(t, err)
+
+	sctx.GetSessionVars().PlanColumnID.Store(0)
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+	plan, err := builder.Build(ctx, nodeW)
+	require.NoError(t, err)
+
+	// Logical optimize to get the DataSource
+	plan, err = plannercore.LogicalOptimizeTest(ctx, rule.FlagCollectPredicateColumnsPoint, plan.(base.LogicalPlan))
+	require.NoError(t, err)
+
+	// Find the DataSource in the plan
+	var ds *logicalop.DataSource
+	stack := []base.LogicalPlan{plan.(base.LogicalPlan)}
+	for len(stack) > 0 {
+		curr := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if dataSource, ok := curr.(*logicalop.DataSource); ok {
+			ds = dataSource
+			break
+		}
+		stack = append(stack, curr.Children()...)
+	}
+	require.NotNil(t, ds, "DataSource should be found in the plan")
+
+	// Derive stats - this will call deriveTablePathStats internally
+	_, _, err = plannercore.RecursiveDeriveStats4Test(ds)
+	require.NoError(t, err)
+
+	// Find the table path
+	var tablePath *util.AccessPath
+	for _, path := range ds.AllPossibleAccessPaths {
+		if path.IsTablePath() {
+			tablePath = path
+			break
+		}
+	}
+	require.NotNil(t, tablePath, "Table path should exist")
+
+	// Verify that CountAfterAccess equals RealtimeCount when there are no access conditions
+	// Since the query has no WHERE clause, there are no access conditions, so the optimization
+	// should set CountAfterAccess = RealtimeCount
+	require.Equal(t, float64(expectedRowCount), tablePath.CountAfterAccess,
+		"CountAfterAccess should equal RealtimeCount when there are no access conditions and table is not partitioned")
 }
 
 func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
