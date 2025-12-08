@@ -156,6 +156,9 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnA
 		Client:                               kvClient,
 		EnableChunkRPC:                       true,
 		EnabledRateLimitAction:               vardef.DefTiDBEnableRateLimitAction,
+		EnablePaging:                         true,
+		MinPagingSize:                        vardef.DefMinPagingSize,
+		MaxPagingSize:                        vardef.DefMaxPagingSize,
 		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
 		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
 		Location:                             time.UTC,
@@ -185,6 +188,14 @@ func newReorgDistSQLCtxWithReorgMeta(kvClient kv.Client, reorgMeta *model.DDLReo
 	ctx.Location = loc
 	ctx.ErrCtx = errctx.NewContextWithLevels(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode), ctx.WarnHandler)
 	ctx.ResourceGroupName = reorgMeta.ResourceGroupName
+	// Use user session's paging settings if available.
+	ctx.EnablePaging = reorgMeta.EnablePaging
+	if reorgMeta.MinPagingSize > 0 {
+		ctx.MinPagingSize = reorgMeta.MinPagingSize
+	}
+	if reorgMeta.MaxPagingSize > 0 {
+		ctx.MaxPagingSize = reorgMeta.MaxPagingSize
+	}
 	return ctx, nil
 }
 

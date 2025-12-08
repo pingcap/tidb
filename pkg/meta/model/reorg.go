@@ -101,6 +101,10 @@ type DDLReorgMeta struct {
 	Concurrency   atomic.Int64 `json:"concurrency"`
 	BatchSize     atomic.Int64 `json:"batch_size"`
 	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
+	// Paging settings from user session for coprocessor requests.
+	EnablePaging  bool `json:"enable_paging"`
+	MinPagingSize int  `json:"min_paging_size"`
+	MaxPagingSize int  `json:"max_paging_size"`
 }
 
 // GetConcurrency gets the concurrency from DDLReorgMeta.
