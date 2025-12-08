@@ -1198,6 +1198,10 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 	require.Equal(t, 6, taskExecInfos[1].SubtaskConcurrency)
 	checkBasicTaskEq(t, &tasks[3].TaskBase, taskExecInfos[2].TaskBase)
 	require.Equal(t, 8, taskExecInfos[2].SubtaskConcurrency)
+	// :4002, no such subtasks
+	taskExecInfos, err = tm.GetTaskExecInfoByExecID(ctx, ":4002")
+	require.NoError(t, err)
+	require.Empty(t, taskExecInfos)
 }
 
 func TestTaskManagerEntrySize(t *testing.T) {
