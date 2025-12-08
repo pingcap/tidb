@@ -38,10 +38,16 @@ const (
 	storeOpMinBackoff  = 100 * time.Millisecond
 	storeOpMaxBackoff  = time.Second
 	storeOpMaxRetryCnt = 10
+)
+
+var (
+	// BufferedKeySizeLimit is the max size of keys buffered before delete.
+	// exported for test.
 	// we define those limit to be within how client define big transaction, see
 	// https://github.com/tikv/client-go/blob/3150e385e39fbbb324fe975d68abe4fdf5dbd6ba/txnkv/transaction/2pc.go#L695-L696
-	bufferedKeySizeLimit  = 2 * units.MiB
-	bufferedKeyCountLimit = 9600
+	BufferedKeySizeLimit = 2 * units.MiB
+	// BufferedKeyCountLimit is the max number of keys buffered before delete.
+	BufferedKeyCountLimit = 9600
 )
 
 // Deleter deletes KVs related to conflicted KVs from TiKV.
@@ -175,7 +181,7 @@ func (d *Deleter) gatherAndDeleteKeysWithRetry(ctx context.Context, pairs []comm
 		return err
 	}
 
-	if d.bufSize >= bufferedKeySizeLimit || len(d.bufferedKeys) >= bufferedKeyCountLimit {
+	if d.bufSize >= BufferedKeySizeLimit || len(d.bufferedKeys) >= BufferedKeyCountLimit {
 		return d.sendKeysToDelete(ctx)
 	}
 	return nil

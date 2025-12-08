@@ -3,12 +3,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "conflictedkv",
     srcs = [
+        "deleter.go",
         "handler.go",
         "row_handle.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/importinto/conflictedkv",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/disttask/framework/handle",
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
@@ -19,6 +21,8 @@ go_library(
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/backoff",
         "//pkg/util/redact",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
@@ -31,12 +35,13 @@ go_test(
     name = "conflictedkv_test",
     timeout = "short",
     srcs = [
+        "deleter_test.go",
         "handler_test.go",
         "row_handle_test.go",
     ],
     embed = [":conflictedkv"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/executor/importer",
