@@ -425,11 +425,11 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		scanOp := ddl.NewTableScanOperator(wctx, sessPool, copCtx, nil, 2, 0, &model.DDLReorgMeta{}, nil, &execute.TestCollector{})
 
 		scanOp.Open()
-		require.Equal(t, scanOp.GetPoolSize(), int32(2))
-		scanOp.TunePoolSize(8, false)
-		require.Equal(t, scanOp.GetPoolSize(), int32(8))
-		scanOp.TunePoolSize(1, false)
-		require.Equal(t, scanOp.GetPoolSize(), int32(1))
+		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(2))
+		scanOp.TuneWorkerPoolSize(8, false)
+		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(8))
+		scanOp.TuneWorkerPoolSize(1, false)
+		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(1))
 
 		wctx.Cancel()
 		require.NoError(t, wctx.OperatorErr())
@@ -453,11 +453,11 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 			[]ingest.Engine{mockEngine}, nil, 2, nil)
 
 		ingestOp.Open()
-		require.Equal(t, ingestOp.GetPoolSize(), int32(2))
-		ingestOp.TunePoolSize(8, false)
-		require.Equal(t, ingestOp.GetPoolSize(), int32(8))
-		ingestOp.TunePoolSize(1, false)
-		require.Equal(t, ingestOp.GetPoolSize(), int32(1))
+		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(2))
+		ingestOp.TuneWorkerPoolSize(8, false)
+		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(8))
+		ingestOp.TuneWorkerPoolSize(1, false)
+		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(1))
 
 		wctx.Cancel()
 		require.NoError(t, wctx.OperatorErr())

@@ -32,8 +32,8 @@ type Operator interface {
 
 // TunableOperator is the operator which supports modifying pool size.
 type TunableOperator interface {
-	TunePoolSize(workerNum int32, wait bool)
-	GetPoolSize() int32
+	TuneWorkerPoolSize(workerNum int32, wait bool)
+	GetWorkerPoolSize() int32
 }
 
 // AsyncOperator process the data in async way.
@@ -98,14 +98,14 @@ func (c *AsyncOperator[T, R]) SetSink(ch DataChannel[R]) {
 	c.pool.SetResultSender(ch.Channel())
 }
 
-// TunePoolSize tunes the worker pool size.
-func (c *AsyncOperator[T, R]) TunePoolSize(workerNum int32, wait bool) {
-	c.pool.TunePoolSize(workerNum, wait)
+// TuneWorkerPoolSize tunes the worker pool size.
+func (c *AsyncOperator[T, R]) TuneWorkerPoolSize(workerNum int32, wait bool) {
+	c.pool.Tune(workerNum, wait)
 }
 
-// GetPoolSize returns the worker pool size.
-func (c *AsyncOperator[T, R]) GetPoolSize() int32 {
-	return c.pool.GetPoolSize()
+// GetWorkerPoolSize returns the worker pool size.
+func (c *AsyncOperator[T, R]) GetWorkerPoolSize() int32 {
+	return c.pool.Cap()
 }
 
 type asyncWorker[T, R any] struct {

@@ -327,11 +327,7 @@ func TestEngineOnDup(t *testing.T) {
 
 type dummyWorker struct{}
 
-func (w *dummyWorker) TunePoolSize(int32, bool) {
-}
-
-func (w *dummyWorker) GetPoolSize() int32 {
-	return 0
+func (w *dummyWorker) Tune(int32, bool) {
 }
 
 func TestChangeEngineConcurrency(t *testing.T) {

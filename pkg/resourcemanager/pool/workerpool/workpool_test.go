@@ -82,11 +82,11 @@ func TestWorkerPool(t *testing.T) {
 	}
 
 	cntWg.Wait()
-	require.Equal(t, int32(3), pool.GetPoolSize())
+	require.Equal(t, int32(3), pool.Cap())
 	require.Equal(t, int64(45), globalCnt.Load())
 
 	// Enlarge the pool to 5 workers.
-	pool.TunePoolSize(5, false)
+	pool.Tune(5, false)
 
 	// Add some more tasks to the pool.
 	cntWg.Add(10)
@@ -95,11 +95,11 @@ func TestWorkerPool(t *testing.T) {
 	}
 
 	cntWg.Wait()
-	require.Equal(t, int32(5), pool.GetPoolSize())
+	require.Equal(t, int32(5), pool.Cap())
 	require.Equal(t, int64(90), globalCnt.Load())
 
 	// Decrease the pool to 2 workers.
-	pool.TunePoolSize(2, false)
+	pool.Tune(2, false)
 
 	// Add some more tasks to the pool.
 	cntWg.Add(10)
@@ -108,7 +108,7 @@ func TestWorkerPool(t *testing.T) {
 	}
 
 	cntWg.Wait()
-	require.Equal(t, int32(2), pool.GetPoolSize())
+	require.Equal(t, int32(2), pool.Cap())
 	require.Equal(t, int64(135), globalCnt.Load())
 
 	// Wait for the tasks to be completed.
@@ -124,22 +124,22 @@ func TestTunePoolSize(t *testing.T) {
 		t.Logf("seed: %d", seed)
 		for range 100 {
 			wait := rnd.Intn(2) == 0
-			larger := pool.GetPoolSize() + rnd.Int31n(10) + 2
-			pool.TunePoolSize(larger, wait)
-			require.Equal(t, larger, pool.GetPoolSize())
-			smaller := pool.GetPoolSize() / 2
-			pool.TunePoolSize(smaller, wait)
-			require.Equal(t, smaller, pool.GetPoolSize())
+			larger := pool.Cap() + rnd.Int31n(10) + 2
+			pool.Tune(larger, wait)
+			require.Equal(t, larger, pool.Cap())
+			smaller := pool.Cap() / 2
+			pool.Tune(smaller, wait)
+			require.Equal(t, smaller, pool.Cap())
 		}
 		pool.CloseAndWait()
 	})
 
 	t.Run("change pool size before start", func(t *testing.T) {
 		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 10, createMyWorker)
-		pool.TunePoolSize(5, true)
+		pool.Tune(5, true)
 		pool.Start(NewContext(context.Background()))
 		pool.CloseAndWait()
-		require.EqualValues(t, 5, pool.GetPoolSize())
+		require.EqualValues(t, 5, pool.Cap())
 	})
 
 	t.Run("context done when reduce pool size and wait", func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestTunePoolSize(t *testing.T) {
 		wctx := NewContext(context.Background())
 		pool.Start(wctx)
 		wctx.Cancel()
-		pool.TunePoolSize(5, true)
+		pool.Tune(5, true)
 		pool.Release()
 	})
 }

@@ -29,12 +29,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -144,7 +144,7 @@ type Engine struct {
 
 	// region job worker pool related to this engine.
 	// We store the operator.TunableOperator interface here to avoid import cycle.
-	worker atomic.Pointer[operator.TunableOperator]
+	worker atomic.Pointer[workerpool.Tuner]
 
 	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
 	// if hotspot file is detected, we will use multiple readers to read data.
@@ -611,8 +611,8 @@ func (e *Engine) buildIngestData(kvs []KVPair, buf []*membuf.Buffer) *MemoryInge
 	}
 }
 
-// SetWorker sets the worker for this engine.
-func (e *Engine) SetWorker(worker operator.TunableOperator) {
+// SetWorker sets the worker pool for this engine.
+func (e *Engine) SetWorker(worker workerpool.Tuner) {
 	e.worker.Store(&worker)
 }
 
@@ -642,7 +642,7 @@ func (e *Engine) UpdateResource(ctx context.Context, concurrency int, memCapacit
 			logutil.Logger(ctx).Info("update resource for external engine",
 				zap.Int("concurrency", concurrency),
 				zap.String("memLimit", units.BytesSize(float64(e.memLimit))))
-			worker.TunePoolSize(int32(concurrency), true)
+			worker.Tune(int32(concurrency), true)
 		} else {
 			logutil.Logger(ctx).Info("load data finished, skip update resource")
 		}

@@ -285,12 +285,12 @@ func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource 
 	}
 	reader, writer := pipe.GetReaderAndWriter()
 	targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(int(newResource.CPU.Capacity()), r.avgRowSize)
-	currentReaderCnt, currentWriterCnt := reader.GetPoolSize(), writer.GetPoolSize()
+	currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 	if int32(targetReaderCnt) != currentReaderCnt {
-		reader.TunePoolSize(int32(targetReaderCnt), true)
+		reader.TuneWorkerPoolSize(int32(targetReaderCnt), true)
 	}
 	if int32(targetWriterCnt) != currentWriterCnt {
-		writer.TunePoolSize(int32(targetWriterCnt), true)
+		writer.TuneWorkerPoolSize(int32(targetWriterCnt), true)
 	}
 	return nil
 }

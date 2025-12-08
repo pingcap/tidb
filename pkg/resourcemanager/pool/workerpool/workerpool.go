@@ -94,6 +94,13 @@ type tuneConfig struct {
 	wg *sync.WaitGroup
 }
 
+// Tuner is an interface that provides capacity for tuning
+// the worker pools. It's used to pass worker pool without import cycle
+// caused by generic type.
+type Tuner interface {
+	Tune(numWorkers int32, wait bool)
+}
+
 // WorkerPool is a pool of workers.
 type WorkerPool[T TaskMayPanic, R any] struct {
 	// wctx are the context used for the whole pipeline, and ctx and cancel are derived
@@ -267,10 +274,10 @@ func (p *WorkerPool[T, R]) GetResultChan() <-chan R {
 	return p.resChan
 }
 
-// TunePoolSize tunes the pool to the specified number of workers.
+// Tune tunes the pool to the specified number of workers.
 // wait: whether to wait for all workers to close when reducing workers count.
 // this method can only be called after Start.
-func (p *WorkerPool[T, R]) TunePoolSize(numWorkers int32, wait bool) {
+func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -320,8 +327,8 @@ func (p *WorkerPool[T, R]) LastTunerTs() time.Time {
 	return p.lastTuneTs.Load()
 }
 
-// GetPoolSize returns the capacity of the pool.
-func (p *WorkerPool[T, R]) GetPoolSize() int32 {
+// Cap returns the capacity of the pool.
+func (p *WorkerPool[T, R]) Cap() int32 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.numWorkers

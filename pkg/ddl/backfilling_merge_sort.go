@@ -183,12 +183,12 @@ func (m *mergeSortExecutor) ResourceModified(_ context.Context, newResource *pro
 	}
 
 	targetConcurrency := int32(newResource.CPU.Capacity())
-	currentConcurrency := currOp.GetPoolSize()
+	currentConcurrency := currOp.GetWorkerPoolSize()
 	// TODO(joechenrh): Currently, the worker pool size matches the task count for most times,
 	// so wait here blocks until the subtask finish. Maybe we may improve this later by killing
 	// tasks directly when reducing workers if tasks are idempotent.
 	if targetConcurrency != currentConcurrency {
-		currOp.TunePoolSize(targetConcurrency, true)
+		currOp.TuneWorkerPoolSize(targetConcurrency, true)
 	}
 
 	return nil
