@@ -557,10 +557,11 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.SetFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
 	return &expression.Column{
-		RetType:  tp,
-		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraHandleID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
+		RetType:     tp,
+		UniqueID:    ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:          model.ExtraHandleID,
+		OrigName:    fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
+		IsInvisible: true,
 	}
 }
 
@@ -568,10 +569,11 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	return &expression.Column{
-		RetType:  tp,
-		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraCommitTSID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraCommitTSName),
+		RetType:     tp,
+		UniqueID:    ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:          model.ExtraCommitTSID,
+		OrigName:    fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraCommitTSName),
+		IsInvisible: true,
 	}
 }
 

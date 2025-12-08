@@ -296,6 +296,8 @@ type Column struct {
 	OrigName string
 	IsHidden bool
 
+	IsInvisible bool
+
 	// IsPrefix indicates whether this column is a prefix column in index.
 	//
 	// for example:
