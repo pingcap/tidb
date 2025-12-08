@@ -58,7 +58,11 @@ go_test(
     ],
     embed = [":split"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 19,
+=======
+    shard_count = 29,
+>>>>>>> bc50e0d3e23 (region scatter client: retry scatter regions when finished percentage is not 100. (#64884))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/utils",
