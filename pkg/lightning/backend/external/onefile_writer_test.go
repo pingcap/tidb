@@ -224,6 +224,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		func(summary *WriterSummary) { onefile = summary.MultipleFilesStats[0].Filenames[0] },
 		true,
 		common.OnDuplicateKeyIgnore,
+		1,
 	))
 
 	kvs := make([]KVPair, 0, kvCount)
@@ -322,6 +323,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		onClose,
 		true,
 		common.OnDuplicateKeyIgnore,
+		1,
 	))
 
 	bufSize := rand.Intn(100) + 1
