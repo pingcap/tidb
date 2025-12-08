@@ -62,6 +62,7 @@ func TestNestedLoopApply(t *testing.T) {
 
 	outerFilter := expression.NewFunctionInternal(sctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
 	innerFilter := outerFilter.Clone()
+	require.True(t, innerFilter.Equal(sctx, outerFilter))
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	joiner := join.NewJoiner(sctx, logicalop.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter},

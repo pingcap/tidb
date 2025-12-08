@@ -1069,6 +1069,7 @@ var hintTokenMap = map[string]int{
 	"USE_INDEX":               hintUseIndex,
 	"ORDER_INDEX":             hintOrderIndex,
 	"NO_ORDER_INDEX":          hintNoOrderIndex,
+	"INDEX_LOOKUP_PUSHDOWN":   hintIndexLookUpPushDown,
 	"USE_PLAN_CACHE":          hintUsePlanCache,
 	"USE_TOJA":                hintUseToja,
 	"TIME_RANGE":              hintTimeRange,
