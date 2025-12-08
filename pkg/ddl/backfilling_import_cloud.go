@@ -16,6 +16,9 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	goerrors "errors"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -51,6 +54,7 @@ type cloudImportExecutor struct {
 	backend         *local.Backend
 	taskConcurrency int
 	metric          *lightningmetric.Common
+	engine          atomic.Pointer[external.Engine]
 	summary         *execute.SubtaskSummary
 }
 
@@ -155,6 +159,14 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
+
+	eng := localBackend.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	e.engine.Store(eng)
+	defer e.engine.Store(nil)
+
 	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
@@ -208,14 +220,42 @@ func (e *cloudImportExecutor) ResetSummary() {
 }
 
 // TaskMetaModified changes the max write speed for ingest
-func (*cloudImportExecutor) TaskMetaModified(context.Context, []byte) error {
-	// Will be added in the future PR
+func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	logutil.Logger(ctx).Info("cloud import executor update task meta")
+	newTaskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+
+	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+	if newMaxWriteSpeed != e.job.ReorgMeta.GetMaxWriteSpeed() {
+		e.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+		if e.backend != nil {
+			e.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+		}
+	}
 	return nil
 }
 
 // ResourceModified change the concurrency for ingest
-func (*cloudImportExecutor) ResourceModified(context.Context, *proto.StepResource) error {
-	// Will be added in the future PR
+func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	logutil.Logger(ctx).Info("cloud import executor update resource")
+	newConcurrency := int(newResource.CPU.Capacity())
+	if newConcurrency == e.backend.GetWorkerConcurrency() {
+		return nil
+	}
+
+	eng := e.engine.Load()
+	if eng == nil {
+		// let framework retry
+		return goerrors.New("engine not started")
+	}
+
+	if err := eng.UpdateResource(ctx, newConcurrency, newResource.Mem.Capacity()); err != nil {
+		return err
+	}
+
+	e.backend.SetWorkerConcurrency(newConcurrency)
 	return nil
 }
 
