@@ -95,8 +95,6 @@ type DDLReorgMeta struct {
 	MaxNodeCount      int                              `json:"max_node_count"`
 	AnalyzeState      int8                             `json:"analyze_state"`
 	Stage             ReorgStage                       `json:"stage"`
-	// MemQuotaQuery is the memory quota for DDL coprocessor scan, inherited from session tidb_mem_quota_query.
-	MemQuotaQuery int64 `json:"mem_quota_query"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.

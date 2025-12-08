@@ -145,22 +145,19 @@ func NewReorgCopContext(
 	)
 }
 
-func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnAppender, memQuotaQuery int64) *distsqlctx.DistSQLContext {
+func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnAppender) *distsqlctx.DistSQLContext {
 	intest.AssertNotNil(kvClient)
 	intest.AssertNotNil(warnHandler)
 	var sqlKiller sqlkiller.SQLKiller
 	var execDetails execdetails.SyncExecDetails
 	var cpuUsages ppcpuusage.SQLCPUUsages
-	if memQuotaQuery <= 0 {
-		memQuotaQuery = vardef.DefTiDBMemQuotaQuery
-	}
 	return &distsqlctx.DistSQLContext{
 		WarnHandler:                          warnHandler,
 		Client:                               kvClient,
 		EnableChunkRPC:                       true,
 		EnabledRateLimitAction:               vardef.DefTiDBEnableRateLimitAction,
 		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
-		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, memQuotaQuery),
+		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
 		Location:                             time.UTC,
 		SQLKiller:                            &sqlKiller,
 		CPUUsage:                             &cpuUsages,
@@ -184,7 +181,7 @@ func newReorgDistSQLCtxWithReorgMeta(kvClient kv.Client, reorgMeta *model.DDLReo
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ctx := newDefaultReorgDistSQLCtx(kvClient, warnHandler, reorgMeta.MemQuotaQuery)
+	ctx := newDefaultReorgDistSQLCtx(kvClient, warnHandler)
 	ctx.Location = loc
 	ctx.ErrCtx = errctx.NewContextWithLevels(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode), ctx.WarnHandler)
 	ctx.ResourceGroupName = reorgMeta.ResourceGroupName

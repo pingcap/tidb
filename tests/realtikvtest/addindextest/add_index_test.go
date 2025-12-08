@@ -226,37 +226,3 @@ func TestAddIndexOnGB18030Bin(t *testing.T) {
 	tk.MustExec("insert into t values ('a', 'b');")
 	tk.MustExec("admin check table t;")
 }
-
-func TestAddIndexMemQuotaQuery(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, a int)")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
-
-	var capturedMemQuota int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkReorgDistSQLCtxMemTracker", func(memQuota int64) {
-		capturedMemQuota = memQuota
-	})
-
-	// Test default memQuotaQuery (1GB)
-	tk.MustExec("alter table t add index idx_a(a)")
-	assert.Equal(t, int64(1<<30), capturedMemQuota) // 1GB default
-
-	// Test custom memQuotaQuery
-	tk.MustExec("alter table t drop index idx_a")
-	customQuota := int64(512 * 1024 * 1024)               // 512MB
-	tk.MustExec("set @@tidb_mem_quota_query = 536870912") // 512MB
-	capturedMemQuota = 0
-	tk.MustExec("alter table t add index idx_a(a)")
-	assert.Equal(t, customQuota, capturedMemQuota)
-
-	// Test another custom value (2GB)
-	tk.MustExec("alter table t drop index idx_a")
-	largeQuota := int64(2 * 1024 * 1024 * 1024)            // 2GB
-	tk.MustExec("set @@tidb_mem_quota_query = 2147483648") // 2GB
-	capturedMemQuota = 0
-	tk.MustExec("alter table t add index idx_a(a)")
-	assert.Equal(t, largeQuota, capturedMemQuota)
-}
