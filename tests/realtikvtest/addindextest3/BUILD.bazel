@@ -27,6 +27,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/table",
         "//pkg/table/tables",
+        "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/util/chunk",
