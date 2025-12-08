@@ -158,6 +158,7 @@ func isInTokenMap(target string) bool {
 var tokenMap = map[string]int{
 	"ACCOUNT":                        account,
 	"ACTION":                         action,
+	"ACTIVE_ACTIVE":                  activeActive,
 	"ADD":                            add,
 	"ADDDATE":                        addDate,
 	"ADD_COLUMNAR_REPLICA_ON_DEMAND": addColumnarReplicaOnDemand,
@@ -754,6 +755,10 @@ var tokenMap = map[string]int{
 	"SLOW":                           slow,
 	"SMALLINT":                       smallIntType,
 	"SNAPSHOT":                       snapshot,
+	"SOFTDELETE":                     softdelete,
+	"SOFTDELETE_RETENTION":           softdeleteRetention,
+	"SOFTDELETE_JOB_INTERVAL":        softdeleteJobInterval,
+	"SOFTDELETE_JOB_ENABLE":          softdeleteJobEnable,
 	"SOME":                           some,
 	"SOURCE":                         source,
 	"SPATIAL":                        spatial,

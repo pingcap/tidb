@@ -98,25 +98,28 @@ const (
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
 	// not used
-	ActionAlterTableStatsOptions ActionType = 58
-	ActionAlterNoCacheTable      ActionType = 59
-	ActionCreateTables           ActionType = 60
-	ActionMultiSchemaChange      ActionType = 61
-	ActionFlashbackCluster       ActionType = 62
-	ActionRecoverSchema          ActionType = 63
-	ActionReorganizePartition    ActionType = 64
-	ActionAlterTTLInfo           ActionType = 65
-	ActionAlterTTLRemove         ActionType = 67
-	ActionCreateResourceGroup    ActionType = 68
-	ActionAlterResourceGroup     ActionType = 69
-	ActionDropResourceGroup      ActionType = 70
-	ActionAlterTablePartitioning ActionType = 71
-	ActionRemovePartitioning     ActionType = 72
-	ActionAddColumnarIndex       ActionType = 73
-	ActionModifyEngineAttribute  ActionType = 74
-	ActionAlterTableMode         ActionType = 75
-	ActionRefreshMeta            ActionType = 76
-	ActionModifySchemaReadOnly   ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableStatsOptions   ActionType = 58
+	ActionAlterNoCacheTable        ActionType = 59
+	ActionCreateTables             ActionType = 60
+	ActionMultiSchemaChange        ActionType = 61
+	ActionFlashbackCluster         ActionType = 62
+	ActionRecoverSchema            ActionType = 63
+	ActionReorganizePartition      ActionType = 64
+	ActionAlterTTLInfo             ActionType = 65
+	ActionAlterTTLRemove           ActionType = 67
+	ActionCreateResourceGroup      ActionType = 68
+	ActionAlterResourceGroup       ActionType = 69
+	ActionDropResourceGroup        ActionType = 70
+	ActionAlterTablePartitioning   ActionType = 71
+	ActionRemovePartitioning       ActionType = 72
+	ActionAddColumnarIndex         ActionType = 73
+	ActionModifyEngineAttribute    ActionType = 74
+	ActionAlterTableMode           ActionType = 75
+	ActionRefreshMeta              ActionType = 76
+	ActionModifySchemaReadOnly     ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableSoftDeleteInfo ActionType = 78
+	ActionModifySchemaActiveActive ActionType = 79
+	ActionModifySchemaSoftDelete   ActionType = 80
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -183,6 +186,9 @@ var ActionMap = map[ActionType]string{
 	ActionReorganizePartition:           "alter table reorganize partition",
 	ActionAlterTTLInfo:                  "alter table ttl",
 	ActionAlterTTLRemove:                "alter table no_ttl",
+	ActionAlterTableSoftDeleteInfo:      "alter soft delete info",
+	ActionModifySchemaActiveActive:      "modify schema active-active",
+	ActionModifySchemaSoftDelete:        "modify schema soft delete",
 	ActionCreateResourceGroup:           "create resource group",
 	ActionAlterResourceGroup:            "alter resource group",
 	ActionDropResourceGroup:             "drop resource group",
@@ -784,6 +790,7 @@ func (job *Job) IsRollbackable() bool {
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
+		ActionModifySchemaActiveActive, ActionModifySchemaSoftDelete,
 		ActionModifyTableAutoIDCache, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:

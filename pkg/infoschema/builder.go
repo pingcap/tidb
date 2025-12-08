@@ -80,6 +80,10 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return nil, applyModifySchemaCharsetAndCollate(b, m, diff)
 	case model.ActionModifySchemaDefaultPlacement:
 		return nil, applyModifySchemaDefaultPlacement(b, m, diff)
+	case model.ActionModifySchemaActiveActive:
+		return nil, applyModifySchemaActiveActive(b, m, diff)
+	case model.ActionModifySchemaSoftDelete:
+		return nil, applyModifySchemaSoftDelete(b, m, diff)
 	case model.ActionCreatePlacementPolicy:
 		return nil, applyCreatePolicy(b, m, diff)
 	case model.ActionDropPlacementPolicy:
@@ -704,6 +708,41 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m meta.Reader, diff *model.S
 	}
 	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
 	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	return nil
+}
+
+func (b *Builder) applyModifySchemaActiveActive(m meta.Reader, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo.IsActiveActive = di.IsActiveActive
+	return nil
+}
+
+func (b *Builder) applyModifySchemaSoftDelete(m meta.Reader, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo.SoftDeleteEnable = di.SoftDeleteEnable
+	newDbInfo.SoftDeleteRetention = di.SoftDeleteRetention
+	newDbInfo.SoftDeleteJobEnable = di.SoftDeleteJobEnable
+	newDbInfo.SoftDeleteJobInterval = di.SoftDeleteJobInterval
 	return nil
 }
 
