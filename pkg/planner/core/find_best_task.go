@@ -781,9 +781,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 	}
 
-<<<<<<< HEAD
-	if !comparable1 && !comparable2 {
-=======
 	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 || !comparable2 {
@@ -801,7 +798,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < -1 {
 			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 		}
->>>>>>> 52cb3dc3b4b (planner: bug fix for compareCandidates (#64525))
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
