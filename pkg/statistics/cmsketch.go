@@ -643,39 +643,43 @@ func getEncodingType(d []byte) byte {
 	}
 }
 
-func convertFromUintToInt(d []byte) []byte {
+func convertFromUintToInt(d []byte) ([]byte, bool) {
 	back := d
 	_, datum, err := codec.DecodeOne(d)
 	if err != nil {
-		return back
+		return back, false
 	}
-	v := mathutil.Clamp(datum.GetUint64(), 0, math.MaxInt64)
+
+	orig := datum.GetUint64()
+	v := mathutil.Clamp(orig, 0, math.MaxInt64)
 	datum.SetInt64(int64(v))
 	d, _ = codec.EncodeKey(nil, nil, datum)
-	return d
+	return d, orig != v
 }
 
-func convertFromIntToUInt(d []byte) []byte {
+func convertFromIntToUInt(d []byte) ([]byte, bool) {
 	back := d
 	_, datum, err := codec.DecodeOne(d)
 	if err != nil {
-		return back
+		return back, false
 	}
-	v := mathutil.Clamp(datum.GetInt64(), 0, math.MaxInt64)
+
+	orig := datum.GetInt64()
+	v := mathutil.Clamp(orig, 0, math.MaxInt64)
 	datum.SetUint64(uint64(v))
 	d, _ = codec.EncodeKey(nil, nil, datum)
-	return d
+	return d, orig != v
 }
 
-func (c *TopN) convert(d []byte) []byte {
+func (c *TopN) convert(d []byte) ([]byte, bool) {
 	if len(c.TopN) == 0 {
-		return d
+		return d, false
 	}
 
 	storedType := getEncodingType(c.TopN[0].Encoded)
 	gotType := getEncodingType(d)
 	if gotType == storedType {
-		return d
+		return d, false
 	}
 
 	switch storedType {
@@ -685,7 +689,7 @@ func (c *TopN) convert(d []byte) []byte {
 		return convertFromIntToUInt(d)
 	default:
 		// Signed/unsigned conversion is the only case we may meet.
-		return d
+		return d, false
 	}
 }
 
@@ -727,7 +731,11 @@ func (c *TopN) FindTopN(d []byte) int {
 		return -1
 	}
 
-	d = c.convert(d)
+	d, clamped := c.convert(d)
+	if clamped {
+		return 0
+	}
+
 	if bytes.Compare(c.TopN[len(c.TopN)-1].Encoded, d) < 0 {
 		return -1
 	}
@@ -749,7 +757,7 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 	if c == nil {
 		return 0, false
 	}
-	d = c.convert(d)
+	d, _ = c.convert(d)
 	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
