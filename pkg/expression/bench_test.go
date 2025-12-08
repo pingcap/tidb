@@ -2144,5 +2144,11 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkCastIntAsIntVec,
 		BenchmarkVectorizedExecute,
 		BenchmarkScalarFunctionClone,
+		BenchmarkColumnPoolGet,
+		BenchmarkColumnPoolGetParallel,
+		BenchmarkColumnPoolGetPut,
+		BenchmarkColumnPoolGetPutParallel,
+		BenchmarkPlusIntBufAllocator,
+		BenchmarkVectorizedBuiltinMiscellaneousEvalOneVec,
 	)
 }
