@@ -792,9 +792,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 	}
 
-<<<<<<< HEAD
-	if !comparable1 && !comparable2 {
-=======
 	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 || !comparable2 {
@@ -812,7 +809,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < 1 {
 			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 		}
->>>>>>> e10a603ea1b (planner: Adjust risk assessment for plan choice (#64419))
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
@@ -1301,23 +1297,16 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
-<<<<<<< HEAD
-			var unsignedIntHandle bool
-			if c.path.IsIntHandlePath && ds.TableInfo.PKIsHandle {
-				if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
-					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-				}
-			}
-			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
-				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
-=======
 			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 			indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
-				if !c.path.IsFullScanRange(ds.TableInfo) {
->>>>>>> e10a603ea1b (planner: Adjust risk assessment for plan choice (#64419))
+			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+				var unsignedIntHandle bool
+			    if c.path.IsIntHandlePath && ds.TableInfo.PKIsHandle {
+				    if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
+					    unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+				    }
+			    }
+				if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
