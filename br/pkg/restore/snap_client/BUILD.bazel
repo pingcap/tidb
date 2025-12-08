@@ -84,7 +84,11 @@ go_test(
     ],
     embed = [":snap_client"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 18,
+=======
+    shard_count = 42,
+>>>>>>> 0cb39391dce (br: support restore privileges tables from v6.5 to v7.5 (#64668))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/glue",

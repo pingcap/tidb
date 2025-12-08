@@ -87,3 +87,50 @@ func (rc *SnapClient) CreateTablesTest(
 	})
 	return rewriteRules, newTables, nil
 }
+<<<<<<< HEAD
+=======
+
+func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
+	builder *PipelineConcurrentBuilder,
+	s storage.ExternalStorage,
+	updateCh glue.Progress,
+	statsConcurrency uint,
+) {
+	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency)
+}
+
+func (rc *SnapClient) ReplaceTables(
+	ctx context.Context,
+	createdTables []*restoreutils.CreatedTable,
+	schemaVersionPair SchemaVersionPairT,
+	restoreTS uint64,
+	loadStatsPhysical, loadSysTablePhysical bool,
+	kvClient kv.Client,
+	checksum bool,
+	checksumConcurrency uint,
+) (int, error) {
+	return rc.replaceTables(
+		ctx,
+		createdTables,
+		schemaVersionPair,
+		restoreTS,
+		loadStatsPhysical,
+		loadSysTablePhysical,
+		kvClient,
+		checksum,
+		checksumConcurrency,
+	)
+}
+
+func NewTemporaryTableChecker(loadStatsPhysical, loadSysTablePhysical bool) *TemporaryTableChecker {
+	return &TemporaryTableChecker{loadStatsPhysical: loadStatsPhysical, loadSysTablePhysical: loadSysTablePhysical}
+}
+
+func (rc *SnapClient) CheckPrivilegeTableRowsCollateCompatibility(
+	ctx context.Context,
+	dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	return rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbNameL, tableNameL, upstreamTable, downstreamTable)
+}
+>>>>>>> 0cb39391dce (br: support restore privileges tables from v6.5 to v7.5 (#64668))

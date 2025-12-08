@@ -149,6 +149,17 @@ type SnapClient struct {
 	// checkpoint information for snapshot restore
 	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
+<<<<<<< HEAD
+=======
+
+	temporarySystemTablesRenamed bool
+
+	// restoreUUID is the UUID of this restore.
+	// restore from a checkpoint inherits the same restoreUUID.
+	restoreUUID uuid.UUID
+
+	checkPrivilegeTableRowsCollateCompatiblity bool
+>>>>>>> 0cb39391dce (br: support restore privileges tables from v6.5 to v7.5 (#64668))
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -214,6 +225,18 @@ func (rc *SnapClient) GetTLSConfig() *tls.Config {
 // GetSupportPolicy tells whether target tidb support placement policy.
 func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
+}
+
+// SetCheckPrivilegeTableRowsCollateCompatiblity set switch to check
+// privilege tables with different collate columns
+func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatiblity(v bool) {
+	rc.checkPrivilegeTableRowsCollateCompatiblity = v
+}
+
+// GetCheckPrivilegeTableRowsCollateCompatiblity get switch to check
+// privilege tables with different collate columns
+func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatiblity() bool {
+	return rc.checkPrivilegeTableRowsCollateCompatiblity
 }
 
 func (rc *SnapClient) updateConcurrency() {
