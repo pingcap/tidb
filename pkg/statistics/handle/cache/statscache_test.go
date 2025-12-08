@@ -119,7 +119,7 @@ func TestUpdateStatsHealthyMetrics(t *testing.T) {
 }
 
 func newMockTable(t *testing.T, physicalID int64, pseudo bool, realtimeCount, modifyCount int64, analyzeVersion uint64) *statistics.Table {
-	hist := statistics.NewHistColl(physicalID, realtimeCount, modifyCount, 0, 0)
+	hist := statistics.NewHistColl(physicalID, true, realtimeCount, modifyCount, 0, 0)
 	table := &statistics.Table{
 		HistColl:              *hist,
 		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
