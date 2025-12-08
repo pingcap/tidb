@@ -36,6 +36,11 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/size"
+>>>>>>> d7169b2a324 (planner: PointGet will not skip the reuse chunk with enough total memory (#63921))
 	"github.com/stretchr/testify/require"
 )
 
@@ -1507,3 +1512,47 @@ func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestAllocMPPID(t *testing.T) {
+	ctx := mock.NewContext()
+	require.Equal(t, int64(1), physicalop.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(2), physicalop.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(3), physicalop.AllocMPPTaskID(ctx))
+}
+
+func TestSemiJoinRewriter(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`set @@tidb_opt_enable_semi_join_rewrite=on;`)
+		tk.MustExec(`create table t1(a int);`)
+		tk.MustExec(`create table t2(a varchar(10));`)
+		tk.MustExec(`create table t3(a int);`)
+		tk.MustQuery(`explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where t1.a=t2.a);`).Check(testkit.Rows(
+			`HashJoin root  inner join, equal:[eq(Column#6, Column#7)]`,
+			`├─HashAgg(Build) root  group by:Column#7, funcs:firstrow(Column#7)->Column#7`,
+			`│ └─Projection root  cast(test.t2.a, double BINARY)->Column#7`,
+			`│   └─TableReader root  data:TableFullScan`,
+			`│     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`└─Projection(Probe) root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
+			`  └─TableReader root  data:TableFullScan`,
+			`    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
+	})
+}
+
+func TestDisableReuseChunk(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
+		tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
+		core.MaxMemoryLimitForOverlongType = 0
+		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
+		core.MaxMemoryLimitForOverlongType = 500 * size.GB
+		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
+	})
+}
+>>>>>>> d7169b2a324 (planner: PointGet will not skip the reuse chunk with enough total memory (#63921))
