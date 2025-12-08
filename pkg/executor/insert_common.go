@@ -151,17 +151,10 @@ func (e *InsertValues) initInsertColumns() error {
 		cols = tableCols
 		tblInfo := e.Table.Meta()
 		if tblInfo.SoftdeleteInfo != nil || tblInfo.IsActiveActive {
-			cols = slices.Clone(cols)
-			if tblInfo.SoftdeleteInfo != nil {
-				cols = slices.DeleteFunc(cols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraSoftDeleteTimeName.L
-				})
-			}
-			if tblInfo.IsActiveActive {
-				cols = slices.DeleteFunc(cols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraOriginTSName.L
-				})
-			}
+			cols = slices.DeleteFunc(slices.Clone(cols), func(col *table.Column) bool {
+				return (tblInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+					(tblInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L)
+			})
 		}
 	}
 	for _, col := range cols {
