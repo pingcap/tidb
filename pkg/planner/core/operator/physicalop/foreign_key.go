@@ -361,6 +361,7 @@ func buildOnUpdateChildFKChecks(ctx base.PlanContext, is infoschema.InfoSchema, 
 	return fkChecks, nil
 }
 
+// ColumnAndTable represents a column and its table.
 type ColumnAndTable struct {
 	*table.Column
 	table.Table
