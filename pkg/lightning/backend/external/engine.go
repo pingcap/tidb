@@ -83,6 +83,7 @@ import (
 //	|  512M |       256M(2) |       512M(1) |
 const writeStepMemShareCount = 6.5
 
+// getEngineMemoryLimit calculates the memory limit for external engine according to the memory capacity.
 func getEngineMemoryLimit(memCapacity int64) int {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	return int(float64(memCapacity) / writeStepMemShareCount * 3)
@@ -202,7 +203,6 @@ func NewExternalEngine(
 	onDup engineapi.OnDuplicateKey,
 	filePrefix string,
 ) *Engine {
-	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := getEngineMemoryLimit(memCapacity)
 	logutil.Logger(ctx).Info("create external engine",
 		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
