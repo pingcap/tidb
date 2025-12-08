@@ -699,7 +699,7 @@ func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, index idx(a));")
 	tk.MustExec("insert into t values (1, 2);")
 	tk.MustExec("analyze table t")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
