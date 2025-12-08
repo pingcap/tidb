@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kvconflicts
+package conflictedkv
 
 import (
 	"sync/atomic"
@@ -24,16 +24,14 @@ import (
 )
 
 func TestHandleFilter(t *testing.T) {
-	var hf *handleFilter
-	// we allow nil handleFilter
+	var hf *HandleFilter
+	// we allow nil HandleFilter
 	require.False(t, hf.needSkip(tidbkv.IntHandle(1)))
 
 	sharedSize := atomic.Int64{}
 	set := NewBoundedHandleSet(nil, &sharedSize, 1024)
 	set.Add(tidbkv.IntHandle(1))
-	hf = &handleFilter{
-		set: set,
-	}
+	hf = NewHandleFilter(set)
 	require.True(t, hf.needSkip(tidbkv.IntHandle(1)))
 	require.False(t, hf.needSkip(tidbkv.IntHandle(2)))
 }
