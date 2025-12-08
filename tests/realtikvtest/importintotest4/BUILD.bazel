@@ -28,10 +28,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//util",
-<<<<<<< HEAD
         "@com_github_tikv_pd_client//:client",
-=======
         "@org_uber_go_atomic//:atomic",
->>>>>>> 16ec21bcaa9 (importinto: redact option cloud_storage_uri in show process list and log (#62967))
     ],
 )

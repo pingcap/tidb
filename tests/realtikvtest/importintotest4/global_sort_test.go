@@ -36,11 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-<<<<<<< HEAD
 	pd "github.com/tikv/pd/client"
-=======
 	"go.uber.org/atomic"
->>>>>>> 16ec21bcaa9 (importinto: redact option cloud_storage_uri in show process list and log (#62967))
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -70,13 +67,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
-<<<<<<< HEAD
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
-=======
-	ch := make(chan struct{}, 1)
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
-		ch <- struct{}{}
-	})
 	var counter atomic.Int32
 	tk2 := testkit.NewTestKit(s.T(), s.store)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish",
@@ -105,7 +96,6 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 			}
 		},
 	)
->>>>>>> 16ec21bcaa9 (importinto: redact option cloud_storage_uri in show process list and log (#62967))
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
