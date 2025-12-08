@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	mmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -470,7 +469,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
+func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *model.ColumnInfo, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -493,7 +492,7 @@ func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmod
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	for _, assign := range e.OrderedList {
-		var colInfo *mmodel.ColumnInfo
+		var colInfo *model.ColumnInfo
 		if cols[assign.Col.Index] != nil {
 			colInfo = cols[assign.Col.Index].ColumnInfo
 		}
