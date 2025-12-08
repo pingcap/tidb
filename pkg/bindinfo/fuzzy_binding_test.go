@@ -297,9 +297,6 @@ func TestFuzzyBindingInList(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD:pkg/bindinfo/fuzzy_binding_test.go
-func TestFuzzyBindingPlanCache(t *testing.T) {
-=======
 func TestCrossDBBindingReadFromStorage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -326,8 +323,7 @@ func TestCrossDBBindingReadFromStorage(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
 }
 
-func TestCrossDBBindingPlanCache(t *testing.T) {
->>>>>>> dd1df3f81b8 (planner: fix the issue that `READ_FROM_STORAGE` hint doesn't consider cross-db binding (#64644)):pkg/bindinfo/tests/cross_db_binding_test.go
+func TestFuzzyBindingPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
