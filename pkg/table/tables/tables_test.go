@@ -1429,15 +1429,15 @@ func TestActiveActiveUpdateOriginTSColumn(t *testing.T) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205)")
 	tk.MustExec("create table t1 (id int primary key, v int) softdelete = 'on', active_active = 'on'")
+	// TODO: remove this line when DDL is fixed
+	tk.MustExec("alter table t1 drop column _tidb_commit_ts")
 	tk.MustExec("insert into t1 (id, v) values (1, 101)")
 
-	// FIXME: update join involve multiple tables, all _tidb_origin_ts should be updated
-	// Currently the following test report [planner:1060]Duplicate column name '_tidb_commit_ts'
-	//
-	// tk.MustExec("update t, t1 set t.v = t1.v, t1.v = 666 where t.id = t1.id")
-	// tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows("1 101 <nil>"))
-	// tk.MustQuery("select id, v, _tidb_origin_ts from t1 where id = 1").Check(testkit.Rows("1 666 <nil>"))
+	// update join involve multiple tables, all _tidb_origin_ts should be updated
+	tk.MustExec("update t, t1 set t.v = t1.v, t1.v = 666 where t.id = t1.id")
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows("1 101 <nil>"))
+	tk.MustQuery("select id, v, _tidb_origin_ts from t1 where id = 1").Check(testkit.Rows("1 666 <nil>"))
 	// update join _tidb_origin_ts is leagal, and _tidb_origin_ts should be updated
-	// tk.MustExec("update t, t1 set t1._tidb_origin_ts = 9876543 where t.id = t1.id")
-	// tk.MustQuery("select id, v, _tidb_origin_ts from t1 where id = 1").Check(testkit.Rows("1 666 9876543"))
+	tk.MustExec("update t, t1 set t1._tidb_origin_ts = 9876543 where t.id = t1.id")
+	tk.MustQuery("select id, v, _tidb_origin_ts from t1 where id = 1").Check(testkit.Rows("1 666 9876543"))
 }

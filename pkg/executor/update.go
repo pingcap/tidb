@@ -280,16 +280,6 @@ func (e *UpdateExec) exec(
 		newTableData := newData[content.Start:content.End]
 		flags := bAssignFlag[content.Start:content.End]
 
-		if tbl.Meta().IsActiveActive {
-			// For active-active table, when duplicate key is found, value of _tidb_origin_ts
-			// should be set to null rather than copy the old value.
-			for _, col := range tbl.Cols() {
-				if col.Name.Equals(&model.ExtraOriginTSName) {
-					newTableData[col.Offset].SetNull()
-				}
-			}
-		}
-
 		// Evaluate generated columns and write to table.
 		// Evaluated values will be stored in newRow.
 		var assignments []*expression.Assignment
@@ -489,11 +479,19 @@ func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mode
 	return err
 }
 
-func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []physicalop.ColumnAndTable) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
+	for i, col := range cols {
+		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+		// should be set to null rather than copy the old value.
+		if col.Table.Meta().IsActiveActive && col.Name.Equals(&model.ExtraOriginTSName) {
+			newRowData[i].SetNull()
+		}
+	}
+
 	for _, assign := range e.OrderedList {
 		var colInfo *model.ColumnInfo
-		if cols[assign.Col.Index] != nil {
+		if cols[assign.Col.Index].Column != nil {
 			colInfo = cols[assign.Col.Index].ColumnInfo
 		}
 
@@ -509,7 +507,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
-		if cols[assign.Col.Index] != nil {
+		if cols[assign.Col.Index].Column != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 				return nil, err
@@ -521,8 +519,15 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 	return newRowData, nil
 }
 
-func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []physicalop.ColumnAndTable) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
+	for i, col := range cols {
+		if col.Table.Meta().IsActiveActive && col.Name.Equals(&model.ExtraOriginTSName) {
+			// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+			// should be set to null rather than copy the old value.
+			newRowData[i].SetNull()
+		}
+	}
 	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
 		tblIdx := e.assignFlag[assign.Col.Index]
@@ -536,7 +541,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
-		if cols[assign.Col.Index] != nil {
+		if cols[assign.Col.Index].Column != nil {
 			colInfo := cols[assign.Col.Index].ColumnInfo
 			val, err = table.CastValue(e.Ctx(), val, colInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
