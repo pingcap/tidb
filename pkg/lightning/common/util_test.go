@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbutil/dbutiltest"
 	"github.com/stretchr/testify/assert"
@@ -344,7 +344,7 @@ func TestSkipReadRowCount(t *testing.T) {
 	for _, tc := range testCases {
 		tk.MustExec("DROP TABLE IF EXISTS test.sbtest")
 		tk.MustExec(tc.sql)
-		table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("sbtest"))
+		table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("sbtest"))
 		require.NoError(t, err)
 		require.Equal(t, tc.expected, common.SkipReadRowCount(table.Meta()))
 	}
