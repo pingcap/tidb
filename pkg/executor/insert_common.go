@@ -154,14 +154,12 @@ func (e *InsertValues) initInsertColumns() error {
 			cols = slices.Clone(cols)
 			if tblInfo.SoftdeleteInfo != nil {
 				cols = slices.DeleteFunc(cols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraSoftDeleteTimeName.L ||
-						col.Name.L == model.ExtraCommitTSName.L
+					return col.Name.L == model.ExtraSoftDeleteTimeName.L
 				})
 			}
 			if tblInfo.IsActiveActive {
 				cols = slices.DeleteFunc(cols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraOriginTSName.L ||
-						col.Name.L == model.ExtraCommitTSName.L
+					return col.Name.L == model.ExtraOriginTSName.L
 				})
 			}
 		}

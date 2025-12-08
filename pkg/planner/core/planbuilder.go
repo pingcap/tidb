@@ -4293,14 +4293,12 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physic
 			affectedValuesCols = slices.Clone(affectedValuesCols)
 			if tblInfo.SoftdeleteInfo != nil {
 				affectedValuesCols = slices.DeleteFunc(affectedValuesCols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraSoftDeleteTimeName.L ||
-						col.Name.L == model.ExtraCommitTSName.L
+					return col.Name.L == model.ExtraSoftDeleteTimeName.L
 				})
 			}
 			if tblInfo.IsActiveActive {
 				affectedValuesCols = slices.DeleteFunc(affectedValuesCols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraOriginTSName.L ||
-						col.Name.L == model.ExtraCommitTSName.L
+					return col.Name.L == model.ExtraOriginTSName.L
 				})
 			}
 		}
