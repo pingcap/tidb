@@ -303,10 +303,12 @@ func getAutoIncrementID(
 		return 0
 	}
 	alloc := tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
-	if alloc == nil || alloc.Base() == 0 {
+	if alloc == nil {
 		// It may not be loaded yet.
 		// To show global next autoID, one should use `show table x next_row_id`.
 		return 0
+	} else if alloc.Base() == 0 {
+		return 1
 	}
 	return alloc.Base() + 1
 }
