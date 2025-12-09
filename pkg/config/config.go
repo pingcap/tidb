@@ -861,7 +861,7 @@ func DefaultPessimisticTxn() PessimisticTxn {
 		MaxRetryCount:                     256,
 		DeadlockHistoryCapacity:           10,
 		DeadlockHistoryCollectRetryable:   false,
-		PessimisticAutoCommit:             *NewAtomicBool(false),
+		PessimisticAutoCommit:             *NewAtomicBool(true),
 		ConstraintCheckInPlacePessimistic: true,
 	}
 }
