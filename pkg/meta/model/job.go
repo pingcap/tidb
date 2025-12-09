@@ -903,6 +903,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 	var reorgMeta *DDLReorgMeta
 	if parentJob.ReorgMeta != nil {
 		reorgMeta = parentJob.ReorgMeta.ShallowCopy()
+		reorgMeta.ReorgTp = sub.ReorgTp
 		reorgMeta.Stage = sub.ReorgStage
 		reorgMeta.AnalyzeState = sub.AnalyzeState
 	}
