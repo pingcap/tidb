@@ -346,20 +346,6 @@ func (rc *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
 	return l, nil
 }
 
-func (rc *LogFileManager) CountExtraSSTTotalKVs(ctx context.Context) (int64, error) {
-	count := int64(0)
-	ssts := rc.GetCompactionIter(ctx)
-	for err, ssts := range iter.AsSeq(ctx, ssts) {
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		for _, sst := range ssts.GetSSTs() {
-			count += int64(sst.TotalKvs)
-		}
-	}
-	return count, nil
-}
-
 func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 	return iter.FlatMap(ms, func(m *MetaName) MetaGroupIter {
 		return iter.Map(iter.FromSlice(m.meta.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
