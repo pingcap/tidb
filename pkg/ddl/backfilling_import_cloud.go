@@ -46,7 +46,6 @@ type cloudImportExecutor struct {
 }
 
 func newCloudImportExecutor(
-	ctx context.Context,
 	job *model.Job,
 	store kv.Storage,
 	indexes []*model.IndexInfo,
@@ -65,6 +64,7 @@ func newCloudImportExecutor(
 
 func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
+	ctx = lightningmetric.WithCommonMetric(ctx, m.metric)
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build()
 	if err != nil {
 		return err

@@ -528,7 +528,7 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 
 func TestAddIndexValidateRangesFailed(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -542,7 +542,7 @@ func TestAddIndexValidateRangesFailed(t *testing.T) {
 
 func TestModifyColumnWithMultipleIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testcases := []struct {
@@ -579,7 +579,7 @@ func TestModifyColumnWithMultipleIndex(t *testing.T) {
 
 func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testcases := []struct {

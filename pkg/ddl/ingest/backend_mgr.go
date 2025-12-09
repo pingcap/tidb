@@ -103,7 +103,8 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	}
 	jobSortPath := filepath.Join(sortPath, encodeBackendTag(job.ID, b.checkDup))
 	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
-		job.Type == model.ActionAddIndex)
+		job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionModifyColumn)
 	intest.Assert(job.ReorgMeta != nil)
 
 	resGroupName := job.ReorgMeta.ResourceGroupName

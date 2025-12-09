@@ -54,8 +54,6 @@ type readIndexExecutor struct {
 	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
-
-	metric *lightningmetric.Common
 }
 
 type readIndexSummary struct {
@@ -64,7 +62,6 @@ type readIndexSummary struct {
 }
 
 func newReadIndexExecutor(
-	ctx context.Context,
 	d *ddl,
 	job *model.Job,
 	indexes []*model.IndexInfo,
@@ -73,7 +70,7 @@ func newReadIndexExecutor(
 	cloudStorageURI string,
 	avgRowSize int,
 ) (r *readIndexExecutor, err error) {
-	r = &readIndexExecutor{
+	return &readIndexExecutor{
 		d:               d,
 		job:             job,
 		indexes:         indexes,
@@ -82,21 +79,7 @@ func newReadIndexExecutor(
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
 		curRowCount:     &atomic.Int64{},
-	}
-	if !r.isGlobalSort() {
-		r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
-		ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
-	}
-	return r, nil
-}
-
-func hasUniqueIndex(indexes []*model.IndexInfo) bool {
-	for _, idx := range indexes {
-		if idx.Unique {
-			return true
-		}
-	}
-	return false
+	}, nil
 }
 
 func (*readIndexExecutor) Init(_ context.Context) error {
@@ -134,6 +117,8 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	// TODO(tangenta): support checkpoint manager that interact with subtask table.
+	metric := metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, metric)
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
 		WithImportDistributedLock(r.d.etcdCli, sm.TS).
 		Build()
