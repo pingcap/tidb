@@ -86,7 +86,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.optimizerTrace {
 		switch e.optimizerTraceTarget {
 		case core.TracePlanTargetEstimation:
-			return e.nextOptimizerCEPlanTrace(ctx, e.Ctx(), req)
+			return errors.New("this feature has been deprecated.")
 		case core.TracePlanTargetDebug:
 			return e.nextOptimizerDebugPlanTrace(ctx, e.Ctx(), req)
 		default:
@@ -101,10 +101,6 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		return e.nextRowJSON(ctx, se, req)
 	}
-}
-
-func (e *TraceExec) nextOptimizerCEPlanTrace(context.Context, sessionctx.Context, *chunk.Chunk) error {
-	return errors.New("this feature has been deprecated.")
 }
 
 func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
