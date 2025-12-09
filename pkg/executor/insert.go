@@ -242,6 +242,11 @@ func (e *InsertExec) updateDupRow(
 	return err
 }
 
+type removeOldRow struct {
+	handle kv.Handle
+	oldRow []types.Datum
+}
+
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
 func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.Datum) error {
 	// Get keys need to be checked.
@@ -283,13 +288,9 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		autoColIdx = -1
 	}
 
-	type removeOldRow struct {
-		handle kv.Handle
-		oldRow []types.Datum
-	}
-
 	var removeOldRows []removeOldRow
 	for i, r := range toBeCheckedRows {
+		removeOldRows = removeOldRows[:0]
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
 			if err != nil {
@@ -302,31 +303,12 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			}
 
 			if oldRow != nil {
-				shouldRemoveOldRow := false
-				if len(e.replaceConflictIfExpr) > 0 {
-					shouldRemoveOldRow, err = e.replaceConflictIf(e.Ctx().GetExprCtx().GetEvalCtx(), oldRow)
-					if err != nil {
-						return err
-					}
+				var done bool
+				err, done, removeOldRows = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, r.handleKey, updateDupKeyCheck, autoColIdx, removeOldRows)
+				if err != nil {
+					return err
 				}
-
-				if shouldRemoveOldRow {
-					removeOldRows = append(removeOldRows, removeOldRow{
-						handle: handle,
-						oldRow: oldRow,
-					})
-				} else if len(e.OnDuplicate) > 0 {
-					if err = e.updateDupRow(ctx, i, r, oldRow, handle, updateDupKeyCheck, autoColIdx); err != nil {
-						return err
-					}
-					continue
-				} else if e.ignoreErr {
-					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
-					if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
-						e.Ctx().GetSessionVars().LockUnchangedKeys {
-						// lock duplicated row key on insert-ignore
-						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey)
-					}
+				if done {
 					continue
 				}
 			}
@@ -354,32 +336,12 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			shouldRemoveOldRow := false
-			if len(e.replaceConflictIfExpr) > 0 {
-				shouldRemoveOldRow, err = e.replaceConflictIf(e.Ctx().GetExprCtx().GetEvalCtx(), oldRow)
-				if err != nil {
-					return err
-				}
+			var done bool
+			err, done, removeOldRows = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, uk, updateDupKeyCheck, autoColIdx, removeOldRows)
+			if err != nil {
+				return err
 			}
-
-			if shouldRemoveOldRow {
-				removeOldRows = append(removeOldRows, removeOldRow{
-					handle: handle,
-					oldRow: oldRow,
-				})
-			} else if len(e.OnDuplicate) > 0 {
-				if err = e.updateDupRow(ctx, i, r, oldRow, handle, updateDupKeyCheck, autoColIdx); err != nil {
-					return err
-				}
-				newRows[i] = nil
-				break
-			} else if e.ignoreErr {
-				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-				if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
-					e.Ctx().GetSessionVars().LockUnchangedKeys {
-					// lock duplicated row key on insert-ignore
-					txnCtx.AddUnchangedKeyForLock(uk.newKey)
-				}
+			if done {
 				newRows[i] = nil
 				break
 			}
@@ -390,6 +352,8 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
+			// In ignore mode, the inserted row is not applied, so we should not delete the related tombstone rows.
+			// In update mode, the tombstone conflict rows may not be the same as those in insert mode; we should recompute them.
 			for _, rm := range removeOldRows {
 				unchanged, err := e.removeOldRow(txn, rm.handle, rm.oldRow, r, false)
 				if err != nil {
@@ -397,7 +361,6 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				intest.Assert(!unchanged, "old row should not be identical to the new row, it's supposed that change happens")
 			}
-			removeOldRows = removeOldRows[:0]
 
 			err := e.addRecord(ctx, newRows[i], addRecordDupKeyCheck)
 			if err != nil {
@@ -409,6 +372,50 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		e.stats.CheckInsertTime += time.Since(start)
 	}
 	return nil
+}
+
+func (e *InsertExec) handleConflictWithOldRow(ctx context.Context,
+	idxInBatch int,
+	row toBeCheckedRow,
+	oldRow []types.Datum,
+	handle kv.Handle,
+	dupKeyInfo *keyValueWithDupInfo,
+	dupKeyCheck table.DupKeyCheckMode,
+	autoColIdx int,
+	removeOldRows []removeOldRow) (err error, done bool, _ []removeOldRow) {
+	if len(e.replaceConflictIfExpr) > 0 {
+		shouldRemoveOldRow := false
+		shouldRemoveOldRow, err = e.replaceConflictIf(e.Ctx().GetExprCtx().GetEvalCtx(), oldRow)
+		if err != nil {
+			return err, false, nil
+		}
+		if shouldRemoveOldRow {
+			removeOldRows = append(removeOldRows, removeOldRow{
+				handle: handle,
+				oldRow: oldRow,
+			})
+			return nil, true, removeOldRows
+		}
+	}
+
+	if len(e.OnDuplicate) > 0 {
+		if err = e.updateDupRow(ctx, idxInBatch, row, oldRow, handle, dupKeyCheck, autoColIdx); err != nil {
+			return err, false, nil
+		}
+		return nil, true, removeOldRows
+	}
+
+	if e.ignoreErr {
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(dupKeyInfo.dupErr)
+		if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
+			e.Ctx().GetSessionVars().LockUnchangedKeys {
+			// lock duplicated row key on insert-ignore
+			txnCtx.AddUnchangedKeyForLock(dupKeyInfo.newKey)
+		}
+		return nil, true, removeOldRows
+	}
+
+	return nil, false, removeOldRows
 }
 
 // optimizeDupKeyCheckForNormalInsert trys to optimize the DupKeyCheckMode for an insert statement according to the
