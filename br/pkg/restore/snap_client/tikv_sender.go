@@ -15,7 +15,6 @@
 package snapclient
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -25,24 +24,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
@@ -295,8 +285,6 @@ func (rc *SnapClient) RestoreTables(
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
-	compactProtectStartKey []byte,
-	compactProtectEndKey []byte,
 	updateCh glue.Progress,
 	onProgress func(int64),
 ) error {
@@ -324,30 +312,12 @@ func (rc *SnapClient) RestoreTables(
 	}
 	log.Info("Restore Stage Duration", zap.String("stage", "split regions"), zap.Duration("take", time.Since(start)))
 
-	if bytes.Compare(compactProtectStartKey, compactProtectEndKey) < 0 {
-		log.Info("start to check and compact the restore range")
-		if err := rc.compactAndCheckSSTRange(ctx, compactProtectStartKey, compactProtectEndKey); err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		log.Warn("start key must be smaller than end key, so skip sending add partition range request", logutil.Key("start key", compactProtectStartKey), logutil.Key("end key", compactProtectEndKey))
-	}
-
 	start = time.Now()
 	if err = rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, newProgress); err != nil {
 		return errors.Trace(err)
 	}
 	elapsed := time.Since(start)
 	log.Info("Restore Stage Duration", zap.String("stage", "restore files"), zap.Duration("take", elapsed))
-
-	if bytes.Compare(compactProtectStartKey, compactProtectEndKey) < 0 {
-		log.Info("start to remove the force partition restore range")
-		if err := rc.removeForcePartitionRange(ctx, compactProtectStartKey, compactProtectEndKey); err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		log.Warn("start key must be smaller than end key, so skip sending remove partition range request", logutil.Key("start key", compactProtectStartKey), logutil.Key("end key", compactProtectEndKey))
-	}
 
 	summary.CollectSuccessUnit("files", len(allFiles), elapsed)
 	return nil
@@ -391,71 +361,6 @@ func getFileRangeKey(f string) string {
 	}
 
 	return f[:idx]
-}
-
-func (rc *SnapClient) sendRequestToStore(
-	ctx context.Context,
-	sendFn func(ectx context.Context, client importclient.ImporterClient, storeId uint64) error,
-) error {
-	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	eg, ectx := errgroup.WithContext(ctx)
-	pool := tidbutil.NewWorkerPool(uint(len(stores)), "check and compact")
-	for _, store := range stores {
-		if store.StatusAddress == "" || store.State != metapb.StoreState_Up {
-			continue
-		}
-		storeId := store.GetId()
-		pool.ApplyOnErrorGroup(eg, func() error {
-			return sendFn(ectx, rc.importer.importClient, storeId)
-		})
-	}
-	return eg.Wait()
-}
-
-func (rc *SnapClient) compactAndCheckSSTRange(ctx context.Context, startKey, endKey []byte) error {
-	checkReq := &import_sstpb.AddPartitionRangeRequest{
-		Range: &import_sstpb.Range{
-			Start: startKey,
-			End:   endKey,
-		},
-		TtlSeconds: 7200,
-	}
-	return rc.sendRequestToStore(ctx, func(ectx context.Context, client importclient.ImporterClient, storeId uint64) error {
-		if err := client.AddForcePartitionRange(ectx, storeId, checkReq); err != nil {
-			if s, ok := status.FromError(err); ok {
-				if s.Code() == codes.Unimplemented {
-					log.Warn("tikv node doesn't support check and compact.", zap.Uint64("store id", storeId))
-					return nil
-				}
-			}
-			return errors.Trace(err)
-		}
-		return nil
-	})
-}
-
-func (rc *SnapClient) removeForcePartitionRange(ctx context.Context, startKey, endKey []byte) error {
-	removeReq := &import_sstpb.RemovePartitionRangeRequest{
-		Range: &import_sstpb.Range{
-			Start: startKey,
-			End:   endKey,
-		},
-	}
-	return rc.sendRequestToStore(ctx, func(ectx context.Context, client importclient.ImporterClient, storeId uint64) error {
-		if err := client.RemoveForcePartitionRange(ectx, storeId, removeReq); err != nil {
-			if s, ok := status.FromError(err); ok {
-				if s.Code() == codes.Unimplemented {
-					log.Warn("tikv node doesn't support remove force partition range.", zap.Uint64("store id", storeId))
-					return nil
-				}
-			}
-			return errors.Trace(err)
-		}
-		return nil
-	})
 }
 
 // RestoreSSTFiles tries to do something prepare work, such as set speed limit, and restore the files.

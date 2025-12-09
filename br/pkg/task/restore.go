@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -924,7 +923,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	idFrom, idEnd, err := client.AllocTableIDs(ctx, tables)
+	err = client.AllocTableIDs(ctx, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1128,7 +1127,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	compactProtectStartKey, compactProtectEndKey := encodeCompactAndCheckKey(mgr.GetStorage().GetCodec(), idFrom, idEnd)
 	onProgress := func(n int64) {
 		if n == 0 {
 			updateCh.Inc()
@@ -1143,7 +1141,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
 		// It's recommended to enable TiDB configure `split-table` instead.
 		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
-		compactProtectStartKey, compactProtectEndKey,
 		updateCh,
 		onProgress,
 	); err != nil {
@@ -1640,12 +1637,6 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	}
 
 	return
-}
-
-func encodeCompactAndCheckKey(codec tikv.Codec, idFrom, idEnd int64) ([]byte, []byte) {
-	checkStartKey := tablecodec.EncodeTablePrefix(idFrom)
-	checkEndKey := tablecodec.EncodeTablePrefix(idEnd)
-	return codec.EncodeRange(checkStartKey, checkEndKey)
 }
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool

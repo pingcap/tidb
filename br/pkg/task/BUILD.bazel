@@ -65,7 +65,6 @@ go_library(
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle",
-        "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/cdcutil",

@@ -293,14 +293,14 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) (int64, int64, error) {
+func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
 	preallocedTableIDs := tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
 		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
 	})
 	if err != nil {
-		return 0, 0, err
+		return err
 	}
 
 	log.Info("registering the table IDs", zap.Stringer("ids", preallocedTableIDs))
@@ -310,8 +310,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	if rc.db != nil {
 		rc.db.RegisterPreallocatedIDs(preallocedTableIDs)
 	}
-	idFrom, idEnd := preallocedTableIDs.GetAllocRange()
-	return idFrom, idEnd, nil
+	return nil
 }
 
 // InitCheckpoint initialize the checkpoint status for the cluster. If the cluster is
