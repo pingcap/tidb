@@ -366,10 +366,10 @@ Projection	root		Column#17
   └─StreamAgg(Probe)	root		funcs:count(1)->Column#16
     └─MergeJoin	root		inner join, left key:explain_easy.t.a, right key:explain_easy.t.a
       ├─TableReader(Build)	root		data:Selection
-      │ └─Selection	cop[tikv]		eq(3, explain_easy.t.a)
+      │ └─Selection	cop[tikv]		eq(explain_easy.t.a, 3)
       │   └─TableFullScan	cop[tikv]	table:t1	keep order:true
       └─IndexReader(Probe)	root		index:Selection
-        └─Selection	cop[tikv]		eq(3, explain_easy.t.a)
+        └─Selection	cop[tikv]		eq(explain_easy.t.a, 3)
           └─IndexRangeScan	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:true
 explain format = 'plan_tree' select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	task	access object	operator info

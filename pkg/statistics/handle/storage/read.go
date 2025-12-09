@@ -400,7 +400,10 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		if histID != colInfo.ID {
 			continue
 		}
-		table.ColAndIdxExistenceMap.InsertCol(histID, statsVer != statistics.Version0 || distinct > 0 || nullCount > 0)
+
+		// Column stats can be synthesized when adding a column with default values, which keeps statsVer at 0 but
+		// still records NDV/null counts, so mark them as existing whenever any value is present.
+		table.ColAndIdxExistenceMap.InsertCol(histID, statistics.IsColumnAnalyzedOrSynthesized(statsVer, distinct, nullCount))
 		// All the objects in the table shares the same stats version.
 		// Update here.
 		if statsVer != statistics.Version0 {
@@ -563,17 +566,17 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		}
 	}
 	// If DROP STATS executes, we need to reset the stats version to 0.
-	if table.StatsVer != statistics.Version0 {
+	if statistics.IsAnalyzed(int64(table.StatsVer)) {
 		allZero := true
 		table.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
-			if c.StatsVer != statistics.Version0 {
+			if statistics.IsAnalyzed(c.StatsVer) {
 				allZero = false
 				return true
 			}
 			return false
 		})
 		table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-			if idx.StatsVer != statistics.Version0 {
+			if statistics.IsAnalyzed(idx.StatsVer) {
 				allZero = false
 				return true
 			}
@@ -875,7 +878,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		return nil
 	}
 	tbl = tbl.CopyAs(statistics.IndexMapWritable)
-	if idxHist.StatsVer != statistics.Version0 {
+	if statistics.IsAnalyzed(idxHist.StatsVer) {
 		tbl.StatsVer = int(idxHist.StatsVer)
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}
