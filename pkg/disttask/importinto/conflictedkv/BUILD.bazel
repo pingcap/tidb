@@ -4,6 +4,7 @@ go_library(
     name = "conflictedkv",
     srcs = [
         "collector.go",
+        "deleter.go",
         "handler.go",
         "row_handle.go",
     ],
@@ -11,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
+        "//pkg/disttask/framework/handle",
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
@@ -22,6 +24,8 @@ go_library(
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/backoff",
         "//pkg/util/redact",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
@@ -35,12 +39,13 @@ go_test(
     timeout = "short",
     srcs = [
         "collector_test.go",
+        "deleter_test.go",
         "handler_test.go",
         "row_handle_test.go",
     ],
     embed = [":conflictedkv"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//br/pkg/storage",
         "//pkg/config/kerneltype",
