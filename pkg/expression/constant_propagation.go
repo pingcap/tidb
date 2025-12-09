@@ -119,12 +119,14 @@ func ValidCompareConstantPredicate(ctx BuildContext, candidatePredicate Expressi
 			candidatePredicate.SetCharsetAndCollation(scalarFunction.CharsetAndCollation())
 			candidatePredicate.SetCoercibility(scalarFunction.Coercibility())
 			candidatePredicate.SetRepertoire(scalarFunction.Repertoire())
-			scalarFunction = candidatePredicate.(*ScalarFunction)
-			column, _ = ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
+			column, _ = ValidCompareConstantPredicateHelper(ctx, candidatePredicate.(*ScalarFunction), true)
+			if column == nil {
+				return scalarFunction, false
+			}
+			return candidatePredicate.(*ScalarFunction), true
 		default:
 			column, _ = ValidCompareConstantPredicateHelper(ctx, scalarFunction, false)
 		}
-
 	}
 	if column == nil {
 		return scalarFunction, false
