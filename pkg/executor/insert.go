@@ -290,7 +290,6 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 
 	var removeOldRows []removeOldRow
 	for i, r := range toBeCheckedRows {
-		removeOldRows = removeOldRows[:0]
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
 			if err != nil {
@@ -347,21 +346,22 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			}
 		}
 
+		// In ignore mode, the inserted row is not applied, so we should not delete the related tombstone rows.
+		// In update mode, the tombstone conflict rows may not be the same as those in insert mode; we should recompute them.
+		for _, rm := range removeOldRows {
+			unchanged, err := e.removeOldRow(txn, rm.handle, rm.oldRow, r, false)
+			if err != nil {
+				return err
+			}
+			intest.Assert(!unchanged, "old row should not be identical to the new row, it's supposed that change happens")
+		}
+		removeOldRows = removeOldRows[:0]
+
 		// If row was checked with no duplicate keys,
 		// we should do insert the row,
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
-			// In ignore mode, the inserted row is not applied, so we should not delete the related tombstone rows.
-			// In update mode, the tombstone conflict rows may not be the same as those in insert mode; we should recompute them.
-			for _, rm := range removeOldRows {
-				unchanged, err := e.removeOldRow(txn, rm.handle, rm.oldRow, r, false)
-				if err != nil {
-					return err
-				}
-				intest.Assert(!unchanged, "old row should not be identical to the new row, it's supposed that change happens")
-			}
-
 			err := e.addRecord(ctx, newRows[i], addRecordDupKeyCheck)
 			if err != nil {
 				return err
@@ -394,7 +394,7 @@ func (e *InsertExec) handleConflictWithOldRow(ctx context.Context,
 				handle: handle,
 				oldRow: oldRow,
 			})
-			return nil, true, removeOldRows
+			return nil, false, removeOldRows
 		}
 	}
 
