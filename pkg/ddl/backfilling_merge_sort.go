@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -103,6 +104,10 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		common.OnDuplicateKeyError,
 	)
 	if err != nil {
+		currentIdx, _, err2 := getIndexInfoAndID(sm.EleIDs, m.indexes)
+		if err2 == nil {
+			return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
+		}
 		return errors.Trace(err)
 	}
 	return m.onFinished(ctx, subtask)
