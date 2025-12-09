@@ -520,7 +520,6 @@ func TestSelectivity(t *testing.T) {
 			selectivityAfterIncrease: 0.001,
 		},
 	}
-
 	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprs
@@ -544,7 +543,6 @@ func TestSelectivity(t *testing.T) {
 		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
-
 	}
 }
 
@@ -1588,7 +1586,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	require.InDelta(t, 100.09, enhancedCount, 0.1, "Enhanced count should be approximately 100.09")
 
 	// Verify other end values don't trigger heuristic
-	otherCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(3, 3), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	otherCount, _ := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(3, 3), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 	require.InDelta(t, 109.99, otherCount, 0.1, "Other value count should be approximately 109.99")
 
 	// Test index estimation as well
