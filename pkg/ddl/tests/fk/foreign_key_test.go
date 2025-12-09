@@ -22,7 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1631,4 +1633,85 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 			require.Equal(t, ca.err2, err2.Error())
 		}
 	}
+}
+
+func TestForeignKeyWithTableMode(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	de := domain.DDLExecutor()
+	tk := testkit.NewTestKit(t, store)
+	ctx := testkit.NewTestKit(t, store).Session()
+	tk.MustExec("use test")
+	tk.MustExec(`create table parent_1(id int primary key, name varchar(50), index idx_id(id))`)
+	tk.MustExec(`create table parent_2(id int primary key, name varchar(50), index idx_id(id))`)
+	tk.MustExec(`create table parent_3(id int primary key, name varchar(50), index idx_id(id))`)
+	tk.MustExec(`create table parent_4(id int primary key, name varchar(50), index idx_id(id))`)
+
+	// Create child tables with different FK options, include cascade, set null,
+	// restrict, no action and set default options.
+	childTables := []string{"child_delete_cascade", "child_update_cascade", "child_delete_set_null",
+		"child_update_set_null", "child_delete_restrict", "child_update_no_action", "child_update_set_default"}
+	// CASCADE option
+	tk.MustExec(`create table child_delete_cascade(id int primary key, parent_id int,
+        constraint fk_cascade foreign key (parent_id) references parent_1(id) on delete cascade)`)
+	tk.MustExec(`create table child_update_cascade(id int primary key, parent_id int,
+        constraint fk_cascade foreign key (parent_id) references parent_2(id) on update cascade)`)
+	// SET NULL option
+	tk.MustExec(`create table child_delete_set_null(id int primary key, parent_id int,
+        constraint fk_cascade foreign key (parent_id) references parent_3(id) on delete SET NULL)`)
+	tk.MustExec(`create table child_update_set_null(id int primary key, parent_id int,
+        constraint fk_cascade foreign key (parent_id) references parent_4(id) on update SET NULL)`)
+	// RESTRICT/NO ACTION/SET DEFAULT option
+	tk.MustExec(`create table child_delete_restrict(id int primary key, parent_id int,
+		constraint fk_cascade foreign key (parent_id) references parent_2(id) on delete restrict)`)
+	tk.MustExec(`create table child_update_no_action(id int primary key, parent_id int,
+		constraint fk_cascade foreign key (parent_id) references parent_3(id) on update no action)`)
+	tk.MustExec(`create table child_update_set_default(id int primary key, parent_id int,
+		constraint fk_cascade foreign key (parent_id) references parent_3(id) on update set default)`)
+	// Init test data
+	tk.MustExec(`insert into parent_1 values(1, 'parent_1')`)
+	tk.MustExec(`insert into child_delete_cascade values(111, 1)`)
+	tk.MustExec(`insert into parent_2 values(2, 'parent_2'), (22222, 'parent_22')`)
+	tk.MustExec(`insert into child_update_cascade values(222, 2)`)
+	tk.MustExec(`insert into child_delete_restrict values(222222, 22222)`)
+	tk.MustExec(`insert into parent_3 values(3, 'parent_3'), (33333, 'parent_33'), (333333, 'parent_333')`)
+	tk.MustExec(`insert into child_delete_set_null values(333, 3)`)
+	tk.MustExec(`insert into child_update_no_action values(333333, 33333)`)
+	tk.MustExec(`insert into child_update_set_default values(3333333, 333333)`)
+	tk.MustExec(`insert into parent_4 values(4, 'parent_4'),(5, 'parent_5')`)
+	tk.MustExec(`insert into child_update_set_null values(444, 4), (555, 5)`)
+	// Set table mode to import for all child tables
+	dbInfo, ok := domain.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	for _, tbl := range childTables {
+		tblInfo := getTableInfo(t, domain, "test", tbl)
+		testutil.SetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
+	}
+
+	// Test operations for each reference option type
+	// 1. CASCADE
+	tk.MustGetErrCode("delete from parent_1 where id = 1", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("update parent_2 set id = 22 where id = 2", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("insert into parent_2 values (2, 'parent_11') on duplicate key update id =22", errno.ErrProtectedTableMode)
+	// 2. SET NULL
+	tk.MustGetErrCode("delete from parent_3 where id = 3", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("update parent_4 set id = 44 where id = 4", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("insert into parent_4 values (4, 'parent_44') on duplicate key update id =44", errno.ErrProtectedTableMode)
+
+	// set table mode to normal, expect all operations are allowed
+	for _, tbl := range childTables {
+		tblInfo := getTableInfo(t, domain, "test", tbl)
+		testutil.SetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeNormal)
+	}
+	tk.MustExec("delete from parent_1 where id = 1")
+	tk.MustQuery("select * from child_delete_cascade").Check(testkit.Rows())
+	tk.MustExec("update parent_2 set id = 22 where id = 2")
+	tk.MustQuery("select * from child_update_cascade").Check(testkit.Rows("222 22"))
+	tk.MustExec("insert into parent_2 values (22, 'parent_11') on duplicate key update id =222")
+	tk.MustQuery("select * from child_update_cascade").Check(testkit.Rows("222 222"))
+	tk.MustExec("delete from parent_3 where id = 3")
+	tk.MustQuery("select * from child_delete_set_null").Check(testkit.Rows("333 <nil>"))
+	tk.MustExec("update parent_4 set id = 44 where id = 4")
+	tk.MustQuery("select * from child_update_set_null").Check(testkit.Rows("444 <nil>", "555 5"))
+	tk.MustExec("insert into parent_4 values (5, 'parent_55') on duplicate key update id =55")
+	tk.MustQuery("select * from child_update_set_null").Check(testkit.Rows("444 <nil>", "555 <nil>"))
 }

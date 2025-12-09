@@ -56,6 +56,16 @@ error = '''
 invalid restore range
 '''
 
+["BR:Common:ErrMigrationNotFound"]
+error = '''
+no migration found
+'''
+
+["BR:Common:ErrMigrationVersionNotSupported"]
+error = '''
+the migration version isn't supported
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -2924,6 +2934,16 @@ Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_contr
 ["schema:8257"]
 error = '''
 Cannot set resource group for a role
+'''
+
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
 '''
 
 ["server:1040"]

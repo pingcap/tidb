@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -118,6 +119,7 @@ type Executor interface {
 	RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error
 	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
+	AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
 	RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error
@@ -131,6 +133,8 @@ type Executor interface {
 	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
 	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
+	// RefreshMeta can only be called by BR during the log restore phase.
+	RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
@@ -1061,6 +1065,14 @@ func (e *executor) createTableWithInfoJob(
 		switch cfg.OnExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			// if target TableMode is ModeRestore, we check if the existing mode is consistent the new one
+			if tbInfo.Mode == model.TableModeRestore {
+				oldTableMode := oldTable.Meta().Mode
+				if oldTableMode != model.TableModeRestore {
+					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.Mode, tbInfo.Name)
+				}
+			}
+			// Currently, target TableMode will NEVER be ModeImport because ImportInto does not use this function
 			return nil, nil
 		case OnExistReplace:
 			// only CREATE OR REPLACE VIEW is supported at the moment.
@@ -1145,47 +1157,6 @@ func getSharedInvolvingSchemaInfo(info *model.TableInfo) []model.InvolvingSchema
 	return ret
 }
 
-func (e *executor) createTableWithInfoPost(
-	ctx sessionctx.Context,
-	tbInfo *model.TableInfo,
-	schemaID int64,
-	scatterScope string,
-) error {
-	var err error
-	var partitions []model.PartitionDefinition
-	if pi := tbInfo.GetPartitionInfo(); pi != nil {
-		partitions = pi.Definitions
-	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterScope)
-	if tbInfo.AutoIncID > 1 {
-		// Default tableAutoIncID base is 0.
-		// If the first ID is expected to greater than 1, we need to do rebase.
-		newEnd := tbInfo.AutoIncID - 1
-		var allocType autoid.AllocatorType
-		if tbInfo.SepAutoInc() {
-			allocType = autoid.AutoIncrementType
-		} else {
-			allocType = autoid.RowIDAllocType
-		}
-		if err = e.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	// For issue https://github.com/pingcap/tidb/issues/46093
-	if tbInfo.AutoIncIDExtra != 0 {
-		if err = e.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if tbInfo.AutoRandID > 1 {
-		// Default tableAutoRandID base is 0.
-		// If the first ID is expected to greater than 1, we need to do rebase.
-		newEnd := tbInfo.AutoRandID - 1
-		err = e.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.AutoRandomType)
-	}
-	return err
-}
-
 func (e *executor) CreateTableWithInfo(
 	ctx sessionctx.Context,
 	dbName pmodel.CIStr,
@@ -1215,9 +1186,9 @@ func (e *executor) CreateTableWithInfo(
 		if val, ok := jobW.GetSessionVars(variable.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
-		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope)
-	}
 
+		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+	}
 	return errors.Trace(err)
 }
 
@@ -1312,9 +1283,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
-		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
-			return errors.Trace(err)
-		}
+		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
 	}
 
 	return nil
@@ -1395,6 +1364,14 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	} else {
 		go preSplit()
 	}
+}
+
+func preSplitAndScatterTable(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, scatterScope string) {
+	var partitions []model.PartitionDefinition
+	if pi := tbInfo.GetPartitionInfo(); pi != nil {
+		partitions = pi.Definitions
+	}
+	preSplitAndScatter(ctx, store, tbInfo, partitions, scatterScope)
 }
 
 func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
@@ -1525,19 +1502,6 @@ func checkCharsetAndCollation(cs string, co string) error {
 	}
 	if co != "" {
 		if _, err := collate.GetCollationByName(co); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
-// For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func (e *executor) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
-	allocs := autoid.NewAllocatorsFromTblInfo(e.getAutoIDRequirement(), schemaID, tbInfo)
-	if alloc := allocs.Get(tp); alloc != nil {
-		err := alloc.Rebase(context.Background(), newEnd, false)
-		if err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -4155,6 +4119,9 @@ func (e *executor) dropTableObject(
 		} else if err != nil {
 			return err
 		}
+		if err = dbutil.CheckTableModeIsNormal(tableInfo.Meta().Name, tableInfo.Meta().Mode); err != nil {
+			return err
+		}
 
 		// prechecks before build DDL job
 
@@ -4348,6 +4315,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
+		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
+			return err
+		}
 	}
 
 	job := &model.Job{
@@ -4394,6 +4364,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		if t, ok := is.TableByID(e.ctx, tableID); ok {
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
+			}
+			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
+				return err
 			}
 		}
 
@@ -5621,6 +5594,41 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
+	return errors.Trace(err)
+}
+
+func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTableModeArgs) error {
+	is := e.infoCache.GetLatest()
+
+	schema, ok := is.SchemaByID(args.SchemaID)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
+	}
+
+	table, ok := is.TableByID(e.ctx, args.TableID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+	}
+
+	ok = validateTableMode(table.Meta().Mode, args.TableMode)
+	if !ok {
+		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
+	}
+	if table.Meta().Mode == args.TableMode {
+		return nil
+	}
+
+	job := &model.Job{
+		Version:        model.JobVersion2,
+		SchemaID:       args.SchemaID,
+		TableID:        args.TableID,
+		Type:           model.ActionAlterTableMode,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
+	}
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := e.doDDLJob2(sctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -6940,4 +6948,24 @@ func getAnalyzeVersion(sctx sessionctx.Context) string {
 		return val
 	}
 	return strconv.Itoa(variable.DefTiDBAnalyzeVersion)
+}
+
+// RefreshMeta is a internal DDL job. In some cases, BR log restore will EXCHANGE
+// PARTITION\DROP TABLE by write meta kv directly, and table info in meta kv
+// is inconsistent with info schema. So when BR call AlterTableMode for new table
+// will failure. RefreshMeta will reload schema diff to update info schema by
+// schema ID and table ID to make sure data in meta kv and info schema is consistent.
+func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaArgs) error {
+	job := &model.Job{
+		Version:        model.JobVersion2,
+		SchemaID:       args.SchemaID,
+		TableID:        args.TableID,
+		Type:           model.ActionRefreshMeta,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
+	}
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := e.doDDLJob2(sctx, job, args)
+	return errors.Trace(err)
 }
