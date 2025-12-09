@@ -12,6 +12,10 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/taskexecutor",
+        "//pkg/disttask/framework/testutil",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
         "//pkg/meta/model",
