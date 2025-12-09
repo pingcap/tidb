@@ -548,10 +548,6 @@ type StatsHandle interface {
 	// Note: this function may return nil if the table is not found in the cache.
 	GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool)
 
-	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
-	// TODO: remove this function and use GetPhysicalTableStats instead.
-	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
-
 	// StatsGC is used to do the GC job.
 	StatsGC
 
