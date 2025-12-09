@@ -1075,7 +1075,7 @@ func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl
 // and has the same distribution with analyzed rows, which means each unique value should have the
 // same number of rows(Tot/NDV) of it.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
+func outOfRangeEQSelectivity(_ planctx.PlanContext, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
 	increaseRowCount := realtimeRowCount - columnRowCount
 	if increaseRowCount <= 0 {
 		return 0 // it must be 0 since the histogram contains the whole data
