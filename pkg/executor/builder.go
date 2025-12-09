@@ -1048,36 +1048,10 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 		return b.buildReplace(ivs)
 	}
 	insert := &InsertExec{
-		InsertValues: ivs,
-		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
+		InsertValues:          ivs,
+		OnDuplicate:           append(v.OnDuplicate, v.GenCols.OnDuplicates...),
+		replaceConflictIfExpr: v.ReplaceConflictIfExpr,
 	}
-
-	if len(v.ReplaceConflictIfExpr) > 0 {
-		exprs := v.ReplaceConflictIfExpr
-		insert.replaceConflictIf = func(evalCtx expression.EvalContext, row []types.Datum) (bool, error) {
-			chunkRow := chunk.MutRowFromDatums(row).ToRow()
-			tc := evalCtx.TypeCtx()
-			for _, expr := range exprs {
-				data, err := expr.Eval(evalCtx, chunkRow)
-				if err != nil {
-					return false, err
-				}
-				if data.IsNull() {
-					return false, nil
-				}
-				isBool, err := data.ToBool(tc)
-				if err != nil {
-					return false, err
-				}
-				if isBool == 0 {
-					return false, nil
-				}
-			}
-			// All expressions are true
-			return true, nil
-		}
-	}
-
 	return insert
 }
 

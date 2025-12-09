@@ -1351,7 +1351,6 @@ func (e *InsertValues) removeRow(
 	r toBeCheckedRow,
 	inReplace bool,
 ) (bool, error) {
-	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
 	if err != nil {
 		logutil.BgLogger().Error(
@@ -1364,7 +1363,20 @@ func (e *InsertValues) removeRow(
 		}
 		return false, err
 	}
+	return e.removeOldRow(txn, handle, oldRow, r, inReplace)
+}
 
+// removeRow removes the duplicate row and cleanup its keys in the key-value map.
+// But if the to-be-removed row equals to the to-be-added row, no remove or add
+// things to do and return (true, nil).
+func (e *InsertValues) removeOldRow(
+	txn kv.Transaction,
+	handle kv.Handle,
+	oldRow []types.Datum,
+	r toBeCheckedRow,
+	inReplace bool,
+) (bool, error) {
+	newRow := r.row
 	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
 	if err != nil {
 		return false, err
