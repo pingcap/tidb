@@ -325,6 +325,7 @@ replace (
 	// GOPRIVATE=git.musta.ch/company/* go get git.musta.ch/company/tidb-client-go/v2@BRANCH_OR_SHA
 	// Use the ouput from command about to modify the dependency: `go mod edit -replace=github.com/tikv/client-go/v2=git.musta.ch/company/tidb-client-go/v2@v2.X.X-XXX-XXX`
 	// Finally run `GOPRIVATE=git.musta.ch/company/* go mod tidy`
+	// https://developers.a.musta.ch/docs/default/component/tidb-prod/operations/image_building/#internal-go-module-forks-via-goproxy
 	github.com/tikv/client-go/v2 => git.musta.ch/company/tidb-client-go/v2 v2.0.10-0.20251111220450-2933681d647f
 	github.com/tikv/pd/client => git.musta.ch/company/tidb-pd/client v0.0.0-20250903174936-0cbb10a0b95f
 
