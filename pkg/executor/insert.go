@@ -48,13 +48,36 @@ import (
 // InsertExec represents an insert executor.
 type InsertExec struct {
 	*InsertValues
-	OnDuplicate       []*expression.Assignment
-	evalBuffer4Dup    chunk.MutRow
-	curInsertVals     chunk.MutRow
-	row4Update        []types.Datum
-	replaceConflictIf func(expression.EvalContext, []types.Datum) (bool, error)
+	OnDuplicate           []*expression.Assignment
+	evalBuffer4Dup        chunk.MutRow
+	curInsertVals         chunk.MutRow
+	row4Update            []types.Datum
+	replaceConflictIfExpr []expression.Expression
 
 	Priority mysql.PriorityEnum
+}
+
+func (e *InsertExec) replaceConflictIf(evalCtx expression.EvalContext, row []types.Datum) (bool, error) {
+	chunkRow := chunk.MutRowFromDatums(row).ToRow()
+	tc := evalCtx.TypeCtx()
+	for _, expr := range e.replaceConflictIfExpr {
+		data, err := expr.Eval(evalCtx, chunkRow)
+		if err != nil {
+			return false, err
+		}
+		if data.IsNull() {
+			return false, nil
+		}
+		isBool, err := data.ToBool(tc)
+		if err != nil {
+			return false, err
+		}
+		if isBool == 0 {
+			return false, nil
+		}
+	}
+	// All expressions are true
+	return true, nil
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
@@ -89,7 +112,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
-	if len(e.OnDuplicate) > 0 || e.replaceConflictIf != nil {
+	if len(e.OnDuplicate) > 0 || len(e.replaceConflictIfExpr) > 0 {
 		err := e.batchUpdateDupRows(ctx, rows)
 		if err != nil {
 			return err
@@ -280,7 +303,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 
 			if oldRow != nil {
 				shouldRemoveOldRow := false
-				if e.replaceConflictIf != nil {
+				if len(e.replaceConflictIfExpr) > 0 {
 					shouldRemoveOldRow, err = e.replaceConflictIf(e.Ctx().GetExprCtx().GetEvalCtx(), oldRow)
 					if err != nil {
 						return err
@@ -332,7 +355,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			}
 
 			shouldRemoveOldRow := false
-			if e.replaceConflictIf != nil {
+			if len(e.replaceConflictIfExpr) > 0 {
 				shouldRemoveOldRow, err = e.replaceConflictIf(e.Ctx().GetExprCtx().GetEvalCtx(), oldRow)
 				if err != nil {
 					return err
