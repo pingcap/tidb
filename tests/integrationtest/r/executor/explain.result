@@ -373,7 +373,7 @@ IndexHashJoin	12.50	0	root		<execution_info>	inner join, inner:IndexLookUp, oute
 │ └─Selection	10.00	0	cop[tikv]		<execution_info>	eq(executor__explain.t.b, 2333)	<memory>	<disk>
 │   └─TableFullScan	10000.00	1	cop[tikv]	table:t1	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
 └─IndexLookUp(Probe)	12.50	0	root		<execution_info>		<memory>	<disk>
-  ├─Selection(Build)	12.50	0	cop[tikv]		<execution_info>	eq(2333, executor__explain.t.a)	<memory>	<disk>
+  ├─Selection(Build)	12.50	0	cop[tikv]		<execution_info>	eq(executor__explain.t.a, 2333)	<memory>	<disk>
   │ └─IndexRangeScan	12500.00	0	cop[tikv]	table:t2, index:a(a)	<execution_info>	range: decided by [eq(executor__explain.t.a, executor__explain.t.b)], keep order:false, stats:pseudo	<memory>	<disk>
   └─TableRowIDScan(Probe)	12.50	0	cop[tikv]	table:t2	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
 drop table if exists t;
