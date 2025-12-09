@@ -1131,7 +1131,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 // If not, it will return false and set the version to the tbl's.
 // We use this check to make sure all the statistics of the table are in the same version.
 func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
-	if tbl.StatsVer != Version0 && tbl.StatsVer != *version {
+	if IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != *version {
 		*version = tbl.StatsVer
 		return false
 	}
