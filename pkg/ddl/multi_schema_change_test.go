@@ -813,7 +813,7 @@ func TestMultiSchemaChangeDMLUpdate(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, d int)")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("insert into t(a, c) values (1, 2), (2, 3), (3, 4), (4, 5)")
@@ -821,7 +821,7 @@ func TestMultiSchemaChangeDMLUpdate(t *testing.T) {
 		tk.MustExec("delete from t")
 	})
 	tk.MustExec("alter table t change column b e int unsigned, change column d f int unsigned")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 	tk.MustExec("drop table t")
 }
