@@ -303,7 +303,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 
 			if oldRow != nil {
 				var done bool
-				err, done, removeOldRows = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, r.handleKey, updateDupKeyCheck, autoColIdx, removeOldRows)
+				done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, r.handleKey, updateDupKeyCheck, autoColIdx, removeOldRows)
 				if err != nil {
 					return err
 				}
@@ -336,7 +336,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			}
 
 			var done bool
-			err, done, removeOldRows = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, uk, updateDupKeyCheck, autoColIdx, removeOldRows)
+			done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, uk, updateDupKeyCheck, autoColIdx, removeOldRows)
 			if err != nil {
 				return err
 			}
@@ -382,27 +382,27 @@ func (e *InsertExec) handleConflictWithOldRow(ctx context.Context,
 	dupKeyInfo *keyValueWithDupInfo,
 	dupKeyCheck table.DupKeyCheckMode,
 	autoColIdx int,
-	removeOldRows []removeOldRow) (err error, done bool, _ []removeOldRow) {
+	removeOldRows []removeOldRow) (done bool, _ []removeOldRow, err error) {
 	if len(e.replaceConflictIfExpr) > 0 {
 		shouldRemoveOldRow := false
 		shouldRemoveOldRow, err = e.replaceConflictIf(e.Ctx().GetExprCtx().GetEvalCtx(), oldRow)
 		if err != nil {
-			return err, false, nil
+			return false, nil, err
 		}
 		if shouldRemoveOldRow {
 			removeOldRows = append(removeOldRows, removeOldRow{
 				handle: handle,
 				oldRow: oldRow,
 			})
-			return nil, false, removeOldRows
+			return false, removeOldRows, nil
 		}
 	}
 
 	if len(e.OnDuplicate) > 0 {
 		if err = e.updateDupRow(ctx, idxInBatch, row, oldRow, handle, dupKeyCheck, autoColIdx); err != nil {
-			return err, false, nil
+			return false, nil, err
 		}
-		return nil, true, removeOldRows
+		return true, removeOldRows, nil
 	}
 
 	if e.ignoreErr {
@@ -412,10 +412,10 @@ func (e *InsertExec) handleConflictWithOldRow(ctx context.Context,
 			// lock duplicated row key on insert-ignore
 			txnCtx.AddUnchangedKeyForLock(dupKeyInfo.newKey)
 		}
-		return nil, true, removeOldRows
+		return true, removeOldRows, nil
 	}
 
-	return nil, false, removeOldRows
+	return false, removeOldRows, nil
 }
 
 // optimizeDupKeyCheckForNormalInsert trys to optimize the DupKeyCheckMode for an insert statement according to the
