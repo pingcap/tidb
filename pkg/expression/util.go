@@ -682,7 +682,20 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
-			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			var newFunc Expression
+			var err error
+			switch v.FuncName.L {
+			case ast.EQ:
+				args := v.GetArgs()
+				switch args[0].(type) {
+				case *Constant:
+					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, args[1], args[0])
+				default:
+					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+				}
+			default:
+				newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			}
 			if err != nil {
 				return true, true, v
 			}
