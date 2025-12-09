@@ -121,4 +121,6 @@ var (
 	ErrRowIsReferenced2 = dbterror.ClassOptimizer.NewStd(mysql.ErrRowIsReferenced2)
 	ErrNoReferencedRow2 = dbterror.ClassOptimizer.NewStd(mysql.ErrNoReferencedRow2)
 	ErrSpDoesNotExist   = dbterror.ClassOptimizer.NewStd(mysql.ErrSpDoesNotExist)
+
+	ErrMaxEstimatedCostExceeded = dbterror.ClassOptimizer.NewStd(mysql.ErrMaxEstimatedCostExceeded)
 )

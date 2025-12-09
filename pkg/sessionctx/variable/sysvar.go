@@ -3800,6 +3800,20 @@ var defaultSysVars = []*SysVar{
 			return vardef.AdvancerCheckPointLagLimit.Load().String(), nil
 		},
 	},
+	{
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:  vardef.TiDBMaxEstimatedCost,
+		Value: strconv.FormatFloat(vardef.DefTiDBMaxEstimatedCost, 'f', -1, 64),
+		Type:  vardef.TypeFloat,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.MaxEstimatedCost = tidbOptFloat64(s, vardef.DefTiDBMaxEstimatedCost)
+			return nil
+		},
+		MinValue: 0,
+		MaxValue: math.MaxUint64,
+		// because the special character in custom syntax cannot be correctly handled in set_var hint
+		IsHintUpdatableVerified: true,
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSlowLogRules, Value: "", Type: vardef.TypeStr,
 		SetSession: func(s *SessionVars, val string) error {
 			slowLogRules, err := ParseSessionSlowLogRules(val)
