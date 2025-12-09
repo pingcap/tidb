@@ -27,7 +27,7 @@ func RunListMigrations(ctx context.Context, cfg ListMigrationConfig) error {
 		return err
 	}
 	ext := stream.MigrationExtension(st)
-	migs, err := ext.Load(ctx)
+	migs, err := ext.Load(ctx, stream.MLNotFoundIsErr())
 	if err != nil {
 		return err
 	}

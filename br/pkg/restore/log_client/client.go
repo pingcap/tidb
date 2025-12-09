@@ -25,8 +25,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fatih/color"
 	"github.com/gogo/protobuf/proto"
 	"github.com/opentracing/opentracing-go"
@@ -40,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/encryption"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -229,6 +232,20 @@ type LogClient struct {
 	useCheckpoint bool
 
 	logFilesStat logFilesStatistic
+	restoreStat  restoreStatistics
+}
+
+type restoreStatistics struct {
+	// restoreSSTKVSize is the total size (Original KV length) of KV pairs restored from SST files.
+	restoreSSTKVSize uint64
+	// restoreSSTKVCount is the total number of KV pairs restored from SST files.
+	restoreSSTKVCount uint64
+	// restoreSSTPhySize is the total size of SST files after encoding to SST files.
+	// this may be smaller than kv length due to compression or common prefix optimization.
+	restoreSSTPhySize uint64
+	// restoreSSTTakes is the total time taken for restoring SST files.
+	// the unit is nanoseconds, hence it can be converted between `time.Duration` directly.
+	restoreSSTTakes uint64
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -271,6 +288,22 @@ func (rc *LogClient) Close(ctx context.Context) {
 }
 
 func (rc *LogClient) rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
+	if r, ok := sst.(RewrittenSSTs); ok {
+		rewritten := r.RewrittenTo()
+		if rewritten != sst.TableID() {
+			rewriteRules := rules.Clone()
+			if !rewriteRules.RewriteSourceTableID(rewritten, sst.TableID()) {
+				return nil, errors.Annotatef(
+					berrors.ErrUnknown,
+					"table rewritten from a table id (%d) to (%d) which doesn't exist in the stream",
+					rewritten,
+					sst.TableID(),
+				)
+			}
+			log.Info("Rewritten rewrite rules.", zap.Stringer("rules", rewriteRules), zap.Int64("table_id", sst.TableID()), zap.Int64("rewritten_to", rewritten))
+			return rewriteRules, nil
+		}
+	}
 	// Need to set ts range for compacted sst to filter out irrelevant data.
 	if sst.Type() == CompactedSSTsType && !rules.HasSetTs() {
 		rules.SetTsRange(rc.shiftStartTS, rc.startTS, rc.restoreTS)
@@ -285,6 +318,7 @@ func (rc *LogClient) RestoreSSTFiles(
 	importModeSwitcher *restore.ImportModeSwitcher,
 	onProgress func(int64),
 ) error {
+	begin := time.Now()
 	backupFileSets := make([]restore.BackupFileSet, 0, 8)
 	// Collect all items from the iterator in advance to avoid blocking during restoration.
 	// This approach ensures that we have all necessary data ready for processing,
@@ -295,7 +329,12 @@ func (rc *LogClient) RestoreSSTFiles(
 			return r.Err
 		}
 		i := r.Item
-		rewriteRules, ok := rules[i.TableID()]
+
+		tid := i.TableID()
+		if r, ok := i.(RewrittenSSTs); ok {
+			tid = r.RewrittenTo()
+		}
+		rewriteRules, ok := rules[tid]
 		if !ok {
 			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
 			continue
@@ -344,7 +383,30 @@ func (rc *LogClient) RestoreSSTFiles(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return rc.sstRestoreManager.restorer.WaitUntilFinish()
+	err = rc.sstRestoreManager.restorer.WaitUntilFinish()
+
+	for _, files := range backupFileSets {
+		for _, f := range files.SSTFiles {
+			log.Info("Collected file.", zap.Uint64("total_kv", f.TotalKvs), zap.Uint64("total_bytes", f.TotalBytes), zap.Uint64("size", f.Size_))
+			atomic.AddUint64(&rc.restoreStat.restoreSSTKVCount, f.TotalKvs)
+			atomic.AddUint64(&rc.restoreStat.restoreSSTKVSize, f.TotalBytes)
+			atomic.AddUint64(&rc.restoreStat.restoreSSTPhySize, f.Size_)
+		}
+	}
+	atomic.AddUint64(&rc.restoreStat.restoreSSTTakes, uint64(time.Since(begin)))
+	return err
+}
+
+func (rc *LogClient) RestoreSSTStatisticFields(pushTo *[]zapcore.Field) {
+	takes := time.Duration(rc.restoreStat.restoreSSTTakes)
+	fields := []zapcore.Field{
+		zap.Uint64("restore-sst-kv-count", rc.restoreStat.restoreSSTKVCount),
+		zap.Uint64("restore-sst-kv-size", rc.restoreStat.restoreSSTKVSize),
+		zap.Uint64("restore-sst-physical-size (after compression)", rc.restoreStat.restoreSSTPhySize),
+		zap.Duration("restore-sst-total-take", takes),
+		zap.String("average-speed (sst)", units.HumanSize(float64(rc.restoreStat.restoreSSTKVSize)/takes.Seconds())+"/s"),
+	}
+	*pushTo = append(*pushTo, fields...)
 }
 
 func (rc *LogClient) SetRawKVBatchClient(

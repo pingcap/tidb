@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -154,6 +156,10 @@ type SnapClient struct {
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
+
+	// restoreUUID is the UUID of this restore.
+	// restore from a checkpoint inherits the same restoreUUID.
+	restoreUUID uuid.UUID
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -328,6 +334,7 @@ func (rc *SnapClient) InitCheckpoint(
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
+		rc.restoreUUID = meta.RestoreUUID
 
 		if meta.UpstreamClusterID != rc.backupMeta.ClusterId {
 			return checkpointSetWithTableID, nil, errors.Errorf(
@@ -379,10 +386,13 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
+		restoreID := uuid.New()
 		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
 			UpstreamClusterID: rc.backupMeta.ClusterId,
 			RestoredTS:        rc.backupMeta.EndVersion,
+			RestoreUUID:       restoreID,
 		}
+		rc.restoreUUID = restoreID
 		// a nil config means undo function
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
@@ -422,6 +432,39 @@ func makeDBPool(size uint, dbFactory func() (*tidallocdb.DB, error)) ([]*tidallo
 		}
 	}
 	return dbPool, nil
+}
+
+func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) error {
+	if err := deps.LoadMaxCopyConcurrency(ctx, rc.concurrencyPerStore); err != nil {
+		return errors.Trace(err)
+	}
+
+	collector, err := newPiTRColl(ctx, deps)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !collector.enabled {
+		return nil
+	}
+	if rc.IsIncremental() {
+		// Even there were an error, don't return it to confuse the user...
+		_ = collector.close()
+		return errors.Annotatef(berrors.ErrStreamLogTaskExist, "it seems there is a log backup task exists, "+
+			"if an incremental restore were performed to such cluster, log backup cannot properly handle this, "+
+			"the restore will be aborted, you may stop the log backup task, then restore, finally restart the task")
+	}
+
+	collector.restoreUUID = rc.restoreUUID
+	if collector.restoreUUID == (uuid.UUID{}) {
+		collector.restoreUUID = uuid.New()
+		log.Warn("UUID not found(checkpoint not enabled?), generating a new UUID for backup.",
+			zap.Stringer("uuid", collector.restoreUUID))
+	}
+	rc.importer.beforeIngestCallbacks = append(rc.importer.beforeIngestCallbacks, collector.onBatch)
+	rc.importer.closeCallbacks = append(rc.importer.closeCallbacks, func(sfi *SnapFileImporter) error {
+		return collector.close()
+	})
+	return nil
 }
 
 // Init create db connection and domain for storage.
@@ -865,7 +908,7 @@ func (rc *SnapClient) createTables(
 
 func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 	createdTables := struct {
@@ -949,7 +992,7 @@ func (rc *SnapClient) createTablesSingle(
 ) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(dbPool)), "DDL workers")
-	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	createdTables := struct {
 		sync.Mutex
 		tables []*CreatedTable

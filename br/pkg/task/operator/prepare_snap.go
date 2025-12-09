@@ -19,11 +19,31 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/keepalive"
 )
+
+func createStoreManager(pd pd.Client, cfg *task.Config) (*utils.StoreManager, error) {
+	var (
+		tconf *tls.Config
+		err   error
+	)
+
+	if cfg.TLS.IsEnabled() {
+		tconf, err = cfg.TLS.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Annotate(err, "invalid tls config")
+		}
+	}
+	kvMgr := utils.NewStoreManager(pd, keepalive.ClientParameters{
+		Time:    cfg.GRPCKeepaliveTime,
+		Timeout: cfg.GRPCKeepaliveTimeout,
+	}, tconf)
+	return kvMgr, nil
+}
 
 func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error) {
 	var tc *tls.Config
