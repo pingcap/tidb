@@ -466,6 +466,9 @@ func (a *gidAllocator) assignIDsForTable(info *model.TableInfo) {
 func (a *gidAllocator) assignIDsForPartitionInfo(partitionInfo *model.PartitionInfo) {
 	for i := range partitionInfo.Definitions {
 		partitionInfo.Definitions[i].ID = a.next()
+		for j := range partitionInfo.Definitions[i].SubDefinitions {
+			partitionInfo.Definitions[i].SubDefinitions[j].ID = a.next()
+		}
 	}
 }
 
@@ -473,6 +476,9 @@ func idCountForTable(info *model.TableInfo) int {
 	c := 1
 	if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
 		c += len(partitionInfo.Definitions)
+		for _, piDef := range partitionInfo.Definitions {
+			c += len(piDef.SubDefinitions)
+		}
 	}
 	return c
 }

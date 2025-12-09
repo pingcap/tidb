@@ -451,6 +451,350 @@ func TestSubPartitioning(t *testing.T) {
 	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY KEY(col1) PARTITIONS 4 SUBPARTITION BY KEY(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
 }
 
+func TestSubPartitionInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustGetErrMsg(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) ) (
+        PARTITION p0 VALUES LESS THAN (1990) (
+            SUBPARTITION s0,
+            SUBPARTITION s1
+        ),
+        PARTITION p1 VALUES LESS THAN (2000),
+        PARTITION p2 VALUES LESS THAN MAXVALUE (
+            SUBPARTITION s2,
+            SUBPARTITION s3
+        )
+    );`, "[ddl:1485]Wrong number of subpartitions defined, mismatch with previous setting")
+
+	tk.MustGetErrMsg(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 3 (
+        PARTITION p0 VALUES LESS THAN (1990) (
+            SUBPARTITION s0,
+            SUBPARTITION s1
+        ),
+        PARTITION p1 VALUES LESS THAN (2000) (
+            SUBPARTITION s2,
+            SUBPARTITION s3
+        ),
+        PARTITION p2 VALUES LESS THAN MAXVALUE (
+            SUBPARTITION s4,
+            SUBPARTITION s5
+        )
+    );`, "[ddl:1485]Wrong number of subpartitions defined, mismatch with previous setting")
+	// test for range-hash partition
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES LESS THAN (1990),
+        PARTITION p1 VALUES LESS THAN (2000),
+        PARTITION p2 VALUES LESS THAN MAXVALUE
+    );`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows("ts CREATE TABLE `ts` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `purchased` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (YEAR(`purchased`))\n" +
+		"SUBPARTITION BY HASH (TO_DAYS(`purchased`))\n" +
+		"SUBPARTITIONS 2\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1990),\n" +
+		" PARTITION `p1` VALUES LESS THAN (2000),\n" +
+		" PARTITION `p2` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec("insert into ts values (1, '1989-05-27'), (2, '1996-05-27'), (3, '2005-05-27')")
+	tk.MustQuery("select PARTITION_NAME,SUBPARTITION_NAME,PARTITION_ORDINAL_POSITION,SUBPARTITION_ORDINAL_POSITION,PARTITION_METHOD,SUBPARTITION_METHOD,PARTITION_EXPRESSION, SUBPARTITION_EXPRESSION from information_schema.partitions where table_name='ts';").
+		Check(testkit.Rows("p0 p0sp0 1 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p0 p0sp1 1 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 p1sp0 2 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 p1sp1 2 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 p2sp0 3 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 p2sp1 3 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
+
+	tk.MustExec("drop table ts")
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) ) (
+        PARTITION p0 VALUES LESS THAN (1990) (
+            SUBPARTITION s0,
+            SUBPARTITION s1
+        ),
+        PARTITION p1 VALUES LESS THAN (2000) (
+            SUBPARTITION s2,
+            SUBPARTITION s3
+        ),
+        PARTITION p2 VALUES LESS THAN MAXVALUE (
+            SUBPARTITION s4,
+            SUBPARTITION s5
+        )
+    );`)
+	tk.MustQuery("show create table ts").Check(testkit.Rows("ts CREATE TABLE `ts` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `purchased` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (YEAR(`purchased`))\n" +
+		"SUBPARTITION BY HASH (TO_DAYS(`purchased`))\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1990)\n" +
+		"(SUBPARTITION `s0`,\n" +
+		"SUBPARTITION `s1`),\n" +
+		" PARTITION `p1` VALUES LESS THAN (2000)\n" +
+		"(SUBPARTITION `s2`,\n" +
+		"SUBPARTITION `s3`),\n" +
+		" PARTITION `p2` VALUES LESS THAN (MAXVALUE)\n" +
+		"(SUBPARTITION `s4`,\n" +
+		"SUBPARTITION `s5`))"))
+	tk.MustExec("insert into ts values (1, '1989-05-27'), (2, '1996-05-27'), (3, '2005-05-27')")
+	tk.MustQuery("select PARTITION_NAME,SUBPARTITION_NAME,PARTITION_ORDINAL_POSITION,SUBPARTITION_ORDINAL_POSITION,PARTITION_METHOD,SUBPARTITION_METHOD,PARTITION_EXPRESSION, SUBPARTITION_EXPRESSION from information_schema.partitions where table_name='ts';").
+		Check(testkit.Rows("p0 s0 1 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p0 s1 1 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 s2 2 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 s3 2 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 s4 3 1 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 s5 3 2 RANGE HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
+
+	// test for list-hash subpartition
+	tk.MustExec("drop table ts")
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY LIST( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (2020),
+        PARTITION p1 VALUES IN (2021),
+        PARTITION p2 VALUES IN (2022)
+    );`)
+	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows("ts CREATE TABLE `ts` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `purchased` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (YEAR(`purchased`))\n" +
+		"SUBPARTITION BY HASH (TO_DAYS(`purchased`))\n" +
+		"SUBPARTITIONS 2\n" +
+		"(PARTITION `p0` VALUES IN (2020),\n" +
+		" PARTITION `p1` VALUES IN (2021)," +
+		"\n PARTITION `p2` VALUES IN (2022))"))
+	tk.MustExec("insert into ts values (1, '2020-05-27'), (2, '2021-05-27'), (3, '2022-05-27')")
+	tk.MustQuery("select PARTITION_NAME,SUBPARTITION_NAME,PARTITION_ORDINAL_POSITION,SUBPARTITION_ORDINAL_POSITION,PARTITION_METHOD,SUBPARTITION_METHOD,PARTITION_EXPRESSION, SUBPARTITION_EXPRESSION from information_schema.partitions where table_name='ts';").
+		Check(testkit.Rows("p0 p0sp0 1 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p0 p0sp1 1 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 p1sp0 2 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 p1sp1 2 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 p2sp0 3 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 p2sp1 3 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
+
+	tk.MustExec("drop table ts")
+	tk.MustExec(`CREATE TABLE ts (id INT, purchased DATE)
+    PARTITION BY LIST( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) ) (
+        PARTITION p0 VALUES IN (2020) (
+            SUBPARTITION s0,
+            SUBPARTITION s1
+        ),
+        PARTITION p1 VALUES IN (2021) (
+            SUBPARTITION s2,
+            SUBPARTITION s3
+        ),
+        PARTITION p2 VALUES IN (2022) (
+            SUBPARTITION s4,
+            SUBPARTITION s5
+        )
+    );`)
+	tk.MustQuery("SHOW CREATE TABLE ts").Check(testkit.Rows("ts CREATE TABLE `ts` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `purchased` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (YEAR(`purchased`))\n" +
+		"SUBPARTITION BY HASH (TO_DAYS(`purchased`))\n" +
+		"(PARTITION `p0` VALUES IN (2020)\n" +
+		"(SUBPARTITION `s0`,\n" +
+		"SUBPARTITION `s1`),\n" +
+		" PARTITION `p1` VALUES IN (2021)\n" +
+		"(SUBPARTITION `s2`,\n" +
+		"SUBPARTITION `s3`),\n" +
+		" PARTITION `p2` VALUES IN (2022)\n" +
+		"(SUBPARTITION `s4`,\n" +
+		"SUBPARTITION `s5`))"))
+	tk.MustExec("insert into ts values (1, '2020-05-27'), (2, '2021-05-27'), (3, '2022-05-27')")
+	tk.MustQuery("select PARTITION_NAME,SUBPARTITION_NAME,PARTITION_ORDINAL_POSITION,SUBPARTITION_ORDINAL_POSITION,PARTITION_METHOD,SUBPARTITION_METHOD,PARTITION_EXPRESSION, SUBPARTITION_EXPRESSION from information_schema.partitions where table_name='ts';").
+		Check(testkit.Rows("p0 s0 1 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p0 s1 1 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 s2 2 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p1 s3 2 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 s4 3 1 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)",
+			"p2 s5 3 2 LIST HASH YEAR(`purchased`) TO_DAYS(`purchased`)"))
+
+	tk.MustExec("drop table if exists t_list_hash;")
+	tk.MustExec(`CREATE TABLE t_list_hash (id INT, name varchar(100), primary key (id))
+    PARTITION BY LIST COLUMNS ( id )
+    SUBPARTITION BY HASH( id )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (0,1),
+        PARTITION p1 VALUES IN (2,3),
+        PARTITION p2 VALUES IN (4,5)
+    );`)
+	tk.MustQuery("show create table t_list_hash;").Check(testkit.Rows("t_list_hash CREATE TABLE `t_list_hash` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `name` varchar(100) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`id`)\n" +
+		"SUBPARTITION BY HASH (`id`)\n" +
+		"SUBPARTITIONS 2\n" +
+		"(PARTITION `p0` VALUES IN (0,1),\n" +
+		" PARTITION `p1` VALUES IN (2,3),\n" +
+		" PARTITION `p2` VALUES IN (4,5))"))
+}
+
+func TestSubPartitionInsertSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// test for range-hash partition
+	tk.MustExec(`CREATE TABLE t_range_hash (id INT, purchased DATE)
+    PARTITION BY RANGE( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES LESS THAN (1990),
+        PARTITION p1 VALUES LESS THAN (2000),
+        PARTITION p2 VALUES LESS THAN MAXVALUE
+    );`)
+	tk.MustExec("insert into t_range_hash values (1, '1989-05-27'), (2, '1989-05-28'), (3, '1996-05-27'), (4, '1996-05-28'), (5, '2005-05-27'),(6, '2005-05-28');")
+	tk.MustQuery("select * from t_range_hash order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "3 1996-05-27", "4 1996-05-28", "5 2005-05-27", "6 2005-05-28"))
+	// test select by partition name
+	tk.MustQuery("select * from t_range_hash partition (p0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p2) order by  id;").Check(testkit.Rows("5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0sp0);").Check(testkit.Rows("1 1989-05-27"))
+	tk.MustQuery("select * from t_range_hash partition (p0sp1);").Check(testkit.Rows("2 1989-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p1sp0);").Check(testkit.Rows("4 1996-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p1sp1);").Check(testkit.Rows("3 1996-05-27"))
+	tk.MustQuery("select * from t_range_hash partition (p2sp0);").Check(testkit.Rows("5 2005-05-27"))
+	tk.MustQuery("select * from t_range_hash partition (p2sp1);").Check(testkit.Rows("6 2005-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p1, p1sp1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p2, p2sp0, p2sp1) order by  id;").Check(testkit.Rows("5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "4 1996-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p1sp0, p2sp1) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "4 1996-05-28", "6 2005-05-28"))
+	// test select by condition
+	tk.MustQuery("select * from t_range_hash where purchased < '1990-01-01' order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_range_hash where purchased > '1996-05-27' and purchased < '2005-05-28' order by id;").Check(testkit.Rows("4 1996-05-28", "5 2005-05-27"))
+
+	tk.MustExec("update t_range_hash set purchased = '1989-06-01' where purchased = '1989-05-27';")
+	tk.MustQuery("select * from t_range_hash order by id;").Check(testkit.Rows("1 1989-06-01", "2 1989-05-28", "3 1996-05-27", "4 1996-05-28", "5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_range_hash partition (p0) order by  id;").Check(testkit.Rows("1 1989-06-01", "2 1989-05-28"))
+
+	// test for list-hash partition
+	tk.MustExec(`CREATE TABLE t_list_hash (id INT, purchased DATE)
+    PARTITION BY LIST( YEAR(purchased) )
+    SUBPARTITION BY HASH( TO_DAYS(purchased) )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (1989),
+        PARTITION p1 VALUES IN (1996),
+        PARTITION p2 VALUES IN (2005)
+    );`)
+	tk.MustExec("insert into t_list_hash values (1, '1989-05-27'), (2, '1989-05-28'), (3, '1996-05-27'), (4, '1996-05-28'), (5, '2005-05-27'),(6, '2005-05-28');")
+	tk.MustQuery("select * from t_list_hash order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "3 1996-05-27", "4 1996-05-28", "5 2005-05-27", "6 2005-05-28"))
+	// test select by partition name
+	tk.MustQuery("select * from t_list_hash partition (p0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p2) order by  id;").Check(testkit.Rows("5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp0);").Check(testkit.Rows("1 1989-05-27"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp1);").Check(testkit.Rows("2 1989-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p1sp0);").Check(testkit.Rows("4 1996-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p1sp1);").Check(testkit.Rows("3 1996-05-27"))
+	tk.MustQuery("select * from t_list_hash partition (p2sp0);").Check(testkit.Rows("5 2005-05-27"))
+	tk.MustQuery("select * from t_list_hash partition (p2sp1);").Check(testkit.Rows("6 2005-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p1, p1sp1) order by  id;").Check(testkit.Rows("3 1996-05-27", "4 1996-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p2, p2sp0, p2sp1) order by  id;").Check(testkit.Rows("5 2005-05-27", "6 2005-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "4 1996-05-28"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0, p2sp1) order by  id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28", "4 1996-05-28", "6 2005-05-28"))
+	// test select by condition
+	tk.MustQuery("select * from t_list_hash where purchased < '1990-01-01' order by id;").Check(testkit.Rows("1 1989-05-27", "2 1989-05-28"))
+	tk.MustQuery("select * from t_list_hash where purchased > '1996-05-27' and purchased < '2005-05-28' order by id;").Check(testkit.Rows("4 1996-05-28", "5 2005-05-27"))
+
+	// add test for point-get/batch-get access path.
+	tk.MustExec("drop table if exists t_range_hash;")
+	tk.MustExec(`CREATE TABLE t_range_hash (id INT, name varchar(100), primary key (id))
+    PARTITION BY RANGE( id )
+    SUBPARTITION BY HASH( id )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES LESS THAN (2),
+        PARTITION p1 VALUES LESS THAN (4),
+        PARTITION p2 VALUES LESS THAN MAXVALUE
+    );`)
+	tk.MustExec("insert into t_range_hash values (0, 'a'), (1, 'b'), (2, 'c'), (3, 'd'), (4, 'e'),(5, 'f');")
+	tk.MustQuery("select * from t_range_hash partition (p0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_range_hash partition (p1) order by  id;").Check(testkit.Rows("2 c", "3 d"))
+	tk.MustQuery("select * from t_range_hash partition (p2) order by  id;").Check(testkit.Rows("4 e", "5 f"))
+	tk.MustQuery("select * from t_range_hash partition (p0sp0);").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_range_hash partition (p0sp1);").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c"))
+	tk.MustQuery("select * from t_range_hash partition (p0, p1sp0, p2sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "4 e"))
+
+	tk.MustQuery("select * from t_range_hash where id=0;").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_range_hash where id in (0,1) order by id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_range_hash where id in (0,1,2,5) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "5 f"))
+
+	tk.MustQuery("select * from t_range_hash where id>0 and id < 2;").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_range_hash where id>0 and id < 5 order by id;").Check(testkit.Rows("1 b", "2 c", "3 d", "4 e"))
+
+	tk.MustExec("drop table if exists t_list_hash;")
+	tk.MustExec(`CREATE TABLE t_list_hash (id INT, name varchar(100), primary key (id))
+    PARTITION BY LIST ( id )
+    SUBPARTITION BY HASH( id )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (0,1),
+        PARTITION p1 VALUES IN (2,3),
+        PARTITION p2 VALUES IN (4,5)
+    );`)
+	tk.MustExec("insert into t_list_hash values (0, 'a'), (1, 'b'), (2, 'c'), (3, 'd'), (4, 'e'),(5, 'f');")
+	tk.MustQuery("select * from t_list_hash partition (p0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p1) order by  id;").Check(testkit.Rows("2 c", "3 d"))
+	tk.MustQuery("select * from t_list_hash partition (p2) order by  id;").Check(testkit.Rows("4 e", "5 f"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp0);").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp1);").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0, p2sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "4 e"))
+
+	tk.MustQuery("select * from t_list_hash where id=0;").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_list_hash where id in (0,1) order by id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash where id in (0,1,2,5) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "5 f"))
+
+	tk.MustQuery("select * from t_list_hash where id>0 and id < 2;").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_list_hash where id>0 and id < 5 order by id;").Check(testkit.Rows("1 b", "2 c", "3 d", "4 e"))
+
+	tk.MustExec("drop table if exists t_list_hash;")
+	tk.MustExec(`CREATE TABLE t_list_hash (id INT, name varchar(100), primary key (id))
+    PARTITION BY LIST COLUMNS ( id )
+    SUBPARTITION BY HASH( id )
+    SUBPARTITIONS 2 (
+        PARTITION p0 VALUES IN (0,1),
+        PARTITION p1 VALUES IN (2,3),
+        PARTITION p2 VALUES IN (4,5)
+    );`)
+	tk.MustExec("insert into t_list_hash values (0, 'a'), (1, 'b'), (2, 'c'), (3, 'd'), (4, 'e'),(5, 'f');")
+	tk.MustQuery("select * from t_list_hash partition (p0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p1) order by  id;").Check(testkit.Rows("2 c", "3 d"))
+	tk.MustQuery("select * from t_list_hash partition (p2) order by  id;").Check(testkit.Rows("4 e", "5 f"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp0);").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_list_hash partition (p0sp1);").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p0sp0) order by  id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c"))
+	tk.MustQuery("select * from t_list_hash partition (p0, p1sp0, p2sp0) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "4 e"))
+	tk.MustQuery("select * from t_list_hash where id=0;").Check(testkit.Rows("0 a"))
+	tk.MustQuery("select * from t_list_hash where id in (0,1) order by id;").Check(testkit.Rows("0 a", "1 b"))
+	tk.MustQuery("select * from t_list_hash where id in (0,1,2,5) order by  id;").Check(testkit.Rows("0 a", "1 b", "2 c", "5 f"))
+	tk.MustQuery("select * from t_list_hash where id>0 and id < 2;").Check(testkit.Rows("1 b"))
+	tk.MustQuery("select * from t_list_hash where id>0 and id < 5 order by id;").Check(testkit.Rows("1 b", "2 c", "3 d", "4 e"))
+}
+
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
