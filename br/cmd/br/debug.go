@@ -24,6 +24,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	streamdebug "github.com/pingcap/tidb/br/pkg/stream/debug"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -57,6 +58,7 @@ func NewDebugCommand() *cobra.Command {
 	meta.AddCommand(encodeBackupMetaCommand())
 	meta.AddCommand(setPDConfigCommand())
 	meta.AddCommand(searchStreamBackupCommand())
+	meta.AddCommand(searchStreamCompactBackupCommand())
 	meta.Hidden = true
 
 	return meta
@@ -470,11 +472,84 @@ func searchStreamBackupCommand() *cobra.Command {
 			if err != nil {
 				return errors.Trace(err)
 			}
+
 			comparator := stream.NewStartWithComparator()
 			bs := stream.NewStreamBackupSearch(s, comparator, keyBytes)
 			bs.SetStartTS(startTs)
 			bs.SetEndTs(endTs)
 
+			kvs, err := bs.Search(ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			kvsBytes, err := json.MarshalIndent(kvs, "", "  ")
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			cmd.Println("search result")
+			cmd.Println(string(kvsBytes))
+
+			return nil
+		},
+	}
+
+	flags := searchBackupCMD.Flags()
+	flags.String("search-key", "", "hex encoded key")
+	flags.Uint64("start-ts", 0, "search from start TSO, default is no start TSO limit")
+	flags.Uint64("end-ts", 0, "search to end TSO, default is no end TSO limit")
+
+	return searchBackupCMD
+}
+
+func searchStreamCompactBackupCommand() *cobra.Command {
+	searchBackupCMD := &cobra.Command{
+		Use:   "search-log-backup-compact",
+		Short: "search compacted log backup by key",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithCancel(GetDefaultContext())
+			defer cancel()
+
+			searchKey, err := cmd.Flags().GetString("search-key")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if searchKey == "" {
+				return errors.New("key param can't be empty")
+			}
+			keyBytes, err := hex.DecodeString(searchKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			startTs, err := cmd.Flags().GetUint64("start-ts")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			endTs, err := cmd.Flags().GetUint64("end-ts")
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			var cfg task.Config
+			if err = cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return errors.Trace(err)
+			}
+			_, s, err := task.GetStorage(ctx, cfg.Storage, &cfg)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			migs, err := streamdebug.GetMigrations(ctx, s)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer migs.ReadLock.Unlock(ctx)
+			bs, err := streamdebug.NewStreamBackupCompactSearch(ctx, s, migs.Migs, keyBytes, startTs, endTs)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			kvs, err := bs.Search(ctx)
 			if err != nil {
 				return errors.Trace(err)
