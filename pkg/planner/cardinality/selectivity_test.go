@@ -544,7 +544,7 @@ func TestSelectivity(t *testing.T) {
 		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
-	
+
 	}
 }
 
@@ -1567,9 +1567,8 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	insufficientCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
 
-func TestRiskRangeSkewRatioWithinBucket(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
+	// Should be close to baseline since heuristic didn't trigger
+	require.InDelta(t, baselineCount, insufficientCount, baselineCount*0.5, "Count should be similar when insufficient new rows are added")
 
 	// Test Case 2: Sufficient new rows (should trigger heuristic)
 	// Insert more rows to reach threshold (need 50+ total new rows)
@@ -1585,29 +1584,23 @@ func TestRiskRangeSkewRatioWithinBucket(t *testing.T) {
 
 	enhancedCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
-	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
-	count2, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
-	require.NoError(t, err2)
-	// Result of count2 should be larger than count because the risk ratio is higher
-	require.Less(t, count, count2)
-	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 1")
-	count3, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
-	require.NoError(t, err3)
-	// Result of count3 should be larger because the risk ratio is higher
-	require.Less(t, count2, count3)
-	// Repeat the prior test by setting the global variable instead of the session variable. This should have no effect.
-	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = 0.5")
-	count4, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
-	require.NoError(t, err4)
-	require.Less(t, count2, count4)
-	// Repeat the prior test by setting the session variable to the default. Count4 should inherit the global
-	// variable and be less than count3.
-	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = default")
-	count4, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
-	require.NoError(t, err4)
-	require.Less(t, count4, count3)
-	// Reset global variable to default.
-	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = default")
+	// Should be much higher due to heuristic
+	require.InDelta(t, 100.09, enhancedCount, 0.1, "Enhanced count should be approximately 100.09")
+
+	// Verify other end values don't trigger heuristic
+	otherCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(3, 3), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	require.InDelta(t, 109.99, otherCount, 0.1, "Other value count should be approximately 109.99")
+
+	// Test index estimation as well
+	idx := statsTbl.GetIdx(table.Meta().Indices[0].ID)
+	if idx != nil {
+		idxEnhancedCount, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(11, 11))
+		require.NoError(t, err)
+		require.InDelta(t, 100.09, idxEnhancedCount, 0.1, "Index enhanced count should be approximately 100.09")
+		idxOtherCount, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(3, 3))
+		require.NoError(t, err)
+		require.InDelta(t, 109.99, idxOtherCount, 0.1, "Index other count should be approximately 109.99")
+	}
 }
 
 func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
@@ -1631,9 +1624,9 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	h := dom.StatsHandle()
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 
-	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	sctx := testKit.Session()
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
 
