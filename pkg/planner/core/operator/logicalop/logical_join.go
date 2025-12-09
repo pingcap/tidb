@@ -198,6 +198,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
 	case base.SemiJoin, base.InnerJoin:
+		var check bool
+		if len(predicates) == 5 && len(p.EqualConditions) == 2 {
+			check = true
+		}
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, p.LeftConditions...)
 		tempCond = append(tempCond, p.RightConditions...)
@@ -205,9 +209,28 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
+		if check {
+			for _, c := range tempCond {
+				if sf, ok := c.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
+					if _, ok := sf.GetArgs()[0].(*expression.Constant); ok {
+						fmt.Println("wwz")
+					}
+				}
+			}
+		}
+
 		tempCond = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), tempCond,
 			p.Children()[0].Schema(), p.Children()[1].Schema(),
 			true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
+		if check {
+			for _, c := range tempCond {
+				if sf, ok := c.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
+					if _, ok := sf.GetArgs()[0].(*expression.Constant); ok {
+						fmt.Println("wwz")
+					}
+				}
+			}
+		}
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -256,6 +279,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	rightRet, rCh, err := rightChild.PredicatePushDown(rightCond)
 	if err != nil {
 		return nil, nil, err
+	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL && (len(leftRet) > 0 || len(rightRet) > 0) {
+		fmt.Println("wwz")
 	}
 	AddSelection(p, lCh, leftRet, 0)
 	AddSelection(p, rCh, rightRet, 1)
@@ -1441,6 +1467,9 @@ func (p *LogicalJoin) ExtractOnCondition(
 		}
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
+			if _, OK := binop.GetArgs()[0].(*expression.Constant); OK {
+				fmt.Println("wwz")
+			}
 			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
 			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {

@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"fmt"
 	"slices"
 	"sync"
 
@@ -610,6 +611,9 @@ func PropagateConstantForJoin(ctx exprctx.ExprContext, keepJoinKey bool, schema1
 	filter VaildConstantPropagationExpressionFuncType, conditions ...Expression) []Expression {
 	if len(conditions) == 0 {
 		return conditions
+	}
+	if ctx.ConnectionID() != 0  {
+		fmt.Println("wwz")
 	}
 	solver := newPropConstSolver()
 	defer func() {
