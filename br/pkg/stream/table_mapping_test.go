@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1007,7 +1007,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	dbKey := meta.DBkey(dbID)
 	dbInfo := &model.DBInfo{
 		ID:   dbID,
-		Name: ast.NewCIStr(dbName),
+		Name: pmodel.NewCIStr(dbName),
 	}
 	dbValue, err := json.Marshal(dbInfo)
 	require.NoError(t, err)
@@ -1033,17 +1033,17 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	pi.Definitions = append(pi.Definitions,
 		model.PartitionDefinition{
 			ID:   pt1ID,
-			Name: ast.NewCIStr(pt1Name),
+			Name: pmodel.NewCIStr(pt1Name),
 		},
 		model.PartitionDefinition{
 			ID:   pt2ID,
-			Name: ast.NewCIStr(pt2Name),
+			Name: pmodel.NewCIStr(pt2Name),
 		},
 	)
 
 	tableInfo := &model.TableInfo{
 		ID:        tableID,
-		Name:      ast.NewCIStr(tableName),
+		Name:      pmodel.NewCIStr(tableName),
 		Partition: &pi,
 	}
 	tableValue, err := json.Marshal(tableInfo)
