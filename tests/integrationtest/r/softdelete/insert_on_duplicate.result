@@ -1,0 +1,24 @@
+create table t (id int primary key clustered, v int) softdelete = 'on';
+insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4);
+update t set _tidb_softdelete_time = now() where id in (1, 2);
+insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666;
+select id, v from t where _tidb_softdelete_time is null;
+id	v
+1	11
+2	12
+3	666
+4	666
+5	15
+drop table t;
+# test again with nonclustered
+create table t (id int primary key nonclustered, v int) softdelete = 'on';
+insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4);
+update t set _tidb_softdelete_time = now() where id in (1, 2);
+insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666;
+select id, v from t where _tidb_softdelete_time is null;
+id	v
+3	666
+4	666
+1	11
+2	12
+5	15

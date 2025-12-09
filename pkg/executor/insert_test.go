@@ -794,9 +794,7 @@ type softDelete struct {
 func (sd softDelete) testSoftDeleteInsert(t *testing.T) {
 	tk := sd.TestKit
 	for _, clustered := range []string{"clustered", "nonclustered"} {
-		tk.MustExec(fmt.Sprintf(`create table t (
-			id int primary key %s,
-			_tidb_softdelete_time bigint default null)`, clustered))
+		tk.MustExec(fmt.Sprintf(`create table t (id int primary key %s) softdelete = 'on'`, clustered))
 
 		tk.MustExec("insert into t(id) values (1), (2)")
 		tk.MustExec("update t set _tidb_softdelete_time = now() where id = 1")
@@ -821,8 +819,7 @@ func (sd softDelete) testSoftDeleteInsertIgnore(t *testing.T) {
 	for _, clustered := range []string{"nonclustered"} {
 		tk.MustExec(fmt.Sprintf(`create table t (
 			id int primary key %s,
-			v int,
-			_tidb_softdelete_time bigint default null)`, clustered))
+			v int) softdelete = 'on'`, clustered))
 
 		tk.MustExec(`insert into t(id, v) values (1, 1), (2, 2)`)
 		// soft delete (1, 1)
@@ -841,8 +838,7 @@ func (sd softDelete) testSoftDeleteInsertOnDuplicate(t *testing.T) {
 	for _, clustered := range []string{"clustered", "nonclustered"} {
 		tk.MustExec(fmt.Sprintf(`create table t (
 			id int primary key %s,
-			v int,
-			_tidb_softdelete_time bigint default null)`, clustered))
+			v int) softdelete = 'on'`, clustered))
 
 		tk.MustExec(`insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4)`)
 		// soft delete (1, 1), (2, 2)
@@ -869,8 +865,7 @@ func (sd softDelete) testSoftDeleteReplace(t *testing.T) {
 	for _, clustered := range []string{"clustered", "nonclustered"} {
 		tk.MustExec(fmt.Sprintf(`create table t (
 			id int primary key %s,
-			v int,
-			_tidb_softdelete_time bigint default null)`, clustered))
+			v int) softdelete = 'on'`, clustered))
 
 		tk.MustExec(`insert into t (id, v) values (1, 1), (2, 2)`)
 		// soft delete (1, 1)
@@ -900,9 +895,7 @@ func TestSoftDelete(t *testing.T) {
 	t.Run("testSoftDeleteUpdate", sd.testSoftDeleteUpdate)
 
 	t.Run("testSoftDeleteMultipleTombstones", func(t *testing.T) {
-		tk.MustExec(`create table t (
-			id int primary key,
-			_tidb_softdelete_time bigint default null)`)
+		tk.MustExec(`create table t (id int primary key) softdelete = 'on'`)
 
 		// multiple soft-delete tombstone
 		tk.MustExec(`insert into t(id) values (1), (2)`)
@@ -915,14 +908,12 @@ func TestSoftDelete(t *testing.T) {
 	// TODO: report error for this? should be covered by DDL?
 	// tk.MustExec(`create table t(
 	// 	id int primary key,
-	// 	uk int unique key,
-	// 	_tidb_softdelete_time bigint default null)`)
+	// 	uk int unique key) softdelete = 'on'`)
 
 	// The following case is not supported yet, because currently we don't support soft delete table with unique keys.
 	// tk.MustExec(`create table t(
 	// 	id int primary key,
-	// 	uk int unique key,
-	// 	_tidb_softdelete_time bigint default null)`)
+	// 	uk int unique key) softdelete = 'on'`)
 	// tk.MustExec(`insert into t(id, uk) values (1, 10), (2, 6)`)
 	// tk.MustExec(`update t set _tidb_softdelete_time = now() where id in (1, 2)`)
 	// // this step conflicts with both soft delete rows, it triggers removal of two old soft deleted rows
