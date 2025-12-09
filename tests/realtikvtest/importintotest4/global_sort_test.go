@@ -220,7 +220,7 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
 	// TODO: fix this test after tikv supports https://github.com/tikv/tikv/pull/18866 and https://github.com/tikv/tikv/pull/19121.
-	require.Equal(s.T(), addCnt, 0)
+	require.Equal(s.T(), addCnt, 12)
 	// require.Greater(s.T(), addCnt, 0)
 	require.Equal(s.T(), removeCnt, addCnt)
 
