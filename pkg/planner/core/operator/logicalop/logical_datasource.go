@@ -157,13 +157,6 @@ func (ds *DataSource) ExplainInfo() string {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL && ds.DBName.L == "dh_app_5861" && len(predicates) == 1 {
-		if sf, ok := predicates[0].(*expression.ScalarFunction); ok {
-			if _, ok := sf.GetArgs()[0].(*expression.Constant); ok {
-				fmt.Println("wwz")
-			}
-		}
-	}
 	predicates = ruleutil.ApplyPredicateSimplification(ds.SCtx(), predicates, true, nil)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
@@ -289,9 +282,6 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification() base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL && len(ds.PushedDownConds) == 1 {
-		fmt.Println("wwz")
-	}
 	p.PushedDownConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true, nil)
 	p.AllConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true, nil)
 	return p

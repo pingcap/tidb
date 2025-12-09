@@ -16,7 +16,6 @@ package logicalop
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 
 	"github.com/pingcap/errors"
@@ -95,9 +94,6 @@ func (p *LogicalSelection) HashCode() []byte {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
-	if !p.SCtx().GetSessionVars().InRestrictedSQL && (len(p.Conditions) == 1 || len(p.Conditions) == 1) {
-		fmt.Println("wwz")
-	}
 	exprCtx := p.SCtx().GetExprCtx()
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
@@ -214,13 +210,10 @@ func (p *LogicalSelection) PredicateSimplification() base.LogicalPlan {
 
 // PullUpConstantPredicates implements the base.LogicalPlan.<9th> interface.
 func (p *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
-	if !p.SCtx().GetSessionVars().InRestrictedSQL && len(p.Conditions) == 1 {
-		fmt.Println("wwz")
-	}
 	var result []expression.Expression
 	for _, candidatePredicate := range p.Conditions {
 		// the candidate predicate should be a constant and compare predicate
-		candidatePredicate, match := expression.ValidCompareConstantPredicate(p.SCtx().GetExprCtx(), candidatePredicate)
+		match := expression.ValidCompareConstantPredicate(p.SCtx().GetExprCtx().GetEvalCtx(), candidatePredicate)
 		if match {
 			result = append(result, candidatePredicate)
 		}

@@ -16,7 +16,6 @@ package rule
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -207,9 +206,6 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 	// Thus, we utilize a switch to govern this particular logic.
 	if propagateConstant {
 		if forJoin {
-			if !sctx.GetSessionVars().InRestrictedSQL {
-				fmt.Println("wwz")
-			}
 			simplifiedPredicate = expression.PropagateConstantForJoin(exprCtx, sctx.GetSessionVars().AlwaysKeepJoinKey,
 				schema1, schema2, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
 		} else {
