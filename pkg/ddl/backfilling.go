@@ -792,6 +792,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 
 	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
 		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
+		ForDuplicateCheck(hasUnique).
 		Build()
 	if err != nil {
 		return errors.Trace(err)

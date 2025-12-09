@@ -40,6 +40,15 @@ import (
 	"go.uber.org/zap"
 )
 
+func hasUniqueIndex(indexes []*model.IndexInfo) bool {
+	for _, idx := range indexes {
+		if idx.Unique {
+			return true
+		}
+	}
+	return false
+}
+
 type readIndexExecutor struct {
 	taskexecutor.BaseStepExecutor
 	d       *ddl
@@ -120,6 +129,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	metric := metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, metric)
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
+		ForDuplicateCheck(hasUniqueIndex(r.indexes)).
 		WithImportDistributedLock(r.d.etcdCli, sm.TS).
 		Build()
 	if err != nil {

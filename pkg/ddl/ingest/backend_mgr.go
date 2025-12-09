@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -86,8 +85,8 @@ func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 
 // ForDuplicateCheck marks this backend context is only used for duplicate check.
 // TODO(tangenta): remove this after we don't rely on the backend to do duplicate check.
-func (b *BackendCtxBuilder) ForDuplicateCheck() *BackendCtxBuilder {
-	b.checkDup = true
+func (b *BackendCtxBuilder) ForDuplicateCheck(checkDup bool) *BackendCtxBuilder {
+	b.checkDup = checkDup
 	return b
 }
 
@@ -110,11 +109,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	resGroupName := job.ReorgMeta.ResourceGroupName
 	concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
-	hasUnique, err := hasUniqueIndex(job)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
+	cfg, err := genConfig(ctx, jobSortPath, LitMemRoot, b.checkDup, resGroupName, concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", job.ID), zap.Error(err))
 		return nil, err
@@ -162,25 +157,11 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", job.ID),
 		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
 		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()),
-		zap.Bool("has unique index", hasUnique))
+		zap.Bool("has unique index", b.checkDup))
 
 	LitDiskRoot.Add(job.ID, bCtx)
 	BackendCounterForTest.Add(1)
 	return bCtx, nil
-}
-
-func hasUniqueIndex(job *model.Job) (bool, error) {
-	args, err := model.GetModifyIndexArgs(job)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	for _, a := range args.IndexArgs {
-		if a.Unique {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func createLocalBackend(
