@@ -60,7 +60,7 @@ const (
 var MaxConflictRowFileSize int64 = 8 * units.GiB
 
 type collectConflictsStepExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	taskID   int64
 	store    tidbkv.Storage
 	taskMeta *TaskMeta
