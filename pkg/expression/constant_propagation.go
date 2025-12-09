@@ -110,7 +110,6 @@ func ValidCompareConstantPredicate(ctx BuildContext, candidatePredicate Expressi
 		return scalarFunction, false
 	}
 	column, _ := ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
-
 	if column == nil {
 		switch scalarFunction.FuncName.L {
 		case ast.EQ:
