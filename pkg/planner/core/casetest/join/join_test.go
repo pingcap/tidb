@@ -192,7 +192,7 @@ func TestKeepingJoinKeys(t *testing.T) {
 			`Projection root  1->Column#9`,
 			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
-			`  │ └─Selection cop[tikv]  eq(1, test.t2.a)`,
+			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
 			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
 			`  └─TableReader(Probe) root  data:Selection`,
 			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
