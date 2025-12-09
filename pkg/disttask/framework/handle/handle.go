@@ -20,12 +20,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/failpoint"
-	litstorage "github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
->>>>>>> 968e31fc3fe (ddl: cancel the job context before rolling back (#64130))
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/util/backoff"
