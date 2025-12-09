@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/kvcache"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -684,8 +685,22 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			return val, nil
 		}
 	}
+
+	if e.Ctx().GetSessionVars().ConnectionID > 0 {
+		if cachedValue, ok := kvcache.GlobalKVCache.Get([]byte(key)); ok {
+			return cachedValue, nil
+		}
+	}
+
 	// if not read lock or table was unlock then snapshot get
-	return e.snapshot.Get(ctx, key)
+	val, err = e.snapshot.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if e.Ctx().GetSessionVars().ConnectionID > 0 {
+		kvcache.GlobalKVCache.Put(key, val)
+	}
+	return val, nil
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
