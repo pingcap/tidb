@@ -454,6 +454,18 @@ func (e *InsertExec) doDupRowUpdate(
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
 	e.Ctx().GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
+
+	updateOriginTSCol := -1
+	if e.Table.Meta().IsActiveActive {
+		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+		// should be set to null rather than copy the old value.
+		for _, col := range e.Table.Cols() {
+			if col.Name.Equals(&model.ExtraOriginTSName) {
+				updateOriginTSCol = col.Offset
+			}
+		}
+	}
+
 	// NOTE: In order to execute the expression inside the column assignment,
 	// we have to put the value of "oldRow" and "extraCols" before "newRow" in
 	// "row4Update" to be consistent with "Schema4OnDuplicate" in the "Insert"
@@ -521,6 +533,10 @@ func (e *InsertExec) doDupRowUpdate(
 	}
 
 	newData := e.row4Update[:len(oldRow)]
+	if updateOriginTSCol >= 0 && !assignFlag[updateOriginTSCol] {
+		newData[updateOriginTSCol].SetNull()
+	}
+
 	_, ignored, err := updateRecord(
 		ctx, e.Ctx(),
 		handle, oldRow, newData,

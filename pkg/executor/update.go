@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	mmodel "github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -459,7 +459,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
+func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *model.ColumnInfo, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -479,11 +479,20 @@ func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmod
 	return err
 }
 
-func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []physicalop.ColumnAndTable) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
+	for i, col := range cols {
+		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+		// should be set to null rather than copy the old value.
+		if col.Column != nil && col.Table.Meta().IsActiveActive &&
+			col.Name.Equals(&model.ExtraOriginTSName) {
+			newRowData[i].SetNull()
+		}
+	}
+
 	for _, assign := range e.OrderedList {
-		var colInfo *mmodel.ColumnInfo
-		if cols[assign.Col.Index] != nil {
+		var colInfo *model.ColumnInfo
+		if cols[assign.Col.Index].Column != nil {
 			colInfo = cols[assign.Col.Index].ColumnInfo
 		}
 
@@ -499,7 +508,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
-		if cols[assign.Col.Index] != nil {
+		if cols[assign.Col.Index].Column != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 				return nil, err
@@ -511,8 +520,16 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 	return newRowData, nil
 }
 
-func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []physicalop.ColumnAndTable) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
+	for i, col := range cols {
+		if col.Column != nil && col.Table.Meta().IsActiveActive &&
+			col.Name.Equals(&model.ExtraOriginTSName) {
+			// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+			// should be set to null rather than copy the old value.
+			newRowData[i].SetNull()
+		}
+	}
 	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
 		tblIdx := e.assignFlag[assign.Col.Index]
@@ -526,7 +543,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
-		if cols[assign.Col.Index] != nil {
+		if cols[assign.Col.Index].Column != nil {
 			colInfo := cols[assign.Col.Index].ColumnInfo
 			val, err = table.CastValue(e.Ctx(), val, colInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
