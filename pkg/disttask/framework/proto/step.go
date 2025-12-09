@@ -73,11 +73,13 @@ func exampleStep2Str(s Step) string {
 // the initial step is StepInit(-1)
 // steps are processed in the following order:
 //
-//   - local sort: StepInit
+//   - local sort:
+//     StepInit
 //     -> ImportStepImport
 //     -> ImportStepPostProcess
 //     -> StepDone
-//   - global sort: StepInit
+//   - global sort:
+//     StepInit
 //     -> ImportStepEncodeAndSort
 //     -> ImportStepMergeSort (optional)
 //     -> ImportStepWriteAndIngest
@@ -99,9 +101,14 @@ const (
 	ImportStepMergeSort Step = 4
 	// ImportStepWriteAndIngest write sorted kv into TiKV and ingest it.
 	ImportStepWriteAndIngest Step = 5
-	// ImportStepCollectConflicts collect conflicts info, this step doesn't mutate
-	// downstream data, so it's idempotent, and we can collect a correct checksum
-	// for conflict rows.
+	// ImportStepCollectConflicts collect conflicts info, this step won't mutate
+	// downstream data, so is idempotent, and we can collect a correct checksum
+	// for the conflicted rows. if we do this together with ImportStepConflictResolution,
+	// once the step retry in the middle, we can't get a correct checksum.
+	// this step also need to do deduplication for the conflicted rows due to
+	// multiple unique indexes to avoid repeated collection, currently, we do it
+	// in memory, so if there are too many conflicts, we will skip the later
+	// checksum step as we don't know the exact checksum.
 	ImportStepCollectConflicts Step = 6
 	// ImportStepConflictResolution resolve detected conflicts.
 	// during other steps of global sort, we will detect conflicts and record them

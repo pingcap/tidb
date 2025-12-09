@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -198,7 +197,7 @@ func readOneFile(
 
 // ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
 // to the returned channel.
-func ReadKVFilesAsync(ctx context.Context, eg *tidbutil.ErrorGroupWithRecover,
+func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
 	store storage.ExternalStorage, files []string) chan *KVPair {
 	pairCh := make(chan *KVPair)
 	eg.Go(func() error {

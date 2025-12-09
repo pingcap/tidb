@@ -73,7 +73,9 @@ type ImportStepMeta struct {
 	SortedIndexMetas map[int64]*external.SortedKVMeta `external:"true"`
 	// it's the sum of all conflict KVs in all SortedKVMeta, we keep it here to
 	// avoid get the external meta when no conflict KVs.
-	RecordedConflictKVCount uint64
+	//
+	// Note: the comma in json tag is necessary to make omitempty work.
+	RecordedConflictKVCount uint64 `json:",omitempty"`
 }
 
 // Marshal marshals the import step meta to JSON.
