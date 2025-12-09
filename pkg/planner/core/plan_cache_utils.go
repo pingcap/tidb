@@ -536,7 +536,7 @@ func NewPlanCacheValue(
 ) *PlanCacheValue {
 	userParamTypes := make([]*types.FieldType, len(paramTypes))
 	for i, tp := range paramTypes {
-		userParamTypes[i] = tp.Clone()
+		userParamTypes[i] = tp.DeepClone()
 	}
 	var userName string
 	if sctx.GetSessionVars().User != nil { // might be nil if in test
