@@ -46,7 +46,7 @@ func genConfig(
 	concurrency int,
 	maxWriteSpeed int,
 	globalSort bool,
-) (*local.BackendConfig, error) {
+) *local.BackendConfig {
 	cfg := &local.BackendConfig{
 		LocalStoreDir:     jobSortPath,
 		ResourceGroupName: resourceGroup,
@@ -82,7 +82,7 @@ func genConfig(
 		cfg.DuplicateDetectOpt = common.DupDetectOpt{ReportErrOnDup: true}
 	}
 
-	return cfg, nil
+	return cfg
 }
 
 // CopReadBatchSize is the batch size of coprocessor read.

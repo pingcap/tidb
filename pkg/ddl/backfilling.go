@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -790,10 +792,22 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		hasUnique = hasUnique || indexInfo.Unique
 	}
 
+	var (
+		cfg *local.BackendConfig
+		bd  *local.Backend
+		err error
+	)
+	if config.GetGlobalConfig().Store == "tikv" {
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, hasUnique, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer bd.Close()
+	}
 	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
 		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
 		ForDuplicateCheck(hasUnique).
-		Build()
+		Build(cfg, bd)
 	if err != nil {
 		return errors.Trace(err)
 	}

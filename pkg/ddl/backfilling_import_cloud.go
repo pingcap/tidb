@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
@@ -43,6 +44,7 @@ type cloudImportExecutor struct {
 	cloudStoreURI string
 	metric        *lightningmetric.Common
 	backendCtx    ingest.BackendCtx
+	backend       *local.Backend
 }
 
 func newCloudImportExecutor(
@@ -65,11 +67,17 @@ func newCloudImportExecutor(
 func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	ctx = lightningmetric.WithCommonMetric(ctx, m.metric)
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).
-		ForDuplicateCheck(hasUniqueIndex(m.indexes)).Build()
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, hasUniqueIndex(m.indexes), false)
 	if err != nil {
+		return errors.Trace(err)
+	}
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).
+		ForDuplicateCheck(hasUniqueIndex(m.indexes)).Build(cfg, bd)
+	if err != nil {
+		bd.Close()
 		return err
 	}
+	m.backend = bd
 	m.backendCtx = bCtx
 	return nil
 }
@@ -149,6 +157,7 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	if m.backendCtx != nil {
 		m.backendCtx.Close()
 	}
+	m.backend.Close()
 	return nil
 }
 

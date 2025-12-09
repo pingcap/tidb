@@ -48,7 +48,7 @@ var (
 	// RunInTest indicates whether the current process is running in test.
 	RunInTest bool
 	// LastAlloc is the last ID allocator.
-	LastAlloc manual.Allocator
+	LastAlloc atomic.Pointer[manual.Allocator]
 )
 
 // StoreHelper have some api to help encode or store KV data
@@ -94,7 +94,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 	alloc := manual.Allocator{}
 	if RunInTest {
 		alloc.RefCnt = new(atomic.Int64)
-		LastAlloc = alloc
+		LastAlloc.Store(&alloc)
 	}
 	var opts = make([]membuf.Option, 0, 1)
 	if !inMemTest {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -63,6 +65,9 @@ type readIndexExecutor struct {
 	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
+
+	backendCfg *local.BackendConfig
+	backend    *local.Backend
 }
 
 type readIndexSummary struct {
@@ -91,8 +96,17 @@ func newReadIndexExecutor(
 	}, nil
 }
 
-func (*readIndexExecutor) Init(_ context.Context) error {
+func (r *readIndexExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
+	cfg := config.GetGlobalConfig()
+	if cfg.Store == "tikv" {
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, hasUniqueIndex(r.indexes), false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		r.backendCfg = cfg
+		r.backend = bd
+	}
 	return nil
 }
 
@@ -131,7 +145,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
 		ForDuplicateCheck(hasUniqueIndex(r.indexes)).
 		WithImportDistributedLock(r.d.etcdCli, sm.TS).
-		Build()
+		Build(r.backendCfg, r.backend)
 	if err != nil {
 		return err
 	}
@@ -163,8 +177,11 @@ func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	}
 }
 
-func (*readIndexExecutor) Cleanup(ctx context.Context) error {
+func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
+	if r.backend != nil {
+		r.backend.Close()
+	}
 	return nil
 }
 

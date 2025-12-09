@@ -16,7 +16,10 @@ package addindextest
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +46,24 @@ func init() {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Path = "127.0.0.1:2379"
 	})
+}
+
+func checkTmpDDLDir(t *testing.T) {
+	tmpDir := config.GetGlobalConfig().TempDir
+	fmt.Println(tmpDir)
+	require.NoError(t, fs.WalkDir(os.DirFS(tmpDir), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(path, "/tmp_ddl-") {
+			return nil
+		}
+		// we only checks whether there is a stale file, empty dir is allowed.
+		if !d.IsDir() {
+			return goerrors.New("stale file found")
+		}
+		return nil
+	}))
 }
 
 func TestAddIndexDistBasic(t *testing.T) {
@@ -119,6 +140,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
 
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
+	checkTmpDDLDir(t)
 }
 
 func TestAddIndexDistCancelWithPartition(t *testing.T) {
@@ -356,9 +378,9 @@ func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 }
 
 func TestAddUKErrorMessage(t *testing.T) {
-	ingest.ForceSyncFlagForTest = true
+	ingest.ForceSyncFlagForTest.Store(true)
 	t.Cleanup(func() {
-		ingest.ForceSyncFlagForTest = false
+		ingest.ForceSyncFlagForTest.Store(false)
 	})
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
