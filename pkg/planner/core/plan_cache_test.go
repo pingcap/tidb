@@ -1876,7 +1876,7 @@ func TestNonPreparedPlanCacheResourceGroup(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
 }
 
-func TestNonPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
+func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
