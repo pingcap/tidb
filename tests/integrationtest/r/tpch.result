@@ -245,13 +245,8 @@ limit 10;
 id	estRows	task	access object	operator info
 Projection	10.00	root		tpch50.lineitem.l_orderkey, Column#35, tpch50.orders.o_orderdate, tpch50.orders.o_shippriority
 └─TopN	10.00	root		Column#35:desc, tpch50.orders.o_orderdate, offset:0, count:10
-<<<<<<< HEAD
-  └─HashAgg	39877917.22	root		group by:Column#45, Column#46, Column#47, funcs:sum(Column#44)->Column#35, funcs:firstrow(Column#45)->tpch50.orders.o_orderdate, funcs:firstrow(Column#46)->tpch50.orders.o_shippriority, funcs:firstrow(Column#47)->tpch50.lineitem.l_orderkey
-    └─Projection	93262952.04	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#44, tpch50.orders.o_orderdate->Column#45, tpch50.orders.o_shippriority->Column#46, tpch50.lineitem.l_orderkey->Column#47
-=======
   └─HashAgg	39906818.62	root		group by:Column#42, Column#43, Column#44, funcs:sum(Column#41)->Column#35, funcs:firstrow(Column#42)->tpch50.orders.o_orderdate, funcs:firstrow(Column#43)->tpch50.orders.o_shippriority, funcs:firstrow(Column#44)->tpch50.lineitem.l_orderkey
     └─Projection	93262952.04	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#41, tpch50.orders.o_orderdate->Column#42, tpch50.orders.o_shippriority->Column#43, tpch50.lineitem.l_orderkey->Column#44
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
       └─IndexHashJoin	93262952.04	root		inner join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
         ├─HashJoin(Build)	22975885.46	root		inner join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
         │ ├─TableReader(Build)	1508884.60	root		data:Selection

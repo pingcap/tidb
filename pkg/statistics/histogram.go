@@ -965,7 +965,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
-	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
 	if !allowUseModifyCount {
 		return oneValue
 	}
@@ -1011,11 +1011,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return 0
 	}
 
-<<<<<<< HEAD
-	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
-
-=======
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
@@ -1091,38 +1086,13 @@ func (hg *Histogram) OutOfRangeRowCount(
 	avgRowCount = (addedRows * 0.5) * totalPercent
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 	if skewRatio > 0 {
 		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
 		avgRowCount = avgRowCount + (addedRows-avgRowCount)*skewRatio
 	}
 
-<<<<<<< HEAD
-	if !allowUseModifyCount {
-		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
-		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
-		// We use 1/NDV here to assume that at most 1 value qualifies.
-		return min(rowCount, oneValue)
-	}
-
-	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
-	addedPct := addedRows / float64(realtimeRowCount)
-	// If the newly added rows is larger than the percentage that we've estimated that we're
-	// searching for out of the range, rowCount may need to be adjusted.
-	if addedPct > totalPercent {
-		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
-		// Attempt to account for the added rows - but not more than the totalPercent
-		outOfRangeAdded := addedRows * totalPercent
-		// Return the max of each estimate - with a minimum of one value.
-		rowCount = max(rowCount, outOfRangeAdded, oneValue)
-	}
-
-	// Use modifyCount as a final bound
-	return min(rowCount, float64(modifyCount))
-=======
 	// Use oneValue as lower bound
 	return max(avgRowCount, oneValue)
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
 }
 
 // Copy deep copies the histogram.

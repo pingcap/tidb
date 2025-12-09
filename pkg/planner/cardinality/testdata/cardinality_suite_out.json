@@ -24,11 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-<<<<<<< HEAD
-        "Count": 786.504166655054
-=======
         "Count": 755
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
       },
       {
         "Start": 900,
@@ -83,11 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-<<<<<<< HEAD
-        "Count": 1244.696869573942
-=======
         "Count": 865.7992173934855
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
       },
       {
         "Start": 900,
@@ -112,11 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-<<<<<<< HEAD
-        "Count": 1224.0288209899081
-=======
         "Count": 891.757205247477
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
       },
       {
         "Start": 200,
@@ -1324,9 +1312,6 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-<<<<<<< HEAD
-          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-=======
           "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -1362,7 +1347,6 @@
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
           "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
@@ -1372,9 +1356,6 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-<<<<<<< HEAD
-          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-=======
           "  ├─IndexFullScan(Build) 18.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 18.99 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -1410,7 +1391,6 @@
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
           "  ├─IndexFullScan(Build) 99.90 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 99.90 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
@@ -1468,15 +1448,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-<<<<<<< HEAD
-          "  ├─IndexFullScan(Build) 505.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 505.00 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
           "  ├─IndexFullScan(Build) 450.50 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 450.50 cop[tikv] table:t keep order:false, stats:pseudo"
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
         ]
       },
       {
@@ -1484,15 +1458,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-<<<<<<< HEAD
-          "  ├─IndexFullScan(Build) 550.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 550.00 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
           "  ├─IndexFullScan(Build) 459.50 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 459.50 cop[tikv] table:t keep order:false, stats:pseudo"
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
         ]
       },
       {
@@ -3739,12 +3707,7 @@
                             "histL": -999,
                             "histR": 999,
                             "lPercent": 0.5613744375005636,
-<<<<<<< HEAD
-                            "rPercent": 0,
-                            "rowCount": 1105.760693125558
-=======
                             "rPercent": 0
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
                           },
                           {
                             "Result": 154.37797031265498
@@ -4075,12 +4038,7 @@
                             "histL": -999,
                             "histR": 999,
                             "lPercent": 0.5613744375005636,
-<<<<<<< HEAD
-                            "rPercent": 0,
-                            "rowCount": 392.8571428571429
-=======
                             "rPercent": 0
->>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
                           },
                           {
                             "Result": 154.37797031265498
