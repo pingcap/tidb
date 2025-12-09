@@ -1129,6 +1129,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		}
 
 		exec.close(false)
+		close(doneCh)
 		return nil
 	})
 
