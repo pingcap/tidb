@@ -126,6 +126,7 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 
 		if resp.StatusCode != http.StatusOK {
 			body, err1 := io.ReadAll(resp.Body)
+			logutil.BgLogger().Error("HTTP response error", zap.Int("status", resp.StatusCode), zap.ByteString("body", body), zap.Error(err1))
 			if err1 != nil {
 				w.sendReqErr.Store(errors.Trace(&errdef.HTTPStatusError{
 					StatusCode: resp.StatusCode,
@@ -185,6 +186,7 @@ func (w *writeClient) Write(req *WriteRequest) (err error) {
 		}
 	}
 	if _, err := w.writer.Write(buf.Bytes()); err != nil {
+		logutil.BgLogger().Error("failed to write", zap.Error(err))
 		return w.cause(err)
 	}
 	return nil
