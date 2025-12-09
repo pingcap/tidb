@@ -98,28 +98,42 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 // ValidCompareConstantPredicate checks if the predicate is an expression like [column '>'|'>='|'<'|'<='|'=' constant].
 // return param1: return true, if the predicate is a compare constant predicate.
 // return param2: return the column side of predicate.
-func ValidCompareConstantPredicate(ctx EvalContext, candidatePredicate Expression) bool {
+// and expression 1 = a, will be written as a=1 to avoid flaky test
+func ValidCompareConstantPredicate(ctx BuildContext, candidatePredicate Expression) (Expression, bool) {
 	scalarFunction, ok := candidatePredicate.(*ScalarFunction)
 	if !ok {
-		return false
+		return scalarFunction, false
 	}
 	if scalarFunction.FuncName.L != ast.GT && scalarFunction.FuncName.L != ast.GE &&
 		scalarFunction.FuncName.L != ast.LT && scalarFunction.FuncName.L != ast.LE &&
 		scalarFunction.FuncName.L != ast.EQ {
-		return false
+		return scalarFunction, false
 	}
 	column, _ := ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
+
 	if column == nil {
-		column, _ = ValidCompareConstantPredicateHelper(ctx, scalarFunction, false)
+		switch scalarFunction.FuncName.L {
+		case ast.EQ:
+			args := scalarFunction.GetArgs()
+			candidatePredicate = NewFunctionInternal(ctx, scalarFunction.FuncName.L, scalarFunction.GetType(ctx.GetEvalCtx()), args[1], args[0])
+			candidatePredicate.SetCharsetAndCollation(scalarFunction.CharsetAndCollation())
+			candidatePredicate.SetCoercibility(scalarFunction.Coercibility())
+			candidatePredicate.SetRepertoire(scalarFunction.Repertoire())
+			scalarFunction = candidatePredicate.(*ScalarFunction)
+			column, _ = ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
+		default:
+			column, _ = ValidCompareConstantPredicateHelper(ctx, scalarFunction, false)
+		}
+
 	}
 	if column == nil {
-		return false
+		return scalarFunction, false
 	}
-	return true
+	return scalarFunction, true
 }
 
 // ValidCompareConstantPredicateHelper checks if the predicate is a compare constant predicate, like "Column xxx Constant"
-func ValidCompareConstantPredicateHelper(ctx EvalContext, eq *ScalarFunction, colIsLeft bool) (*Column, *Constant) {
+func ValidCompareConstantPredicateHelper(ctx BuildContext, eq *ScalarFunction, colIsLeft bool) (*Column, *Constant) {
 	var col *Column
 	var con *Constant
 	colOk := false
@@ -140,25 +154,33 @@ func ValidCompareConstantPredicateHelper(ctx EvalContext, eq *ScalarFunction, co
 	if !conOk {
 		return nil, nil
 	}
-	if col.GetStaticType().GetCollate() != con.GetType(ctx).GetCollate() {
+	if col.GetStaticType().GetCollate() != con.GetType(ctx.GetEvalCtx()).GetCollate() {
 		return nil, nil
 	}
 	return col, con
 }
 
 // validEqualCond checks if the cond is an expression like [column eq constant].
-func validEqualCond(ctx EvalContext, cond Expression) (*Column, *Constant) {
+func validEqualCond(ctx BuildContext, cond Expression) (Expression, *Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
 		if eq.FuncName.L != ast.EQ {
-			return nil, nil
+			return cond, nil, nil
 		}
+		// because it is only for equal condition, we can swap the positions of the two args.
 		col, con := ValidCompareConstantPredicateHelper(ctx, eq, true)
 		if col == nil {
-			return ValidCompareConstantPredicateHelper(ctx, eq, false)
+			args := eq.GetArgs()
+			eqCondition := NewFunctionInternal(ctx, eq.FuncName.L, eq.GetType(ctx.GetEvalCtx()), args[1], args[0])
+			eqCondition.SetCharsetAndCollation(eq.CharsetAndCollation())
+			eqCondition.SetCoercibility(eq.Coercibility())
+			eqCondition.SetRepertoire(eq.Repertoire())
+			col, constant := ValidCompareConstantPredicateHelper(ctx, eqCondition.(*ScalarFunction), true)
+
+			return eq, col, constant
 		}
-		return col, con
+		return eq, col, con
 	}
-	return nil, nil
+	return cond, nil, nil
 }
 
 // replaceEqCondtionWithTrue replaces eq condition in 'cond' by true if both 'src' and 'tgt' appear in 'eq cond'.
@@ -502,7 +524,9 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		if visited[i] {
 			continue
 		}
-		col, con := validEqualCond(s.ctx.GetEvalCtx(), cond)
+		var col *Column
+		var con *Constant
+		s.conditions[i], col, con = validEqualCond(s.ctx, cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
@@ -739,7 +763,9 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		if visited[i+condsOffset] {
 			continue
 		}
-		col, con := validEqualCond(s.ctx.GetEvalCtx(), cond)
+		var col *Column
+		var con *Constant
+		conds[i], col, con = validEqualCond(s.ctx, cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {

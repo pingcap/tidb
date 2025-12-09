@@ -213,7 +213,7 @@ func (p *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
 	var result []expression.Expression
 	for _, candidatePredicate := range p.Conditions {
 		// the candidate predicate should be a constant and compare predicate
-		match := expression.ValidCompareConstantPredicate(p.SCtx().GetExprCtx().GetEvalCtx(), candidatePredicate)
+		candidatePredicate, match := expression.ValidCompareConstantPredicate(p.SCtx().GetExprCtx(), candidatePredicate)
 		if match {
 			result = append(result, candidatePredicate)
 		}
