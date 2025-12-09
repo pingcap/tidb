@@ -40,8 +40,7 @@ type DestroyableSessionPool interface {
 // resourceCallback is a helper function to be triggered after Get/Put call.
 type resourceCallback func(pools.Resource)
 
-// DestroyablePool is an implementation of DestroyableSessionPool.
-type DestroyablePool struct {
+type pool struct {
 	resources chan pools.Resource
 	factory   pools.Factory
 	mu        struct {
@@ -55,7 +54,7 @@ type DestroyablePool struct {
 
 // NewSessionPool creates a new session pool with the given capacity and factory function.
 func NewSessionPool(capacity int, factory pools.Factory, getCallback, putCallback, destroyCallback resourceCallback) DestroyableSessionPool {
-	return &DestroyablePool{
+	return &pool{
 		resources:       make(chan pools.Resource, capacity),
 		factory:         factory,
 		getCallback:     getCallback,
@@ -65,7 +64,7 @@ func NewSessionPool(capacity int, factory pools.Factory, getCallback, putCallbac
 }
 
 // Get gets a session from the session pool.
-func (p *DestroyablePool) Get() (resource pools.Resource, err error) {
+func (p *pool) Get() (resource pools.Resource, err error) {
 	var ok bool
 	select {
 	case resource, ok = <-p.resources:
@@ -89,7 +88,7 @@ func (p *DestroyablePool) Get() (resource pools.Resource, err error) {
 }
 
 // Put puts the session back to the pool.
-func (p *DestroyablePool) Put(resource pools.Resource) {
+func (p *pool) Put(resource pools.Resource) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.putCallback != nil {
@@ -108,7 +107,7 @@ func (p *DestroyablePool) Put(resource pools.Resource) {
 }
 
 // Destroy destroys the session.
-func (p *DestroyablePool) Destroy(resource pools.Resource) {
+func (p *pool) Destroy(resource pools.Resource) {
 	if p.destroyCallback != nil {
 		p.destroyCallback(resource)
 	}
@@ -116,7 +115,7 @@ func (p *DestroyablePool) Destroy(resource pools.Resource) {
 }
 
 // Close closes the pool to release all resources.
-func (p *DestroyablePool) Close() {
+func (p *pool) Close() {
 	p.mu.Lock()
 	if p.mu.closed {
 		p.mu.Unlock()
