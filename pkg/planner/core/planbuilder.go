@@ -4290,17 +4290,10 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physic
 		affectedValuesCols = insertPlan.Table.VisibleCols()
 		tblInfo := insertPlan.Table.Meta()
 		if tblInfo.SoftdeleteInfo != nil || tblInfo.IsActiveActive {
-			affectedValuesCols = slices.Clone(affectedValuesCols)
-			if tblInfo.SoftdeleteInfo != nil {
-				affectedValuesCols = slices.DeleteFunc(affectedValuesCols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraSoftDeleteTimeName.L
-				})
-			}
-			if tblInfo.IsActiveActive {
-				affectedValuesCols = slices.DeleteFunc(affectedValuesCols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraOriginTSName.L
-				})
-			}
+			affectedValuesCols = slices.DeleteFunc(slices.Clone(affectedValuesCols), func(col *table.Column) bool {
+				return (tblInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+					(tblInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L)
+			})
 		}
 	}
 	return affectedValuesCols, nil
