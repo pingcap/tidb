@@ -686,6 +686,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			var err error
 			switch v.FuncName.L {
 			case ast.EQ:
+				// keep order as col=value to avoid flaky test.
 				args := refExprArr.Result()
 				switch args[0].(type) {
 				case *Constant:
