@@ -202,7 +202,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	})
 	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
 	require.True(t, cancelled)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	cnt := ingest.LitDiskRoot.Count()
 	require.Equal(t, 0, cnt)
 }

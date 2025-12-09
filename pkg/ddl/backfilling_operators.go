@@ -183,6 +183,12 @@ func NewAddIndexIngestPipeline(
 		rm = nil
 	}
 
+	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
+		if MockDMLExecutionBeforeScan != nil {
+			MockDMLExecutionBeforeScan()
+		}
+	})
+	failpoint.InjectCall("mockDMLExecutionBeforeScanV2")
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
 		reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), rm, backendCtx)
