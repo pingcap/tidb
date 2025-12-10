@@ -135,10 +135,10 @@ require (
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
 	golang.org/x/net v0.47.0
 	golang.org/x/oauth2 v0.33.0
-	golang.org/x/sync v0.18.0
+	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.38.0
 	golang.org/x/term v0.37.0
-	golang.org/x/text v0.31.0
+	golang.org/x/text v0.32.0
 	golang.org/x/time v0.14.0
 	golang.org/x/tools v0.39.0
 	google.golang.org/api v0.170.0
