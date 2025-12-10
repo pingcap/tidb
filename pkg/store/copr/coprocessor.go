@@ -2366,9 +2366,18 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 		logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
 			zap.Stringer("lock", lockErr))
 	}
+	var locks []*txnlock.Lock
+	if sharedLocks := lockErr.GetSharedLockInfos(); len(sharedLocks) > 0 {
+		locks = make([]*txnlock.Lock, 0, len(sharedLocks))
+		for _, l := range sharedLocks {
+			locks = append(locks, txnlock.NewLock(l))
+		}
+	} else {
+		locks = []*txnlock.Lock{txnlock.NewLock(lockErr)}
+	}
 	resolveLocksOpts := txnlock.ResolveLocksOptions{
 		CallerStartTS: worker.req.StartTs,
-		Locks:         []*txnlock.Lock{txnlock.NewLock(lockErr)},
+		Locks:         locks,
 		Detail:        resolveLockDetail,
 	}
 	resolveLocksRes, err1 := worker.kvclient.ResolveLocksWithOpts(bo.TiKVBackoffer(), resolveLocksOpts)
