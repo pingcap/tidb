@@ -539,13 +539,6 @@ func BuildHistAndTopN(
 	samplesExcludingTopN := sampleNum - topNSampleCount
 	if samplesExcludingTopN > 0 {
 		remainingNDV := ndv - lenTopN
-		// if we pruned the topN, it means that there are no remaining skewed values in the samples
-		if lenTopN < int64(numTopN) && numBuckets == DefaultHistogramBuckets {
-			// set the number of buckets to be the number of remaining distinct values divided by bucketNDVDivisor
-			// but no less than 1 and no more than the original number of buckets
-			numBuckets = int(min(max(1, remainingNDV/bucketNDVDivisor), int64(numBuckets)))
-		}
-
 		// create range checker for efficient TopN index skipping using final TopN items only
 		rangeChecker := NewSequentialRangeChecker(prunedTopNItems)
 
