@@ -97,7 +97,7 @@ Insert	root		N/A
 explain format='plan_tree' insert into t select t1.a, t2.b, t1.c+t2.c from t t1, t t2 where t1.a=t2.a;
 id	task	access object	operator info
 Insert	root		N/A
-└─Projection	root		planner__core__casetest__rule__rule_result_reorder.t.a, planner__core__casetest__rule__rule_result_reorder.t.b, plus(planner__core__casetest__rule__rule_result_reorder.t.c, planner__core__casetest__rule__rule_result_reorder.t.c)->Column#12
+└─Projection	root		planner__core__casetest__rule__rule_result_reorder.t.a, planner__core__casetest__rule__rule_result_reorder.t.b, plus(planner__core__casetest__rule__rule_result_reorder.t.c, planner__core__casetest__rule__rule_result_reorder.t.c)->Column#13
   └─MergeJoin	root		inner join, left key:planner__core__casetest__rule__rule_result_reorder.t.a, right key:planner__core__casetest__rule__rule_result_reorder.t.a
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
@@ -106,7 +106,7 @@ Insert	root		N/A
 explain format='plan_tree' insert into t select min(a), max(b), sum(c) from t group by a;
 id	task	access object	operator info
 Insert	root		N/A
-└─Projection	root		planner__core__casetest__rule__rule_result_reorder.t.a->Column#8, planner__core__casetest__rule__rule_result_reorder.t.b->Column#9, cast(planner__core__casetest__rule__rule_result_reorder.t.c, decimal(32,0) BINARY)->Column#10
+└─Projection	root		planner__core__casetest__rule__rule_result_reorder.t.a->Column#9, planner__core__casetest__rule__rule_result_reorder.t.b->Column#10, cast(planner__core__casetest__rule__rule_result_reorder.t.c, decimal(32,0) BINARY)->Column#11
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' delete from t;
