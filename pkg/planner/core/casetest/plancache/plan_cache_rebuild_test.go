@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package plancache
 
 import (
 	"context"
@@ -312,7 +312,7 @@ func TestCheckPlanClone(t *testing.T) {
 	s2 := new(S)
 	s1.p2 = new(int)
 	s2.p2 = s1.p2
-	require.Equal(t, checkUnclearPlanCacheClone(s1, s2).Error(), "same pointer, path *core_test.S.p2")
+	require.Equal(t, checkUnclearPlanCacheClone(s1, s2).Error(), "same pointer, path *plancache.S.p2")
 	s2.p2 = new(int)
 	s1.p1 = new(int)
 	s2.p1 = s1.p1

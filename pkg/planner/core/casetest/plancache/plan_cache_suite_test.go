@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package plancache
 
 import (
 	"context"
@@ -254,7 +254,26 @@ func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
-func TestIssue53872(t *testing.T) {
+func TestPreparedPlanCachePlanSelectionRegressions(t *testing.T) {
+	runPreparedPlanCacheGroupByParamProjection(t)
+	runPreparedPlanCacheRedactExplain(t)
+	runPreparedPlanCacheIndexHintRangeScan(t)
+	runPreparedPlanCacheInvalidRange(t)
+	runPreparedPlanCacheLeftJoinRangeScan(t)
+	runPreparedPlanCacheInlJoinRangeScan(t)
+	runPreparedPlanCachePointGetSafety(t)
+}
+
+func TestPreparedPlanCacheWarningRegressions(t *testing.T) {
+	runPreparedPlanCacheDisableEnable(t)
+	runPreparedPlanCacheLimitWarning(t)
+	runPreparedPlanCacheTypeConversionWarning(t)
+	runPreparedPlanCacheIndexRangeTypeWarning(t)
+	runPreparedPlanCacheConvFunction(t)
+	runPreparedPlanCacheForUpdateInTxn(t)
+}
+
+func runPreparedPlanCacheGroupByParamProjection(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -266,7 +285,7 @@ func TestIssue53872(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 }
 
-func TestIssue38269(t *testing.T) {
+func runPreparedPlanCacheRedactExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
@@ -296,7 +315,7 @@ func TestIssue38269(t *testing.T) {
 		"  └─TableRowIDScan_28(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
-func TestIssue38533(t *testing.T) {
+func runPreparedPlanCacheIndexHintRangeScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -315,7 +334,7 @@ func TestIssue38533(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestInvalidRange(t *testing.T) {
+func runPreparedPlanCacheInvalidRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -336,7 +355,7 @@ func TestInvalidRange(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestIssue49344(t *testing.T) {
+func runPreparedPlanCacheDisableEnable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -347,7 +366,7 @@ func TestIssue49344(t *testing.T) {
 	tk.MustExec(`execute s`) // no error
 }
 
-func TestIssue40093(t *testing.T) {
+func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -377,7 +396,7 @@ func TestIssue40093(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestIssue38205(t *testing.T) {
+func runPreparedPlanCacheInlJoinRangeScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -409,7 +428,7 @@ func TestIssue38205(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestIssue49736(t *testing.T) {
+func runPreparedPlanCacheLimitWarning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -428,7 +447,7 @@ func TestIssue49736(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
-func TestIssue40224(t *testing.T) {
+func runPreparedPlanCacheTypeConversionWarning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -460,7 +479,7 @@ func TestIssue40224(t *testing.T) {
 		})
 }
 
-func TestIssue40679(t *testing.T) {
+func runPreparedPlanCacheIndexRangeTypeWarning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -960,7 +979,7 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 	}
 }
 
-func TestIssue42125(t *testing.T) {
+func runPreparedPlanCachePointGetSafety(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1180,7 +1199,13 @@ func TestNonPreparedPlanCacheAutoStmtRetry(t *testing.T) {
 	require.ErrorContains(t, tk2Err, "Duplicate entry")
 }
 
-func TestIssue43667Concurrency(t *testing.T) {
+func TestNonPreparedPlanCacheRegressions(t *testing.T) {
+	runNonPreparedPlanCacheConcurrency(t)
+	runNonPreparedPlanCacheASTMutation(t)
+	runNonPreparedPlanCacheFieldNameMapping(t)
+}
+
+func runNonPreparedPlanCacheConcurrency(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1204,7 +1229,7 @@ func TestIssue43667Concurrency(t *testing.T) {
 	wg.Wait()
 }
 
-func TestIssue43667(t *testing.T) {
+func runNonPreparedPlanCacheASTMutation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1226,7 +1251,7 @@ func TestIssue43667(t *testing.T) {
 	tk.MustQueryWithContext(tctx, `select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
 }
 
-func TestIssue47133(t *testing.T) {
+func runNonPreparedPlanCacheFieldNameMapping(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1283,7 +1308,7 @@ func TestPlanCacheBindingIgnore(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
-func TestIssue53505(t *testing.T) {
+func runPreparedPlanCacheConvFunction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1540,7 +1565,7 @@ func TestPlanCacheMVIndexManually(t *testing.T) {
 			Result []string
 		}
 	)
-	planSuiteData := plannercore.GetPlanCacheSuiteData()
+	planSuiteData := GetPlanCacheSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
 
 	for i := range input {
@@ -1687,7 +1712,7 @@ func TestInstancePlanCacheAcrossSession(t *testing.T) {
 	tk2.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
-func TestIssue54652(t *testing.T) {
+func runPreparedPlanCacheForUpdateInTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 

@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package plancache
 
 import (
 	"flag"
@@ -25,20 +25,16 @@ import (
 )
 
 var testDataMap = make(testdata.BookKeeper)
-var planSuiteUnexportedData testdata.TestData
+var planCacheSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
-	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
+	testDataMap.LoadTestSuiteData("testdata", "plan_cache_suite")
+	planCacheSuiteData = testDataMap["plan_cache_suite"]
 
-	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/statistics/handle/usage/collector.(*globalCollector[...]).StartWorker.func1"),
-		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
-		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
@@ -46,7 +42,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher.(*worker).run"),
 	}
 
 	callback := func(i int) int {
@@ -57,6 +52,6 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func GetRuntimeFilterGeneratorData() testdata.TestData {
-	return testDataMap["runtime_filter_generator_suite"]
+func GetPlanCacheSuiteData() *testdata.TestData {
+	return &planCacheSuiteData
 }

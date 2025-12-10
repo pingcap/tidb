@@ -424,9 +424,10 @@ bench-daily:
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	# Plan cache benchmarks moved to casetest/plancache.
+	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpcds -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpch -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
