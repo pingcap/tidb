@@ -231,7 +231,7 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		cloned.indexPlan = indexPlan.(base.PhysicalPlan)
 	}
 	cloned.IndexPlans = FlattenListPushDownPlan(cloned.indexPlan)
-	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns)
+	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	return cloned, true
 }
@@ -261,14 +261,11 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions, nil)
-	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
-	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions)
-	cloned.ctx = newCtx
 	cloned.unfold = make([]bool, len(op.unfold))
 	copy(cloned.unfold, op.unfold)
 	cloned.colsInWhereClause = make([]string, len(op.colsInWhereClause))
 	copy(cloned.colsInWhereClause, op.colsInWhereClause)
-	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols)
+	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
 	return cloned, true
 }
 
@@ -293,12 +290,11 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
 	copy(cloned.PartitionIdxs, op.PartitionIdxs)
-	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
 	cloned.unfold = make([]bool, len(op.unfold))
 	copy(cloned.unfold, op.unfold)
 	cloned.colsInWhereClause = make([]string, len(op.colsInWhereClause))
 	copy(cloned.colsInWhereClause, op.colsInWhereClause)
-	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols)
+	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
 	return cloned, true
 }
 
