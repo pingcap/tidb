@@ -129,8 +129,11 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if ds.TableInfo.SoftdeleteInfo != nil && ds.TableInfo.SoftdeleteInfo.Enable {
 		// Find the soft delete column in the schema
 		var softDeleteCol *expression.Column
-		for i, col := range ds.Schema().Columns {
-			if ds.OutputNames()[i].OrigColName.L == model.ExtraSoftDeleteTimeName.L {
+		for _, col := range ds.Schema().Columns {
+			// We should have used ds.OutputNames() to check the ExtraSoftDeleteTimeName column here, but the current
+			// implementation doesn't correctly maintain the output names during optimizations, so use col.OrigName for
+			// now.
+			if strings.HasSuffix(col.OrigName, model.ExtraSoftDeleteTimeName.L) {
 				softDeleteCol = col
 				break
 			}
