@@ -587,7 +587,7 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 
 	// Change the max_write_speed of running ingest subtask and check the write speed of backend
 	var onceIngest sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/modifyRunningGlobalSortSpeed", func(be *local.Backend) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/modifyRunningGlobalSortSpeed", func() {
 		onceIngest.Do(func() {
 			tk1 := testkit.NewTestKit(t, store)
 			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()

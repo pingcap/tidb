@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "addindextest2_test",
-     timeout = "moderate",
+    timeout = "moderate",
     srcs = [
         "alter_job_test.go",
         "global_sort_test.go",
