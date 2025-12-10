@@ -225,7 +225,7 @@ func TestBRIEBuilderOptions(t *testing.T) {
 	e, ok = exec.(*BRIEExec)
 	require.True(t, ok)
 	require.Equal(t, uint(4), e.restoreCfg.ChecksumConcurrency)
-	require.False(t, e.restoreCfg.Checksum)
+	require.True(t, e.restoreCfg.Checksum)
 	require.True(t, e.restoreCfg.WaitTiflashReady)
 	require.True(t, e.restoreCfg.WithSysTable)
 	require.True(t, e.restoreCfg.LoadStats)
