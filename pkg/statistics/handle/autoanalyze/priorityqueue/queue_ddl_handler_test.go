@@ -37,6 +37,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// enableAutoAnalyze enables auto-analyze for the test and restores it on cleanup.
+// In tests, auto-analyze is disabled by default, so tests that need it enabled
+// should call this helper at the beginning.
+func enableAutoAnalyze(t *testing.T, tk *testkit.TestKit) {
+	bakRunAutoAnalyze := vardef.RunAutoAnalyze.Load()
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze = %t", bakRunAutoAnalyze))
+	})
+}
+
 func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
