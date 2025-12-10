@@ -74,6 +74,7 @@ go_test(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
+        "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/session",
