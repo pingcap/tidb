@@ -142,7 +142,11 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			ctx.WriteKeyWord("SOFTDELETE ")
 			ctx.WritePlain("= ")
-			ctx.WriteString(n.Value)
+			if n.BoolValue {
+				ctx.WriteString("ON`")
+			} else {
+				ctx.WriteString("OFF")
+			}
 			return nil
 		})
 	case DatabaseOptionSoftDeleteRetention:
@@ -3035,7 +3039,11 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			ctx.WriteKeyWord("SOFTDELETE ")
 			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
 			return nil
 		})
 	case TableOptionSoftDeleteRetention:
