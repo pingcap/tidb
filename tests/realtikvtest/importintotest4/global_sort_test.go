@@ -30,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -210,18 +212,16 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
 		removeCnt += 1
 	})
-	// dom, err := session.GetDomain(s.store)
-	// require.NoError(s.T(), err)
-	// stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
-	// require.NoError(s.T(), err)
+	dom, err := session.GetDomain(s.store)
+	require.NoError(s.T(), err)
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
+	require.NoError(s.T(), err)
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s' with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	// TODO: fix this test after tikv supports https://github.com/tikv/tikv/pull/18866 and https://github.com/tikv/tikv/pull/19121.
-	require.Equal(s.T(), addCnt, 0)
-	// require.Greater(s.T(), addCnt, 0)
+	require.Greater(s.T(), addCnt, 0)
 	require.Equal(s.T(), removeCnt, addCnt)
 
 	addCnt = 0
@@ -230,13 +230,13 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	importSQL = fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'`, gcsEndpoint)
 	result = s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	// require.Equal(s.T(), addCnt, 2*len(stores))
+	require.Equal(s.T(), addCnt, 2*len(stores))
 	require.Equal(s.T(), removeCnt, addCnt)
 
 	addCnt = 0
 	removeCnt = 0
 	s.tk.MustExec("create table dst like t")
 	s.tk.MustExec(`import into dst FROM select * from t`)
-	// require.Equal(s.T(), addCnt, 2*len(stores))
+	require.Equal(s.T(), addCnt, 2*len(stores))
 	require.Equal(s.T(), removeCnt, addCnt)
 }
