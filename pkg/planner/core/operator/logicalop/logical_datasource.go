@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -187,7 +188,9 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 			continue
 		}
 		// todo: add system variable check
-		if ds.OutputNames()[i].OrigColName.L == model.ExtraSoftDeleteTimeName.L && ds.TableInfo.SoftdeleteInfo != nil {
+		// We should have used ds.OutputNames() to check the ExtraSoftDeleteTimeName column here, but the current
+		// implementation doesn't correctly maintain the output names during optimizations, so use col.OrigName for now.
+		if ds.TableInfo.SoftdeleteInfo != nil && strings.HasSuffix(col.OrigName, model.ExtraSoftDeleteTimeName.L) {
 			nonPrunableCols.Insert(i)
 			continue
 		}
