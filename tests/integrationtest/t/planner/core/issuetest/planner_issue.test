@@ -851,3 +851,15 @@ set global tidb_stmt_summary_max_sql_length = DEFAULT;
 select @@global.tidb_stmt_summary_max_sql_length;
 set global tidb_enable_stmt_summary = DEFAULT;
 set global tidb_stmt_summary_refresh_interval = DEFAULT;
+
+# TestIssue64922
+drop table if exists t, t1, t2;
+create table t(a int, b int);
+insert into t value (1,1);
+select *, _tidb_rowid from t;
+select * from (select *, _tidb_rowid from t) n;
+
+create table t1(a int, b int);
+create table t2(aa int, bb int);
+explain format = 'brief' select * from (select _tidb_rowid from t1) n1 natural join (select _tidb_rowid from t2) n2;
+explain format = 'brief' select * from (select _tidb_rowid, a from t1) n1 natural join (select _tidb_rowid, aa from t2) n2;
