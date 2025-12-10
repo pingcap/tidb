@@ -54,22 +54,6 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 	}
 
 	var err error
-	defer func() {
-		if err != nil {
-			intest.Assert(
-				errors.ErrorEqual(err, context.Canceled) ||
-					strings.Contains(err.Error(), "mock handleTaskOnce error") ||
-					strings.Contains(err.Error(), "session pool closed"),
-				fmt.Sprintf("handle ddl event failed, err: %+v", err),
-			)
-			actionType := event.GetType().String()
-			statslogutil.StatsErrVerboseSampleLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
-				zap.Error(err),
-				zap.String("event", event.String()),
-			)
-		}
-	}()
-
 	switch event.GetType() {
 	case model.ActionAddIndex:
 		err = pq.handleAddIndexEvent(sctx, event)
@@ -94,7 +78,19 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 	default:
 		// Ignore other DDL events.
 	}
-
+	if err != nil {
+		intest.Assert(
+			errors.ErrorEqual(err, context.Canceled) ||
+				strings.Contains(err.Error(), "mock handleTaskOnce error") ||
+				strings.Contains(err.Error(), "session pool closed"),
+			fmt.Sprintf("handle ddl event failed, err: %+v", err),
+		)
+		actionType := event.GetType().String()
+		statslogutil.StatsErrVerboseSampleLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
+			zap.Error(err),
+			zap.String("event", event.String()),
+		)
+	}
 	// Ideally, we shouldn't allow any errors to be ignored, but for now, there is no retry limit mechanism.
 	// So to avoid infinite retry, we just log the error and continue.
 	// See more at: https://github.com/pingcap/tidb/issues/59474
