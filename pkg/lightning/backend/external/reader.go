@@ -196,7 +196,7 @@ func readOneFile(
 }
 
 // ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
-// to the returned channel.
+// to the returned channel, the channel will be closed when finish read.
 func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
 	store storage.ExternalStorage, files []string) chan *KVPair {
 	pairCh := make(chan *KVPair)

@@ -97,6 +97,7 @@ go_test(
         "//pkg/lightning/membuf",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/testkit/testfailpoint",
+        "//pkg/util",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/size",
