@@ -114,14 +114,6 @@ type statsWrapper struct {
 func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error {
 	remainedItems := s.removeHistLoadedColumns(neededHistItems)
 
-	failpoint.Inject("assertSyncLoadItems", func(val failpoint.Value) {
-		if sc.OptimizeTracer != nil {
-			count := val.(int)
-			if len(remainedItems) != count {
-				panic("remained items count wrong")
-			}
-		}
-	})
 	if len(remainedItems) <= 0 {
 		return nil
 	}

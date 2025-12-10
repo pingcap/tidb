@@ -18,7 +18,6 @@ go_library(
         "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/planner/util/costusage",
-        "//pkg/planner/util/debugtrace",
         "//pkg/privilege",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

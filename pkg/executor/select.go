@@ -970,9 +970,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		clear(sc.TblInfo2UnionScan)
 	}
 	sc.IsStaleness = false
-	sc.EnableOptimizeTrace = false
-	sc.OptimizeTracer = nil
-	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
 	sc.ResourceGroupName = vars.ResourceGroupName

@@ -753,8 +753,6 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 				return nil, err
 			}
 		}
-		debugTrace := ctx.GetSessionVars().StmtCtx.OptimizerDebugTrace
-		debugTraces = append(debugTraces, debugTrace)
 		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], emptyAsNil)
 		if err != nil {
 			return nil, err

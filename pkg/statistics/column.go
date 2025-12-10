@@ -136,19 +136,6 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 	var totalCount float64
 	var ndv int64
 	var inValidForCollPseudo, essentialLoaded bool
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx,
-				"IsInvalid", res,
-				"InValidForCollPseudo", inValidForCollPseudo,
-				"TotalCount", totalCount,
-				"NDV", ndv,
-				"EssentialLoaded", essentialLoaded,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
 	if sctx != nil {
 		if sctx.GetSessionVars().InRestrictedSQL {
 			inValidForCollPseudo = true
