@@ -180,9 +180,22 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
 
+	nonPrunableCols := intset.NewFastIntSet()
+	for i, col := range ds.Schema().Columns {
+		if ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr) {
+			nonPrunableCols.Insert(i)
+			continue
+		}
+		// todo: add system variable check
+		if ds.OutputNames()[i].OrigColName.L == model.ExtraSoftDeleteTimeName.L && ds.TableInfo.SoftdeleteInfo != nil {
+			nonPrunableCols.Insert(i)
+			continue
+		}
+	}
+
 	ds.ColsRequiringFullLen = make([]*expression.Column, 0, len(used))
 	for i, col := range ds.Schema().Columns {
-		if used[i] || (ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
+		if used[i] || nonPrunableCols.Has(i) {
 			ds.ColsRequiringFullLen = append(ds.ColsRequiringFullLen, col)
 		}
 	}
@@ -191,13 +204,13 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 		if !used[i] && !exprUsed[i] {
 			// If ds has a shard index, and the column is generated column by `tidb_shard()`
 			// it can't prune the generated column of shard index
-			if ds.ContainExprPrefixUk &&
-				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
+			if nonPrunableCols.Has(i) {
 				continue
 			}
 			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
+			ds.SetOutputNames(append(ds.OutputNames()[:i], ds.OutputNames()[i+1:]...))
 		}
 	}
 	addOneHandle := false
