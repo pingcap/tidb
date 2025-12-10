@@ -170,6 +170,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 }
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
+	failpoint.InjectCall("cloudImportExecutorCleanup", m.backend)
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	if m.backendCtx != nil {
 		m.backendCtx.Close()

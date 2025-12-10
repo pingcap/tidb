@@ -77,7 +77,6 @@ func genConfig(
 		DisableAutomaticCompactions: true,
 		StoreWriteBWLimit:           maxWriteSpeed,
 	}
-
 	adjustImportMemory(ctx, memRoot, cfg)
 	if checkDup && !globalSort {
 		cfg.DupeDetectEnabled = true
