@@ -18,7 +18,7 @@ FROM quay.io/rockylinux/rockylinux:8.10.20240528
 # setup mariadb repo
 #   ref: https://mariadb.com/docs/server/connect/clients/mariadb-client/#Linux_(Repository)
 RUN curl -LsSO https://r.mariadb.com/downloads/mariadb_repo_setup \
-    && echo "6083ef1974d11f49d42ae668fb9d513f7dc2c6276ffa47caed488c4b47268593  mariadb_repo_setup" | sha256sum -c - \
+    && echo "7a3e1610fee91347e198214e3672a6d3932ccbbf67905d9e892e9255baaec292  mariadb_repo_setup" | sha256sum -c - \
     && chmod +x mariadb_repo_setup \
     && ./mariadb_repo_setup \
     && rm mariadb_repo_setup
