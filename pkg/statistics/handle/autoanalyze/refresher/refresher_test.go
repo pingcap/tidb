@@ -62,8 +62,17 @@ func TestTurnOffAndOnAutoAnalyze(t *testing.T) {
 
 	// Add a new index to generate DDL event.
 	tk.MustExec("alter table t add index idx_b(b);")
+	// Make sure the mysql.tidb_ddl_notifier is not empty.
+	rows := tk.MustQuery("select * from mysql.tidb_ddl_notifier").Rows()
+	require.Greater(t, len(rows), 0)
 	require.Eventually(t, func() bool {
 		return !r.IsQueueInitializedForTest()
+	}, time.Second*5, time.Millisecond*100)
+
+	// Make sure the mysql.tidb_ddl_notifier table is empty.
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("select * from mysql.tidb_ddl_notifier").Rows()
+		return len(rows) == 0
 	}, time.Second*5, time.Millisecond*100)
 
 	// Enable auto analyze again to make sure the queue is re-initialized and handles the DDL event correctly.
