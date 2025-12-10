@@ -1145,7 +1145,7 @@ func TestTurnOffAutoAnalyze(t *testing.T) {
 	testKit.MustExec("truncate table t")
 
 	// Find the truncate table event.
-	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
+	truncateTableEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionTruncateTable)
 
 	// Disable the auto analyze.
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze = 0;")
