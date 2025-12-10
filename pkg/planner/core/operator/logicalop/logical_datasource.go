@@ -183,11 +183,16 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 
 	nonPrunableCols := intset.NewFastIntSet()
 	for i, col := range ds.Schema().Columns {
+		// If ds has a shard index, and the column is generated column by `tidb_shard()` it can't prune the generated
+		// column of shard index
 		if ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr) {
 			nonPrunableCols.Insert(i)
 			continue
 		}
-		// todo: add system variable check
+
+		// For softdelete table, we need an extra isnull(_tidb_softdelete_time) filter to satisfy the softdelete
+		// semantics. So we can't prune the _tidb_softdelete_time column even if it's not used by parent operators.
+		// TODO: add system variable check
 		// We should have used ds.OutputNames() to check the ExtraSoftDeleteTimeName column here, but the current
 		// implementation doesn't correctly maintain the output names during optimizations, so use col.OrigName for now.
 		if ds.TableInfo.SoftdeleteInfo != nil && strings.HasSuffix(col.OrigName, model.ExtraSoftDeleteTimeName.L) {
@@ -205,8 +210,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprUsed[i] {
-			// If ds has a shard index, and the column is generated column by `tidb_shard()`
-			// it can't prune the generated column of shard index
 			if nonPrunableCols.Has(i) {
 				continue
 			}
