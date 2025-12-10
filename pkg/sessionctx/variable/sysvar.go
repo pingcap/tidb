@@ -3540,7 +3540,7 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	switch varName {
 	case TiDBEnableAsyncCommit, TiDBEnable1PC:
 		if config.GetGlobalConfig().Store == "tikv" {
-			varVal = On
+			varVal = Off
 		}
 	case TiDBMemOOMAction:
 		if intest.InTest {
