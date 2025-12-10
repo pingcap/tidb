@@ -1051,7 +1051,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
 		}
-	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
+	}
+	if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
 		if err := checkTableExistence(ctx, mgr, tables); err != nil {
 			canRestoreSchedulers = true
 			return errors.Trace(err)
