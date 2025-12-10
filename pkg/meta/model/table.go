@@ -102,6 +102,7 @@ var ExtraOriginTSName = ast.NewCIStr("_tidb_origin_ts")
 // ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
 var ExtraSoftDeleteTimeName = ast.NewCIStr("_tidb_softdelete_time")
 
+// IsInternalColumn will check if a column name is reserved.
 func IsInternalColumn(x ast.CIStr) bool {
 	switch x.L {
 	case ExtraOriginTSName.L, ExtraSoftDeleteTimeName.L, ExtraHandleName.L:
@@ -1471,7 +1472,7 @@ type SoftdeleteInfo struct {
 	JobInterval   string           `json:"job_interval,omitempty"`
 }
 
-// SoftdeleteInfoArg is not part of meta info.
+// SoftDeleteInfoArg is not part of meta info.
 // It is used by all DDL parts to generate info from table/db options.
 type SoftDeleteInfoArg struct {
 	SoftdeleteInfo

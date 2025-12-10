@@ -200,6 +200,7 @@ func (a *ModifySchemaArgs) decodeV1(job *Job) error {
 	return errors.Trace(job.decodeArgs(&a.PolicyRef))
 }
 
+// GetModifySchemaArgs gets the modify schema args.
 func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
 	return getOrDecodeArgs[*ModifySchemaArgs](&ModifySchemaArgs{}, job)
 }
