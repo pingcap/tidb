@@ -884,6 +884,8 @@ var defaultSysVars = []*SysVar{
 		}, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 			return strconv.FormatInt(vardef.DDLReorgMaxWriteSpeed.Load(), 10), nil
 		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDDLReorgReaderCount, Value: strconv.Itoa(vardef.DefTiDBDDLReorgReaderCount), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: vardef.MaxConfigurableConcurrency},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDDLReorgWriterCount, Value: strconv.Itoa(vardef.DefTiDBDDLReorgWriterCount), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: vardef.MaxConfigurableConcurrency},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBDDLErrorCountLimit, Value: strconv.Itoa(vardef.DefTiDBDDLErrorCountLimit), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.SetDDLErrorCountLimit(TidbOptInt64(val, vardef.DefTiDBDDLErrorCountLimit))
 		return nil
