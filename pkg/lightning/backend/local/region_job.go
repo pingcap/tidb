@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	rcmgrutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
-	putil "github.com/pingcap/tidb/pkg/util"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1366,7 +1365,7 @@ type regionJobWorker struct {
 // Besides, the worker must call jobWg.done() if it does not put the job into jobOutCh.
 func (w *regionJobWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err error) {
 	// As we need to call job.done() after panic, we recover here rather than in worker pool.
-	defer putil.Recover("region job worker", "handleTableScanTaskWithRecover", func() {
+	defer util2.Recover("region job worker", "handleTableScanTaskWithRecover", func() {
 		err = errors.Errorf("region job worker panic")
 		job.done(w.jobWg)
 	}, false)
@@ -1437,7 +1436,7 @@ func (w *regionJobWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err er
 	return err
 }
 
-func (w *regionJobWorker) Close() error {
+func (*regionJobWorker) Close() error {
 	return nil
 }
 
