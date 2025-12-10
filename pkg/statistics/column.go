@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -135,10 +134,9 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *HistColl, cid int64) (res bool) {
 	var totalCount float64
 	var ndv int64
-	var inValidForCollPseudo, essentialLoaded bool
+	var essentialLoaded bool
 	if sctx != nil {
 		if sctx.GetSessionVars().InRestrictedSQL {
-			inValidForCollPseudo = true
 			return true
 		}
 		stmtctx := sctx.GetSessionVars().StmtCtx
@@ -154,7 +152,6 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 		}
 	}
 	if histColl.Pseudo {
-		inValidForCollPseudo = true
 		return true
 	}
 	if colStats == nil {
