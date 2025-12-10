@@ -591,8 +591,38 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	return errors.Trace(err)
 }
 
-// ReadFile reads the file from the storage and returns the contents.
 func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) {
+	backoff := 10 * time.Millisecond
+	remainRetry := 5
+	contRetry := func() bool {
+		if remainRetry <= 0 {
+			return false
+		}
+		time.Sleep(backoff)
+		remainRetry -= 1
+		return true
+	}
+
+	// The errors cannot be handled by the SDK because they happens during reading the HTTP response body.
+	// We cannot use `utils.WithRetry[V2]` here because cyclinic deps.
+	for {
+		data, err := rs.doReadFile(ctx, file)
+		if err != nil {
+			log.Warn("ReadFile: failed to read file.",
+				zap.String("file", file), logutil.ShortError(err), zap.Int("remained", remainRetry))
+			if !isHTTP2ConnAborted(err) {
+				return nil, err
+			}
+			if !contRetry() {
+				return nil, err
+			}
+			continue
+		}
+		return data, nil
+	}
+}
+
+func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error) {
 	var (
 		data    []byte
 		readErr error
@@ -1201,7 +1231,27 @@ func isConnectionRefusedError(err error) bool {
 	return strings.Contains(err.Error(), "connection refused")
 }
 
-func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
+func isHTTP2ConnAborted(err error) bool {
+	patterns := []string{
+		"http2: client connection force closed via ClientConn.Close",
+		"http2: server sent GOAWAY and closed the connection",
+		"unexpected EOF",
+	}
+	errMsg := err.Error()
+
+	for _, p := range patterns {
+		if strings.Contains(errMsg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (rl retryerWithLog) ShouldRetry(r *request.Request) (retry bool) {
+	defer func() {
+		log.Warn("failed to request s3, checking whether we can retry", zap.Error(r.Error), zap.Bool("retry", retry))
+	}()
+
 	// for unit test
 	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
 		log.Info("original error", zap.Error(r.Error))
@@ -1220,14 +1270,15 @@ func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 	if isConnectionRefusedError(r.Error) {
 		return false
 	}
+	if isHTTP2ConnAborted(r.Error) {
+		return true
+	}
 	return rl.DefaultRetryer.ShouldRetry(r)
 }
 
 func (rl retryerWithLog) RetryRules(r *request.Request) time.Duration {
 	backoffTime := rl.DefaultRetryer.RetryRules(r)
-	if backoffTime > 0 {
-		log.Warn("failed to request s3, retrying", zap.Error(r.Error), zap.Duration("backoff", backoffTime))
-	}
+	log.Warn("failed to request s3, retrying", zap.Error(r.Error), zap.Duration("backoff", backoffTime))
 	return backoffTime
 }
 
