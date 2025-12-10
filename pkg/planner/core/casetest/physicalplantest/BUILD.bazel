@@ -9,12 +9,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
-    race = "on",
-    shard_count = 35,
-=======
     shard_count = 41,
->>>>>>> d7169b2a324 (planner: PointGet will not skip the reuse chunk with enough total memory (#63921))
     deps = [
         "//pkg/config",
         "//pkg/domain",

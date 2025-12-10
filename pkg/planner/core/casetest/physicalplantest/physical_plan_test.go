@@ -37,11 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/size"
->>>>>>> d7169b2a324 (planner: PointGet will not skip the reuse chunk with enough total memory (#63921))
 	"github.com/stretchr/testify/require"
 )
 
@@ -1541,16 +1537,16 @@ func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 }
 
 func TestDisableReuseChunk(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1;")
-		tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
-		tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
-		core.MaxMemoryLimitForOverlongType = 0
-		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
-		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
-		core.MaxMemoryLimitForOverlongType = 500 * size.GB
-		tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
-		tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
-	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
+	tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
+	core.MaxMemoryLimitForOverlongType = 0
+	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
+	core.MaxMemoryLimitForOverlongType = 500 * size.GB
+	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
 }
