@@ -508,9 +508,11 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
+	tk.MustExec("set global tidb_enable_dist_task = on;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 	})
 

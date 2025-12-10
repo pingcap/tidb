@@ -202,7 +202,7 @@ func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *
 }
 
 // TaskMetaModified changes the max write speed for ingest
-func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
 	logutil.Logger(ctx).Info("cloud import executor update task meta")
 	newTaskMeta := &BackfillTaskMeta{}
 	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
@@ -210,24 +210,24 @@ func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 	}
 
 	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeedOrDefault()
-	if newMaxWriteSpeed != e.job.ReorgMeta.GetMaxWriteSpeedOrDefault() {
-		e.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
-		if e.backend != nil {
-			e.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+	if newMaxWriteSpeed != m.job.ReorgMeta.GetMaxWriteSpeedOrDefault() {
+		m.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+		if m.backend != nil {
+			m.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
 		}
 	}
 	return nil
 }
 
 // ResourceModified change the concurrency for ingest
-func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
 	logutil.Logger(ctx).Info("cloud import executor update resource")
 	newConcurrency := int(newResource.CPU.Capacity())
-	if newConcurrency == e.backend.GetWorkerConcurrency() {
+	if newConcurrency == m.backend.GetWorkerConcurrency() {
 		return nil
 	}
 
-	eng := e.engine.Load()
+	eng := m.engine.Load()
 	if eng == nil {
 		// let framework retry
 		return goerrors.New("engine not started")
@@ -237,6 +237,6 @@ func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource 
 		return err
 	}
 
-	e.backend.SetWorkerConcurrency(newConcurrency)
+	m.backend.SetWorkerConcurrency(newConcurrency)
 	return nil
 }
