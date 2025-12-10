@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -198,27 +199,34 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 }
 
 // Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPushDownIndexLookUp bool) *PhysicalIndexLookUpReader {
+func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, indexLookUpPushDownBy util.IndexLookUpPushDownByType) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
 	p.SetSchema(p.TablePlan.Schema())
 	p.SetStats(p.TablePlan.StatsInfo())
-	if tryPushDownIndexLookUp {
-		p.tryPushDownLookUp(ctx)
-	}
+	p.tryPushDownLookUp(ctx, indexLookUpPushDownBy)
 	p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 	p.IndexPlans, p.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(p.IndexPlan)
 	return &p
 }
 
 // tryPushDownLookUp tries to push down the index lookup to TiKV.
-func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
+func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext, tp util.IndexLookUpPushDownByType) {
 	intest.Assert(!p.IndexLookUpPushDown)
+	if tp == util.IndexLookUpPushDownNone {
+		// util.IndexLookUpPushDownNone indicates no index lookup push-down.
+		return
+	}
+
 	if p.KeepOrder {
 		// Though most of the index-lookup push-down constraints should be checked in
 		// `checkIndexLookUpPushDownSupported` if possible,
 		// however, the keep order cannot be determined until the final plan is constructed.
 		// So we have to check the keep order here, and if it is required, we should not push down it and use
 		// the normal index-lookup instead.
+		if tp == util.IndexLookUpPushDownByHint {
+			// only append warning when the push-down is forced by hint.
+			ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
+		}
 		return
 	}
 
@@ -282,7 +290,7 @@ func BuildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 		ExpectedCnt:      t.ExpectCnt,
 		KeepOrder:        t.KeepOrder,
 		PlanPartInfo:     t.PhysPlanPartInfo,
-	}.Init(ctx, t.TablePlan.QueryBlockOffset(), t.IndexLookUpPushDown)
+	}.Init(ctx, t.TablePlan.QueryBlockOffset(), t.IndexLookUpPushDownBy)
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
 	// the final agg would be broken. Please reference comments for the similar logic in
 	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.

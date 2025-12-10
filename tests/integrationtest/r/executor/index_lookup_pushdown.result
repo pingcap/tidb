@@ -393,6 +393,8 @@ id	estRows	task	access object	operator info
 IndexLookUp_18	3333.33	root		
 ├─IndexRangeScan_16(Build)	3333.33	cop[tikv]	table:t1, index:i(a, b)	range:("a",+inf], keep order:true, stats:pseudo
 └─TableRowIDScan_17(Probe)	3333.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.
 explain select /*+ index_lookup_pushdown(t4, a) */ * from t4 where a < 100;
 id	estRows	task	access object	operator info
 UnionScan_7	3323.33	root		lt(executor__index_lookup_pushdown.t4.a, 100)
