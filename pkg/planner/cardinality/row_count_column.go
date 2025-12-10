@@ -61,7 +61,7 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 		}
 		return statistics.DefaultRowEst(pseudoResult), nil
 	}
-	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
+	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, pkIsHandle)
 	if err != nil {
 		return statistics.DefaultRowEst(0), errors.Trace(err)
 	}
