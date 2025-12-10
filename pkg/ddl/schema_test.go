@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -743,4 +744,27 @@ func TestErrInWaitingUncommittedTxn(t *testing.T) {
 	tk1.MustExec("create database test_db")
 	tk1.MustExec("create table test_db.t(a int)")
 	tk1.MustGetErrMsg("alter schema test_db read only = 1", "[ddl:-1]DDL job rollback, error msg: mock error for check uncommitted txn")
+}
+
+func TestTTLDeleteError(t *testing.T) {
+	enableReadOnlyDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ttl_job_enable = off")
+	tk.MustExec("create database if not exists test; use test;drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(id BIGINT PRIMARY KEY, ts TIMESTAMP NOT NULL) TTL = `ts` + INTERVAL 1 SECOND  TTL_JOB_INTERVAL = '1m';")
+	tk.MustExec("insert into t values (1, now());")
+	tk.MustExec("alter schema test read only = 1")
+	tk.MustExec("set global tidb_ttl_job_enable = on")
+	lastJobSummary := "select last_job_summary from mysql.tidb_ttl_table_status;"
+	require.Eventually(t, func() bool {
+		res := tk.MustQuery(lastJobSummary).Rows()
+		if len(res) != 1 || !strings.Contains(res[0][0].(string), "error_rows") {
+			return false
+		}
+		var m map[string]int
+		json.Unmarshal([]byte(res[0][0].(string)), &m)
+		a := m["error_rows"] == 1
+		return a
+	}, 3*time.Minute, 5*time.Second)
 }
