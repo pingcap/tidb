@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/types"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -46,6 +47,9 @@ var GenPlanCostTrace func(p base.PhysicalPlan, costV *costusage.CostVer2, taskTy
 
 func getPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
+		if p.SCtx().GetSessionVars().StmtCtx.ExplainFormat == types.ExplainFormatCostTrace && option != nil {
+			option.WithCostFlag(costusage.CostFlagTrace)
+		}
 		planCost, err := p.GetPlanCostVer2(taskType, option)
 		if costusage.TraceCost(option) && GenPlanCostTrace != nil {
 			GenPlanCostTrace(p, &planCost, taskType, option)
