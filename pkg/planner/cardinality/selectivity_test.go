@@ -17,7 +17,6 @@ package cardinality_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"math"
 	"os"
 	"runtime/pprof"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
