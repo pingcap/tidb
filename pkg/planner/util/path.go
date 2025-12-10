@@ -29,6 +29,18 @@ import (
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 )
 
+// IndexLookUpPushDownByType indicates whether to use index lookup push down optimization where it comes.
+type IndexLookUpPushDownByType int
+
+const (
+	// IndexLookUpPushDownNone indicates do not push down the index lookup.
+	IndexLookUpPushDownNone IndexLookUpPushDownByType = iota
+	// IndexLookUpPushDownByHint indicates the hint tells to push down the index lookup.
+	IndexLookUpPushDownByHint
+	// IndexLookUpPushDownBySysVar indicates the system variable tells to push down the index lookup.
+	IndexLookUpPushDownBySysVar
+)
+
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type AccessPath struct {
@@ -129,8 +141,8 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
-	// Whether to use the index lookup push down optimization for this access path.
-	IsIndexLookUpPushDown bool
+	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
+	IndexLookUpPushDownBy IndexLookUpPushDownByType
 
 	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
 	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
