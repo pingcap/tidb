@@ -155,9 +155,6 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 		return true
 	}
 	if colStats == nil {
-		totalCount = -1
-		ndv = -1
-		essentialLoaded = false
 		return true
 	}
 	// In some cases, some statistics in column would be evicted
