@@ -56,6 +56,12 @@ type ImporterClient interface {
 		req *import_sstpb.DownloadRequest,
 	) (*import_sstpb.DownloadResponse, error)
 
+	BatchDownloadSST(
+		ctx context.Context,
+		storeID uint64,
+		req *import_sstpb.DownloadRequest,
+	) (*import_sstpb.DownloadResponse, error)
+
 	MultiIngest(
 		ctx context.Context,
 		storeID uint64,
@@ -75,11 +81,9 @@ type ImporterClient interface {
 
 	CloseGrpcClient() error
 
+	CheckBatchDownloadSupport(ctx context.Context, stores []uint64) (bool, error)
+
 	CheckMultiIngestSupport(ctx context.Context, stores []uint64) error
-
-	AddForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.AddPartitionRangeRequest) error
-
-	RemoveForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.RemovePartitionRangeRequest) error
 }
 
 type importClient struct {
@@ -141,6 +145,18 @@ func (ic *importClient) DownloadSST(
 		return nil, errors.Trace(err)
 	}
 	return client.Download(ctx, req)
+}
+
+func (ic *importClient) BatchDownloadSST(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.DownloadRequest,
+) (*import_sstpb.DownloadResponse, error) {
+	client, err := ic.GetImportClient(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return client.BatchDownload(ctx, req)
 }
 
 func (ic *importClient) SetDownloadSpeedLimit(
@@ -248,6 +264,21 @@ func (ic *importClient) CloseGrpcClient() error {
 	return nil
 }
 
+func (ic *importClient) CheckBatchDownloadSupport(ctx context.Context, stores []uint64) (bool, error) {
+	for _, storeID := range stores {
+		_, err := ic.BatchDownloadSST(ctx, storeID, &import_sstpb.DownloadRequest{})
+		if err != nil {
+			if s, ok := status.FromError(err); ok {
+				if s.Code() == codes.Unimplemented {
+					return false, nil
+				}
+			}
+			return false, errors.Annotatef(err, "failed to check batch download support. (store id %d)", storeID)
+		}
+	}
+	return true, nil
+}
+
 func (ic *importClient) CheckMultiIngestSupport(ctx context.Context, stores []uint64) error {
 	for _, storeID := range stores {
 		_, err := ic.MultiIngest(ctx, storeID, &import_sstpb.MultiIngestRequest{})
@@ -261,22 +292,4 @@ func (ic *importClient) CheckMultiIngestSupport(ctx context.Context, stores []ui
 		}
 	}
 	return nil
-}
-
-func (ic *importClient) AddForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.AddPartitionRangeRequest) error {
-	client, err := ic.GetImportClient(ctx, storeID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = client.AddForcePartitionRange(ctx, req)
-	return errors.Trace(err)
-}
-
-func (ic *importClient) RemoveForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.RemovePartitionRangeRequest) error {
-	client, err := ic.GetImportClient(ctx, storeID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = client.RemoveForcePartitionRange(ctx, req)
-	return errors.Trace(err)
 }

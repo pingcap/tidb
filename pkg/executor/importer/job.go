@@ -66,8 +66,11 @@ const (
 	// step goes from none -> importing -> validating -> none.
 	// when used in global sort, it means importing the sorted data.
 	// when used in local sort, it means encode&sort data and then importing the data.
-	JobStepImporting  = "importing"
-	JobStepValidating = "validating"
+	JobStepImporting = "importing"
+	// JobStepResolvingConflicts is the step after importing to resolve conflicts,
+	// it's used in global sort.
+	JobStepResolvingConflicts = "resolving-conflicts"
+	JobStepValidating         = "validating"
 
 	baseQuerySQL = `SELECT
 					id, create_time, start_time, end_time,
@@ -100,7 +103,12 @@ func (ip *ImportParameters) String() string {
 // JobSummary is the summary info of import into job.
 type JobSummary struct {
 	// ImportedRows is the number of rows imported into TiKV.
+	// if the job is using global-sort, this number will be the rows after conflict
+	// resolution.
 	ImportedRows uint64 `json:"imported-rows,omitempty"`
+	// ConflictedRows is the number of rows that are conflicted during import with
+	// global-sort.
+	ConflictedRows uint64 `json:"conflicted-rows,omitempty"`
 }
 
 // JobInfo is the information of import into job.
@@ -128,6 +136,11 @@ type JobInfo struct {
 // CanCancel returns whether the job can be cancelled.
 func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
+}
+
+// IsSuccess returns whether the job is successful.
+func (j *JobInfo) IsSuccess() bool {
+	return j.Status == jobStatusFinished
 }
 
 // GetJob returns the job with the given id if the user has privilege.

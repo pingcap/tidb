@@ -15,15 +15,20 @@
 package restore
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -155,4 +160,174 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 		log.Error("failed to get TS", zap.Error(err))
 	}
 	return startTS, errors.Trace(err)
+}
+
+// HasRestoreIDColumn checks if the tidb_pitr_id_map table has restore_id column
+func HasRestoreIDColumn(dom *domain.Domain) bool {
+	table, err := GetTableSchema(dom, pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_pitr_id_map"))
+	if err != nil {
+		return false
+	}
+
+	for _, col := range table.Columns {
+		if col.Name.L == "restore_id" {
+			return true
+		}
+	}
+	return false
+}
+
+type regionScanner struct {
+	regionClient split.SplitClient
+	regionCache  []*split.RegionInfo
+	cacheSize    int
+}
+
+func NewRegionScanner(regionClient split.SplitClient, cacheSize int) *regionScanner {
+	return &regionScanner{
+		regionClient: regionClient,
+		cacheSize:    cacheSize,
+	}
+}
+
+func (scanner *regionScanner) locateRegionFromRemote(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	regionInfos, err := split.ScanRegionsWithRetry(ctx, scanner.regionClient, key, []byte(""), scanner.cacheSize)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	scanner.regionCache = regionInfos
+	return scanner.regionCache[0], nil
+}
+
+func (scanner *regionScanner) locateRegionFromCache(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	if len(scanner.regionCache) == 0 {
+		return scanner.locateRegionFromRemote(ctx, key)
+	}
+	if bytes.Compare(key, scanner.regionCache[len(scanner.regionCache)-1].Region.EndKey) >= 0 {
+		return scanner.locateRegionFromRemote(ctx, key)
+	}
+	i, ok := slices.BinarySearchFunc(scanner.regionCache, key, func(regionInfo *split.RegionInfo, k []byte) int {
+		startCmpRet := bytes.Compare(regionInfo.Region.StartKey, k)
+		if startCmpRet <= 0 && (len(regionInfo.Region.EndKey) == 0 || bytes.Compare(regionInfo.Region.EndKey, k) > 0) {
+			return 0
+		}
+		return startCmpRet
+	})
+	if !ok {
+		return scanner.locateRegionFromRemote(ctx, key)
+	}
+	scanner.regionCache = scanner.regionCache[i:]
+	return scanner.regionCache[0], nil
+}
+
+func (scanner *regionScanner) IsKeyRangeInOneRegion(ctx context.Context, startKey, endKey []byte) (bool, error) {
+	regionInfo, err := scanner.locateRegionFromCache(ctx, startKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return len(regionInfo.Region.EndKey) == 0 || bytes.Compare(endKey, regionInfo.Region.EndKey) < 0, nil
+}
+
+type BackupFileSetWithKeyRange struct {
+	backupFileSet BackupFileSet
+	startKey      []byte
+	endKey        []byte
+}
+
+func GroupOverlappedBackupFileSetsIter(ctx context.Context, regionClient split.SplitClient, backupFileSets []BackupFileSet, fn func(BatchBackupFileSet)) error {
+	backupFileSetWithKeyRanges := make([]*BackupFileSetWithKeyRange, 0, len(backupFileSets))
+	for _, backupFileSet := range backupFileSets {
+		startKey, endKey, err := getKeyRangeForBackupFileSet(backupFileSet)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		backupFileSetWithKeyRanges = append(backupFileSetWithKeyRanges, &BackupFileSetWithKeyRange{
+			backupFileSet: backupFileSet,
+			startKey:      startKey,
+			endKey:        endKey,
+		})
+	}
+	slices.SortFunc(backupFileSetWithKeyRanges, func(a, b *BackupFileSetWithKeyRange) int {
+		startKeyCmp := bytes.Compare(a.startKey, b.startKey)
+		if startKeyCmp == 0 {
+			return bytes.Compare(a.endKey, b.endKey)
+		}
+		return startKeyCmp
+	})
+	regionScanner := NewRegionScanner(regionClient, 64)
+	var thisBackupFileSet *BackupFileSet = nil
+	thisBatchBackupFileSet := make([]BackupFileSet, 0)
+	lastEndKey := []byte{}
+	for _, file := range backupFileSetWithKeyRanges {
+		if bytes.Compare(lastEndKey, file.startKey) < 0 {
+			// the next file is not overlapped with this backup file set anymore, so add the set
+			// into the batch set.
+			if thisBackupFileSet != nil {
+				thisBatchBackupFileSet = append(thisBatchBackupFileSet, *thisBackupFileSet)
+				thisBackupFileSet = nil
+			}
+			// create new this backup file set
+			thisBackupFileSet = &BackupFileSet{
+				TableID:      file.backupFileSet.TableID,
+				SSTFiles:     make([]*backuppb.File, 0),
+				RewriteRules: file.backupFileSet.RewriteRules,
+			}
+			thisBackupFileSet.SSTFiles = append(thisBackupFileSet.SSTFiles, file.backupFileSet.SSTFiles...)
+			// check whether [lastEndKey, file.startKey] is in the one region
+			inOneRegion, err := regionScanner.IsKeyRangeInOneRegion(ctx, lastEndKey, file.startKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !inOneRegion && len(thisBatchBackupFileSet) > 0 {
+				// not in the same region, so this batch backup file set can be output
+				fn(thisBatchBackupFileSet)
+				thisBatchBackupFileSet = make([]BackupFileSet, 0)
+			}
+			lastEndKey = file.endKey
+		} else {
+			// the next file is overlapped with this backup file set, so add the file
+			// into the set.
+			thisBackupFileSet.SSTFiles = append(thisBackupFileSet.SSTFiles, file.backupFileSet.SSTFiles...)
+			if thisBackupFileSet.TableID != file.backupFileSet.TableID || !thisBackupFileSet.RewriteRules.Equal(file.backupFileSet.RewriteRules) {
+				log.Error("the overlapped SST must have the same table id and rewrite rules",
+					zap.Int64("set table id", thisBackupFileSet.TableID),
+					zap.Int64("file table id", file.backupFileSet.TableID),
+					zap.Reflect("set rewrite rule", thisBackupFileSet.RewriteRules),
+					zap.Reflect("file rewrite rule", file.backupFileSet.RewriteRules),
+				)
+				return errors.Errorf("the overlapped SST must have the same table id(%d<>%d) and rewrite rules",
+					thisBackupFileSet.TableID, file.backupFileSet.TableID)
+			}
+			// update lastEndKey if file.endKey is larger
+			if bytes.Compare(lastEndKey, file.endKey) < 0 {
+				lastEndKey = file.endKey
+			}
+		}
+	}
+	// add the set into the batch set.
+	if thisBackupFileSet != nil {
+		thisBatchBackupFileSet = append(thisBatchBackupFileSet, *thisBackupFileSet)
+	}
+	// output the last batch backup file set
+	if len(thisBatchBackupFileSet) > 0 {
+		fn(thisBatchBackupFileSet)
+	}
+	return nil
+}
+
+func getKeyRangeForBackupFileSet(backupFileSet BackupFileSet) ([]byte, []byte, error) {
+	var startKey, endKey []byte
+	for _, f := range backupFileSet.SSTFiles {
+		start, end, err := restoreutils.GetRewriteRawKeys(f, backupFileSet.RewriteRules)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if len(startKey) == 0 || bytes.Compare(start, startKey) < 0 {
+			startKey = start
+		}
+		if len(endKey) == 0 || bytes.Compare(endKey, end) < 0 {
+			endKey = end
+		}
+	}
+	return startKey, endKey, nil
 }

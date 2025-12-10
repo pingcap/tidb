@@ -193,7 +193,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 		for _, db := range ca.backupDBs {
 			backupDBs = append(backupDBs, db)
 		}
-		err := CheckRestoreDBAndTable(backupDBs, cfg)
+		err := VerifyDBAndTableInBackup(backupDBs, cfg)
 		require.NoError(t, err)
 	}
 }

@@ -100,6 +100,8 @@ select * from t_slim;
 # Request_unit_write: 3182.424414062492
 # Tidb_cpu_time: 0.01
 # Tikv_cpu_time: 0.021
+# Storage_from_kv: true
+# Storage_from_mpp: true
 INSERT INTO ...;
 `)
 	require.NoError(t, f.Close())

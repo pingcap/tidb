@@ -711,6 +711,11 @@ bazel_txntest: failpoint-enable bazel_ci_simple_prepare
 		-- //tests/realtikvtest/txntest/...
 	./build/jenkins_collect_coverage.sh
 
+.PHONY: bazel_pushdowntest
+bazel_pushdowntest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest --jobs=1 \
+		-- //tests/realtikvtest/pushdowntest/...
+
 .PHONY: bazel_addindextest
 bazel_addindextest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \

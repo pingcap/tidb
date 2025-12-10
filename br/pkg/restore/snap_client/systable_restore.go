@@ -121,7 +121,7 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 	}()
 
 	if !f.MatchSchema(sysDB) || !rc.withSysTable {
-		log.Debug("system database filtered out", zap.String("database", sysDB))
+		log.Info("system database filtered out", zap.String("database", sysDB))
 		return nil
 	}
 	originDatabase, ok := rc.databases[temporaryDB.O]

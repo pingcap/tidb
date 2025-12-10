@@ -564,6 +564,10 @@ func TestTablesTable(t *testing.T) {
 		}
 	}
 
+	// test table mode
+	tk.MustQuery(`select tidb_table_mode from information_schema.tables where table_schema = 'db1' and
+		table_name = 't1'`).Check(testkit.Rows("Normal"))
+
 	// Predicates are extracted in CNF, so we separate the test cases by the number of disjunctions in the predicate.
 
 	// predicate covers one disjunction
@@ -661,7 +665,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "4986"))
+		testkit.RowsWithSep("|", "4999"))
 }
 
 func TestIndexUsageTable(t *testing.T) {

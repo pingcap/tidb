@@ -1756,6 +1756,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
+		StorageKV:         stmtCtx.IsTiKV.Load(),
+		StorageMPP:        stmtCtx.IsTiFlash.Load(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {

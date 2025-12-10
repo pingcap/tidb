@@ -83,14 +83,14 @@ require (
 	github.com/otiai10/copy v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20241015064302-38533b6cbf8d
-	github.com/pingcap/errors v0.11.5-0.20241219054535-6b8c588c3122
+	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20250908061600-97d984880071
+	github.com/pingcap/kvproto v0.0.0-20251205034844-90db5eaa107c
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20241022082558-0607513e7fa4
+	github.com/pingcap/tipb v0.0.0-20251125085256-097db0b2c02a
 	github.com/prometheus/client_golang v1.20.5
 	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/common v0.57.0
@@ -109,7 +109,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20251009122557-471c5bd6ec4d
+	github.com/tikv/client-go/v2 v2.0.8-0.20251202113147-065a1251aea9
 	github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
@@ -132,7 +132,7 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
 	golang.org/x/net v0.38.0
-	golang.org/x/oauth2 v0.23.0
+	golang.org/x/oauth2 v0.27.0
 	golang.org/x/sync v0.12.0
 	golang.org/x/sys v0.31.0
 	golang.org/x/term v0.30.0
