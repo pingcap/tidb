@@ -3812,6 +3812,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		originalFields = sel.Fields.Fields
 	}
 
+	// After unfolding wildstar and all join conditions are handled, we need to reset the IsInvisible flag of columns
+	// in the schema. This is because this flag will be passed to upper operators, but in the outer select block of the
+	// original SQL, these columns should not be invisible. For example:
+	// SELECT * FROM (SELECT _tidb_rowid FROM t) as tmp;
+	// The _tidb_rowid column should be visible in the outer select block.
 	for _, col := range p.Schema().Columns {
 		col.IsInvisible = false
 	}
