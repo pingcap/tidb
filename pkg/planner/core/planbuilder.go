@@ -4132,6 +4132,23 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, errors.Errorf("Can't get table %s", tableInfo.Name.O)
 	}
 
+	dbName := tnW.DBInfo.Name
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	commitTSCol := &expression.Column{
+		RetType:     tp,
+		UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+		ID:          model.ExtraCommitTSID,
+		OrigName:    fmt.Sprintf("%v.%v.%v", dbName.L, tableInfo.Name, model.ExtraCommitTSName),
+		IsInvisible: true,
+	}
+	schema.Append(commitTSCol)
+	names = append(names, &types.FieldName{
+		DBName:      dbName,
+		TblName:     tableInfo.Name,
+		ColName:     model.ExtraCommitTSName,
+		OrigColName: model.ExtraCommitTSName,
+	})
+
 	insertPlan := physicalop.Insert{
 		Table:         tableInPlan,
 		Columns:       insert.Columns,

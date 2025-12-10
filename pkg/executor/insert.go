@@ -296,12 +296,13 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+			oldRow, commitTS, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
 			if err != nil && !kv.IsErrNotFound(err) {
 				return err
 			}
 
 			if oldRow != nil {
+				oldRow = append(oldRow, types.NewUintDatum(commitTS))
 				var done bool
 				done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, r.handleKey, updateDupKeyCheck, autoColIdx, removeOldRows)
 				if err != nil {
@@ -322,7 +323,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				continue
 			}
 
-			oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+			oldRow, commitTS, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -334,6 +335,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
+			oldRow = append(oldRow, types.NewUintDatum(commitTS))
 
 			var done bool
 			done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, uk, updateDupKeyCheck, autoColIdx, removeOldRows)
@@ -509,19 +511,22 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 	// Use public columns for new row.
 	numCols := len(e.Table.Cols())
 	// Use writable columns for old row for update.
-	numWritableCols := len(e.Table.WritableCols())
+	numWritableCols := len(e.Table.WritableCols()) + 1
 
 	extraLen := 0
 	if e.SelectExec != nil {
 		extraLen = e.SelectExec.Schema().Len() - e.rowLen
 	}
 
-	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols+extraLen)
+	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols+extraLen+1)
 
 	// Append the old row before the new row, to be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
 	for _, col := range e.Table.WritableCols() {
 		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))
 	}
+	commitTSFt := types.NewFieldType(mysql.TypeLonglong)
+	commitTSFt.SetFlag(mysql.UnsignedFlag)
+	evalBufferTypes = append(evalBufferTypes, commitTSFt)
 	if extraLen > 0 {
 		evalBufferTypes = append(evalBufferTypes, e.SelectExec.RetFieldTypes()[e.rowLen:]...)
 	}
@@ -628,7 +633,7 @@ func (e *InsertExec) doDupRowUpdate(
 		assignFlag[assign.Col.Index] = true
 	}
 
-	newData := e.row4Update[:len(oldRow)]
+	newData := e.row4Update[:len(e.Table.WritableCols())]
 	if updateOriginTSCol >= 0 && !assignFlag[updateOriginTSCol] {
 		newData[updateOriginTSCol].SetNull()
 	}

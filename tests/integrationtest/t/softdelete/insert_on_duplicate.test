@@ -67,3 +67,10 @@ select id, v, isnull(_tidb_softdelete_time) from t;
 # tk.MustExec(`update t2 set _tidb_softdelete_time = now() where id = 1`)
 # tk.MustExec(`insert into t2 (id, v) values (2, 12) on duplicate key update id = 1`)
 # tk.MustQuery(`select id, v from t2 where _tidb_softdelete_time is null`).Sort().Check(testkit.Rows("1 2"))
+
+drop table if exists t;
+create table t (a bigint primary key, b int, c int);
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+--replace_regex /^[1-9][0-9]+/TSO/
+select * from t;
