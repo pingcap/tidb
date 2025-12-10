@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -55,13 +54,13 @@ type TiDBConfigProvider struct{}
 // When memory usage exceeds this ratio of the total memory limit (or system memory if no limit),
 // the memory monitor will dump profiles and trigger OOM-related actions.
 func (*TiDBConfigProvider) GetMemoryUsageAlarmRatio() float64 {
-	return vardef.MemoryUsageAlarmRatio.Load()
+	return variable.MemoryUsageAlarmRatio.Load()
 }
 
 // GetMemoryUsageAlarmKeepRecordNum returns the number of alarm records to keep.
 // When the number of records exceeds this limit, older records will be deleted.
 func (*TiDBConfigProvider) GetMemoryUsageAlarmKeepRecordNum() int64 {
-	return vardef.MemoryUsageAlarmKeepRecordNum.Load()
+	return variable.MemoryUsageAlarmKeepRecordNum.Load()
 }
 
 // GetLogDir returns the directory for storing memory profiles and alarm records.
