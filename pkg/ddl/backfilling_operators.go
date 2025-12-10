@@ -798,7 +798,9 @@ func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResul
 	result := IndexWriteResult{
 		ID: rs.ID,
 	}
-	w.initSessCtx()
+	if err := w.initSessCtx(); err != nil {
+		return result, err
+	}
 	count, _, err := w.WriteChunk(&rs)
 	if err != nil {
 		return result, err
