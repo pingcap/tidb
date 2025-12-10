@@ -366,11 +366,11 @@ Sort	root		planner__core__casetest__index__index.t2.c1
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
       └─IndexMerge	root		type: union
-        ├─Selection(Build)	cop[tikv]		eq(10, planner__core__casetest__index__index.t2.c3)
+        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 10)
         │ └─TableRangeScan	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
-        ├─Selection(Build)	cop[tikv]		eq(1, planner__core__casetest__index__index.t2.c3)
+        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 1)
         │ └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-        └─Selection(Probe)	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(10, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(1, planner__core__casetest__index__index.t2.c3))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
+        └─Selection(Probe)	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t2.c3, 10)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(planner__core__casetest__index__index.t2.c3, 1))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
           └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
 c1	c2	c3
@@ -385,11 +385,11 @@ Sort	root		planner__core__casetest__index__index.t2.c1
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
       └─IndexMerge	root		type: union
-        ├─Selection(Build)	cop[tikv]		eq(10, planner__core__casetest__index__index.t2.c3)
+        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 10)
         │ └─TableRangeScan	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
-        ├─Selection(Build)	cop[tikv]		eq(1, planner__core__casetest__index__index.t2.c3)
+        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 1)
         │ └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-        └─Selection(Probe)	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(10, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(1, planner__core__casetest__index__index.t2.c3))), reverse(cast(planner__core__casetest__index__index.t1.c3, var_string(20)))
+        └─Selection(Probe)	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t2.c3, 10)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(planner__core__casetest__index__index.t2.c3, 1))), reverse(cast(planner__core__casetest__index__index.t1.c3, var_string(20)))
           └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;
 c1	c2	c3
@@ -405,9 +405,9 @@ Sort	root		planner__core__casetest__index__index.t2.c1
       └─IndexMerge	root		type: union
         ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)
         │ └─TableRangeScan	cop[tikv]	table:t1	range:[10,+inf], keep order:false, stats:pseudo
-        ├─Selection(Build)	cop[tikv]		eq(1, planner__core__casetest__index__index.t2.c3)
+        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 1)
         │ └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-        └─Selection(Probe)	cop[tikv]		or(and(ge(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(1, planner__core__casetest__index__index.t2.c3))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
+        └─Selection(Probe)	cop[tikv]		or(and(ge(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(planner__core__casetest__index__index.t2.c3, 1))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
           └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
 c1	c2	c3

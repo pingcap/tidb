@@ -20,14 +20,12 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,10 +70,9 @@ func TestLoadStats(t *testing.T) {
 	require.True(t, c == nil || c.CMSketch == nil)
 
 	// Column stats are loaded after they are needed.
-	_, err = cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stat, types.NewIntDatum(1), colAID)
-	require.NoError(t, err)
-	_, err = cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stat, types.NewIntDatum(1), colCID)
-	require.NoError(t, err)
+	pctx := testKit.Session().GetPlanCtx()
+	statistics.ColumnStatsIsInvalid(stat.GetCol(colAID), pctx, &stat.HistColl, colAID)
+	statistics.ColumnStatsIsInvalid(stat.GetCol(colCID), pctx, &stat.HistColl, colCID)
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, stat.GetCol(colAID).IsFullLoad())

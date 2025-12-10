@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -765,6 +766,166 @@ func TestBuildProjectionForIndexJoinPanic(t *testing.T) {
 	require.ErrorContains(t, err, "buildProjectionForIndexJoinPanic")
 }
 
+type IndexLookUpPushDownRunVerifier struct {
+	*testing.T
+	tk          *testkit.TestKit
+	tableName   string
+	indexName   string
+	primaryRows []int
+	hitRate     any
+	msg         string
+}
+
+type RunSelectWithCheckResult struct {
+	SQL         string
+	Rows        [][]any
+	AnalyzeRows [][]any
+}
+
+func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, limit int) RunSelectWithCheckResult {
+	require.NotNil(t, t.tk)
+	require.NotEmpty(t, t.tableName)
+	require.NotEmpty(t, t.indexName)
+	require.NotEmpty(t, t.primaryRows)
+	require.GreaterOrEqual(t, skip, 0)
+	if skip > 0 {
+		require.GreaterOrEqual(t, limit, 0)
+	}
+
+	var hitRate int
+	if r, ok := t.hitRate.(*rand.Rand); ok {
+		hitRate = r.Intn(11)
+	} else {
+		hitRate, ok = t.hitRate.(int)
+		require.True(t, ok)
+	}
+
+	message := fmt.Sprintf("%s, hitRate: %d, where: %s, limit: %d", t.msg, hitRate, where, limit)
+	injectHandleFilter := func(h kv.Handle) bool {
+		if hitRate >= 10 {
+			return true
+		}
+		h64a := fnv.New64a()
+		_, err := h64a.Write(h.Encoded())
+		require.NoError(t, err)
+		return h64a.Sum64()%10 < uint64(hitRate)
+	}
+	var injectCalled atomic.Bool
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter", func(f *func(kv.Handle) bool) {
+		*f = injectHandleFilter
+		injectCalled.Store(true)
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter"))
+	}()
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("select /*+ index_lookup_pushdown(%s, %s)*/ * from %s where ", t.tableName, t.indexName, t.tableName))
+	sb.WriteString(where)
+	if skip > 0 {
+		sb.WriteString(fmt.Sprintf(" limit %d, %d", skip, limit))
+	} else if limit >= 0 {
+		sb.WriteString(fmt.Sprintf(" limit %d", limit))
+	}
+
+	// make sure the query uses index lookup
+	analyzeSQL := "explain analyze " + sb.String()
+	injectCalled.Store(false)
+	analyzeResult := t.tk.MustQuery(analyzeSQL)
+	require.True(t, injectCalled.Load(), message)
+	require.Contains(t, analyzeResult.String(), "LocalIndexLookUp", analyzeSQL+"\n"+analyzeResult.String())
+
+	// get actual result
+	injectCalled.Store(false)
+	rs := t.tk.MustQuery(sb.String())
+	actual := rs.Rows()
+	require.True(t, injectCalled.Load(), message)
+	idSets := make(map[string]struct{}, len(actual))
+	for _, row := range actual {
+		var primaryKey strings.Builder
+		require.Greater(t, len(t.primaryRows), 0)
+		for i, idx := range t.primaryRows {
+			if i > 0 {
+				primaryKey.WriteString("#")
+			}
+			primaryKey.WriteString(row[idx].(string))
+		}
+		id := primaryKey.String()
+		_, dup := idSets[id]
+		require.False(t, dup, "dupID: "+id+", "+message)
+		idSets[row[0].(string)] = struct{}{}
+	}
+
+	// use table scan
+	matchCondList := t.tk.MustQuery(fmt.Sprintf("select /*+ use_index(%s) */* from %s where "+where, t.tableName, t.tableName)).Rows()
+	if limit == 0 || skip >= len(matchCondList) {
+		require.Len(t, actual, 0, message)
+	} else if limit < 0 {
+		// no limit two results should have same members
+		require.ElementsMatch(t, matchCondList, actual, message)
+	} else {
+		expectRowCnt := limit
+		if skip+limit > len(matchCondList) {
+			expectRowCnt = len(matchCondList) - skip
+		}
+		require.Len(t, actual, expectRowCnt, message)
+		require.Subset(t, matchCondList, actual, message)
+	}
+
+	// check in analyze the index is lookup locally
+	message = fmt.Sprintf("%s\n%s\n%s", message, analyzeSQL, analyzeResult.String())
+	analyzeVerified := false
+	localIndexLookUpIndex := -1
+	totalIndexScanCnt := -1
+	localIndexLookUpRowCnt := -1
+	analyzeRows := analyzeResult.Rows()
+	metTableRowIDScan := false
+	for i, row := range analyzeRows {
+		if strings.Contains(row[0].(string), "LocalIndexLookUp") {
+			localIndexLookUpIndex = i
+			continue
+		}
+
+		if strings.Contains(row[0].(string), "TableRowIDScan") && strings.Contains(row[3].(string), "cop[tikv]") {
+			var err error
+			if !metTableRowIDScan {
+				localIndexLookUpRowCnt, err = strconv.Atoi(row[2].(string))
+				require.NoError(t, err, message)
+				require.GreaterOrEqual(t, localIndexLookUpRowCnt, 0)
+				if hitRate == 0 {
+					require.Zero(t, localIndexLookUpRowCnt, message)
+				}
+				// check actRows for LocalIndexLookUp
+				require.Equal(t, analyzeRows[localIndexLookUpIndex][2], row[2], message)
+				// get index scan row count
+				totalIndexScanCnt, err = strconv.Atoi(analyzeRows[localIndexLookUpIndex+1][2].(string))
+				require.NoError(t, err, message)
+				require.GreaterOrEqual(t, totalIndexScanCnt, localIndexLookUpRowCnt)
+				if hitRate >= 10 {
+					require.Equal(t, localIndexLookUpRowCnt, totalIndexScanCnt)
+				}
+				metTableRowIDScan = true
+				continue
+			}
+
+			tidbIndexLookUpRowCnt, err := strconv.Atoi(row[2].(string))
+			require.NoError(t, err, message)
+			if limit < 0 {
+				require.Equal(t, totalIndexScanCnt, localIndexLookUpRowCnt+tidbIndexLookUpRowCnt, message)
+			} else {
+				require.LessOrEqual(t, localIndexLookUpRowCnt+tidbIndexLookUpRowCnt, totalIndexScanCnt, message)
+			}
+			analyzeVerified = true
+			break
+		}
+	}
+	require.True(t, analyzeVerified, analyzeResult.String())
+	return RunSelectWithCheckResult{
+		SQL:         sb.String(),
+		Rows:        actual,
+		AnalyzeRows: analyzeRows,
+	}
+}
+
 func TestIndexLookUpPushDownExec(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -773,6 +934,16 @@ func TestIndexLookUpPushDownExec(t *testing.T) {
 	seed := time.Now().UnixNano()
 	logutil.BgLogger().Info("Run TestIndexLookUpPushDownExec with seed", zap.Int64("seed", seed))
 	r := rand.New(rand.NewSource(seed))
+	v := &IndexLookUpPushDownRunVerifier{
+		T:           t,
+		tk:          tk,
+		tableName:   "t",
+		indexName:   "a",
+		primaryRows: []int{0},
+		hitRate:     r,
+		msg:         fmt.Sprintf("seed: %d", seed),
+	}
+
 	batch := 100
 	total := batch * 20
 	indexValEnd := 100
@@ -787,94 +958,110 @@ func TestIndexLookUpPushDownExec(t *testing.T) {
 		tk.MustExec("insert into t values " + strings.Join(values, ","))
 	}
 
-	runSelectWithCheck := func(where string, skip, limit int) {
-		require.GreaterOrEqual(t, skip, 0)
-		if skip > 0 {
-			require.GreaterOrEqual(t, limit, 0)
+	v.RunSelectWithCheck("1", 0, -1)
+	v.RunSelectWithCheck("1", 0, r.Intn(total*2))
+	v.RunSelectWithCheck("1", total/2, r.Intn(total))
+	v.RunSelectWithCheck("1", total-10, 20)
+	v.RunSelectWithCheck("1", total, 10)
+	v.RunSelectWithCheck("1", 10, 0)
+	v.RunSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, -1)
+	v.RunSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, 25)
+	v.RunSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, -1)
+	v.RunSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, r.Intn(100)+1)
+	v.RunSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, -1)
+	v.RunSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, r.Intn(100)+1)
+	start := randIndexVal()
+	v.RunSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, -1)
+	start = randIndexVal()
+	v.RunSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, r.Intn(50)+1)
+	v.RunSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, -1)
+	v.RunSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, r.Intn(50)+1)
+}
+
+func TestIndexLookUpPushDownPartitionExec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// int handle
+	tk.MustExec("create table tp1 (\n" +
+		"    a varchar(32),\n" +
+		"    b int,\n" +
+		"    c int,\n" +
+		"    d int,\n" +
+		"    primary key(b) CLUSTERED,\n" +
+		"    index c(c)\n" +
+		")\n" +
+		"PARTITION BY RANGE (b) (\n" +
+		"    PARTITION p0 VALUES LESS THAN (100),\n" +
+		"    PARTITION p1 VALUES LESS THAN (200),\n" +
+		"    PARTITION p2 VALUES LESS THAN (300),\n" +
+		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
+		")")
+
+	// common handle
+	tk.MustExec("create table tp2 (\n" +
+		"    a varchar(32),\n" +
+		"    b int,\n" +
+		"    c int,\n" +
+		"    d int,\n" +
+		"    primary key(a, b) CLUSTERED,\n" +
+		"    index c(c)\n" +
+		")\n" +
+		"PARTITION BY RANGE COLUMNS (a) (\n" +
+		"    PARTITION p0 VALUES LESS THAN ('c'),\n" +
+		"    PARTITION p1 VALUES LESS THAN ('e'),\n" +
+		"    PARTITION p2 VALUES LESS THAN ('g'),\n" +
+		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
+		")")
+
+	// extra handle
+	tk.MustExec("create table tp3 (\n" +
+		"    a varchar(32),\n" +
+		"    b int,\n" +
+		"    c int,\n" +
+		"    d int,\n" +
+		"    primary key(a, b) NONCLUSTERED,\n" +
+		"    index c(c)\n" +
+		")\n" +
+		"PARTITION BY RANGE COLUMNS (a) (\n" +
+		"    PARTITION p0 VALUES LESS THAN ('c'),\n" +
+		"    PARTITION p1 VALUES LESS THAN ('e'),\n" +
+		"    PARTITION p2 VALUES LESS THAN ('g'),\n" +
+		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
+		")")
+
+	tableNames := []string{"tp1", "tp2", "tp3"}
+	// prepare data
+	for _, tableName := range tableNames {
+		tk.MustExec("insert into " + tableName + " values " +
+			"('a', 10, 1, 100), " +
+			"('b', 20, 2, 200), " +
+			"('c', 110, 3, 300), " +
+			"('d', 120, 4, 400), " +
+			"('e', 210, 5, 500), " +
+			"('f', 220, 6, 600), " +
+			"('g', 330, 5, 700), " +
+			"('h', 340, 5, 800), " +
+			"('i', 450, 5, 900), " +
+			"('j', 550, 6, 1000) ",
+		)
+
+		v := &IndexLookUpPushDownRunVerifier{
+			T:           t,
+			tk:          tk,
+			tableName:   tableName,
+			indexName:   "c",
+			primaryRows: []int{0, 1},
+			msg:         tableName,
 		}
 
-		hitRate := r.Intn(11)
-		message := fmt.Sprintf("seed: %d, hitRate: %d, where: %s, limit: %d", seed, hitRate, where, limit)
-		filterMap := make([]bool, total)
-		for i := 0; i < total; i++ {
-			filterMap[i] = r.Intn(10) < hitRate
+		if tableName == "tp1" {
+			v.primaryRows = []int{1}
 		}
 
-		injectHandleFilter := func(h kv.Handle) bool {
-			return filterMap[h.IntValue()]
-		}
-		var injectCalled atomic.Bool
-		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter", func(f *func(kv.Handle) bool) {
-			*f = injectHandleFilter
-			injectCalled.Store(true)
-		}))
-		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter"))
-		}()
-
-		// use index lookup push down
-		injectCalled.Store(false)
-		var sb strings.Builder
-		sb.WriteString("select /*+ index_lookup_pushdown(t, a)*/ * from t where ")
-		sb.WriteString(where)
-		if skip > 0 {
-			sb.WriteString(fmt.Sprintf(" limit %d, %d", skip, limit))
-		} else if limit >= 0 {
-			sb.WriteString(fmt.Sprintf(" limit %d", limit))
-		}
-
-		// make sure the query uses index lookup
-		analyzeResult := tk.MustQuery("explain analyze " + sb.String())
-		require.Contains(t, analyzeResult.String(), "LocalIndexLookUp", analyzeResult.String())
-
-		// get actual result
-		rs := tk.MustQuery(sb.String())
-		require.True(t, injectCalled.Load(), message)
-		actual := rs.Rows()
-		idSets := make(map[string]struct{}, len(actual))
-		for _, row := range actual {
-			id := row[0].(string)
-			_, dup := idSets[id]
-			require.False(t, dup, "dupID: "+id+", "+message)
-			idSets[row[0].(string)] = struct{}{}
-		}
-
-		// use table scan
-		injectCalled.Store(false)
-		matchCondList := tk.MustQuery("select /*+ use_index(t) */* from t where " + where + " order by id").Rows()
-		require.False(t, injectCalled.Load(), message)
-
-		if limit == 0 || skip >= len(matchCondList) {
-			require.Len(t, actual, 0, message)
-		} else if limit < 0 {
-			// no limit two results should have same members
-			require.ElementsMatch(t, matchCondList, actual, message)
-		} else {
-			expectRowCnt := limit
-			if skip+limit > len(matchCondList) {
-				expectRowCnt = len(matchCondList) - skip
-			}
-			require.Len(t, actual, expectRowCnt, message)
-			require.Subset(t, matchCondList, actual, message)
+		for _, hitRate := range []int{0, 5, 10} {
+			v.hitRate = hitRate
+			v.RunSelectWithCheck("1", 0, -1)
 		}
 	}
-
-	runSelectWithCheck("1", 0, -1)
-	runSelectWithCheck("1", 0, r.Intn(total*2))
-	runSelectWithCheck("1", total/2, r.Intn(total))
-	runSelectWithCheck("1", total-10, 20)
-	runSelectWithCheck("1", total, 10)
-	runSelectWithCheck("1", 10, 0)
-	runSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, -1)
-	runSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, 25)
-	runSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, -1)
-	runSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, r.Intn(100)+1)
-	runSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, -1)
-	runSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, r.Intn(100)+1)
-	start := randIndexVal()
-	runSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, -1)
-	start = randIndexVal()
-	runSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, r.Intn(50)+1)
-	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, -1)
-	runSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, r.Intn(50)+1)
 }

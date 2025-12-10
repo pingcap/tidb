@@ -818,6 +818,36 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	}
 }
 
+// CheckInvolvingSchemaInfo check the job should set valid InvolvingSchemaInfo,
+// job scheduler uses this info to calculate job dependency, invalid
+// InvolvingSchemaInfo may cause job scheduler stuck or execute DDLs in wrong order.
+func (job *Job) CheckInvolvingSchemaInfo() error {
+	involvedSI := job.GetInvolvingSchemaInfo()
+	for _, info := range involvedSI {
+		var involvedObjTypes int
+		if info.Policy != InvolvingNone {
+			involvedObjTypes++
+		}
+		if info.ResourceGroup != InvolvingNone {
+			involvedObjTypes++
+		}
+		if info.Database != InvolvingNone || info.Table != InvolvingNone {
+			involvedObjTypes++
+		}
+		if involvedObjTypes != 1 {
+			return errors.New("InvolvingSchemaInfo must involve only one type of object among database/table, placement policy, resource group")
+		}
+		if info.Policy == InvolvingNone && info.ResourceGroup == InvolvingNone {
+			if info.Database == InvolvingNone || info.Table == InvolvingNone {
+				return errors.New("DDL job operating on schema or table, must have non-empty name set in InvolvingSchemaInfo")
+			} else if info.Database == InvolvingAll && info.Table != InvolvingAll {
+				return errors.New("DDL job operating on all databases, must not set table name in InvolvingSchemaInfo")
+			}
+		}
+	}
+	return nil
+}
+
 // ClearDecodedArgs clears the decoded args.
 func (job *Job) ClearDecodedArgs() {
 	job.args = nil

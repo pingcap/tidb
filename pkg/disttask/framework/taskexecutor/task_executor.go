@@ -605,7 +605,7 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 			return
 		}
 
-		// after application reduced memory usage, the garbage might not recycle
+		// After reducing memory usage, garbage may not be recycled
 		// in time, so we trigger GC here.
 		//nolint: revive
 		runtime.GC()
