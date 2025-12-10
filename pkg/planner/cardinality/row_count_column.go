@@ -274,6 +274,26 @@ func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, 
 	return histBetweenCnt
 }
 
+// ColumnEqualRowCount estimates the row count where the column equals to value.
+// This function is only used for testing.
+func ColumnEqualRowCount(sctx planctx.PlanContext, t *statistics.Table, value types.Datum, colID int64) (float64, error) {
+	c := t.GetCol(colID)
+	if statistics.ColumnStatsIsInvalid(c, sctx, &t.HistColl, colID) {
+		return float64(t.RealtimeCount) / pseudoEqualRate, nil
+	}
+	encodedVal, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, value)
+	err = sctx.GetSessionVars().StmtCtx.HandleError(err)
+	if err != nil {
+		return 0, err
+	}
+	result, err := equalRowCountOnColumn(sctx, c, value, encodedVal, t.RealtimeCount, t.ModifyCount)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	result.MultiplyAll(c.GetIncreaseFactor(t.RealtimeCount))
+	return result.Est, nil
+}
+
 // getPseudoRowCountWithPartialStats calculates the row count if there are no statistics on the index, but there are column stats available.
 func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistics.HistColl, indexRanges []*ranger.Range,
 	tableRowCount float64, idxCols []*expression.Column) (totalCount float64, maxCount float64, err error) {
