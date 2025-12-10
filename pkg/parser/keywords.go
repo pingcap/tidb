@@ -224,6 +224,7 @@ var Keywords = []KeywordsType{
 	{"STRAIGHT_JOIN", true, "reserved"},
 	{"TABLE", true, "reserved"},
 	{"TABLESAMPLE", true, "reserved"},
+	{"TABLESPLIT", true, "reserved"},
 	{"TERMINATED", true, "reserved"},
 	{"THEN", true, "reserved"},
 	{"TIDB_CURRENT_TSO", true, "reserved"},

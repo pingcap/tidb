@@ -156,6 +156,9 @@ type PhysicalTableReader struct {
 	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
+
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
 }
 
 // LoadTableStats loads the stats of the table read by this plan.
@@ -286,6 +289,7 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 		Columns:        sg.Source.TblCols,
 		ColumnNames:    sg.Source.OutputNames(),
 	}
+	reader.TableSplit = sg.Source.TableSplit
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
 	reader.SetChildrenReqProps(props)
@@ -960,6 +964,9 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
 }
 
 // VectorIndexExtra is the extra information for vector index.

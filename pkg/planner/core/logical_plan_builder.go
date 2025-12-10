@@ -4759,6 +4759,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
 
+	ds.TableSplit = tn.TableSplit
+
 	for i, colExpr := range ds.Schema().Columns {
 		var expr expression.Expression
 		if i < len(columns) {
@@ -4970,6 +4972,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.Extractor = NewInfoSchemaTableConstraintsExtractor()
 		case infoschema.TableTiKVRegionStatus:
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
+		case infoschema.TableRegions:
+			p.Extractor = &TableRegionsExtractor{}
 		}
 	}
 	return p, nil

@@ -281,6 +281,8 @@ type TableName struct {
 	IndexHints     []*IndexHint
 	PartitionNames []model.CIStr
 	TableSample    *TableSample
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *TableSplit
 	// AS OF is used to see the data as it was at a specific point in time.
 	AsOf *AsOfClause
 	// IsAlias is true if this table name is an alias.
@@ -351,6 +353,12 @@ func (n *TableName) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		if err := n.TableSample.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing TableName.TableSample")
+		}
+	}
+	if n.TableSplit != nil {
+		ctx.WritePlain(" ")
+		if err := n.TableSplit.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing TableName.TableSplit")
 		}
 	}
 	return nil
@@ -444,6 +452,13 @@ func (n *TableName) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.TableSample = newTs.(*TableSample)
+	}
+	if n.TableSplit != nil {
+		newTblSplit, ok := n.TableSplit.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.TableSplit = newTblSplit.(*TableSplit)
 	}
 	if n.AsOf != nil {
 		newNode, skipChildren := n.AsOf.Accept(v)
@@ -572,6 +587,12 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(" ")
 			if err := tn.TableSample.Restore(ctx); err != nil {
 				return errors.Annotate(err, "An error occurred while splicing TableName.TableSample")
+			}
+		}
+		if tn.TableSplit != nil {
+			ctx.WritePlain(" ")
+			if err := tn.TableSplit.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while splicing TableName.TableSplit")
 			}
 		}
 
@@ -1069,6 +1090,36 @@ func (s *TableSample) Accept(v Visitor) (node Node, ok bool) {
 		s.RepeatableSeed = node.(ExprNode)
 	}
 	return v.Leave(s)
+}
+
+// TableSplit represents a table split range returned by SHOW TABLE SPLITS.
+type TableSplit struct {
+	node
+	// Start is the lower bound of the split, as a hex-encoded string.
+	Start string
+	// End is the upper bound of the split, as a hex-encoded string.
+	End string
+}
+
+// Restore implements Node interface.
+func (ts *TableSplit) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("TABLESPLIT")
+	ctx.WritePlain("(")
+	ctx.WriteString(ts.Start)
+	ctx.WritePlain(", ")
+	ctx.WriteString(ts.End)
+	ctx.WritePlain(")")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (ts *TableSplit) Accept(v Visitor) (node Node, ok bool) {
+	newNode, skipChildren := v.Enter(ts)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n := newNode.(*TableSplit)
+	return v.Leave(n)
 }
 
 type SelectStmtKind uint8
