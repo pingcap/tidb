@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -997,6 +998,11 @@ func StoreInternalSession(se any) bool {
 	if sm == nil {
 		return false
 	}
+	fields := []zap.Field{zap.String("session", objectStrForLog(se))}
+	if sctx, ok := se.(sessionctx.Context); ok {
+		fields = append(fields, requestSourceFieldsForLog(sctx)...)
+	}
+	logutil.BgLogger().Info("store internal session to manager", fields...)
 	sm.StoreInternalSession(se)
 	return true
 }
@@ -1011,6 +1017,11 @@ func DeleteInternalSession(se any) {
 	if sm == nil {
 		return
 	}
+	fields := []zap.Field{zap.String("session", objectStrForLog(se))}
+	if sctx, ok := se.(sessionctx.Context); ok {
+		fields = append(fields, requestSourceFieldsForLog(sctx)...)
+	}
+	logutil.BgLogger().Info("delete internal session from manager", fields...)
 	sm.DeleteInternalSession(se)
 }
 
@@ -1027,6 +1038,33 @@ func ContainsInternalSessionForTest(se any) bool {
 	}
 
 	return sm.ContainsInternalSession(se)
+}
+
+func objectStrForLog(obj any) string {
+	if obj == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%T(%p)", obj, obj)
+}
+
+func requestSourceFieldsForLog(sctx sessionctx.Context) []zap.Field {
+	if sctx == nil {
+		return nil
+	}
+
+	vars := sctx.GetSessionVars()
+	if vars == nil {
+		return nil
+	}
+
+	fields := make([]zap.Field, 0, 2)
+	if vars.RequestSourceType != "" {
+		fields = append(fields, zap.String("requestSource", vars.RequestSourceType))
+	}
+	if vars.ExplicitRequestSourceType != "" {
+		fields = append(fields, zap.String("explicitRequestSource", vars.ExplicitRequestSourceType))
+	}
+	return fields
 }
 
 // SetEtcdClient is only used for test.
