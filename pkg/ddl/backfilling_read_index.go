@@ -46,15 +46,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func hasUniqueIndex(indexes []*model.IndexInfo) bool {
-	for _, idx := range indexes {
-		if idx.Unique {
-			return true
-		}
-	}
-	return false
-}
-
 type readIndexStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	d       *ddl
@@ -101,11 +92,20 @@ func newReadIndexExecutor(
 	}, nil
 }
 
+func hasUniqueIndex(indexes []*model.IndexInfo) bool {
+	for _, idx := range indexes {
+		if idx.Unique {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == "tikv" {
-		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, hasUniqueIndex(r.indexes), false)
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, hasUniqueIndex(r.indexes), false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -149,7 +149,6 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	metric := metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, metric)
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
-		ForDuplicateCheck(hasUniqueIndex(r.indexes)).
 		WithImportDistributedLock(r.d.etcdCli, sm.TS).
 		Build(r.backendCfg, r.backend)
 	if err != nil {

@@ -60,26 +60,27 @@ func newCloudImportExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
+	taskConcurrency int,
 ) (*cloudImportExecutor, error) {
 	return &cloudImportExecutor{
-		job:           job,
-		store:         store,
-		indexes:       indexes,
-		ptbl:          ptbl,
-		cloudStoreURI: cloudStoreURI,
-		metric:        metrics.RegisterLightningCommonMetricsForDDL(job.ID),
+		job:             job,
+		store:           store,
+		indexes:         indexes,
+		ptbl:            ptbl,
+		cloudStoreURI:   cloudStoreURI,
+		taskConcurrency: taskConcurrency,
+		metric:          metrics.RegisterLightningCommonMetricsForDDL(job.ID),
 	}, nil
 }
 
 func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	ctx = lightningmetric.WithCommonMetric(ctx, m.metric)
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, hasUniqueIndex(m.indexes), false)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, hasUniqueIndex(m.indexes), false, m.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).
-		ForDuplicateCheck(hasUniqueIndex(m.indexes)).Build(cfg, bd)
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build(cfg, bd)
 	if err != nil {
 		bd.Close()
 		return err
@@ -96,6 +97,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
+
 	local := m.backendCtx.GetLocalBackend()
 	if local == nil {
 		return errors.Errorf("local backend not found")
@@ -138,7 +140,6 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	local.WorkerConcurrency.Store(int32(m.GetResource().CPU.Capacity()) * 2)
 	eng := local.GetExternalEngine(engineUUID)
 	if eng == nil {
 		return errors.Errorf("external engine %s not found", engineUUID)

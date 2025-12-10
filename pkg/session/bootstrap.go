@@ -1208,16 +1208,16 @@ const (
 	// Add last_stats_histograms_version to mysql.stats_meta.
 	version220 = 220
 
-	// next version should start with 239
-
-	// version 239
+	// version 221
 	// add modify_params to tidb_global_task and tidb_global_task_history.
-	version239 = 239
+	version221 = 221
+
+	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version239
+var currentBootstrapVersion int64 = version221
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1391,7 +1391,7 @@ var (
 		upgradeToVer216,
 		upgradeToVer217,
 		upgradeToVer218,
-		upgradeToVer239,
+		upgradeToVer221,
 	}
 )
 
@@ -3268,8 +3268,8 @@ func upgradeToVer220(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer239(s sessiontypes.Session, ver int64) {
-	if ver >= version239 {
+func upgradeToVer221(s sessiontypes.Session, ver int64) {
+	if ver >= version221 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)

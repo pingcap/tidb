@@ -84,8 +84,8 @@ func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 
 // ForDuplicateCheck marks this backend context is only used for duplicate check.
 // TODO(tangenta): remove this after we don't rely on the backend to do duplicate check.
-func (b *BackendCtxBuilder) ForDuplicateCheck(checkDup bool) *BackendCtxBuilder {
-	b.checkDup = checkDup
+func (b *BackendCtxBuilder) ForDuplicateCheck() *BackendCtxBuilder {
+	b.checkDup = true
 	return b
 }
 
@@ -145,7 +145,7 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 }
 
 // CreateLocalBackend creates a local backend for adding index.
-func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, hasUnique, checkDup bool) (*local.BackendConfig, *local.Backend, error) {
+func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, hasUnique, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
 	jobSortPath, err := genJobSortPath(job.ID, checkDup)
 	if err != nil {
 		return nil, nil, err
@@ -159,6 +159,9 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 	concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
+	if adjustedWorkerConcurrency > 0 {
+		cfg.WorkerConcurrency.Store(int32(adjustedWorkerConcurrency))
+	}
 
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(

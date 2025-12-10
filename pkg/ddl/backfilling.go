@@ -799,7 +799,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		err error
 	)
 	if config.GetGlobalConfig().Store == "tikv" {
-		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, hasUnique, false)
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, hasUnique, false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -807,7 +807,6 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	}
 	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
 		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
-		ForDuplicateCheck(hasUnique).
 		Build(cfg, bd)
 	if err != nil {
 		return errors.Trace(err)

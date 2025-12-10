@@ -226,6 +226,11 @@ func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.Tab
 	return tblInfo, nil
 }
 
+const (
+	scanRegionBackoffBase = 200 * time.Millisecond
+	scanRegionBackoffMax  = 2 * time.Second
+)
+
 func generatePartitionPlan(
 	ctx context.Context,
 	store kv.StorageWithPD,
@@ -258,11 +263,6 @@ func generatePartitionPlan(
 	}
 	return subTaskMetas, nil
 }
-
-const (
-	scanRegionBackoffBase = 200 * time.Millisecond
-	scanRegionBackoffMax  = 2 * time.Second
-)
 
 func generateNonPartitionPlan(
 	ctx context.Context,

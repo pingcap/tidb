@@ -1140,12 +1140,11 @@ SwitchIndexState:
 			logutil.DDLLogger().Info("run add index job done",
 				zap.String("charset", job.Charset),
 				zap.String("collation", job.Collate))
-		default:
-			err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State)
 		}
-
-		return ver, errors.Trace(err)
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State)
 	}
+
 	return ver, errors.Trace(err)
 }
 
@@ -2735,13 +2734,13 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if backendCtx == nil {
 				if config.GetGlobalConfig().Store == "tikv" {
-					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, true)
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, true, 0)
 					if err != nil {
 						return errors.Trace(err)
 					}
 				}
 				backendCtx, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
-					ForDuplicateCheck(true).
+					ForDuplicateCheck().
 					Build(cfg, backend)
 				if err != nil {
 					return err
