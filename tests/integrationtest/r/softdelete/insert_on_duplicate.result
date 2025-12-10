@@ -9,6 +9,13 @@ id	v
 3	666
 4	666
 5	15
+select * from t;
+id	v
+1	11
+2	12
+3	666
+4	666
+5	15
 truncate table t;
 insert into t (id, v) values (1, 1), (2, 2), (3, 3);
 update t set _tidb_softdelete_time = now() where id = 1;
