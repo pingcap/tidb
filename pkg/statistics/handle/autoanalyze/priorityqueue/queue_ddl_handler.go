@@ -17,6 +17,7 @@ package priorityqueue
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -36,7 +37,7 @@ import (
 // HandleDDLEvent handles DDL events for the priority queue.
 func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 	// Check if auto analyze is enabled.
-	if !vardef.RunAutoAnalyze.Load() {
+	if !variable.RunAutoAnalyze.Load() {
 		// Close the priority queue if auto analyze is disabled.
 		// This ensures proper cleanup of the DDL notifier (mysql.tidb_ddl_notifier) and prevents the queue from remaining
 		// in an unknown state. When auto analyze is re-enabled, the priority queue can be properly re-initialized.
@@ -51,20 +52,7 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 		return notifier.ErrNotReadyRetryLater
 	}
 
-<<<<<<< HEAD
-	defer func() {
-		if err != nil {
-			actionType := event.GetType().String()
-			statslogutil.StatsErrVerboseSampleLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
-				zap.Error(err),
-				zap.String("event", event.String()),
-			)
-		}
-	}()
-
-=======
 	var err error
->>>>>>> 04e1ea9b6ad (stats: close the priority queue DDL handler when auto-analyze is disabled (#64817))
 	switch event.GetType() {
 	case model.ActionAddIndex:
 		err = pq.handleAddIndexEvent(sctx, event)

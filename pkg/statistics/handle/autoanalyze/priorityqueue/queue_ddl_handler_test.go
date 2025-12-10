@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -38,7 +38,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-<<<<<<< HEAD
 func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType) *notifier.SchemaChangeEvent {
 	// Find the target event.
 	for {
@@ -62,17 +61,17 @@ func findEventWithTimeout(eventCh <-chan *notifier.SchemaChangeEvent, eventType 
 			return nil
 		}
 	}
-=======
+}
+
 // enableAutoAnalyze enables auto-analyze for the test and restores it on cleanup.
 // In tests, auto-analyze is disabled by default, so tests that need it enabled
 // should call this helper at the beginning.
 func enableAutoAnalyze(t *testing.T, tk *testkit.TestKit) {
-	bakRunAutoAnalyze := vardef.RunAutoAnalyze.Load()
+	bakRunAutoAnalyze := variable.RunAutoAnalyze.Load()
 	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1")
 	t.Cleanup(func() {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze = %t", bakRunAutoAnalyze))
 	})
->>>>>>> 04e1ea9b6ad (stats: close the priority queue DDL handler when auto-analyze is disabled (#64817))
 }
 
 func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
@@ -1142,7 +1141,7 @@ func TestTurnOffAutoAnalyze(t *testing.T) {
 	enableAutoAnalyze(t, testKit)
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
@@ -1172,7 +1171,7 @@ func TestTurnOffAutoAnalyze(t *testing.T) {
 	testKit.MustExec("truncate table t")
 
 	// Find the truncate table event.
-	truncateTableEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionTruncateTable)
+	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
 
 	// Disable the auto analyze.
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze = 0;")
