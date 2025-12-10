@@ -79,7 +79,7 @@ func TestColumnIDs(t *testing.T) {
 		Collators:   collate.GetBinaryCollatorSlice(1),
 	}
 	var countEst statistics.RowEstimate
-	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran}, false)
 	count := countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, float64(1), count)
@@ -95,7 +95,7 @@ func TestColumnIDs(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// At that time, we should get c2's stats instead of c1's.
-	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran}, false)
 	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
