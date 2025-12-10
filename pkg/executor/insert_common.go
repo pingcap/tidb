@@ -151,17 +151,10 @@ func (e *InsertValues) initInsertColumns() error {
 		cols = tableCols
 		tblInfo := e.Table.Meta()
 		if tblInfo.SoftdeleteInfo != nil || tblInfo.IsActiveActive {
-			cols = slices.Clone(cols)
-			if tblInfo.SoftdeleteInfo != nil {
-				cols = slices.DeleteFunc(cols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraSoftDeleteTimeName.L
-				})
-			}
-			if tblInfo.IsActiveActive {
-				cols = slices.DeleteFunc(cols, func(col *table.Column) bool {
-					return col.Name.L == model.ExtraOriginTSName.L
-				})
-			}
+			cols = slices.DeleteFunc(slices.Clone(cols), func(col *table.Column) bool {
+				return (tblInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+					(tblInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L)
+			})
 		}
 	}
 	for _, col := range cols {
@@ -1358,7 +1351,6 @@ func (e *InsertValues) removeRow(
 	r toBeCheckedRow,
 	inReplace bool,
 ) (bool, error) {
-	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
 	if err != nil {
 		logutil.BgLogger().Error(
@@ -1371,7 +1363,20 @@ func (e *InsertValues) removeRow(
 		}
 		return false, err
 	}
+	return e.removeOldRow(txn, handle, oldRow, r, inReplace)
+}
 
+// removeRow removes the duplicate row and cleanup its keys in the key-value map.
+// But if the to-be-removed row equals to the to-be-added row, no remove or add
+// things to do and return (true, nil).
+func (e *InsertValues) removeOldRow(
+	txn kv.Transaction,
+	handle kv.Handle,
+	oldRow []types.Datum,
+	r toBeCheckedRow,
+	inReplace bool,
+) (bool, error) {
+	newRow := r.row
 	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
 	if err != nil {
 		return false, err

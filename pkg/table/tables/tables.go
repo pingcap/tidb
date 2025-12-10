@@ -496,6 +496,19 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		} else {
 			value = newData[col.Offset]
 		}
+
+		// For active-active replication, if _tidb_origin_ts is not null, it means the row is updated by upstream TiDBs.
+		// Then this txn must make sure its commit ts is greater than the _tidb_origin_ts. (last-write-win conflict resolving strategy, so-called LWW)
+		if t.Meta().IsActiveActive && col.Name.Equals(&model.ExtraOriginTSName) {
+			oldVal := oldData[col.Offset]
+			if !oldVal.IsNull() && value.IsNull() {
+				// In update or insert-on-dup update, the new value of _tidb_origin_ts column should be NULL, rather than the old _tidb_origin_ts value.
+				// Because _tidb_origin_ts not NULL means this is a replicated row, and NULL means this row is written by a local DML.
+				newData[col.Offset].SetNull()
+				txn.SetOption(kv.CommitWaitUntilTSO, oldVal.GetUint64())
+			}
+		}
+
 		if !t.canSkip(col, &value) {
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
@@ -1138,12 +1151,26 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 		return err
 	}
 
-	if m := t.Meta(); m.TempTableType != model.TempTableNone {
+	m := t.Meta()
+	if m.TempTableType != model.TempTableNone {
 		if tmpTable, sizeLimit, ok := addTemporaryTable(ctx, m); ok {
 			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
+	}
+	if m.IsActiveActive {
+		// For active-active replication, if _tidb_origin_ts is not null, it means the row is updated by upstream TiDBs.
+		// Then this txn must make sure its commit ts is greater than the _tidb_origin_ts. (last-write-win conflict resolving strategy, so-called LWW)
+		for _, col := range t.Columns {
+			if col.State == model.StatePublic && col.Name == model.ExtraOriginTSName {
+				value := r[col.Offset]
+				if !value.IsNull() {
+					txn.SetOption(kv.CommitWaitUntilTSO, value.GetUint64())
+				}
+				break
+			}
 		}
 	}
 
