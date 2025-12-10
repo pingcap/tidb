@@ -592,7 +592,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	switch joinNode.Tp {
 	case ast.LeftJoin:
 		// left outer join need to be checked elimination
-		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin | rule.FlagOuterJoinToSemiJoin
 		joinPlan.JoinType = base.LeftOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), leftPlan.Schema().Len(), joinPlan.Schema().Len())
 	case ast.RightJoin:
