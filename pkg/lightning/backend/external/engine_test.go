@@ -19,12 +19,16 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
+	"golang.org/x/sync/errgroup"
 )
 
 func testGetFirstAndLastKey(
@@ -122,50 +126,6 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
 
-func TestSplit(t *testing.T) {
-	cases := []struct {
-		input    []int
-		conc     int
-		expected [][]int
-	}{
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     1,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     2,
-			expected: [][]int{{1, 2, 3}, {4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     0,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     5,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-		{
-			input:    []int{},
-			conc:     5,
-			expected: nil,
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     100,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-	}
-
-	for _, c := range cases {
-		got := split(c.input, c.conc)
-		require.Equal(t, c.expected, got)
-	}
-}
-
 func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]KVPair) (dataFiles, statFiles []string) {
 	ctx := context.Background()
 	for i, c := range contents {
@@ -227,7 +187,6 @@ func TestEngineOnDup(t *testing.T) {
 			16*units.GiB,
 			onDup,
 			"/",
-			dummyOnReaderCloseFunc,
 		)
 	}
 
@@ -363,5 +322,88 @@ func TestEngineOnDup(t *testing.T) {
 				}, dupPairs)
 			}
 		}
+	})
+}
+
+type dummyWorker struct{}
+
+func (w *dummyWorker) Tune(int32, bool) {
+}
+
+func TestChangeEngineConcurrency(t *testing.T) {
+	var (
+		outCh     chan engineapi.DataAndRanges
+		eg        errgroup.Group
+		e         *Engine
+		finished  atomic.Int32
+		updatedCh chan struct{}
+	)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	resetFn := func() {
+		outCh = make(chan engineapi.DataAndRanges, 4)
+		updatedCh = make(chan struct{})
+		eg = errgroup.Group{}
+		finished.Store(0)
+		e = &Engine{
+			jobKeys:           make([][]byte, 64),
+			workerConcurrency: *atomic.NewInt32(4),
+			readyCh:           make(chan struct{}),
+		}
+		e.SetWorkerPool(&dummyWorker{})
+
+		// Load and consume the data
+		eg.Go(func() error {
+			defer close(outCh)
+			return e.LoadIngestData(context.Background(), outCh)
+		})
+		eg.Go(func() error {
+			<-updatedCh
+			for data := range outCh {
+				data.Data.DecRef()
+				finished.Add(1)
+			}
+			return nil
+		})
+	}
+
+	t.Run("reduce concurrency", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+			updatedCh <- struct{}{}
+		})
+
+		resetFn()
+		// Make sure update concurrency is triggered.
+		require.Eventually(t, func() bool {
+			return len(outCh) >= 4
+		}, 5*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 1, 1024))
+		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("increase concurrency", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+			updatedCh <- struct{}{}
+		})
+
+		resetFn()
+		// Make sure update concurrency is triggered.
+		require.Eventually(t, func() bool {
+			return len(outCh) >= 4
+		}, 5*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 8, 1024))
+		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("increase concurrency after loading all data", func(t *testing.T) {
+		resetFn()
+		close(updatedCh)
+		// Wait all the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() >= 16
+		}, 3*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 8, 1024))
+		require.NoError(t, eg.Wait())
 	})
 }

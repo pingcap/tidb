@@ -29,7 +29,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -293,19 +292,6 @@ func (em *engineManager) closeEngine(
 	engineUUID uuid.UUID,
 ) (errRet error) {
 	if externalCfg := cfg.External; externalCfg != nil {
-		storeBackend, err := storage.ParseBackend(externalCfg.StorageURI, nil)
-		if err != nil {
-			return err
-		}
-		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if errRet != nil {
-				store.Close()
-			}
-		}()
 		ts := cfg.TS
 		if ts == 0 {
 			physical, logical, err := em.GetTS(ctx)
@@ -314,20 +300,16 @@ func (em *engineManager) closeEngine(
 			}
 			ts = oracle.ComposeTS(physical, logical)
 		}
-		onClose := func(*external.ReaderSummary) {}
-		if externalCfg.OnReaderClose != nil {
-			onClose = externalCfg.OnReaderClose
-		}
 		externalEngine := external.NewExternalEngine(
 			ctx,
-			store,
+			externalCfg.ExtStore,
 			externalCfg.DataFiles,
 			externalCfg.StatFiles,
 			externalCfg.StartKey,
 			externalCfg.EndKey,
 			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			em.WorkerConcurrency,
+			int(em.WorkerConcurrency.Load()),
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
@@ -335,7 +317,6 @@ func (em *engineManager) closeEngine(
 			externalCfg.MemCapacity,
 			externalCfg.OnDup,
 			"",
-			onClose,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -425,7 +406,8 @@ func (em *engineManager) resetEngine(
 	if localEngine == nil {
 		if engineI, ok := em.externalEngine[engineUUID]; ok {
 			extEngine := engineI.(*external.Engine)
-			return extEngine.Reset()
+			extEngine.Reset()
+			return nil
 		}
 
 		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))

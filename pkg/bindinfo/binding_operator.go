@@ -231,6 +231,7 @@ func (op *bindingOperator) SetBindingStatus(newStatus, sqlDigest string) (ok boo
 
 		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status IN (%?, %?)`,
 			newStatus, updateTsStr, sqlDigest, updateTsStr, oldStatus0, oldStatus1)
+		ok = sctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 		return err
 	})
 	return

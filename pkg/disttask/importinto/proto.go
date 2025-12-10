@@ -19,7 +19,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -74,12 +76,6 @@ type ImportStepMeta struct {
 func (m *ImportStepMeta) Marshal() ([]byte, error) {
 	return m.BaseExternalMeta.Marshal(m)
 }
-
-const (
-	// dataKVGroup is the group name of the sorted kv for data.
-	// index kv will be stored in a group named as index-id.
-	dataKVGroup = "data"
-)
 
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
@@ -137,7 +133,9 @@ type SharedVars struct {
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
 	SortedIndexMetas map[int64]*external.SortedKVMeta
 	ShareMu          sync.Mutex
-	summary          *execute.SubtaskSummary
+	globalSortStore  storage.ExternalStorage
+	dataKVFileCount  *atomic.Int64
+	indexKVFileCount *atomic.Int64
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {
@@ -164,15 +162,12 @@ type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      importer.Chunk
 	SharedVars *SharedVars
-	panicked   *atomic.Bool
 	logger     *zap.Logger
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "encodeAndSortOperator", "RecoverArgs", func() {
-		t.panicked.Store(true)
-	}, false
+func (*importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return proto.ImportInto.String(), "importStepMininalTask", errors.Errorf("panic occurred during import, please check log")
 }
 
 func (t *importStepMinimalTask) String() string {

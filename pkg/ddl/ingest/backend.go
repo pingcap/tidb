@@ -157,7 +157,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 }
 
 func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	dupeController := bc.backend.GetDupeController(bc.cfg.WorkerConcurrency, nil)
+	dupeController := bc.backend.GetDupeController(bc.cfg.GetWorkerConcurrency(), nil)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode:     mysql.ModeStrictAllTables,
 		SysVars:     bc.sysVars,
@@ -404,15 +404,11 @@ func (bc *litBackendCtx) GetImportTS() uint64 {
 
 // AdvanceWatermark implements CheckpointOperator interface.
 func (bc *litBackendCtx) AdvanceWatermark(imported bool) (err error) {
-	defer func() {
-		if err == nil {
-			failpoint.Inject("ddlIngestFailOnceAfterCheckpointUpdated", func() {
-				if imported {
-					err = errors.New("failpoint: ddlIngestFailOnceAfterCheckpointUpdated")
-				}
-			})
+	failpoint.Inject("ddlIngestFailOnceBeforeCheckpointUpdated", func() {
+		if imported {
+			failpoint.Return(errors.New("failpoint: ddlIngestFailOnceBeforeCheckpointUpdated"))
 		}
-	}()
+	})
 	if bc.checkpointMgr != nil {
 		return bc.checkpointMgr.AdvanceWatermark(imported)
 	}

@@ -1648,6 +1648,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		}
+		// WHERE CONDITION
+		if len(info.IndexInfo.ConditionExprString) > 0 {
+			addSQL.WriteString(" WHERE ")
+			addSQL.WriteString(info.IndexInfo.ConditionExprString)
+		}
 		// USING BTREE/HASH/RTREE
 		indexTypeStr := info.IndexInfo.Tp.String()
 		if len(indexTypeStr) > 0 {
@@ -2095,33 +2100,35 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	deletedTableCount := 0
 
 	// First, delete all tables
-	for dbID, tableIDsSet := range deletedTablesMap {
+	for upstreamDBID, tableIDsSet := range deletedTablesMap {
 		if len(tableIDsSet) > 0 {
 			// handle table deletions
-			for tableID := range tableIDsSet {
-				var dbName, tableName string
-				if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
-					dbName = dbReplace.Name
-					if tableReplace, ok := dbReplace.TableMap[tableID]; ok {
-						tableName = tableReplace.Name
-					}
+			for upstreamTableID := range tableIDsSet {
+				dbReplace, ok := schemasReplace.DbReplaceMap[upstreamDBID]
+				if !ok {
+					return errors.Errorf("the database(upstream ID: %d) of deleted table has no record in replace map", upstreamDBID)
 				}
+				tableReplace, ok := dbReplace.TableMap[upstreamTableID]
+				if !ok {
+					return errors.Errorf("the deleted table(upstream ID: %d) has no record in replace map", upstreamTableID)
+				}
+
 				args := &model.RefreshMetaArgs{
-					SchemaID:      dbID,
-					TableID:       tableID,
-					InvolvedDB:    dbName,
-					InvolvedTable: tableName,
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
 				}
 
 				log.Info("refreshing deleted table meta",
-					zap.Int64("schemaID", dbID),
-					zap.String("dbName", dbName),
-					zap.Any("tableID", tableID),
-					zap.String("tableName", tableName))
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.String("dbName", dbReplace.Name),
+					zap.Any("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name))
 				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
 					return errors.Annotatef(err,
 						"failed to refresh meta for deleted table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
-						dbID, tableID, dbName, tableName)
+						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
 				}
 				deletedTableCount++
 			}
@@ -2129,25 +2136,25 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	}
 
 	// Then, delete databases if needed
-	for dbID := range deletedTablesMap {
+	for upstreamDBID := range deletedTablesMap {
 		// Get database name for logging
-		var dbName string
-		if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
-			dbName = dbReplace.Name
+		dbReplace, ok := schemasReplace.DbReplaceMap[upstreamDBID]
+		if !ok {
+			return errors.Errorf("the deleted database(upstream ID: %d) has no record in replace map", upstreamDBID)
 		}
 		args := &model.RefreshMetaArgs{
-			SchemaID:      dbID,
+			SchemaID:      dbReplace.DbID,
 			TableID:       0, // 0 for database-only refresh
-			InvolvedDB:    dbName,
+			InvolvedDB:    dbReplace.Name,
 			InvolvedTable: model.InvolvingAll,
 		}
 
 		log.Info("refreshing potential deleted database meta",
-			zap.Int64("schemaID", dbID),
-			zap.String("dbName", dbName))
+			zap.Int64("schemaID", dbReplace.DbID),
+			zap.String("dbName", dbReplace.Name))
 		if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
 			return errors.Annotatef(err, "failed to refresh meta for deleted database with schemaID=%d, dbName=%s",
-				dbID, dbName)
+				dbReplace.DbID, dbReplace.Name)
 		}
 	}
 
@@ -2158,13 +2165,13 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	regularCount := 0
 
 	// First, handle database-only operations
-	for _, dbReplace := range schemasReplace.DbReplaceMap {
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
 
 		// Skip if we already processed this database in delete section
-		if _, alreadyProcessed := deletedTablesMap[dbReplace.DbID]; alreadyProcessed {
+		if _, alreadyProcessed := deletedTablesMap[upstreamDBID]; alreadyProcessed {
 			continue
 		}
 
@@ -2184,20 +2191,20 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	}
 
 	// Then, handle table operations
-	for _, dbReplace := range schemasReplace.DbReplaceMap {
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
 
 		if len(dbReplace.TableMap) > 0 {
-			for _, tableReplace := range dbReplace.TableMap {
+			for upstreamTableID, tableReplace := range dbReplace.TableMap {
 				if tableReplace.FilteredOut {
 					continue
 				}
 
 				// skip if this table is in the deleted list
-				if tableIDsSet, dbExists := deletedTablesMap[dbReplace.DbID]; dbExists {
-					if _, isDeleted := tableIDsSet[tableReplace.TableID]; isDeleted {
+				if tableIDsSet, dbExists := deletedTablesMap[upstreamDBID]; dbExists {
+					if _, isDeleted := tableIDsSet[upstreamTableID]; isDeleted {
 						continue
 					}
 				}

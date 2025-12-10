@@ -14,47 +14,46 @@
 
 package metering
 
-import "sync/atomic"
+import (
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
+)
 
 // Recorder is used to record metering data.
 type Recorder struct {
-	taskID      int64
-	keyspace    string
-	taskType    string
-	getRequests atomic.Uint64
-	putRequests atomic.Uint64
-	readBytes   atomic.Uint64
-	writeBytes  atomic.Uint64
+	taskID         int64
+	keyspace       string
+	taskType       string
+	objStoreAccess recording.AccessStats
+	clusterTraffic recording.Traffic
 }
 
-// IncGetRequest records the get request count.
-func (r *Recorder) IncGetRequest(v uint64) {
-	r.getRequests.Add(v)
+// MergeObjStoreAccess merges the object store requests from another Requests.
+func (r *Recorder) MergeObjStoreAccess(other *recording.AccessStats) {
+	r.objStoreAccess.Merge(other)
 }
 
-// IncPutRequest records the put request count.
-func (r *Recorder) IncPutRequest(v uint64) {
-	r.putRequests.Add(v)
+// IncClusterReadBytes records the read data bytes from cluster.
+func (r *Recorder) IncClusterReadBytes(n uint64) {
+	r.clusterTraffic.Read.Add(n)
 }
 
-// IncReadBytes records the read data bytes.
-func (r *Recorder) IncReadBytes(v uint64) {
-	r.readBytes.Add(v)
-}
-
-// IncWriteBytes records the write data bytes.
-func (r *Recorder) IncWriteBytes(v uint64) {
-	r.writeBytes.Add(v)
+// IncClusterWriteBytes records the write data bytes to cluster.
+func (r *Recorder) IncClusterWriteBytes(n uint64) {
+	r.clusterTraffic.Write.Add(n)
 }
 
 func (r *Recorder) currData() *Data {
 	return &Data{
-		taskID:      r.taskID,
-		keyspace:    r.keyspace,
-		taskType:    r.taskType,
-		getRequests: r.getRequests.Load(),
-		putRequests: r.putRequests.Load(),
-		readBytes:   r.readBytes.Load(),
-		writeBytes:  r.writeBytes.Load(),
+		taskID:   r.taskID,
+		keyspace: r.keyspace,
+		taskType: r.taskType,
+		dataValues: dataValues{
+			getRequests:        r.objStoreAccess.Requests.Get.Load(),
+			putRequests:        r.objStoreAccess.Requests.Put.Load(),
+			objStoreReadBytes:  r.objStoreAccess.Traffic.Read.Load(),
+			objStoreWriteBytes: r.objStoreAccess.Traffic.Write.Load(),
+			clusterReadBytes:   r.clusterTraffic.Read.Load(),
+			clusterWriteBytes:  r.clusterTraffic.Write.Load(),
+		},
 	}
 }

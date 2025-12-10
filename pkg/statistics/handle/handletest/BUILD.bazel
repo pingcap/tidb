@@ -8,11 +8,12 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 35,
+    shard_count = 38,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/domain",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx/variable",

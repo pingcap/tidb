@@ -1,16 +1,11 @@
 drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
 create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
-create table t2(a int, b int, c int, d int, primary key(a, b) CLUSTERED, index i(c));
+create table t2(a varchar(32), b int, c int, d int, e int, primary key(a, b) CLUSTERED, index i(c), unique index u(e)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 create table t3 (
     id int primary key,
     a int,
     b int,
     index a(a)
-)
-PARTITION BY RANGE (id) (
-    PARTITION p0 VALUES LESS THAN (1000),
-    PARTITION p1 VALUES LESS THAN (2000),
-    PARTITION p2 VALUES LESS THAN MAXVALUE
 );
 create table t4(id int primary key, a int, b int, index a(a));
 alter table t4 cache;
@@ -76,13 +71,44 @@ insert into t6 values (511, 10), (412, 20), (313, 30), (214, 40), (115, 50);
 explain select /*+ index_lookup_pushdown(t6, primary) */ * from t6;
 select /*+ index_lookup_pushdown(t6, primary) */ * from t6;
 
-# Test index lookup push down restrictions
-## Common handle not supported
+## test for common handle
+insert into t2 values
+    ('a', 1, 9010, 100, 90),
+    ('A', 2, 8020, 200, 80),
+    ('a', 3, 7030, 300, 70),
+    ('b', 1, 6040, 400, 60),
+    ('B', 2, 5050, 500, 50),
+    ('b', 3, 4060, 600, 40),
+    ('c', 1, 3070, 700, 30),
+    ('C', 2, 2080, 800, 20),
+    ('c', 3, 1090, 900, 10);
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+explain select /*+ index_lookup_pushdown(t2, u) */ * from t2;
+select /*+ index_lookup_pushdown(t2, u) */ * from t2;
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
+
+## test common handle with primary key prefix column
+create table t22(a varchar(32), b int, c int, d int, e int, primary key(a(2), b) CLUSTERED, index i(c)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert into t22 values
+    ('abc', 1, 9010, 100, 90),
+    ('Abc', 2, 8020, 200, 80),
+    ('abc', 3, 7030, 300, 70),
+    ('bcd', 1, 6040, 400, 60),
+    ('Bcd', 2, 5050, 500, 50),
+    ('bcd', 3, 4060, 600, 40),
+    ('cde', 1, 3070, 700, 30),
+    ('Cde', 2, 2080, 800, 20),
+    ('cde', 3, 1090, 900, 10);
+explain select /*+ index_lookup_pushdown(t22, i) */ * from t22 where c > 2000 limit 5;
+select /*+ index_lookup_pushdown(t22, i) */ * from t22 where c > 2000 limit 5;
+
+# Test index lookup push down restrictions
 ## Keep order not supported
 explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > 'a' order by a asc;
-## partition table not supported
-explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 where id < 100 and a = 1;
 ## cached table not supported
 explain select /*+ index_lookup_pushdown(t4, a) */ * from t4 where a < 100;
 ## temporary tables are not supported
@@ -133,4 +159,12 @@ delete from mysql.tidb where VARIABLE_NAME='tikv_gc_safe_point' and COMMENT='moc
 create table t7 (j json, index idx((cast(j->'$.path' as signed array))));
 explain select /*+ index_lookup_pushdown(t7, idx) */ * from t7 where (1 member of (j->'$.path'));
 
+--disable_warnings
+
+## issue #64519, the index_lookup_pushdown hint should not affect other hints in a same index.
+set @@tidb_replica_read='learner';
+insert into t3 values(1, 2, 3);
+--enable_warnings
+explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
+select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
 --disable_warnings

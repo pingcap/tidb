@@ -2706,6 +2706,7 @@ func writeOneKV(
 		if err != nil {
 			return kvBytes, errors.Trace(err)
 		}
+		// TODO this size doesn't consider keyspace prefix.
 		kvBytes += int64(len(key) + len(idxVal))
 		failpoint.Inject("mockLocalWriterError", func() {
 			failpoint.Return(0, errors.New("mock engine error"))
@@ -2937,10 +2938,8 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 
 // TaskKeyBuilder is used to build task key for the backfill job.
 type TaskKeyBuilder struct {
-	keyspace       string
 	multiSchemaSeq int32
 	mergeTempIdx   bool
-	jobID          int64
 }
 
 // NewTaskKeyBuilder creates a new TaskKeyBuilder.
@@ -3375,6 +3374,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	// REORGANIZE PARTITION - (re)create indexes on partitions to be added (3)
 	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions (4)
 	// (i.e. pi.Definitions - pi.DroppingDefinitions)
+	// MODIFY COLUMN - no change in partitions, just use pi.Definitions (5)
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
 		// case 1, 3 or 4
 		if len(pi.AddingDefinitions) == 0 {
@@ -3415,6 +3415,9 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
 			}
 		}
+	} else if len(pi.DroppingDefinitions) == 0 {
+		// case 5
+		pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
 	} else {
 		// case 2
 		pid, err = findNextPartitionID(currPhysicalTableID, pi.DroppingDefinitions)

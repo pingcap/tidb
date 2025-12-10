@@ -117,24 +117,44 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 		}
 	}
 
+	rowLen := len(en.Columns)
+	if cap(en.rowCache) < rowLen || cap(en.hasValueCache) < rowLen {
+		en.rowCache = make([]types.Datum, rowLen)
+		en.hasValueCache = make([]bool, rowLen)
+	} else {
+		en.rowCache = en.rowCache[:0]
+		en.hasValueCache = en.hasValueCache[:0]
+		for range rowLen {
+			en.rowCache = append(en.rowCache, types.Datum{})
+			en.hasValueCache = append(en.hasValueCache, false)
+		}
+	}
+	hasValue := en.hasValueCache
+	for i := range en.insertColumns {
+		offset := en.insertColumns[i].Offset
+		hasValue[offset] = true
+	}
+
 	for i := range en.fieldMappings {
+		col := en.fieldMappings[i].Column
 		if i >= len(parserData) {
-			if en.fieldMappings[i].Column == nil {
+			if col == nil {
 				setVar(en.fieldMappings[i].UserVar.Name, nil)
 				continue
 			}
 
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(en.fieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(en.fieldMappings[i].Column.GetFlag()) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(en.fieldMappings[i].Column.GetType())))
+			if types.IsTypeTime(col.GetType()) && mysql.HasNotNullFlag(col.GetFlag()) {
+				row = append(row, types.NewTimeDatum(types.CurrentTime(col.GetType())))
 				continue
 			}
 
 			row = append(row, types.NewDatum(nil))
+			hasValue[col.Offset] = false
 			continue
 		}
 
-		if en.fieldMappings[i].Column == nil {
+		if col == nil {
 			setVar(en.fieldMappings[i].UserVar.Name, &parserData[i])
 			continue
 		}
@@ -151,7 +171,7 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	}
 
 	// a new row buffer will be allocated in getRow
-	newRow, err := en.getRow(row, rowID)
+	newRow, err := en.getRow(row, hasValue, rowID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,21 +183,8 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
 // copied from InsertValues
-func (en *TableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
-	rowLen := len(en.Columns)
-	if cap(en.rowCache) < rowLen || cap(en.hasValueCache) < rowLen {
-		en.rowCache = make([]types.Datum, rowLen)
-		en.hasValueCache = make([]bool, rowLen)
-	} else {
-		en.rowCache = en.rowCache[:0]
-		en.hasValueCache = en.hasValueCache[:0]
-		for range rowLen {
-			en.rowCache = append(en.rowCache, types.Datum{})
-			en.hasValueCache = append(en.hasValueCache, false)
-		}
-	}
+func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
 	row := en.rowCache
-	hasValue := en.hasValueCache
 	for i := range en.insertColumns {
 		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
@@ -186,7 +193,6 @@ func (en *TableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 
 		offset := en.insertColumns[i].Offset
 		row[offset] = casted
-		hasValue[offset] = true
 	}
 
 	return en.fillRow(row, hasValue, rowID)

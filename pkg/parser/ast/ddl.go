@@ -2617,6 +2617,13 @@ const (
 	TableOptionTTLJobInterval
 	TableOptionEngineAttribute
 	TableOptionSecondaryEngineAttribute
+	TableOptionAutoextendSize
+	TableOptionPageChecksum
+	TableOptionPageCompressed
+	TableOptionPageCompressionLevel
+	TableOptionTransactional
+	TableOptionIetfQuotes
+	TableOptionSequence
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2978,6 +2985,42 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
+	case TableOptionAutoextendSize:
+		ctx.WriteKeyWord("AUTOEXTEND_SIZE ")
+		ctx.WritePlain("= ")
+		ctx.WritePlain(n.StrValue) // e.g. '4M'
+
+	// MariaDB specific options
+	case TableOptionPageChecksum:
+		ctx.WriteKeyWord("PAGE_CHECKSUM ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionPageCompressed:
+		ctx.WriteKeyWord("PAGE_COMPRESSED ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionPageCompressionLevel:
+		ctx.WriteKeyWord("PAGE_COMPRESSION_LEVEL ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionTransactional:
+		ctx.WriteKeyWord("TRANSACTIONAL ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionIetfQuotes:
+		ctx.WriteKeyWord("IETF_QUOTES ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%s", n.StrValue)
+		return nil
+	case TableOptionSequence:
+		ctx.WriteKeyWord("SEQUENCE ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}

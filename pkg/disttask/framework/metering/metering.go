@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/metering_sdk/common"
 	mconfig "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/metering_sdk/storage"
@@ -40,7 +41,13 @@ const (
 	category     = "dxf"
 )
 
-var meteringInstance atomic.Pointer[Meter]
+var (
+	// FlushInterval is the interval to flush metering data.
+	// exported for testing.
+	FlushInterval = time.Minute
+
+	meteringInstance atomic.Pointer[Meter]
+)
 
 // RegisterRecorder returns the Recorder for the given task.
 func RegisterRecorder(task *proto.TaskBase) *Recorder {
@@ -63,6 +70,17 @@ func UnregisterRecorder(taskID int64) {
 		return
 	}
 	meter.unregisterRecorder(taskID)
+}
+
+// WriteMeterData writes the metering data.
+// ts+category+uuid uniquely identifies a metering data file, the SDK also use the
+// shared-pool-id in the file name, but for each meter writer, it's the same.
+func WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
+	meter := meteringInstance.Load()
+	if kerneltype.IsClassic() || meter == nil {
+		return nil
+	}
+	return meter.WriteMeterData(ctx, ts, uuid, items)
 }
 
 // SetMetering sets the metering instance for dxf.
@@ -99,7 +117,13 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create storage provider")
 	}
-	meteringConfig := mconfig.DefaultConfig().WithLogger(logger)
+	// if there are network issues, we might successfully write the metering data,
+	// but the writer still returns error, we will retry write with the same TS
+	// in this case, which means the metering data file will have the same name,
+	// we set WithOverwriteExisting to true to avoid the retry write report error
+	// in this case.
+	// IgnoreExisting wound be more appropriate, but the SDK doesn't provide it.
+	meteringConfig := mconfig.DefaultConfig().WithLogger(logger).WithOverwriteExisting(true)
 	writer := meteringwriter.NewMeteringWriterFromConfig(provider, meteringConfig, cfg)
 	return newMeterWithWriter(logger, writer), nil
 }
@@ -160,7 +184,8 @@ func (m *Meter) cleanupUnregisteredRecorders() []*Recorder {
 			// some non-flushed data even the recorder is unregistered, so we check
 			// current data too.
 			if fd.equals(r.currData()) {
-				delete(m.recorders, r.taskID)
+				delete(m.recorders, taskID)
+				delete(m.lastFlushedData, taskID)
 				removed = append(removed, r.Recorder)
 			}
 		}
@@ -173,8 +198,10 @@ func (m *Meter) onSuccessFlush(flushedData map[int64]*Data) {
 	m.lastFlushedData = flushedData
 	removedRecorders := m.cleanupUnregisteredRecorders()
 	for _, r := range removedRecorders {
+		data := r.currData()
+		failpoint.InjectCall("meteringFinalFlush", data)
 		m.logger.Info("recorder unregistered and finished final flush",
-			zap.Stringer("accumulatedData", r.currData()))
+			zap.Stringer("accumulatedData", data))
 	}
 }
 
@@ -206,13 +233,13 @@ func (m *Meter) calculateDataItems(currData map[int64]*Data) []map[string]any {
 func (m *Meter) StartFlushLoop(ctx context.Context) {
 	// Control the writing timestamp accurately enough so that the previous round won't be overwritten by the next round.
 	curTime := time.Now()
-	nextTime := curTime.Truncate(time.Minute).Add(time.Minute)
+	nextTime := curTime.Truncate(FlushInterval).Add(FlushInterval)
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
 		case <-time.After(nextTime.Sub(curTime)):
 			m.flush(ctx, nextTime.Unix())
-			nextTime = nextTime.Add(time.Minute)
+			nextTime = nextTime.Add(FlushInterval)
 			curTime = time.Now()
 		}
 	}
@@ -228,28 +255,32 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 	startTime := time.Now()
 	currData := m.scrapeCurrData()
 	items := m.calculateDataItems(currData)
+	logger := m.logger.With(zap.Int64("timestamp", ts))
 	if len(items) == 0 {
-		m.logger.Info("no metering data to flush", zap.Duration("duration", time.Since(startTime)))
+		logger.Info("no metering data to flush", zap.Int("recorder-count", len(currData)),
+			zap.Duration("duration", time.Since(startTime)))
 		m.onSuccessFlush(currData)
 		return
 	}
 
-	if err := m.writeMeterData(ctx, ts, items); err != nil {
-		m.logger.Warn("failed to write metering data",
-			zap.Error(err),
+	// each metering background loop sends data with the same uuid.
+	if err := m.WriteMeterData(ctx, ts, m.uuid, items); err != nil {
+		logger.Warn("failed to write metering data", zap.Error(err),
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
 	} else {
-		m.logger.Info("succeed to write metering data",
+		logger.Info("succeed to write metering data",
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
 		m.onSuccessFlush(currData)
 	}
 }
 
-func (m *Meter) writeMeterData(ctx context.Context, ts int64, items []map[string]any) error {
+// WriteMeterData writes the metering data.
+func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
+	failpoint.InjectCall("forceTSAtMinuteBoundary", &ts)
 	meteringData := &common.MeteringData{
-		SelfID:    m.uuid,
+		SelfID:    uuid,
 		Timestamp: ts,
 		Category:  category,
 		Data:      items,

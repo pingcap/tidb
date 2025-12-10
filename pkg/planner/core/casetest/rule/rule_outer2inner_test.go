@@ -109,7 +109,7 @@ where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
 		`└─HashJoin root  CARTESIAN inner join`,
 		`  ├─TableDual(Build) root  rows:1`,
 		`  └─HashAgg(Probe) root  group by:Column#11, Column#12, funcs:firstrow(1)->Column#18`,
-		`    └─Selection root  eq("1", Column#11), eq(1, Column#12)`,
+		`    └─Selection root  eq(Column#11, "1"), eq(Column#12, 1)`,
 		`      └─Window root  row_number()->Column#12 over(rows between current row and current row)`,
 		`        └─Apply root  CARTESIAN left outer join, left side:TableReader`,
 		`          ├─TableReader(Build) root  data:TableFullScan`,

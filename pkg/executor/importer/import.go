@@ -73,6 +73,7 @@ import (
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -173,6 +174,8 @@ var (
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
 		threadOption:          {},
+		checksumTableOption:   {},
+		recordErrorsOption:    {},
 	}
 
 	disallowedOptionsForSEM = map[string]struct{}{
@@ -368,7 +371,7 @@ type LoadDataController struct {
 	// as IMPORT INTO have 2 place to state columns, in column-vars and in set clause,
 	// so it's computed from both clauses:
 	//  - append columns from column-vars to InsertColumns
-	//  - append columns from left hand fo set clause to InsertColumns
+	//  - append columns from left hand of set clause to InsertColumns
 	// it's similar to InsertValues.InsertColumns.
 	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
@@ -379,8 +382,8 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
-	// GlobalSortStore is used to store sorted data when using global sort.
-	GlobalSortStore storage.ExternalStorage
+	// globalSortStore is used to store sorted data when using global sort.
+	globalSortStore storage.ExternalStorage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
 }
@@ -1168,7 +1171,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 		if err3 != nil {
 			return err3
 		}
-		e.GlobalSortStore = store
+		e.globalSortStore = store
 	}
 	return nil
 }
@@ -1178,8 +1181,8 @@ func (e *LoadDataController) Close() {
 	if e.dataStore != nil {
 		e.dataStore.Close()
 	}
-	if e.GlobalSortStore != nil {
-		e.GlobalSortStore.Close()
+	if e.globalSortStore != nil {
+		e.globalSortStore.Close()
 	}
 }
 
@@ -1682,7 +1685,7 @@ func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.ThreadCnt,
+		WorkerConcurrency:      *atomic.NewInt32(int32(e.ThreadCnt)),
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),

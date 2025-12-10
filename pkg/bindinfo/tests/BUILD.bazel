@@ -11,7 +11,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//pkg/bindinfo",
         "//pkg/domain",

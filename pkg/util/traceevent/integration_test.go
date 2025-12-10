@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/trace"
 )
 
 func drainEvents(eventCh <-chan []traceevent.Event) {
@@ -66,6 +67,11 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	defer func() {
 		_, _ = traceevent.SetMode(prevMode)
 	}()
+
+	// Enable all categories for this test
+	prevCategories := traceevent.GetEnabledCategories()
+	traceevent.SetCategories(traceevent.AllCategories)
+	defer traceevent.SetCategories(prevCategories)
 
 	recorder := traceevent.NewRingBufferSink(100)
 	prevSink := traceevent.CurrentSink()
@@ -151,6 +157,53 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	require.True(t, foundPrevTraceID, "Should find prev_trace_id field in stmt.start events")
 }
 
+func TestTraceControlIntegration(t *testing.T) {
+	// Test that the extractor still propagates enabled categories even without a Trace sink.
+	// First, enable TiKVRequest category (since defaultEnabledCategories is now 0)
+	prevCategories := tracing.GetEnabledCategories()
+	tracing.Enable(tracing.TiKVRequest)
+	defer tracing.SetCategories(prevCategories)
+
+	ctx := context.Background()
+	flags := trace.GetTraceControlFlags(ctx)
+	require.True(t, flags.Has(trace.FlagTiKVCategoryRequest))
+	require.False(t, flags.Has(trace.FlagTiKVCategoryWriteDetails))
+	require.False(t, flags.Has(trace.FlagTiKVCategoryReadDetails))
+	require.False(t, trace.ImmediateLoggingEnabled(ctx))
+
+	// Test that we can set a custom extractor
+	type testKey struct{}
+	trace.SetTraceControlExtractor(func(ctx context.Context) trace.TraceControlFlags {
+		if val, ok := ctx.Value(testKey{}).(trace.TraceControlFlags); ok {
+			return val
+		}
+		return 0
+	})
+	defer func() {
+		// Restore the original extractor
+		traceevent.RegisterWithClientGo()
+	}()
+
+	// Without the key, should return 0
+	require.Equal(t, trace.TraceControlFlags(0), trace.GetTraceControlFlags(ctx))
+	require.False(t, trace.ImmediateLoggingEnabled(ctx))
+
+	// With immediate log flag set
+	ctxWithImmediate := context.WithValue(ctx, testKey{}, trace.FlagImmediateLog)
+	require.True(t, trace.ImmediateLoggingEnabled(ctxWithImmediate))
+	flags = trace.GetTraceControlFlags(ctxWithImmediate)
+	require.True(t, flags.Has(trace.FlagImmediateLog))
+
+	// With multiple flags set
+	ctxWithMultiple := context.WithValue(ctx, testKey{},
+		trace.FlagImmediateLog|trace.FlagTiKVCategoryRequest|trace.FlagTiKVCategoryWriteDetails)
+	flags = trace.GetTraceControlFlags(ctxWithMultiple)
+	require.True(t, flags.Has(trace.FlagImmediateLog))
+	require.True(t, flags.Has(trace.FlagTiKVCategoryRequest))
+	require.True(t, flags.Has(trace.FlagTiKVCategoryWriteDetails))
+	require.False(t, flags.Has(trace.FlagTiKVCategoryReadDetails))
+}
+
 func TestFlightRecorder(t *testing.T) {
 	eventCh := make(chan []tracing.Event, 1024)
 	store := testkit.CreateMockStore(t)
@@ -172,9 +225,8 @@ func TestFlightRecorder(t *testing.T) {
 		for _, sql := range []string{"select * from t", "select * from t where b = 5"} {
 			tk.MustQueryWithContext(ctx, sql).Check(testkit.Rows())
 			sink.DiscardOrFlush(ctx)
-			require.Len(t, eventCh, 1)
-			event := <-eventCh
-			require.NotEmpty(t, event)
+			require.GreaterOrEqual(t, len(eventCh), 1)
+			drainEvents(eventCh)
 		}
 		flightRecorder.Close()
 	}

@@ -656,10 +656,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
-		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
-			maxExecutionTime = 0
-		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
 
@@ -1381,6 +1377,7 @@ func (a *ExecStmt) logAudit() {
 			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
 			}
+			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, a.retryCount > 0 || sessVars.RetryInfo.Retrying)
 			if intest.InTest && (cmdBin == mysql.ComStmtPrepare ||
 				cmdBin == mysql.ComStmtExecute || cmdBin == mysql.ComStmtClose) {
 				intest.Assert(ctx.Value(plugin.PrepareStmtIDCtxKey) != nil, "prepare statement id should not be nil")

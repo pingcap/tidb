@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -376,7 +375,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		p.summary.Bytes += int64(kvMeta.TotalKVSize)
-		if kvGroup == dataKVGroup {
+		if kvGroup == external.DataKVGroup {
 			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
 		}
 		dataFiles := kvMeta.GetDataFiles()
@@ -415,7 +414,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		failpoint.Return([]planner.PipelineSpec{
 			&WriteIngestSpec{
 				WriteIngestStepMeta: &WriteIngestStepMeta{
-					KVGroup: dataKVGroup,
+					KVGroup: external.DataKVGroup,
 				},
 			},
 			&WriteIngestSpec{
@@ -434,7 +433,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		p.summary.Bytes += int64(kvMeta.TotalKVSize)
-		if kvGroup == dataKVGroup {
+		if kvGroup == external.DataKVGroup {
 			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
 		}
 		specsForOneSubtask, err3 := splitForOneSubtask(ctx, store, kvGroup, kvMeta, ver.Ver)
@@ -479,9 +478,13 @@ func splitForOneSubtask(
 			endKey = tidbkv.Key(endKeyOfGroup).Clone()
 		}
 		logutil.Logger(ctx).Info("kv range as subtask",
+			zap.String("kvGroup", kvGroup),
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)),
-			zap.Int("dataFiles", len(dataFiles)))
+			zap.Int("dataFiles", len(dataFiles)),
+			zap.Int("rangeJobKeys", len(interiorRangeJobKeys)),
+			zap.Int("regionSplitKeys", len(interiorRegionSplitKeys)),
+		)
 		if startKey.Cmp(endKey) >= 0 {
 			return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
@@ -545,9 +548,9 @@ func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, st
 		}
 	}
 	res := make(map[string]*external.SortedKVMeta, 1+len(indexKVMetas))
-	res[dataKVGroup] = dataKVMeta
+	res[external.DataKVGroup] = dataKVMeta
 	for indexID, item := range indexKVMetas {
-		res[strconv.Itoa(int(indexID))] = item
+		res[external.IndexID2KVGroup(indexID)] = item
 	}
 	return res, nil
 }
@@ -609,8 +612,9 @@ func getRangeSplitter(
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to get region split size and keys", zap.Error(err))
 	}
-	regionSplitSize = max(regionSplitSize, int64(config.SplitRegionSize))
-	regionSplitKeys = max(regionSplitKeys, int64(config.SplitRegionKeys))
+	defRegionSplitSize, defRegionSplitKeys := handle.GetDefaultRegionSplitConfig()
+	regionSplitSize = max(regionSplitSize, defRegionSplitSize)
+	regionSplitKeys = max(regionSplitKeys, defRegionSplitKeys)
 	nodeRc := handle.GetNodeResource()
 	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
 	logutil.Logger(ctx).Info("split kv range with split size and keys",

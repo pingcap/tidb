@@ -487,10 +487,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
+	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
 	p := newBatchPointGetPlan(
 		ctx,
 		in,
@@ -557,10 +554,6 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	if schema == nil {
 		return nil
 	}
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
 
 	pairs := make([]nameValuePair, 0, 4)
 	pairs, isTableDual := getNameValuePairs(ctx.GetExprCtx(), tbl, tblAlias, pairs, selStmt.Where)
@@ -569,6 +562,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	}
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
+	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 &&
 		indexIsAvailableByHints(
 			ctx.GetSessionVars().CurrentDB,
@@ -579,7 +573,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 			tblName.IndexHints,
 		) {
 		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
@@ -608,10 +602,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 	var err error
 
 	tbl := tblName.TableInfo
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
+	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(
@@ -645,7 +636,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 					continue
 				}
 			}
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
@@ -1349,7 +1340,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if err != nil {
 		return nil
 	}
-	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo)
+	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo, 0)
 	if err != nil {
 		return nil
 	}
