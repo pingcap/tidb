@@ -775,12 +775,11 @@ func rollbackModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64
 	}
 	dbInfo.ReadOnly = !args.ReadOnly
 	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.State = model.JobStateRollbackDone
+	job.State = model.JobStateRollingback
 	return ver, nil
 }
