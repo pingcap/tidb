@@ -1165,7 +1165,6 @@ const (
 	// Reserved for future use.
 	ErrEngineAttributeInvalidFormat             = 8270
 	ErrStorageClassInvalidSpec                  = 8271
-	ErrSetSoftDeleteOptionForNonSoftDeleteTable = 8274
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

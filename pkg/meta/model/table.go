@@ -102,6 +102,14 @@ var ExtraOriginTSName = ast.NewCIStr("_tidb_origin_ts")
 // ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
 var ExtraSoftDeleteTimeName = ast.NewCIStr("_tidb_softdelete_time")
 
+func IsInternalColumn(x ast.CIStr) bool {
+	switch x.L {
+	case ExtraOriginTSName.L, ExtraSoftDeleteTimeName.L, ExtraHandleName.L:
+		return true
+	}
+	return false
+}
+
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,
 // so a distance column will be added to table_scan. this field is used in the action.
@@ -1456,12 +1464,22 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 
 // SoftdeleteInfo records the Softdelete config.
 type SoftdeleteInfo struct {
-	// Enable controls whether soft delete is active
-	Enable bool `json:"enable"`
 	// Retention specifies how long soft-deleted data is kept.
-	Retention   string `json:"retention,omitempty"`
-	JobEnable   bool   `json:"job_enable,omitempty"`
-	JobInterval string `json:"job_interval,omitempty"`
+	Retention     string           `json:"retention,omitempty"`
+	RetentionUnit ast.TimeUnitType `json:"retention_unit,omitempty"`
+	JobEnable     bool             `json:"job_enable,omitempty"`
+	JobInterval   string           `json:"job_interval,omitempty"`
+}
+
+// SoftdeleteInfoArg is not part of meta info.
+// It is used by all DDL parts to generate info from table/db options.
+type SoftDeleteInfoArg struct {
+	SoftdeleteInfo
+	Enable       bool `json:"enable,omitempty"`
+	HasEnable    bool `json:"has_enable,omitempty"`
+	HasJobEnable bool `json:"has_job_enable,omitempty"`
+	// Handled means if any softdelete arg present
+	Handled bool `json:"handled,omitempty"`
 }
 
 // Clone clones SoftdeleteInfo
@@ -1476,10 +1494,15 @@ func (s *SoftdeleteInfo) Clone() *SoftdeleteInfo {
 // GetRetention parses the retention duration and returns it
 // If retention is empty, returns DefaultSoftDeleteRetention for compatibility
 func (s *SoftdeleteInfo) GetRetention() (time.Duration, error) {
-	if len(s.Retention) == 0 {
-		return duration.ParseDuration(DefaultSoftDeleteRetention)
+	d, err := s.RetentionUnit.Duration()
+	if err != nil {
+		return 0, err
 	}
-	return duration.ParseDuration(s.Retention)
+	n, err := strconv.Atoi(s.Retention)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(n) * d, nil
 }
 
 // GetJobInterval parses the job interval and returns it

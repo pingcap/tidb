@@ -17,8 +17,34 @@ package ddl
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
+
+func onModifySchemaSoftDeleteAndActiveActive(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetModifySchemaSoftDeleteAndActiveActiveArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo.SoftdeleteInfo = args.SoftDelete
+	dbInfo.IsActiveActive = args.ActiveActive
+
+	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	return ver, nil
+}
 
 // onSoftDeleteInfoChange handles changes to soft delete configuration
 func onSoftDeleteInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
@@ -28,16 +54,14 @@ func onSoftDeleteInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err 
 		return ver, errors.Trace(err)
 	}
 
-	softDeleteInfo := &args.SoftdeleteInfo
-
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	// If disabling soft-delete, just update config and return (no need to delete column)
-	if !softDeleteInfo.Enable {
-		tblInfo.SoftdeleteInfo = softDeleteInfo
+	if args.SoftDelete == nil {
+		tblInfo.SoftdeleteInfo = args.SoftDelete
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -95,7 +119,7 @@ func onSoftDeleteInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err 
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		columnInfo.State = model.StatePublic
-		tblInfo.SoftdeleteInfo = softDeleteInfo
+		tblInfo.SoftdeleteInfo = args.SoftDelete
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -104,7 +128,7 @@ func onSoftDeleteInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err 
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		return ver, nil
 	case model.StatePublic:
-		tblInfo.SoftdeleteInfo = softDeleteInfo
+		tblInfo.SoftdeleteInfo = args.SoftDelete
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -116,71 +140,71 @@ func onSoftDeleteInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err 
 	}
 }
 
-// getDefaultSoftDeleteInfo returns a default SoftdeleteInfo structure.
-// Inherits from DBInfo where fields are set (non-empty), uses system defaults otherwise.
-func getDefaultSoftDeleteInfo(dbInfo *model.DBInfo) *model.SoftdeleteInfo {
-	info := &model.SoftdeleteInfo{
-		Enable:      false,
-		Retention:   model.DefaultSoftDeleteRetention,
-		JobEnable:   true,
-		JobInterval: model.DefaultSoftDeleteJobInterval,
+func getSoftDeleteAndActiveActive(oldInfo *model.SoftdeleteInfo, newInfo *model.SoftDeleteInfoArg, oldActiveActive bool, isActiveActive *bool) (*model.SoftdeleteInfo, bool, error) {
+	newActiveActive := oldActiveActive
+	if isActiveActive != nil {
+		newActiveActive = *isActiveActive
 	}
 
-	if dbInfo == nil {
-		return info
+	if newInfo == nil || !newInfo.Handled {
+		newSoft := oldInfo
+		if newSoft != nil {
+			newSoft = newSoft.Clone()
+		}
+		if newActiveActive && newSoft == nil {
+			return nil, false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ActiveActive enabled but SoftDelete disabled")
+		}
+		return newSoft, newActiveActive, nil
 	}
 
-	// Inherit from database if set
-	if dbInfo.SoftDeleteEnable != "" {
-		info.Enable = (dbInfo.SoftDeleteEnable == "ON")
-	}
-	if dbInfo.SoftDeleteRetention != "" {
-		info.Retention = dbInfo.SoftDeleteRetention
-	}
-	if dbInfo.SoftDeleteJobEnable != "" {
-		info.JobEnable = (dbInfo.SoftDeleteJobEnable == "ON")
-	}
-	if dbInfo.SoftDeleteJobInterval != "" {
-		info.JobInterval = dbInfo.SoftDeleteJobInterval
+	if newInfo.HasEnable && !newInfo.Enable {
+		if newInfo.Retention != "" || newInfo.RetentionUnit != ast.TimeUnitInvalid || newInfo.JobInterval != "" || newInfo.HasJobEnable {
+			return nil, false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("having SOFTDELETE options but SOFTDELETE = 'OFF'")
+		}
+		if newActiveActive {
+			return nil, false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ACTIVE_ACTIVE = 'ON' but SOFTDELETE = 'OFF'")
+		}
+		return nil, newActiveActive, nil
 	}
 
-	return info
+	if oldInfo == nil {
+		if newInfo.Retention == "" {
+			return nil, false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("must sepecify SOFTDELETE = RETENTION xxx")
+		}
+		oldInfo = &model.SoftdeleteInfo{
+			Retention:   model.DefaultSoftDeleteRetention,
+			JobEnable:   true,
+			JobInterval: model.DefaultSoftDeleteJobInterval,
+		}
+	} else {
+		oldInfo = oldInfo.Clone()
+	}
+
+	if newInfo.Retention != "" {
+		oldInfo.Retention = newInfo.Retention
+	}
+	if newInfo.RetentionUnit != ast.TimeUnitInvalid {
+		oldInfo.RetentionUnit = newInfo.RetentionUnit
+	}
+	if newInfo.JobInterval != "" {
+		oldInfo.JobInterval = newInfo.JobInterval
+	}
+	if newInfo.HasJobEnable {
+		oldInfo.JobEnable = newInfo.JobEnable
+	}
+
+	return oldInfo, newActiveActive, nil
 }
 
 // checkSoftDeleteAndActiveActive validates soft delete configuration
-func checkSoftDeleteAndActiveActive(tblInfo *model.TableInfo, isCreateTable bool) error {
-	if tblInfo.SoftdeleteInfo == nil {
-		if tblInfo.IsActiveActive {
-			return errors.Trace(dbterror.ErrSetSoftDeleteOptionForNonSoftDeleteTable.FastGenByArgs("ACTIVE_ACTIVE"))
-		}
-		return nil
-	}
-
-	// In CREATE TABLE, soft delete options were set without enabling it
-	if isCreateTable && !tblInfo.SoftdeleteInfo.Enable {
-		return errors.Trace(dbterror.ErrSetSoftDeleteOptionForNonSoftDeleteTable.FastGenByArgs("SOFTDELETE"))
-	}
-
-	if !tblInfo.SoftdeleteInfo.Enable {
-		if tblInfo.IsActiveActive {
-			return errors.Trace(dbterror.ErrSetSoftDeleteOptionForNonSoftDeleteTable.FastGenByArgs("ACTIVE_ACTIVE"))
-		}
-		return nil
-	}
-
-	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("soft delete")
-	}
-
-	// Validate retention duration (if not empty)
-	if len(tblInfo.SoftdeleteInfo.Retention) > 0 {
+func checkSoftDeleteAndActiveActive(tblInfo *model.TableInfo) error {
+	if info := tblInfo.SoftdeleteInfo; info != nil {
+		// Validate retention duration
 		if _, err := tblInfo.SoftdeleteInfo.GetRetention(); err != nil {
 			return errors.Trace(err)
 		}
-	}
 
-	// Validate job interval duration
-	if len(tblInfo.SoftdeleteInfo.JobInterval) > 0 {
+		// Validate job interval duration
 		if _, err := tblInfo.SoftdeleteInfo.GetJobInterval(); err != nil {
 			return errors.Trace(err)
 		}

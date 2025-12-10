@@ -1,4 +1,4 @@
-create table t (id int primary key) softdelete = 'on';
+create table t (id int primary key) softdelete retention 7 day;
 
 # multiple soft-delete tombstone
 insert into t(id) values (1), (2);

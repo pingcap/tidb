@@ -1,4 +1,4 @@
-create table t (id int primary key) softdelete = 'on';
+create table t (id int primary key) softdelete retention 7 day;
 insert into t(id) values (1), (2);
 update t set _tidb_softdelete_time = now() where id in (1, 2);
 insert into t(id) values (1), (2);

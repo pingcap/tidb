@@ -1060,7 +1060,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTempTableNotAllowedWithTTL:               mysql.Message("Set TTL for temporary table is not allowed", nil),
 	ErrUnsupportedTTLReferencedByFK:             mysql.Message("Set TTL for a table referenced by foreign key is not allowed", nil),
 	ErrUnsupportedPrimaryKeyTypeWithTTL:         mysql.Message("Unsupported clustered primary key type FLOAT/DOUBLE for TTL", nil),
-	ErrSetSoftDeleteOptionForNonSoftDeleteTable: mysql.Message("Cannot set %s on a table without SOFTDELETE config", nil),
 	ErrLoadDataFromServerDisk:                   mysql.Message("Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '%s' needs to specify the clause of LOCAL first", nil),
 	ErrLoadParquetFromLocal:                     mysql.Message("Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage", nil),
 	ErrLoadDataEmptyPath:                        mysql.Message("The value of INFILE must not be empty when LOAD DATA from LOCAL", nil),
