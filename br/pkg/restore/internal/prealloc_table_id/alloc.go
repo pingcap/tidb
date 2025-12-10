@@ -5,20 +5,22 @@ package prealloctableid
 import (
 	"fmt"
 	"math"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pkg/errors"
 )
 
 const (
-	// insaneTableIDThreshold is the threshold for "normal" table ID.
+	// InsaneTableIDThreshold is the threshold for "normal" table ID.
 	// Sometimes there might be some tables with huge table ID.
 	// For example, DDL metadata relative tables may have table ID up to 1 << 48.
 	// When calculating the max table ID, we would ignore tables with table ID greater than this.
 	// NOTE: In fact this could be just `1 << 48 - 1000` (the max available global ID),
 	// however we are going to keep some gap here for some not-yet-known scenario, which means
 	// at least, BR won't exhaust all global IDs.
-	insaneTableIDThreshold = math.MaxUint32
+	InsaneTableIDThreshold = math.MaxUint32
 )
 
 // Allocator is the interface needed to allocate table IDs.
@@ -29,9 +31,11 @@ type Allocator interface {
 
 // PreallocIDs mantains the state of preallocated table IDs.
 type PreallocIDs struct {
-	end int64
-
-	allocedFrom int64
+	start          int64
+	reusableBorder int64
+	end            int64
+	count          int64
+	next           atomic.Int64
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -39,78 +43,112 @@ type PreallocIDs struct {
 func New(tables []*metautil.Table) *PreallocIDs {
 	if len(tables) == 0 {
 		return &PreallocIDs{
-			allocedFrom: math.MaxInt64,
+			start: math.MaxInt64,
 		}
 	}
 
-	maxv := int64(0)
+	maxID := int64(0)
+	count := int64(len(tables))
 
 	for _, t := range tables {
-		if t.Info.ID > maxv && t.Info.ID < insaneTableIDThreshold {
-			maxv = t.Info.ID
+		if t.Info.ID > maxID && t.Info.ID < InsaneTableIDThreshold {
+			maxID = t.Info.ID
 		}
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
+			count += int64(len(t.Info.Partition.Definitions))
 			for _, part := range t.Info.Partition.Definitions {
-				if part.ID > maxv && part.ID < insaneTableIDThreshold {
-					maxv = part.ID
+				if part.ID > maxID && part.ID < InsaneTableIDThreshold {
+					maxID = part.ID
 				}
 			}
 		}
 	}
+	if maxID+count+1 > InsaneTableIDThreshold {
+		return nil
+	}
 	return &PreallocIDs{
-		end: maxv + 1,
-
-		allocedFrom: math.MaxInt64,
+		start:          math.MaxInt64,
+		reusableBorder: maxID + 1,
+		count:          count,
+		next:           atomic.Int64{},
 	}
 }
 
 // String implements fmt.Stringer.
 func (p *PreallocIDs) String() string {
-	if p.allocedFrom >= p.end {
+	if p.start >= p.end {
 		return fmt.Sprintf("ID:empty(end=%d)", p.end)
 	}
-	return fmt.Sprintf("ID:[%d,%d)", p.allocedFrom, p.end)
+	return fmt.Sprintf("ID:[%d,%d)", p.start, p.end)
+}
+
+func (p *PreallocIDs) GetIDRange() (int64, int64) {
+	return p.start, p.end
 }
 
 // preallocTableIDs peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
-	currentId, err := m.GetGlobalID()
-	if err != nil {
-		return err
-	}
-	if currentId > p.end {
+	if p.count == 0 {
 		return nil
 	}
+	if p.start < p.end {
+		return errors.Errorf("table ID should only be allocated once")
+	}
 
-	alloced, err := m.AdvanceGlobalIDs(int(p.end - currentId))
+	currentID, err := m.GetGlobalID()
 	if err != nil {
 		return err
 	}
-	p.allocedFrom = alloced + 1
+	p.start = currentID + 1
+
+	if p.reusableBorder <= p.start {
+		p.reusableBorder = p.start
+	}
+	idRange := p.reusableBorder - p.start + p.count
+	if _, err := m.AdvanceGlobalIDs(int(idRange)); err != nil {
+		return err
+	}
+
+	p.end = p.start + idRange
+	p.next.Store(p.reusableBorder)
 	return nil
 }
 
-// GetAllocRange returns the prealloced range
-func (p *PreallocIDs) GetAllocRange() (int64, int64) {
-	return p.allocedFrom, p.end
-}
-
-// Prealloced checks whether a table ID has been successfully allocated.
-func (p *PreallocIDs) Prealloced(tid int64) bool {
-	return p.allocedFrom <= tid && tid < p.end
-}
-
-func (p *PreallocIDs) PreallocedFor(ti *model.TableInfo) bool {
-	if !p.Prealloced(ti.ID) {
-		return false
+func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
+	if originalID >= p.start && originalID < p.reusableBorder {
+		return originalID, nil
 	}
-	if ti.Partition != nil && ti.Partition.Definitions != nil {
-		for _, part := range ti.Partition.Definitions {
-			if !p.Prealloced(part.ID) {
-				return false
+
+	rewriteID := p.next.Add(1) - 1
+	if rewriteID >= p.end {
+		return 0, errors.Errorf("no available IDs")
+	}
+	return rewriteID, nil
+}
+
+func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo, error) {
+	if info == nil {
+		return nil, errors.Errorf("table info is nil")
+	}
+	infoCopy := info.Clone()
+
+	newID, err := p.allocID(info.ID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to allocate table ID for %d", info.ID)
+	}
+	infoCopy.ID = newID
+
+	if infoCopy.Partition != nil {
+		for i := range infoCopy.Partition.Definitions {
+			def := &infoCopy.Partition.Definitions[i]
+			newPartID, err := p.allocID(def.ID)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to allocate partition ID for %d", def.ID)
 			}
+			def.ID = newPartID
 		}
 	}
-	return true
+
+	return infoCopy, nil
 }

@@ -58,11 +58,6 @@ const (
 	MetaV2
 )
 
-// PitrIDMapsFilename is filename that used to save id maps in pitr.
-func PitrIDMapsFilename(clusterID, restoreTS uint64) string {
-	return fmt.Sprintf("%s/pitr_id_map.cluster_id:%d.restored_ts:%d", "pitr_id_maps", clusterID, restoreTS)
-}
-
 // Encrypt encrypts the content according to CipherInfo.
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
 	if len(content) == 0 || cipher == nil {

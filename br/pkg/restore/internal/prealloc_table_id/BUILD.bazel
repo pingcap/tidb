@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//br/pkg/metautil",
         "//pkg/meta/model",
+        "@com_github_pkg_errors//:errors",
     ],
 )
 
@@ -23,7 +24,9 @@ go_test(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
+        "//pkg/parser/model",
         "//pkg/testkit",
+        "@com_github_pkg_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )
