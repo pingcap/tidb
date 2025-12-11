@@ -1423,7 +1423,7 @@ func TestInitStatsLite(t *testing.T) {
 
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
-	tk.MustExec("explain select * from t where b > 1")
+	tk.MustExec("explain select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(is))
 	statsTbl2 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	colBStats1 := statsTbl2.GetCol(colBID)
@@ -1440,7 +1440,7 @@ func TestInitStatsLite(t *testing.T) {
 
 	// sync stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
-	tk.MustExec("explain select * from t where c > 1")
+	tk.MustExec("explain select * from t where b > 1 and c > 1")
 	statsTbl3 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	colCStats1 := statsTbl3.GetCol(colCID)
 	require.True(t, colCStats1.IsFullLoad())
