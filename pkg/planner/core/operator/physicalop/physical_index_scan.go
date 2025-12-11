@@ -685,37 +685,32 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
 // TryToPassTiCITopN checks whether the TopN can be embedded into TiCI index scan.
 func (p *PhysicalIndexScan) TryToPassTiCITopN(topN *PhysicalTopN) {
 	hybridSearchInfo := p.Index.HybridInfo
-	if hybridSearchInfo != nil && hybridSearchInfo.Sort != nil {
-		orderMatched := true
-		orderPos := 0
-	checkLoop:
-		for _, byItem := range topN.ByItems {
-			if orderPos >= len(hybridSearchInfo.Sort.Columns) || !orderMatched {
-				break
-			}
-			switch x := byItem.Expr.(type) {
-			case *expression.Column:
-				if byItem.Desc != !hybridSearchInfo.Sort.IsAsc[orderPos] {
-					orderMatched = false
-					break checkLoop
-				}
-				colID := p.Table.Columns[hybridSearchInfo.Sort.Columns[orderPos].Offset].ID
-				if colID != x.ID {
-					orderMatched = false
-					break checkLoop
-				}
-				orderPos++
-			case *expression.ScalarFunction:
-				orderMatched = false
-				break checkLoop
-			}
+	if hybridSearchInfo == nil || hybridSearchInfo.Sort == nil {
+		return
+	}
+	orderPos := 0
+	for _, byItem := range topN.ByItems {
+		// All order by items should be covered by hybrid index sort columns.
+		if orderPos >= len(hybridSearchInfo.Sort.Columns) {
+			return
 		}
-		if orderMatched {
-			p.FtsQueryInfo.TopK = new(uint32)
-			// The passed TopN here may be the global one. We need to consider the offset.
-			*p.FtsQueryInfo.TopK = uint32(topN.Count) + uint32(topN.Offset)
+		switch x := byItem.Expr.(type) {
+		case *expression.Column:
+			if byItem.Desc != !hybridSearchInfo.Sort.IsAsc[orderPos] {
+				return
+			}
+			colID := p.Table.Columns[hybridSearchInfo.Sort.Columns[orderPos].Offset].ID
+			if colID != x.ID {
+				return
+			}
+			orderPos++
+		case *expression.ScalarFunction:
+			return
 		}
 	}
+	p.FtsQueryInfo.TopK = new(uint32)
+	// The passed TopN here may be the global one. We need to consider the offset.
+	*p.FtsQueryInfo.TopK = uint32(topN.Count) + uint32(topN.Offset)
 }
 
 // GetPhysicalIndexScan4LogicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
