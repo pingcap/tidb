@@ -1302,7 +1302,7 @@ func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
 		// Verify the imported statistics after import.
 		// For external engine, use the total number of KVs loaded in LoadIngestData
 		// (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
-		expectedLength := extEngine.GetTotalLoadedKVsCount()
+		expectedKVCount := extEngine.GetTotalLoadedKVsCount()
 		if importedLength != expectedLength {
 			return errors.Errorf("imported length mismatch, expected %d, got %d", expectedLength, importedLength)
 		}
