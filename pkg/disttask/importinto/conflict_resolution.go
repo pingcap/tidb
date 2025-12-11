@@ -123,7 +123,7 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	})
 	task := log.BeginTask(e.logger.With(
 		zap.String("kvGroup", kvGroup), zap.Uint64("duplicates", ci.Count),
-		zap.Int("file-count", len(ci.Files)), zap.Int("concurrency", concurrency),
+		zap.Int("fileCount", len(ci.Files)), zap.Int("concurrency", concurrency),
 	), "resolve conflicts of kv group")
 
 	defer func() {
