@@ -577,9 +577,9 @@
       {
         "SQL": "explain select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';",
         "Plan": [
-          "IndexLookUp_8 836.36 root  ",
-          "├─IndexRangeScan_6(Build) 836.36 cop[tikv] table:s, index:tbl_cardcore_statement_ix7(latest_stmt_print_date) range:[2024-10-16,2024-10-16], keep order:false",
-          "└─TableRowIDScan_7(Probe) 836.36 cop[tikv] table:s keep order:false"
+          "IndexLookUp_11 53778.89 root  ",
+          "├─IndexRangeScan_9(Build) 53778.89 cop[tikv] table:s, index:tbl_cardcore_statement_ix7(latest_stmt_print_date) range:[2024-10-16,2024-10-16], keep order:false",
+          "└─TableRowIDScan_10(Probe) 53778.89 cop[tikv] table:s keep order:false"
         ],
         "Warn": null
       }
