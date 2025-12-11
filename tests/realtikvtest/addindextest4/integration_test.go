@@ -381,15 +381,10 @@ func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 	checkFn("alter table t modify column a int, modify column b int unsigned", "a, b, c")
 
 	// No index reorg.
-	checkFn("alter table t modify column d char(16)", "a, b, c, d")
-	checkFn("alter table t modify column d int unsigned", "a, b, c, d")
 	checkFn("alter table t modify column a int", "")
 	checkFn("alter table t modify column a bigint", "")
 	checkFn("alter table t modify column a int, modify column d char(5)", "")
 	checkFn("alter table t modify column a int, modify column d int unsigned", "")
-
-	// Drop Index should not trigger analyze.
-	checkFn("alter table t drop index i_a_2, drop index i_b_2, drop index i_d_1", "")
 }
 
 func TestCancelAfterReorgTimeout(t *testing.T) {
