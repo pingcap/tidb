@@ -3533,10 +3533,10 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},
 	},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct, Value: strconv.Itoa(vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100,
+	{Scope: ScopeGlobal, Name: TiDBCircuitBreakerPDMetadataErrorRateThresholdPct, Value: strconv.Itoa(DefTiDBCircuitBreakerPDMetaErrorRatePct), Type: TypeUnsigned, MinValue: 0, MaxValue: 100,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			if ChangePDMetadataCircuitBreakerErrorRateThresholdPct != nil {
-				ChangePDMetadataCircuitBreakerErrorRateThresholdPct(uint32(tidbOptPositiveInt32(val, vardef.DefTiDBCircuitBreakerPDMetaErrorRatePct)))
+				ChangePDMetadataCircuitBreakerErrorRateThresholdPct(uint32(tidbOptPositiveInt32(val, DefTiDBCircuitBreakerPDMetaErrorRatePct)))
 			}
 			return nil
 		},

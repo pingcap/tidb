@@ -24,11 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-<<<<<<< HEAD
-=======
-	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/circuitbreaker"
->>>>>>> a573e49452a (*: integrate circuitbreaker for get region calls to PD (#58737))
 )
 
 // initDomainSysVars() is called when a domain is initialized.
