@@ -43,23 +43,8 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 	}
 	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
 	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
-		var pseudoResult float64
-		if pkIsHandle {
-			if len(colRanges) == 0 {
-				return statistics.DefaultRowEst(0), nil
-			}
-			if colRanges[0].LowVal[0].Kind() == types.KindInt64 {
-				pseudoResult = getPseudoRowCountBySignedIntRanges(colRanges, float64(coll.RealtimeCount))
-			} else {
-				pseudoResult = getPseudoRowCountByUnsignedIntRanges(colRanges, float64(coll.RealtimeCount))
-			}
-		} else {
-			pseudoResult, err = getPseudoRowCountByColumnRanges(sc.TypeCtx(), float64(coll.RealtimeCount), colRanges, 0)
-			if err != nil {
-				return statistics.DefaultRowEst(0), err
-			}
-		}
-		return statistics.DefaultRowEst(pseudoResult), nil
+		pseudoResult, err := getPseudoRowCountByColumnRanges(sc.TypeCtx(), float64(coll.RealtimeCount), colRanges, 0, pkIsHandle)
+		return statistics.DefaultRowEst(pseudoResult), err
 	}
 	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, pkIsHandle)
 	if err != nil {

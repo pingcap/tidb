@@ -189,7 +189,7 @@ func getPseudoRowCountByIndexRanges(tc types.Context, indexRanges []*ranger.Rang
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
 		}
-		rowCount, err := getPseudoRowCountByColumnRanges(tc, tableRowCount, []*ranger.Range{indexRange}, i)
+		rowCount, err := getPseudoRowCountByColumnRanges(tc, tableRowCount, []*ranger.Range{indexRange}, i, false)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -208,7 +208,19 @@ func getPseudoRowCountByIndexRanges(tc types.Context, indexRanges []*ranger.Rang
 }
 
 // getPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
-func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
+func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, columnRanges []*ranger.Range, colIdx int, pkIsHandle bool) (float64, error) {
+	if pkIsHandle {
+		if len(columnRanges) == 0 {
+			return 0, nil
+		}
+		kind := columnRanges[0].LowVal[colIdx].Kind()
+		if kind == types.KindInt64 {
+			return getPseudoRowCountBySignedIntRanges(columnRanges, tableRowCount), nil
+		} else {
+			return getPseudoRowCountByUnsignedIntRanges(columnRanges, tableRowCount), nil
+		}
+	}
+
 	var rowCount float64
 	for _, ran := range columnRanges {
 		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
