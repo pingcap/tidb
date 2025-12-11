@@ -19,6 +19,11 @@
 //
 // # 1. collect duplicated KVs during global sort and ingest phase
 //
+// We record the duplicated KVs in encode and merge step too, to avoid have too
+// many duplicated KVs to be recorded during ingest step, and to avoid the
+// generated region job too small due to too many duplicated KVs being removed,
+// then to avoid the target region to be too much undersized.
+//
 //   - during encode step, the duplicated data and UK KVs due to conflicted rows
 //     are collected and write to the cloud storage as a separate file, there might
 //     be duplicated KVs due to secondary indices, but they are not usefully for
@@ -46,7 +51,7 @@
 //   - for duplicated UK KVs, we can only get the handle of the row, we have to
 //     get the data KV from the cluster, if not found, it means the data KV is
 //     also duplicated and recorded before, so we can skip it. Otherwise, we can
-//     we encode and re-encode to get the checksum of the original row.
+//     decode and re-encode to get the checksum of the original row.
 //     since there might be multiple UKs for a single row, we need to avoid
 //     calculating the checksum multiple times for the same row. currently, we
 //     do this deduplication in memory by maintaining a set of handles processed.
