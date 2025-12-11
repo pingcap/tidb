@@ -3129,16 +3129,17 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' select t1.a, (select sum(t1.a) from t2 where t2.a = 10) from t1;
 id	estRows	task	access object	operator info
-Projection	1.00	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column#6->Column#11
-└─HashJoin	1.00	root		CARTESIAN left outer join
-  ├─Point_Get(Build)	1.00	root	table:t2	handle:10
-  └─HashAgg(Probe)	1.00	root		funcs:sum(Column#13)->Column#6, funcs:firstrow(Column#14)->planner__core__casetest__physicalplantest__physical_plan.t1.a
-    └─TableReader	1.00	root		data:HashAgg
-      └─HashAgg	1.00	cop[tikv]		funcs:sum(planner__core__casetest__physicalplantest__physical_plan.t1.a)->Column#13, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t1.a)->Column#14
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Projection	1.00	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column#9->Column#11
+└─Apply	1.00	root		CARTESIAN left outer join
+  ├─HashAgg(Build)	1.00	root		funcs:sum(Column#14)->Column#6, funcs:firstrow(Column#15)->planner__core__casetest__physicalplantest__physical_plan.t1.a
+  │ └─Projection	10000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.t1.a, decimal(10,0) BINARY)->Column#14, planner__core__casetest__physicalplantest__physical_plan.t1.a->Column#15
+  │   └─TableReader	10000.00	root		data:TableFullScan
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Projection(Probe)	1.00	root		Column#6->Column#9
+    └─Point_Get	1.00	root	table:t2	handle:10
 select t1.a, (select sum(t1.a) from t2 where t2.a = 10) from t1;
 a	(select sum(t1.a) from t2 where t2.a = 10)
-1	3
+1	NULL
 show warnings;
 Level	Code	Message
 explain format = 'brief' select t1.a, (select /*+ no_decorrelate() */ sum(t1.a) from t2 where t2.a = 10) from t1;
