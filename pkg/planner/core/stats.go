@@ -343,15 +343,24 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		path.CountAfterAccess = 1
 		return nil
 	}
+	lenAccessConds := len(path.AccessConds)
 	var remainedConds []expression.Expression
 	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.SCtx().GetRangerCtx(), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
 	path.TableFilters = append(path.TableFilters, remainedConds...)
 	if err != nil {
 		return err
 	}
-	var countEst statistics.RowEstimate
-	countEst, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
-	path.CountAfterAccess = countEst.Est
+	// Optimization: If there are no AccessConds, the ranges will be full range and the count will be the full table count.
+	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
+	// Current code will exclude partitioned tables from this optimization.
+	// TODO: Enhance this optimization to support partitioned tables.
+	if lenAccessConds == 0 && ds.Table.GetPartitionedTable() == nil {
+		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	} else {
+		var countEst statistics.RowEstimate
+		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges, true)
+		path.CountAfterAccess = countEst.Est
+	}
 	if !isIm {
 		// Check if we need to apply a lower bound to CountAfterAccess
 		adjustCountAfterAccess(ds, path)
