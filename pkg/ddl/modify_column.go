@@ -118,7 +118,6 @@ func getModifyColumnType(
 	sqlMode mysql.SQLMode) byte {
 	newCol := args.Column
 	if noReorgDataStrict(tblInfo, oldCol, args.Column) {
-		// It's not NULL->NOTNULL change
 		if !isNullToNotNullChange(oldCol, newCol) {
 			return ModifyTypeNoReorg
 		}
@@ -130,18 +129,20 @@ func getModifyColumnType(
 		return ModifyTypeReorg
 	}
 
-	// FIXME(joechenrh): handle partition table case
-	if tblInfo.Partition != nil {
+	if !sqlMode.HasStrictMode() {
 		return ModifyTypeReorg
 	}
 
-	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			failpoint.Return(ModifyTypeReorg)
-		}
-	})
+	// FIXME(joechenrh): handle partition and TiFlash replica case
+	if tblInfo.Partition != nil || tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
+		return ModifyTypeReorg
+	}
 
-	if !sqlMode.HasStrictMode() {
+	// FIXME(joechenrh): remove this when resolve stats problem.
+	if (types.IsIntegerChange(&oldCol.FieldType, &args.Column.FieldType) &&
+		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
+		(types.IsCharChange(&oldCol.FieldType, &args.Column.FieldType) &&
+			!collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
 		return ModifyTypeReorg
 	}
 
@@ -789,41 +790,48 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 }
 
 func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	if mysql.IsIntegerType(oldCol.GetType()) && mysql.IsIntegerType(changingCol.GetType()) {
+	oldFt := &oldCol.FieldType
+	changingFt := &changingCol.FieldType
+
+	// Signed/unsigned change for integer types need index reorg.
+	if types.IsIntegerChange(oldFt, changingFt) {
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
 
-	intest.Assert(types.IsTypeChar(oldCol.GetType()) && types.IsTypeChar(changingCol.GetType()))
+	intest.Assert(types.IsCharChange(oldFt, changingFt))
 
-	// Check index key part, ref tablecodec.GenIndexKey
-	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
-		return true
-	}
-
-	// Check index value part, ref tablecodec.GenIndexValuePortal
+	// Check index key/value part, ref tablecodec.GenIndexKey/GenIndexValuePortal
 	// TODO(joechenrh): It's better to check each index here, because not all indexes need
 	// reorg even if the below condition is true.
-	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
+	return !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) ||
+		types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
 }
 
 func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	oldTp := oldCol.GetType()
-	changingTp := changingCol.GetType()
+	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(ModifyTypeReorg)
+		}
+	})
 
-	if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
+	oldFt := &oldCol.FieldType
+	changingFt := &changingCol.FieldType
+
+	// Integer are guaranteed to not need row reorg.
+	if types.IsIntegerChange(oldFt, changingFt) {
 		return false
 	}
 
-	if !types.IsTypeChar(oldTp) || !types.IsTypeChar(changingTp) {
+	// Other changes except char changes need row reorg.
+	if !types.IsCharChange(oldFt, changingFt) {
 		return true
 	}
 
-	// binary str has padding, it must need reorg if flen changes.
-	if types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType) {
+	// We have checked charset before, so only need to check binary string here.
+	if types.IsBinaryStr(oldFt) && types.IsBinaryStr(changingFt) {
 		return oldCol.GetFlen() != changingCol.GetFlen()
 	}
-
-	return false
+	return types.IsBinaryStr(oldFt) || types.IsBinaryStr(changingFt)
 }
 
 // checkModifyColumnData checks the values of the old column data
@@ -2103,6 +2111,12 @@ func checkModifyTypes(from, to *model.ColumnInfo) error {
 		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4) {
 		// TiDB only allow utf8/latin1 to be changed to utf8mb4, or changing the collation when the charset is utf8/utf8mb4/latin1.
 		return nil
+	}
+
+	// TODO(joechenrh): I don't know why we disallow GBK charset modification here.
+	if origCharset == charset.CharsetGBK || toCharset == charset.CharsetGBK {
+		msg := fmt.Sprintf("charset from %s to %s", origCharset, toCharset)
+		return dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 
 	// column type change can handle the charset change between these two types in the process of the reorg.

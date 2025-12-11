@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/types"
 	ast "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -1468,33 +1469,42 @@ func SetBinChsClnFlag(ft *FieldType) {
 // VarStorageLen indicates this column is a variable length column.
 const VarStorageLen = ast.VarStorageLen
 
+// IsIntegerChange checks whether it's a change between two integer types.
+func IsIntegerChange(from, to *FieldType) bool {
+	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
+}
+
+// IsCharChange checks whether it's a change between CHAR/VARCHAR.
+func IsCharChange(from, to *FieldType) bool {
+	return IsTypeChar(from.GetType()) && IsTypeChar(to.GetType())
+}
+
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible and can be changed.
 // If types are compatible and can be directly changed, nil err will be returned; otherwise the types are incompatible.
 // There are two cases when types incompatible:
 // 1. returned canReorg == true: types can be changed by reorg
 // 2. returned canReorg == false: type change not supported yet
 func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool, err error) {
+	fromType := origin.GetType()
+	toType := to.GetType()
+
 	// Deal with the same type.
-	if origin.GetType() == to.GetType() {
-		if origin.GetType() == mysql.TypeEnum || origin.GetType() == mysql.TypeSet {
-			typeVar := "set"
-			if origin.GetType() == mysql.TypeEnum {
-				typeVar = "enum"
-			}
+	if fromType == toType {
+		if fromType == mysql.TypeEnum || fromType == mysql.TypeSet {
 			if len(to.GetElems()) < len(origin.GetElems()) {
-				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.GetElems()))
+				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", types.TypeStr(fromType), len(origin.GetElems()))
 				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 			for index, originElem := range origin.GetElems() {
 				toElem := to.GetElems()[index]
 				if originElem != toElem {
-					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
+					msg := fmt.Sprintf("cannot modify %s column value %s to %s", types.TypeStr(fromType), originElem, toElem)
 					return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
 		}
 
-		if origin.GetType() == mysql.TypeNewDecimal {
+		if fromType == mysql.TypeNewDecimal {
 			// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
 			// negative values from being stored in the column. Unlike the integer types, the upper range of column values
 			// remains the same.
@@ -1519,7 +1529,7 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 
 	// Check if different type can directly convert and no need to reorg.
 	stringToString := IsString(origin.GetType()) && IsString(to.GetType())
-	integerToInteger := mysql.IsIntegerType(origin.GetType()) && mysql.IsIntegerType(to.GetType())
+	integerToInteger := IsIntegerChange(origin, to)
 	if stringToString || integerToInteger {
 		needReorg, reason := needReorgToChange(origin, to)
 		if !needReorg {
@@ -1536,8 +1546,8 @@ func needReorgToChange(origin *FieldType, to *FieldType) (needReorg bool, reason
 	toFlen := to.GetFlen()
 	originFlen := origin.GetFlen()
 	if mysql.IsIntegerType(to.GetType()) && mysql.IsIntegerType(origin.GetType()) {
-		// For integers, we should ignore the potential display length represented by flen, using
-		// the default flen of the type.
+		// For integers, we should ignore the potential display length represented by flen,
+		// and use the default flen of the type instead.
 		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.GetType())
 		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.GetType())
 	}
