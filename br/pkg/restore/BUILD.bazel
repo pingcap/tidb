@@ -59,7 +59,7 @@ go_test(
     ],
     embed = [":restore"],
     flaky = True,
-    shard_count = 17,
+    shard_count = 19,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/mock",
