@@ -131,6 +131,17 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		)
 		localChecksum.AddRawGroup(id, cksum.Size, cksum.KVs, cksum.Sum)
 	}
+	encodeStepChecksum := localChecksum.MergedChecksum()
+	deletedRowsChecksum := subtaskMeta.DeletedRowsChecksum.ToKVChecksum()
+	finalChecksum := encodeStepChecksum
+	finalChecksum.Sub(deletedRowsChecksum)
+	callLog.Info("checksum info", zap.Stringer("encodeStepSum", &encodeStepChecksum),
+		zap.Stringer("deletedRowsSum", deletedRowsChecksum),
+		zap.Stringer("final", &finalChecksum))
+	if subtaskMeta.TooManyConflictsFromIndex {
+		callLog.Info("too many conflicts from index, skip verify checksum, as the checksum of deleted rows may be inaccurate")
+		return nil
+	}
 
 	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
@@ -138,6 +149,6 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		return err
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
+		return importer.VerifyChecksum(ctx, &taskMeta.Plan, finalChecksum, se, logger)
 	})
 }

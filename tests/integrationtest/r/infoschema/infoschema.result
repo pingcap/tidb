@@ -54,11 +54,11 @@ count(*)
 3
 desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:count(1)->Column#26
+HashAgg	1.00	root		funcs:count(1)->Column#27
 └─MemTableScan	10000.00	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:count(1)->Column#26
+HashAgg	1.00	root		funcs:count(1)->Column#27
 └─MemTableScan	10000.00	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
 count(*)

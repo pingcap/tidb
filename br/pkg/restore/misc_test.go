@@ -15,15 +15,22 @@
 package restore_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -107,7 +114,7 @@ func TestAssertUserDBsEmpty(t *testing.T) {
 func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader is healthy:", func(t *testing.T) {
 		retryTimes := -1000
-		pDClient := utiltest.NewFakePDClient(nil, false, &retryTimes)
+		pDClient := split.NewFakePDClient(nil, false, &retryTimes)
 		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
 		require.NoError(t, err)
 	})
@@ -118,15 +125,245 @@ func TestGetTSWithRetry(t *testing.T) {
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one"))
 		}()
 		retryTimes := -1000
-		pDClient := utiltest.NewFakePDClient(nil, true, &retryTimes)
+		pDClient := split.NewFakePDClient(nil, true, &retryTimes)
 		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
 		require.Error(t, err)
 	})
 
 	t.Run("PD leader switch successfully", func(t *testing.T) {
 		retryTimes := 0
-		pDClient := utiltest.NewFakePDClient(nil, true, &retryTimes)
+		pDClient := split.NewFakePDClient(nil, true, &retryTimes)
 		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
 		require.NoError(t, err)
 	})
+}
+
+type fakeMetaClient struct {
+	split.SplitClient
+	regions []*split.RegionInfo
+	t       *testing.T
+}
+
+func (fmc *fakeMetaClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
+	i, ok := slices.BinarySearchFunc(fmc.regions, key, func(regionInfo *split.RegionInfo, k []byte) int {
+		startCmpRet := bytes.Compare(regionInfo.Region.StartKey, k)
+		if startCmpRet <= 0 && (len(regionInfo.Region.EndKey) == 0 || bytes.Compare(regionInfo.Region.EndKey, k) > 0) {
+			return 0
+		}
+		return startCmpRet
+	})
+	require.True(fmc.t, ok)
+	endI, ok := slices.BinarySearchFunc(fmc.regions, endKey, func(regionInfo *split.RegionInfo, k []byte) int {
+		if len(k) == 0 {
+			if len(regionInfo.Region.EndKey) == 0 {
+				return 0
+			}
+			return -1
+		}
+		startCmpRet := bytes.Compare(regionInfo.Region.StartKey, k)
+		if startCmpRet <= 0 && (len(regionInfo.Region.EndKey) == 0 || bytes.Compare(regionInfo.Region.EndKey, k) > 0) {
+			return 0
+		}
+		return startCmpRet
+	})
+	require.True(fmc.t, ok)
+	if !bytes.Equal(fmc.regions[endI].Region.StartKey, endKey) {
+		endI += 1
+	}
+	if endI > i+limit {
+		endI = i + limit
+	}
+	if endI > len(fmc.regions) {
+		endI = len(fmc.regions)
+	}
+	return fmc.regions[i:endI], nil
+}
+
+func NewFakeMetaClient(t *testing.T, keys [][]byte) *fakeMetaClient {
+	regions := make([]*split.RegionInfo, 0, len(keys)+1)
+	lastEndKey := []byte{}
+	for _, key := range keys {
+		regions = append(regions, &split.RegionInfo{
+			Region: &metapb.Region{
+				StartKey: lastEndKey,
+				EndKey:   key,
+			},
+		})
+		lastEndKey = key
+	}
+	regions = append(regions, &split.RegionInfo{
+		Region: &metapb.Region{
+			StartKey: lastEndKey,
+			EndKey:   []byte{},
+		},
+	})
+	return &fakeMetaClient{
+		regions: regions,
+		t:       t,
+	}
+}
+
+func TestFakeRegionScanner(t *testing.T) {
+	keys := make([][]byte, 0, 100)
+	for i := range 50 {
+		keys = append(keys, fmt.Appendf(nil, "%02d5", 2*i))
+	}
+	metaClient := NewFakeMetaClient(t, keys)
+
+	checkRegionsFn := func(regionInfos []*split.RegionInfo, startKey, endKey []byte) {
+		require.Equal(t, regionInfos[0].Region.StartKey, startKey)
+		require.Equal(t, regionInfos[len(regionInfos)-1].Region.EndKey, endKey)
+	}
+
+	ctx := context.Background()
+	regionInfos, err := metaClient.ScanRegions(ctx, []byte("20"), []byte("30"), 1)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("185"), []byte("205"))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("185"), []byte("30"), 1)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("185"), []byte("205"))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("20"), []byte("30"), 5)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("185"), []byte("285"))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("185"), []byte("30"), 5)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("185"), []byte("285"))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("20"), []byte("30"), 20)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("185"), []byte("305"))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("185"), []byte("305"), 20)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("185"), []byte("305"))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("0001"), []byte("30"), 2)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte(""), []byte("025"))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("0001"), []byte("10"), 20)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte(""), []byte("105"))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("90"), []byte(""), 20)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("885"), []byte(""))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("90"), []byte(""), 2)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("885"), []byte("925"))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("885"), []byte(""), 20)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("885"), []byte(""))
+	regionInfos, err = metaClient.ScanRegions(ctx, []byte("885"), []byte(""), 2)
+	require.NoError(t, err)
+	checkRegionsFn(regionInfos, []byte("885"), []byte("925"))
+}
+
+func newBackupFileSet(oldPrefix, newPrefix int, keys [][2]int) restore.BackupFileSet {
+	sstFiles := make([]*backuppb.File, 0, len(keys))
+	for _, key := range keys {
+		sstFiles = append(sstFiles, &backuppb.File{
+			StartKey: fmt.Appendf(nil, "%02d%d", oldPrefix, key[0]),
+			EndKey:   fmt.Appendf(nil, "%02d%d", oldPrefix, key[1]),
+		})
+	}
+	return restore.BackupFileSet{
+		TableID:  int64(oldPrefix),
+		SSTFiles: sstFiles,
+		RewriteRules: &restoreutils.RewriteRules{
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: fmt.Appendf(nil, "%02d", oldPrefix),
+					NewKeyPrefix: fmt.Appendf(nil, "%02d", newPrefix),
+				},
+			},
+		},
+	}
+}
+
+func TestRegionScanner(t *testing.T) {
+	keys := make([][]byte, 0, 100)
+	for i := range 50 {
+		keys = append(keys, fmt.Appendf(nil, "%02d5", 2*i))
+	}
+	oldKeyMap := make([]int, 100)
+	for i := range 100 {
+		oldKeyMap[i] = i
+	}
+	rand.Shuffle(len(oldKeyMap), func(i, j int) {
+		oldKeyMap[i], oldKeyMap[j] = oldKeyMap[j], oldKeyMap[i]
+	})
+	metaClient := NewFakeMetaClient(t, keys)
+	ctx := context.Background()
+	input := []restore.BackupFileSet{
+		newBackupFileSet(oldKeyMap[1], 1, [][2]int{{5, 7}}),
+		newBackupFileSet(oldKeyMap[4], 4, [][2]int{{2, 7}}),
+		newBackupFileSet(oldKeyMap[8], 8, [][2]int{{2, 4}, {3, 7}, {6, 8}}),
+		newBackupFileSet(oldKeyMap[12], 12, [][2]int{{1, 2}}),
+		newBackupFileSet(oldKeyMap[12], 12, [][2]int{{6, 7}}),
+		newBackupFileSet(oldKeyMap[14], 14, [][2]int{{1, 2}, {6, 7}}),
+		newBackupFileSet(oldKeyMap[15], 15, [][2]int{{1, 5}}),
+		newBackupFileSet(oldKeyMap[20], 20, [][2]int{{1, 5}}),
+		newBackupFileSet(oldKeyMap[21], 21, [][2]int{{1, 2}}),
+		newBackupFileSet(oldKeyMap[24], 24, [][2]int{{2, 4}}),
+		newBackupFileSet(oldKeyMap[24], 24, [][2]int{{3, 7}}),
+		newBackupFileSet(oldKeyMap[24], 24, [][2]int{{6, 8}}),
+		newBackupFileSet(oldKeyMap[28], 28, [][2]int{{1, 9}}),
+		newBackupFileSet(oldKeyMap[28], 28, [][2]int{{2, 4}}),
+		newBackupFileSet(oldKeyMap[30], 30, [][2]int{{1, 4}}),
+		newBackupFileSet(oldKeyMap[32], 32, [][2]int{{1, 2}, {6, 7}}),
+		newBackupFileSet(oldKeyMap[34], 34, [][2]int{{1, 2}, {6, 7}}),
+	}
+	rand.Shuffle(len(input), func(i, j int) {
+		input[i], input[j] = input[j], input[i]
+	})
+	output := []restore.BatchBackupFileSet{
+		{
+			newBackupFileSet(oldKeyMap[1], 1, [][2]int{{5, 7}}),
+		},
+		{
+			newBackupFileSet(oldKeyMap[4], 4, [][2]int{{2, 7}}),
+		},
+		{
+			newBackupFileSet(oldKeyMap[8], 8, [][2]int{{2, 4}, {3, 7}, {6, 8}}),
+		},
+		{
+			newBackupFileSet(oldKeyMap[12], 12, [][2]int{{1, 2}}),
+		},
+		{
+			newBackupFileSet(oldKeyMap[12], 12, [][2]int{{6, 7}}),
+			newBackupFileSet(oldKeyMap[14], 14, [][2]int{{1, 2}, {6, 7}}),
+			newBackupFileSet(oldKeyMap[15], 15, [][2]int{{1, 5}}),
+		},
+		{
+			newBackupFileSet(oldKeyMap[20], 20, [][2]int{{1, 5}}),
+			newBackupFileSet(oldKeyMap[21], 21, [][2]int{{1, 2}}),
+		},
+		{
+			newBackupFileSet(oldKeyMap[24], 24, [][2]int{{2, 4}, {3, 7}, {6, 8}}),
+		},
+		{
+			newBackupFileSet(oldKeyMap[28], 28, [][2]int{{1, 9}, {2, 4}}),
+			newBackupFileSet(oldKeyMap[30], 30, [][2]int{{1, 4}}),
+		},
+		{
+			newBackupFileSet(oldKeyMap[32], 32, [][2]int{{1, 2}, {6, 7}}),
+			newBackupFileSet(oldKeyMap[34], 34, [][2]int{{1, 2}, {6, 7}}),
+		},
+	}
+	output_i := 0
+	restore.GroupOverlappedBackupFileSetsIter(ctx, metaClient, input, func(bbfs restore.BatchBackupFileSet) {
+		expectSets := output[output_i]
+		require.Equal(t, len(expectSets), len(bbfs))
+		for i, bbf := range bbfs {
+			t.Logf("output_i: %d, i: %d", output_i, i)
+			expectSet := expectSets[i]
+			require.Equal(t, len(expectSet.SSTFiles), len(bbf.SSTFiles))
+			for j, file := range bbf.SSTFiles {
+				require.Equal(t, expectSet.SSTFiles[j].StartKey, file.StartKey)
+				require.Equal(t, expectSet.SSTFiles[j].EndKey, file.EndKey)
+			}
+			require.Equal(t, len(expectSet.RewriteRules.Data), len(bbf.RewriteRules.Data))
+			for j, data := range bbf.RewriteRules.Data {
+				require.Equal(t, expectSet.RewriteRules.Data[j].NewKeyPrefix, data.NewKeyPrefix)
+			}
+		}
+		output_i += 1
+	})
+	require.Equal(t, len(output), output_i)
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 )
@@ -51,6 +52,14 @@ func ParseTxnMetaKeyFrom(txnKey kv.Key) (*RawMetaKey, error) {
 		Field: field,
 		Ts:    ts,
 	}, nil
+}
+
+func ParseDBIDFromTableKey(key []byte) (int64, error) {
+	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return meta.ParseDBKey(rawMetaKey.Key)
 }
 
 // UpdateKey updates `key` field in `RawMetaKey` struct.

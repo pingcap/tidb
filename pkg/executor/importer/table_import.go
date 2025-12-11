@@ -306,7 +306,8 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
+// GetKVEncoder get the KV encoder.
+func (ti *TableImporter) GetKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        ti.SQLMode,
@@ -319,6 +320,20 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEnc
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
 	return NewTableKVEncoder(cfg, ti)
+}
+
+// GetKVEncoderForDupResolve get the KV encoder.
+func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
+	cfg := &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode: ti.SQLMode,
+			SysVars: ti.ImportantSysVars,
+		},
+		Table:                ti.encTable,
+		Logger:               log.Logger{Logger: ti.logger},
+		UseIdentityAutoRowID: true,
+	}
+	return NewTableKVEncoderForDupResolve(cfg, ti)
 }
 
 func (e *LoadDataController) calculateSubtaskCnt() int {
@@ -773,7 +788,7 @@ func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 
 // RebaseAllocatorBases rebase the allocator bases.
 func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
-	callLog := log.BeginTask(logger, "rebase allocators")
+	callLog := log.BeginTask(logger.With(zap.Any("maxIDs", maxIDs)), "rebase allocators")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()

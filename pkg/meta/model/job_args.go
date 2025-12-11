@@ -1077,6 +1077,26 @@ func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
 	return getOrDecodeArgs[*LockTablesArgs](&LockTablesArgs{}, job)
 }
 
+// AlterTableModeArgs is the argument for AlterTableMode.
+type AlterTableModeArgs struct {
+	TableMode TableMode `json:"table_mode,omitempty"`
+	SchemaID  int64     `json:"schema_id,omitempty"`
+	TableID   int64     `json:"table_id,omitempty"`
+}
+
+func (a *AlterTableModeArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *AlterTableModeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetAlterTableModeArgs get the AlterTableModeArgs argument.
+func GetAlterTableModeArgs(job *Job) (*AlterTableModeArgs, error) {
+	return getOrDecodeArgs[*AlterTableModeArgs](&AlterTableModeArgs{}, job)
+}
+
 // RepairTableArgs is the argument for repair table
 type RepairTableArgs struct {
 	TableInfo *TableInfo `json:"table_info"`
@@ -1726,4 +1746,23 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 		}, nil
 	}
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
+}
+
+// RefreshMetaArgs is the argument for RefreshMeta.
+type RefreshMetaArgs struct {
+	SchemaID int64 `json:"schema_id,omitempty"`
+	TableID  int64 `json:"table_id,omitempty"`
+}
+
+func (a *RefreshMetaArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *RefreshMetaArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetRefreshMetaArgs get the refresh meta argument.
+func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
+	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
 }

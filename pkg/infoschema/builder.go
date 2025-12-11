@@ -102,6 +102,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return applyExchangeTablePartition(b, m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
+	case model.ActionRefreshMeta:
+		return applyRefreshMeta(b, m, diff)
 	default:
 		return applyDefaultAction(b, m, diff)
 	}
@@ -109,6 +111,64 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 
 func (b *Builder) applyCreateTables(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
+}
+
+func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	schemaID := diff.SchemaID
+	tableID := diff.TableID
+	// Check if schema exists in kv.
+	dbInfo, err := m.GetDatabase(schemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Schema doesn't exist in kv, drop it from infoschema.
+	if dbInfo == nil {
+		schemaDiff := &model.SchemaDiff{
+			Version:  diff.Version,
+			Type:     model.ActionDropSchema,
+			SchemaID: schemaID,
+		}
+		return applyDropSchema(b, schemaDiff), nil
+	}
+	// Schema exists in kv but not in infoschema, create it to infoschema.
+	if _, ok := b.SchemaByID(schemaID); !ok {
+		schemaDiff := &model.SchemaDiff{
+			Version:  diff.Version,
+			Type:     model.ActionCreateSchema,
+			SchemaID: schemaID,
+		}
+		if err := applyCreateSchema(b, m, schemaDiff); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	// If tableID is not specified, skip refresh meta.
+	if tableID <= 0 {
+		return nil, nil
+	}
+	// Check if table exists in kv.
+	tableInfo, err := m.GetTable(schemaID, tableID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Table not exists in kv, drop it from infoschema.
+	if tableInfo == nil {
+		schemaDiff := &model.SchemaDiff{
+			Version:  diff.Version,
+			Type:     model.ActionDropTable,
+			SchemaID: schemaID,
+			TableID:  tableID,
+		}
+		return applyDropTableOrPartition(b, m, schemaDiff)
+	}
+	// default update table
+	schemaDiff := &model.SchemaDiff{
+		Version:  diff.Version,
+		Type:     model.ActionCreateTable,
+		SchemaID: schemaID,
+		TableID:  tableID,
+	}
+	return applyDefaultAction(b, m, schemaDiff)
 }
 
 func applyTruncateTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {

@@ -23,6 +23,7 @@ go_test(
         "//pkg/sessiontxn",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/util/hint",

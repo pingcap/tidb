@@ -8,6 +8,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/url"
 	"os"
 	"path"
@@ -15,6 +16,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -115,6 +117,37 @@ type GCSStorage struct {
 	clientCancel context.CancelFunc
 }
 
+// CopyFrom implements Copier.
+func (s *GCSStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	es, ok := e.(*GCSStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "GCSStorage.CopyFrom supports only GCSStorage, get %T", e)
+	}
+	dstName := s.objectName(spec.To)
+	srcName := es.objectName(spec.From)
+	// A note here:
+	// https://cloud.google.com/storage/docs/json_api/v1/objects/rewrite
+	// It seems extra configuration is needed when doing cross-region copying.
+	copier := s.GetBucketHandle().Object(dstName).CopierFrom(es.GetBucketHandle().Object(srcName))
+	_, err := copier.Run(ctx)
+	if err != nil {
+		return errors.Annotatef(
+			err,
+			"failed to copy %s/%s to %s/%s",
+			es.gcs.Bucket,
+			srcName,
+			s.gcs.Bucket,
+			dstName,
+		)
+	}
+
+	return nil
+}
+
+func (s *GCSStorage) MarkStrongConsistency() {
+	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
+}
+
 // GetBucketHandle gets the handle to the GCS API on the bucket.
 func (s *GCSStorage) GetBucketHandle() *storage.BucketHandle {
 	i := s.idx.Inc() % int64(len(s.handles))
@@ -140,10 +173,16 @@ func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 }
 
 // DeleteFiles delete the files in storage.
+// If the file does not exist, we will ignore it.
 func (s *GCSStorage) DeleteFiles(ctx context.Context, names []string) error {
 	for _, name := range names {
 		err := s.DeleteFile(ctx, name)
 		if err != nil {
+			// some real-TiKV test also delete objects, so we ignore the error if
+			// the object does not exist
+			if goerrors.Is(err, storage.ErrObjectNotExist) {
+				continue
+			}
 			return err
 		}
 	}
@@ -362,12 +401,12 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 					clientOps = append(clientOps, option.WithoutAuthentication())
 					goto skipHandleCred
 				}
-				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
+				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--%s'", gcsCredentialsFile, err)
 			}
 			if opts.SendCredentials {
 				if len(creds.JSON) <= 0 {
-					return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
-						"You should provide '--gcs.credentials_file' when '--send-credentials-to-tikv' is true")
+					return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig,
+						"You should provide '--%s' when '--send-credentials-to-tikv' is true", gcsCredentialsFile)
 				}
 				gcs.CredentialsBlob = string(creds.JSON)
 			}
@@ -563,6 +602,12 @@ type gcsObjectReader struct {
 
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
+	failpoint.Inject("GCSReadUnexpectedEOF", func(n failpoint.Value) {
+		if r.prefetchSize > 0 && r.pos > 0 && rand.Intn(2) == 0 {
+			log.Info("ingest error in gcs reader read")
+			failpoint.Return(n.(int), io.ErrUnexpectedEOF)
+		}
+	})
 	if r.reader == nil {
 		length := r.endPos - r.pos
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)

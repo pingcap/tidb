@@ -192,7 +192,7 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	cfg := Config{
 		Storage: testDir,
 	}
-	_, err = getLogRange(context.TODO(), &cfg)
+	_, err = getLogInfo(context.TODO(), &cfg)
 	require.Error(t, err, errors.Annotate(berrors.ErrStorageUnknown,
 		"the storage has been used for full backup"))
 }
@@ -215,7 +215,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	cfg := Config{
 		Storage: testDir,
 	}
-	logInfo, err := getLogRange(context.TODO(), &cfg)
+	logInfo, err := getLogInfo(context.TODO(), &cfg)
 	require.Nil(t, err)
 	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
 }
