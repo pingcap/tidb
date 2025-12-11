@@ -77,12 +77,6 @@ func (m *ImportStepMeta) Marshal() ([]byte, error) {
 	return m.BaseExternalMeta.Marshal(m)
 }
 
-const (
-	// dataKVGroup is the group name of the sorted kv for data.
-	// index kv will be stored in a group named as index-id.
-	dataKVGroup = "data"
-)
-
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
 	external.BaseExternalMeta

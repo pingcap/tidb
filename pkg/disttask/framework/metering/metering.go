@@ -72,6 +72,17 @@ func UnregisterRecorder(taskID int64) {
 	meter.unregisterRecorder(taskID)
 }
 
+// WriteMeterData writes the metering data.
+// ts+category+uuid uniquely identifies a metering data file, the SDK also use the
+// shared-pool-id in the file name, but for each meter writer, it's the same.
+func WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
+	meter := meteringInstance.Load()
+	if kerneltype.IsClassic() || meter == nil {
+		return nil
+	}
+	return meter.WriteMeterData(ctx, ts, uuid, items)
+}
+
 // SetMetering sets the metering instance for dxf.
 func SetMetering(m *Meter) {
 	meteringInstance.Store(m)
@@ -106,7 +117,13 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create storage provider")
 	}
-	meteringConfig := mconfig.DefaultConfig().WithLogger(logger)
+	// if there are network issues, we might successfully write the metering data,
+	// but the writer still returns error, we will retry write with the same TS
+	// in this case, which means the metering data file will have the same name,
+	// we set WithOverwriteExisting to true to avoid the retry write report error
+	// in this case.
+	// IgnoreExisting wound be more appropriate, but the SDK doesn't provide it.
+	meteringConfig := mconfig.DefaultConfig().WithLogger(logger).WithOverwriteExisting(true)
 	writer := meteringwriter.NewMeteringWriterFromConfig(provider, meteringConfig, cfg)
 	return newMeterWithWriter(logger, writer), nil
 }
@@ -167,7 +184,8 @@ func (m *Meter) cleanupUnregisteredRecorders() []*Recorder {
 			// some non-flushed data even the recorder is unregistered, so we check
 			// current data too.
 			if fd.equals(r.currData()) {
-				delete(m.recorders, r.taskID)
+				delete(m.recorders, taskID)
+				delete(m.lastFlushedData, taskID)
 				removed = append(removed, r.Recorder)
 			}
 		}
@@ -245,7 +263,8 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 		return
 	}
 
-	if err := m.writeMeterData(ctx, ts, items); err != nil {
+	// each metering background loop sends data with the same uuid.
+	if err := m.WriteMeterData(ctx, ts, m.uuid, items); err != nil {
 		logger.Warn("failed to write metering data", zap.Error(err),
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
@@ -257,10 +276,11 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 	}
 }
 
-func (m *Meter) writeMeterData(ctx context.Context, ts int64, items []map[string]any) error {
+// WriteMeterData writes the metering data.
+func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
 	failpoint.InjectCall("forceTSAtMinuteBoundary", &ts)
 	meteringData := &common.MeteringData{
-		SelfID:    m.uuid,
+		SelfID:    uuid,
 		Timestamp: ts,
 		Category:  category,
 		Data:      items,

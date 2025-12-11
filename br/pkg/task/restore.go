@@ -112,6 +112,8 @@ const (
 
 	FlagResetSysUsers = "reset-sys-users"
 
+	FlagSysCheckCollation = "sys-check-collation"
+
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
@@ -147,6 +149,8 @@ type RestoreCommonConfig struct {
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 
 	ResetSysUsers []string `json:"reset-sys-users" toml:"reset-sys-users"`
+
+	SysCheckCollation bool `json:"sys-check-collation" toml:"sys-check-collation"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -359,6 +363,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 		" default is true, the incremental restore will not perform rewrite on the incremental data"+
 		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
 		" these ddl jobs are Add index, Modify column and Reorganize partition")
+	flags.Bool(FlagSysCheckCollation, false, "whether check the privileges table rows to permit to restore the privilege data"+
+		" from utf8mb4_bin collate column to utf8mb4_general_ci collate column")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -489,7 +495,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
 	}
-
+	cfg.SysCheckCollation, err = flags.GetBool(FlagSysCheckCollation)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagSysCheckCollation)
+	}
 	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
@@ -729,6 +738,7 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 	client.SetRewriteMode(ctx)
+	client.SetCheckPrivilegeTableRowsCollateCompatiblity(cfg.SysCheckCollation)
 	return nil
 }
 
@@ -1399,8 +1409,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+		canLoadSysTablePhysical, err := snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables, client.GetCheckPrivilegeTableRowsCollateCompatiblity())
+		if err != nil {
 			return errors.Trace(err)
+		}
+		if loadSysTablePhysical && !canLoadSysTablePhysical {
+			log.Info("The system tables schema is not compatible. Fallback to logically load system tables.")
+			loadSysTablePhysical = false
 		}
 	}
 

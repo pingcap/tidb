@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	clitutil "github.com/tikv/client-go/v2/util"
 )
 
@@ -373,6 +374,8 @@ func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskSta
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
+	r := tracing.StartRegion(ctx, "TaskManager.GetTaskExecInfoByExecID")
+	defer r.End()
 	var res []*TaskExecInfo
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err

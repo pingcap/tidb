@@ -38,6 +38,8 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newForceFlushCommand())
 	cmd.AddCommand(newChecksumCommand())
 	cmd.AddCommand(newTestStorageCommand())
+	cmd.AddCommand(newPitrChecksumCommand())
+	cmd.AddCommand(newUpstreamChecksumCommand())
 	return cmd
 }
 
@@ -134,6 +136,49 @@ func newChecksumCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
 	operator.DefineFlagsForChecksumTableConfig(cmd.Flags())
+	return cmd
+}
+
+func newPitrChecksumCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "checksum-pitr",
+		Short: "calculate the checksum with pitr id map",
+		Long: "Calculate the checksum of the current cluster (specified by `-u`) " +
+			"with applying the rewrite rules generated from pitr id map (specified by `-s` if saved in external storage). " +
+			"This can be used when you have the checksum of upstream elsewhere.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.ChecksumWithPitrIdMapConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunPitrChecksumTable(ctx, tidbGlue, cfg)
+		},
+	}
+	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
+	operator.DefineFlagsForChecksumPitrTableConfig(cmd.Flags())
+	return cmd
+}
+
+func newUpstreamChecksumCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "checksum-upstream",
+		Short: "calculate the checksum",
+		Long: "Calculate the checksum of the current cluster (specified by `-u`). " +
+			"This can be used when you have the checksum of upstream elsewhere",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.ChecksumUpstreamConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunUpstreamChecksumTable(ctx, tidbGlue, cfg)
+		},
+	}
+	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
+	operator.DefineFlagsForChecksumUpstreamTableConfig(cmd.Flags())
 	return cmd
 }
 

@@ -201,6 +201,11 @@ error = '''
 pd not fully scattered
 '''
 
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
 failed to wait region split

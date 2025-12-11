@@ -142,6 +142,13 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexScanCostFactor)
+	// Add a small tie-breaker cost based on the last 2 digits of the index ID to differentiate
+	// indexes that would otherwise cost the same (same predicates, and same length).
+	// This cost is intentionally not included in the trace output.
+	if p.Index != nil {
+		tieBreakerValue := float64(p.Index.ID%100) / 1000000.0
+		p.PlanCostVer2 = costusage.AddCostWithoutTrace(p.PlanCostVer2, tieBreakerValue)
+	}
 	return p.PlanCostVer2, nil
 }
 

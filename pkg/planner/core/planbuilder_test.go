@@ -757,8 +757,8 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 			Name:   ast.NewCIStr("t1"),
 		},
 		{
-			Schema: ast.NewCIStr("test"),
-			Name:   ast.NewCIStr("t2"),
+			Schema: ast.NewCIStr("Test"),
+			Name:   ast.NewCIStr("T2"),
 		},
 	}
 
@@ -768,6 +768,8 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, "t1", pb.visitInfo[0].table)
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
+	require.Equal(t, "test", pb.visitInfo[2].db)
+	require.Equal(t, "t2", pb.visitInfo[2].table)
 }
 
 func TestBuildRefreshStatsPrivileges(t *testing.T) {

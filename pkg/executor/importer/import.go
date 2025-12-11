@@ -73,6 +73,7 @@ import (
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -173,6 +174,8 @@ var (
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
 		threadOption:          {},
+		checksumTableOption:   {},
+		recordErrorsOption:    {},
 	}
 
 	disallowedOptionsForSEM = map[string]struct{}{
@@ -368,7 +371,7 @@ type LoadDataController struct {
 	// as IMPORT INTO have 2 place to state columns, in column-vars and in set clause,
 	// so it's computed from both clauses:
 	//  - append columns from column-vars to InsertColumns
-	//  - append columns from left hand fo set clause to InsertColumns
+	//  - append columns from left hand of set clause to InsertColumns
 	// it's similar to InsertValues.InsertColumns.
 	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
@@ -1682,7 +1685,7 @@ func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.ThreadCnt,
+		WorkerConcurrency:      *atomic.NewInt32(int32(e.ThreadCnt)),
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
