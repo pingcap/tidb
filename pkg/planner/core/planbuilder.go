@@ -4267,7 +4267,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 // buildSoftDeleteReplaceExpr builds the ReplaceConflictIfExpr for soft delete enabled tables.
 // It creates an expression: NOT(ISNULL(_tidb_softdelete_time)) to check if a row is soft-deleted.
 func (b *PlanBuilder) buildSoftDeleteReplaceExpr(insertPlan *physicalop.Insert, tableInfo *model.TableInfo) {
-	if tableInfo.SoftdeleteInfo == nil || !tableInfo.SoftdeleteInfo.Enable {
+	if tableInfo.SoftdeleteInfo == nil ||
+		!tableInfo.SoftdeleteInfo.Enable ||
+		!insertPlan.SCtx().GetSessionVars().SoftDeleteRewrite {
 		return
 	}
 

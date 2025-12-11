@@ -1335,6 +1335,9 @@ const (
 	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
 	// The log backup task will be paused if the checkpoint lag is larger than it.
 	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+
+	// TiDBTranslateSoftDeleteSQL indicates whether to rewrite SQL for softdelete tables.
+	TiDBTranslateSoftDeleteSQL = "tidb_translate_softdelete_sql"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1749,6 +1752,7 @@ const (
 	DefTiDBMemArbitratorModeText                      = memory.ArbitratorModeDisableName
 	DefTiDBMemArbitratorQueryReservedText             = "0"
 	DefTiDBMemArbitratorWaitAverse                    = "0"
+	DefTiDBTranslateSoftdeleteSQL                     = true
 )
 
 // Process global variables.
