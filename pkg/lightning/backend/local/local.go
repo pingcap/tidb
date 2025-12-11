@@ -1132,7 +1132,9 @@ func (local *Backend) generateAndSendJob(
 						}
 						return err
 					}
-					// reference the job to prevent the job from being GCed before being put into jobToWorkerCh.
+					// we need to increase the ref count before sending jobs to
+					// jobToWorkerCh, in case some job finished quickly and decrease
+					// the ref count to zero and cause the data being released.
 					for _, job := range jobs {
 						job.ref(jobWg)
 					}
