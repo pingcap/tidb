@@ -153,7 +153,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 				count = tempResult.Est
 			} else {
 				var countEst statistics.RowEstimate
-				countEst, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
+				countEst, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang}, false)
 				count = countEst.Est
 			}
 			if err != nil {
@@ -474,7 +474,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		if !statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
 			foundStats = true
 			var countEst statistics.RowEstimate
-			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan, false)
 			if err != nil {
 				return 0, 0, 0, false, err
 			}
