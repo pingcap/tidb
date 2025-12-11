@@ -10,6 +10,6 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `id` int DEFAULT NULL,
   `created_time` datetime DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_time` + INTERVAL 1 HOUR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_time` + INTERVAL 1 HOUR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
 PARTITION BY RANGE COLUMNS(`id`)
 (PARTITION `p1` VALUES LESS THAN (100))
