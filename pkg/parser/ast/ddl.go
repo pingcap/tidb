@@ -135,7 +135,11 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
 			ctx.WriteKeyWord("ACTIVE_ACTIVE ")
 			ctx.WritePlain("= ")
-			ctx.WriteString(n.Value)
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
 			return nil
 		})
 	case DatabaseOptionSoftDelete:
