@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"encoding/hex"
 	"slices"
 
 	"github.com/pingcap/failpoint"
@@ -34,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -120,6 +123,26 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	stmtCtx.SetPlan(finalPlan)
+
+	// Emit trace event for plan digest if enabled
+	if traceevent.IsEnabled(traceevent.StmtPlan) {
+		normalized, planDigest := stmtCtx.GetPlanDigest()
+		var digestHex string
+		if planDigest != nil {
+			digestHex = hex.EncodeToString(planDigest.Bytes())
+		}
+		fields := []zap.Field{
+			zap.String("plan_digest", digestHex),
+			zap.String("stmt_type", stmtctx.GetStmtLabel(ctx, stmtNode)),
+			zap.Uint64("conn_id", sessVars.ConnectionID),
+		}
+		// Add normalized plan if present, respecting redaction
+		if normalized != "" {
+			fields = append(fields, zap.String("normalized_plan", redact.String(sessVars.EnableRedactLog, normalized)))
+		}
+		traceevent.TraceEvent(ctx, traceevent.StmtPlan, "stmt.plan.digest", fields...)
+	}
+
 	stmt := &ExecStmt{
 		GoCtx:         ctx,
 		InfoSchema:    is,
@@ -214,17 +237,17 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 	switch x := stmtNode.(type) {
 	case *ast.AlterTableStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.CreateIndexStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.CreateTableStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.InsertStmt:
@@ -241,39 +264,39 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 		}
 	case *ast.DropIndexStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.TruncateTableStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.RepairTableStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.FlashBackTableStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.RecoverTableStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.CreateViewStmt:
 		if x.ViewName != nil {
-			dbLabel := x.ViewName.Schema.O
+			dbLabel := x.ViewName.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.RenameTableStmt:
 		tables := x.TableToTables
 		for _, table := range tables {
 			if table.OldTable != nil {
-				dbLabel := table.OldTable.Schema.O
+				dbLabel := table.OldTable.Schema.L
 				if _, ok := dbLabelSet[dbLabel]; !ok {
 					dbLabelSet[dbLabel] = struct{}{}
 				}
@@ -282,7 +305,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 	case *ast.DropTableStmt:
 		tables := x.Tables
 		for _, table := range tables {
-			dbLabel := table.Schema.O
+			dbLabel := table.Schema.L
 			if _, ok := dbLabelSet[dbLabel]; !ok {
 				dbLabelSet[dbLabel] = struct{}{}
 			}
@@ -313,44 +336,44 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 		}
 	case *ast.CallStmt:
 		if x.Procedure != nil {
-			dbLabel := x.Procedure.Schema.O
+			dbLabel := x.Procedure.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.ShowStmt:
 		dbLabelSet[x.DBName] = struct{}{}
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.LoadDataStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.ImportIntoStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.SplitRegionStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.DistributeTableStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.NonTransactionalDMLStmt:
 		if x.ShardColumn != nil {
-			dbLabel := x.ShardColumn.Schema.O
+			dbLabel := x.ShardColumn.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.AnalyzeTableStmt:
 		tables := x.TableNames
 		for _, table := range tables {
-			dbLabel := table.Schema.O
+			dbLabel := table.Schema.L
 			if _, ok := dbLabelSet[dbLabel]; !ok {
 				dbLabelSet[dbLabel] = struct{}{}
 			}
@@ -358,7 +381,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 	case *ast.DropStatsStmt:
 		tables := x.Tables
 		for _, table := range tables {
-			dbLabel := table.Schema.O
+			dbLabel := table.Schema.L
 			if _, ok := dbLabelSet[dbLabel]; !ok {
 				dbLabelSet[dbLabel] = struct{}{}
 			}
@@ -366,7 +389,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 	case *ast.AdminStmt:
 		tables := x.Tables
 		for _, table := range tables {
-			dbLabel := table.Schema.O
+			dbLabel := table.Schema.L
 			if _, ok := dbLabelSet[dbLabel]; !ok {
 				dbLabelSet[dbLabel] = struct{}{}
 			}
@@ -378,14 +401,14 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 	case *ast.FlushStmt:
 		tables := x.Tables
 		for _, table := range tables {
-			dbLabel := table.Schema.O
+			dbLabel := table.Schema.L
 			if _, ok := dbLabelSet[dbLabel]; !ok {
 				dbLabelSet[dbLabel] = struct{}{}
 			}
 		}
 	case *ast.CompactTableStmt:
 		if x.Table != nil {
-			dbLabel := x.Table.Schema.O
+			dbLabel := x.Table.Schema.L
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.CreateBindingStmt:
@@ -551,7 +574,7 @@ func getDbFromResultNode(resultNode ast.ResultSetNode, resolveCtx *resolve.Conte
 	case *ast.TableName:
 		xW := resolveCtx.GetTableName(x)
 		if xW != nil {
-			dbLabels = append(dbLabels, xW.DBInfo.Name.O)
+			dbLabels = append(dbLabels, xW.DBInfo.Name.L)
 		}
 	case *ast.Join:
 		if x.Left != nil {

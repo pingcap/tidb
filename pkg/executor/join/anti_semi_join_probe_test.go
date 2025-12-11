@@ -225,8 +225,6 @@ func testNotInAntiSemi(t *testing.T, rightAsBuildSide bool) {
 	ctx.GetSessionVars().MaxChunkSize = maxChunkSizeInTest
 	leftDataSource, rightDataSource, expectedResult := buildNotInAntiSemiDataSourceAndExpectResult(ctx, semiJoinleftCols, semiJoinrightCols)
 
-	maxRowTableSegmentSize = 100
-
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 
 	leftKeys := []*expression.Column{

@@ -71,6 +71,34 @@ func TestCrossDBBindingCache(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestDuplicatedBinding(t *testing.T) {
+	// 3 bindings with the same noDBDigest
+	bindingDB1 := &Binding{BindSQL: "SELECT * FROM db1.t1"}
+	bindingDB2 := &Binding{BindSQL: "SELECT * FROM db2.t1"}
+	bindingDB3 := &Binding{BindSQL: "SELECT * FROM db3.t1"}
+	c := newBindCache()
+	require.Nil(t, c.SetBinding("db1", bindingDB1))
+	require.Nil(t, c.SetBinding("db2", bindingDB2))
+	require.Nil(t, c.SetBinding("db3", bindingDB3))
+
+	digestMap := c.(*bindingCache).digestBiMap.(*digestBiMapImpl)
+	var noDBDigest string
+	for digest := range digestMap.noDBDigest2SQLDigest {
+		noDBDigest = digest
+	}
+	require.True(t, noDBDigest != "")
+	require.Equal(t, 3, len(digestMap.noDBDigest2SQLDigest[noDBDigest]))
+	require.Equal(t, 3, len(digestMap.sqlDigest2noDBDigest))
+
+	// put 3 duplicated bindings again
+	require.Nil(t, c.SetBinding("db1", bindingDB1))
+	require.Nil(t, c.SetBinding("db2", bindingDB2))
+	require.Nil(t, c.SetBinding("db3", bindingDB3))
+	require.True(t, noDBDigest != "")
+	require.Equal(t, 3, len(digestMap.noDBDigest2SQLDigest[noDBDigest]))
+	require.Equal(t, 3, len(digestMap.sqlDigest2noDBDigest))
+}
+
 func TestBindCache(t *testing.T) {
 	binding := &Binding{BindSQL: "SELECT * FROM t1"}
 	kvSize := int(binding.size())

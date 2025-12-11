@@ -439,6 +439,7 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
+			failpoint.InjectCall("onRunReorgJobTimeout")
 			return jobCtx.genReorgTimeoutErr()
 		}
 	}

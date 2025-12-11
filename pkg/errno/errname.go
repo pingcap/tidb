@@ -1157,9 +1157,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupQueryRunawayInterrupted:   mysql.Message("Query execution was interrupted, identified as runaway query [%s]", nil),
 	ErrResourceGroupQueryRunawayQuarantine:    mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
 	ErrResourceGroupInvalidBackgroundTaskName: mysql.Message("Unknown background task name '%-.192s'", nil),
+	ErrQueryExecStopped:                       mysql.Message("Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]", nil),
 
-	ErrEngineAttributeInvalidFormat: mysql.Message("Invalid engine attribute format: %s", nil),
-	ErrStorageClassInvalidSpec:      mysql.Message("Invalid storage class: %s", nil),
+	ErrEngineAttributeInvalidFormat:             mysql.Message("Invalid engine attribute format: %s", nil),
+	ErrStorageClassInvalidSpec:                  mysql.Message("Invalid storage class: %s", nil),
+	ErrModifyColumnReferencedByPartialCondition: mysql.Message("Cannot drop, change or modify column '%s': it is referenced in partial index '%s'", nil),
+	ErrCheckPartialIndexWithoutFastCheck:        mysql.Message("Validation of partial indexes requires tidb_enable_fast_table_check=ON", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:      mysql.Message("PD server timeout: %s", nil),

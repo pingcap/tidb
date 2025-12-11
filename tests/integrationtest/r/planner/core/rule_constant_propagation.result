@@ -186,7 +186,7 @@ Update	root		N/A
   └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.t1.id, planner__core__rule_constant_propagation.t2.id)]
     ├─HashAgg(Build)	root		group by:planner__core__rule_constant_propagation.t2.id, funcs:count(1)->Column#7, funcs:firstrow(planner__core__rule_constant_propagation.t2.id)->planner__core__rule_constant_propagation.t2.id
     │ └─TableReader	root		data:Selection
-    │   └─Selection	cop[tikv]		eq(10, planner__core__rule_constant_propagation.t2.id)
+    │   └─Selection	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.id, 10)
     │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	root		data:Selection
       └─Selection	cop[tikv]		eq(planner__core__rule_constant_propagation.t1.id, 10)
@@ -229,7 +229,7 @@ explain select * from t2 where not exists (select 1 from t3 where t3.k = t2.k an
 id	estRows	task	access object	operator info
 HashJoin_16	8000.00	root		anti semi join, left side:TableReader_19, equal:[eq(planner__core__rule_constant_propagation.t2.b, planner__core__rule_constant_propagation.t3.b) eq(planner__core__rule_constant_propagation.t2.k, planner__core__rule_constant_propagation.t3.k)], left cond:[eq(planner__core__rule_constant_propagation.t2.k, 1)]
 ├─TableReader_22(Build)	10.00	root		data:Selection_21
-│ └─Selection_21	10.00	cop[tikv]		eq(1, planner__core__rule_constant_propagation.t3.k)
+│ └─Selection_21	10.00	cop[tikv]		eq(planner__core__rule_constant_propagation.t3.k, 1)
 │   └─TableFullScan_20	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─TableReader_19(Probe)	10000.00	root		data:TableFullScan_18
   └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -237,7 +237,7 @@ explain select * from t2 where exists (select 1 from t3 where t3.k = t2.k and t3
 id	estRows	task	access object	operator info
 HashJoin_17	7.99	root		semi join, left side:TableReader_21, equal:[eq(planner__core__rule_constant_propagation.t2.b, planner__core__rule_constant_propagation.t3.b) eq(planner__core__rule_constant_propagation.t2.k, planner__core__rule_constant_propagation.t3.k)]
 ├─TableReader_24(Build)	9.99	root		data:Selection_23
-│ └─Selection_23	9.99	cop[tikv]		eq(1, planner__core__rule_constant_propagation.t3.k), not(isnull(planner__core__rule_constant_propagation.t3.b))
+│ └─Selection_23	9.99	cop[tikv]		eq(planner__core__rule_constant_propagation.t3.k, 1), not(isnull(planner__core__rule_constant_propagation.t3.b))
 │   └─TableFullScan_22	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─TableReader_21(Probe)	9.99	root		data:Selection_20
   └─Selection_20	9.99	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.k, 1), not(isnull(planner__core__rule_constant_propagation.t2.b))
@@ -251,7 +251,7 @@ AND t2.k = 1;
 id	estRows	task	access object	operator info
 HashJoin_17	8.00	root		anti semi join, left side:TableReader_21, equal:[eq(planner__core__rule_constant_propagation.t2.b, planner__core__rule_constant_propagation.t3.b) eq(planner__core__rule_constant_propagation.t2.k, planner__core__rule_constant_propagation.t3.k)]
 ├─TableReader_24(Build)	10.00	root		data:Selection_23
-│ └─Selection_23	10.00	cop[tikv]		eq(1, planner__core__rule_constant_propagation.t3.k)
+│ └─Selection_23	10.00	cop[tikv]		eq(planner__core__rule_constant_propagation.t3.k, 1)
 │   └─TableFullScan_22	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─TableReader_21(Probe)	10.00	root		data:Selection_20
   └─Selection_20	10.00	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.k, 1)
@@ -272,7 +272,7 @@ AND t2.k = 1;
 id	estRows	task	access object	operator info
 HashJoin_17	7.99	root		semi join, left side:TableReader_21, equal:[eq(planner__core__rule_constant_propagation.t2.b, planner__core__rule_constant_propagation.t3.b) eq(planner__core__rule_constant_propagation.t2.k, planner__core__rule_constant_propagation.t3.k)]
 ├─TableReader_24(Build)	9.99	root		data:Selection_23
-│ └─Selection_23	9.99	cop[tikv]		eq(1, planner__core__rule_constant_propagation.t3.k), not(isnull(planner__core__rule_constant_propagation.t3.b))
+│ └─Selection_23	9.99	cop[tikv]		eq(planner__core__rule_constant_propagation.t3.k, 1), not(isnull(planner__core__rule_constant_propagation.t3.b))
 │   └─TableFullScan_22	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─TableReader_21(Probe)	9.99	root		data:Selection_20
   └─Selection_20	9.99	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.k, 1), not(isnull(planner__core__rule_constant_propagation.t2.b))

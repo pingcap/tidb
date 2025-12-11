@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -40,6 +42,8 @@ func init() {
 		},
 	}
 }
+
+var sampleLoggerFactory = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "slow log"))
 
 func mergeConditionFields(dst, src map[string]struct{}) {
 	for k := range src {

@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -104,7 +105,9 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec("drop database if exists fk_index;")
 	tk.MustExec("create database fk_index;")
 	tk.MustExec("use fk_index;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	}
 	tk.MustExec("create table employee (id bigint auto_increment key, pid bigint)")
 	tk.MustExec("insert into employee (id) values (1),(2),(3),(4),(5),(6),(7),(8)")
 	for range 14 {
@@ -153,7 +156,9 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustExec("drop database if exists small;")
 	tk.MustExec("create database small;")
 	tk.MustExec("use small;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	}
 	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
 	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
@@ -164,7 +169,9 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	}
 	tk.MustExec("create table t(a int DEFAULT '-13202', b varchar(221) NOT NULL DEFAULT 'duplicatevalue', " +
 		"c int NOT NULL DEFAULT '0');")
 

@@ -15,6 +15,7 @@
 package reporter
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -537,6 +538,188 @@ func TestReporterWorker(t *testing.T) {
 	assert.Len(t, data.DataRecords, 1)
 	assert.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
 	assert.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
+}
+
+func TestProcessStmtStatsData(t *testing.T) {
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
+	topsqlstate.GlobalState.MaxStatementCount.Store(3)
+
+	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	r.Start()
+	defer r.Close()
+
+	ch := make(chan *ReportData, 1)
+	ds := newMockDataSink(ch)
+	err := r.Register(ds)
+	assert.NoError(t, err)
+
+	r.Collect(nil)
+	r.Collect([]collector.SQLCPUTimeRecord{
+		{
+			SQLDigest:  []byte("S1"),
+			PlanDigest: []byte("P1"),
+			CPUTimeMs:  1,
+		},
+		{
+			SQLDigest:  []byte("S2"),
+			PlanDigest: []byte("P2"),
+			CPUTimeMs:  2,
+		},
+	})
+	r.CollectStmtStatsMap(nil)
+	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S1",
+			PlanDigest: "P1",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       1,
+			NetworkInBytes:  1,
+			NetworkOutBytes: 0,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S2",
+			PlanDigest: "P2",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       2,
+			NetworkInBytes:  0,
+			NetworkOutBytes: 2,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S3",
+			PlanDigest: "P3",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       3,
+			NetworkInBytes:  1,
+			NetworkOutBytes: 2,
+		},
+	})
+
+	var data *ReportData
+	select {
+	case data = <-ch:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no data in ch")
+	}
+
+	assert.Len(t, data.DataRecords, 3)
+	sort.Slice(data.DataRecords, func(i, j int) bool {
+		return data.DataRecords[i].Items[0].StmtNetworkInBytes+data.DataRecords[i].Items[0].StmtNetworkOutBytes <
+			data.DataRecords[j].Items[0].StmtNetworkInBytes+data.DataRecords[j].Items[0].StmtNetworkOutBytes
+	})
+	// Check Si, Pi and corresponding item value i.
+	for i, record := range data.DataRecords {
+		j := i + 1
+		assert.Equal(t, []byte(fmt.Sprintf("S%d", j)), record.SqlDigest)
+		assert.Equal(t, []byte(fmt.Sprintf("P%d", j)), record.PlanDigest)
+		assert.Equal(t, uint64(j), record.Items[0].StmtNetworkInBytes+record.Items[0].StmtNetworkOutBytes)
+	}
+	// S3, P3 has no recorded CPU time data, so the CpuTimeMs is 0.
+	assert.Equal(t, uint32(0), data.DataRecords[2].Items[0].CpuTimeMs)
+
+	// Check cases with others and evicted
+	r.Collect(nil)
+	// S1/P1 and S4/P4 will be evicted since MaxStatementCount is 3 and its cputime is the lowest.
+	r.Collect([]collector.SQLCPUTimeRecord{
+		{
+			SQLDigest:  []byte("S1"),
+			PlanDigest: []byte("P1"),
+			CPUTimeMs:  1,
+		},
+		{
+			SQLDigest:  []byte("S2"),
+			PlanDigest: []byte("P2"),
+			CPUTimeMs:  2,
+		},
+		{
+			SQLDigest:  []byte("S3"),
+			PlanDigest: []byte("P3"),
+			CPUTimeMs:  3,
+		},
+		{
+			SQLDigest:  []byte("S4"),
+			PlanDigest: []byte("P4"),
+			CPUTimeMs:  0,
+		},
+		{
+			SQLDigest:  []byte("S7"),
+			PlanDigest: []byte("P7"),
+			CPUTimeMs:  7,
+		},
+	})
+	r.CollectStmtStatsMap(nil)
+	// S1/P1 and S7/P7 will be picked from network dimension, and added
+	// Also S2/P2 is not picked from network dimension, while it is not evicted in cputime data, so it won't be added to others.
+	// S4/P4 is not picked from network dimension, and evicted in cputime data, so it will be added to others.
+	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S1",
+			PlanDigest: "P1",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       10,
+			NetworkInBytes:  10,
+			NetworkOutBytes: 0,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S2",
+			PlanDigest: "P2",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       2,
+			NetworkInBytes:  0,
+			NetworkOutBytes: 2,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S4",
+			PlanDigest: "P4",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       4,
+			NetworkInBytes:  1,
+			NetworkOutBytes: 3,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S6",
+			PlanDigest: "P6",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       6,
+			NetworkInBytes:  2,
+			NetworkOutBytes: 4,
+		},
+	})
+
+	select {
+	case data = <-ch:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no data in ch")
+	}
+	assert.Len(t, data.DataRecords, 6)
+	sort.Slice(data.DataRecords, func(i, j int) bool {
+		return (data.DataRecords[i].Items[0].StmtNetworkInBytes+data.DataRecords[i].Items[0].StmtNetworkOutBytes)*100+uint64(data.DataRecords[i].Items[0].CpuTimeMs) <
+			(data.DataRecords[j].Items[0].StmtNetworkInBytes+data.DataRecords[j].Items[0].StmtNetworkOutBytes)*100+uint64(data.DataRecords[j].Items[0].CpuTimeMs)
+	})
+	// DataRecords should be:
+	// S3, P3, CpuTime=3, Network=0
+	// S7, P7, CpuTime=7, Network=0
+	// S2, P2, CpuTime=2, Network=2
+	// Other,  CpuTime=1, Network=4
+	// S6, P6, CpuTime=0, Network=6
+	// S1, P1, CpuTime=0, Network=10
+	assert.Equal(t, []byte("S3"), data.DataRecords[0].SqlDigest)
+	assert.Equal(t, uint32(3), data.DataRecords[0].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(0), data.DataRecords[0].Items[0].StmtNetworkInBytes+data.DataRecords[0].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte("S7"), data.DataRecords[1].SqlDigest)
+	assert.Equal(t, uint32(7), data.DataRecords[1].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(0), data.DataRecords[1].Items[0].StmtNetworkInBytes+data.DataRecords[0].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte("S2"), data.DataRecords[2].SqlDigest)
+	assert.Equal(t, uint32(2), data.DataRecords[2].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(2), data.DataRecords[2].Items[0].StmtNetworkInBytes+data.DataRecords[2].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte(nil), data.DataRecords[3].SqlDigest)
+	assert.Equal(t, uint32(1), data.DataRecords[3].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(4), data.DataRecords[3].Items[0].StmtNetworkInBytes+data.DataRecords[3].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte("S6"), data.DataRecords[4].SqlDigest)
+	assert.Equal(t, uint32(0), data.DataRecords[4].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(6), data.DataRecords[4].Items[0].StmtNetworkInBytes+data.DataRecords[4].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte("S1"), data.DataRecords[5].SqlDigest)
+	assert.Equal(t, uint32(0), data.DataRecords[5].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(10), data.DataRecords[5].Items[0].StmtNetworkInBytes+data.DataRecords[5].Items[0].StmtNetworkOutBytes)
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {

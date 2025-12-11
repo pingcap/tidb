@@ -150,7 +150,6 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		vardef.TiDBRowFormatVersion,
 		vardef.TiDBSlowQueryFile,
 		vardef.TiDBSlowLogThreshold,
-		vardef.TiDBSlowTxnLogThreshold,
 		vardef.TiDBEnableCollectExecutionInfo,
 		vardef.TiDBMemoryUsageAlarmRatio,
 		vardef.TiDBRedactLog,
@@ -159,6 +158,13 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		vardef.TiDBTopSQLMaxMetaCount,
 		vardef.TiDBServiceScope,
 		vardef.TiDBCloudStorageURI,
+		vardef.TiDBStmtSummaryMaxStmtCount,
+		vardef.TiDBServerMemoryLimit,
+		vardef.TiDBServerMemoryLimitGCTrigger,
+		vardef.TiDBInstancePlanCacheMaxMemSize,
+		vardef.TiDBStatsCacheMemQuota,
+		vardef.TiDBMemQuotaBindingCache,
+		vardef.TiDBSchemaCacheSize,
 		tidbAuditRetractLog:
 		return true
 	}

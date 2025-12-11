@@ -215,11 +215,12 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
 func TestRowFormat(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set sql_mode=''") // disable lossy ddl optimization
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\");")
 	tk.MustExec("alter table t modify column v varchar(5);")
@@ -236,12 +237,13 @@ func TestRowFormat(t *testing.T) {
 }
 
 func TestRowFormatWithChecksums(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set sql_mode=''") // disable lossy ddl optimization
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\");")
 	tk.MustExec("alter table t modify column v varchar(5);")
@@ -259,11 +261,12 @@ func TestRowFormatWithChecksums(t *testing.T) {
 }
 
 func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set sql_mode=''") // disable lossy ddl optimization
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\")")
 

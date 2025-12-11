@@ -445,7 +445,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 func TestStatsAnalyzedInDDL(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-		testKit.MustExec("set session tidb_enable_ddl_analyze = 1")
+		testKit.MustExec("set session tidb_stats_update_during_ddl = 1")
 		// test normal table
 		testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 

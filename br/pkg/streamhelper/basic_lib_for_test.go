@@ -789,7 +789,7 @@ func (t *testEnv) putTask() {
 	t.taskCh <- tsk
 }
 
-func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, endKey []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.maxTs != maxVersion {

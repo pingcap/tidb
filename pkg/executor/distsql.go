@@ -33,6 +33,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/expression"
 	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -737,7 +738,9 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	if e.indexLookUpPushDown {
-		// For index lookup push down, partition table is not supported
+		// For index lookup push down, needPartitionHandle should always return false because
+		// global index or keep order for partition table is not supported now.
+		intest.Assert(!e.index.Global && !e.keepOrder)
 		return false, nil
 	}
 
@@ -816,8 +819,21 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		e.byItems = nil
 	}
 	var tps []*types.FieldType
+	tblScanIdxForRewritePartitionID := -1
 	if e.indexLookUpPushDown {
 		tps = e.RetFieldTypes()
+		if e.partitionTableMode {
+			for idx, executor := range e.dagPB.Executors {
+				if executor.Tp == tipb.ExecType_TypeTableScan {
+					tblScanIdxForRewritePartitionID = idx
+					break
+				}
+			}
+			if tblScanIdxForRewritePartitionID < 0 {
+				intest.Assert(false)
+				return errors.New("cannot find table scan executor in for partition index lookup push down")
+			}
+		}
 	} else {
 		tps = e.getRetTpsForIndexReader()
 	}
@@ -839,7 +855,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		for _, kvRange := range kvRanges {
+		for idx, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
 			select {
@@ -850,6 +866,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			if finished {
 				break
 			}
+
+			if tblScanIdxForRewritePartitionID >= 0 {
+				// We should set the TblScan's TableID to the partition physical ID to make sure
+				// the push-down index lookup can encode the table handle key correctly.
+				e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[idx].GetPhysicalID()
+			}
+
 			var builder distsql.RequestBuilder
 			builder.SetDAGRequest(e.dagPB).
 				SetStartTS(e.startTS).
@@ -987,8 +1010,29 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
 	if e.stats != nil {
-		defer e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+			var indexScanCopTasks int32
+			if copStats := e.stmtRuntimeStatsColl.GetCopStats(e.getIndexPlanRootID()); copStats != nil {
+				indexScanCopTasks = copStats.GetTasks()
+			}
+			if e.indexLookUpPushDown {
+				metrics.IndexLookUpExecutorWithPushDownEnabledRowNumber.Observe(float64(e.stats.indexScanBasicStats.GetActRows()))
+				metrics.IndexLookUpIndexScanCopTasksWithPushDownEnabled.Add(float64(indexScanCopTasks))
+			} else {
+				metrics.IndexLookUpIndexScanCopTasksNormal.Add(float64(indexScanCopTasks))
+			}
+		}()
 	}
+
+	if stats := e.RuntimeStats(); stats != nil {
+		if e.indexLookUpPushDown {
+			defer func() {
+				metrics.IndexLookUpExecutorWithPushDownEnabledDuration.Observe(time.Duration(stats.GetTime()).Seconds())
+			}()
+		}
+	}
+
 	if e.indexUsageReporter != nil {
 		e.indexUsageReporter.ReportCopIndexUsageForTable(
 			e.table,
@@ -1215,7 +1259,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 	}
 	taskID := 0
 	for i := 0; i < len(results); {
-		result := results[i]
+		curResultIdx := i
+		result := results[curResultIdx]
 		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
 			break
 		}
@@ -1245,7 +1290,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		}
 
 		var completedTask *lookupTableTask
-		if len(completedRows) > 0 {
+		if rowCnt := len(completedRows); rowCnt > 0 {
+			metrics.IndexLookUpPushDownRowsCounterHit.Add(float64(rowCnt))
 			// Currently, completedRows is only produced by index lookup push down which does not support keep order.
 			// for non-keep-order request, the completed rows can be sent to resultCh directly.
 			completedTask = w.buildCompletedTask(taskID, completedRows)
@@ -1253,10 +1299,15 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		}
 
 		var tableLookUpTask *lookupTableTask
-		if len(handles) > 0 {
+		if rowCnt := len(handles); rowCnt > 0 {
+			if w.idxLookup.indexLookUpPushDown {
+				metrics.IndexLookUpPushDownRowsCounterMiss.Add(float64(rowCnt))
+			} else {
+				metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
+			}
 			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
 			if w.idxLookup.partitionTableMode {
-				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[i]
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 			}
 			taskID++
 		}
@@ -1320,6 +1371,14 @@ func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, it
 	intest.Assert(w.checkIndexValue == nil, "CheckIndex or CheckTable should not use index lookup push down")
 	const channelIdxIndex = 0
 	const channelIdxRow = 1
+
+	startTime := time.Now()
+	startScanKeys := w.scannedKeys
+	defer func() {
+		if cnt := w.scannedKeys - startScanKeys; w.idxLookup.stats != nil {
+			w.idxLookup.stats.indexScanBasicStats.Record(time.Since(startTime), int(cnt))
+		}
+	}()
 
 	checkLimit := w.PushedLimit != nil
 	for len(handles)+len(rows) < w.batchSize {

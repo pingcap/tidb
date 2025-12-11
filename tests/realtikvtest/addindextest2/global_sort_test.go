@@ -33,9 +33,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -54,6 +56,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/opt"
+	uberatomic "go.uber.org/atomic"
 )
 
 func init() {
@@ -169,7 +172,9 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	}
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	cloudStorageURI = handle.GetCloudStorageURI(context.Background(), store) // path with cluster id
 	defer func() {
@@ -268,11 +273,18 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if kerneltype.IsNextGen() && tc.cloudStorageURI == "" {
-				t.Skip("local sort might ingest duplicate KV, cause overlapped sst")
+			if kerneltype.IsNextGen() {
+				if tc.cloudStorageURI == "" {
+					t.Skip("local sort might ingest duplicate KV, cause overlapped sst")
+				}
+				if tc.enableDistTask == "0" {
+					t.Skip("DXF is always enabled on nextgen")
+				}
 			}
-			tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
-			tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
+			if kerneltype.IsClassic() {
+				tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
+				tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
+			}
 			tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + tc.cloudStorageURI + "';")
 			for _, tn := range tableNames {
 				if kerneltype.IsNextGen() && tc.cloudStorageURI != "" && tn == "t_partition" {
@@ -295,11 +307,16 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		})
 	}
 
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	}
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 }
 
 func TestAddIndexIngestShowReorgTp(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	_, cloudStorageURI := genServerWithStorage(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -346,7 +363,9 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	}
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
@@ -526,7 +545,9 @@ func TestIngestUseGivenTS(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	}
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
@@ -569,7 +590,9 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	}
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
@@ -593,6 +616,20 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 		})
 	}
 
+	var (
+		modifiedReadIndex atomic.Bool
+		modifiedMerge     atomic.Bool
+	)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return(true)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func(step proto.Step) {
+		switch step {
+		case proto.BackfillStepReadIndex:
+			modifiedReadIndex.Store(true)
+		case proto.BackfillStepMergeSort:
+			modifiedMerge.Store(true)
+		}
+	})
+
 	var pipeClosed bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
@@ -602,11 +639,6 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	})
 
 	// Change the batch size and concurrency during table scanning and check the modified parameters.
-	var modified atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
-		require.False(t, modified.Load())
-		modified.Store(true)
-	})
 	var onceScan sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(reorgMeta *model.DDLReorgMeta) {
 		onceScan.Do(func() {
@@ -615,15 +647,31 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 			require.Len(t, rows, 1)
 			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256", rows[0][0]))
 			require.Eventually(t, func() bool {
-				return modified.Load()
-			}, 20*time.Second, 100*time.Millisecond)
+				return modifiedReadIndex.Load()
+			}, 30*time.Second, 100*time.Millisecond)
 			require.Equal(t, 256, reorgMeta.GetBatchSize())
+		})
+	})
+
+	// Change the concurrency during merge sort and check the modified parameters.
+	var onceMerge sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mergeOverlappingFiles", func(op *external.MergeOperator) {
+		onceMerge.Do(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+			require.Len(t, rows, 1)
+			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 2", rows[0][0]))
+			require.Eventually(t, func() bool {
+				return modifiedMerge.Load()
+			}, 30*time.Second, 100*time.Millisecond)
+			require.EqualValues(t, 2, op.GetWorkerPoolSize())
 		})
 	})
 
 	tk.MustExec("alter table gsort add index idx(a)")
 	require.True(t, pipeClosed)
-	require.True(t, modified.Load())
+	require.True(t, modifiedReadIndex.Load())
+	require.True(t, modifiedMerge.Load())
 	tk.MustExec("admin check index gsort idx")
 }
 
@@ -637,7 +685,9 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	}
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
@@ -684,22 +734,34 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 		return
 	}
 	getReqCnt, putReqCnt, readBytes, bytes := getSummary(taskID, 1)
-	require.Equal(t, getReqCnt, 0)   // 0, because step 1 doesn't read s3
-	require.Equal(t, putReqCnt, 2)   // 2 times (data + stats)
-	require.Greater(t, readBytes, 0) // 143 bytes for reading table records
-	require.Greater(t, bytes, 0)     // 153 bytes for writing index records
+	// 0, because step 1 doesn't read s3
+	require.Equal(t, 0, getReqCnt)
+	// 1 data, 1 stats, 1 final meta
+	require.Equal(t, 3, putReqCnt)
+	// 143 bytes for reading table records
+	require.Greater(t, readBytes, 0)
+	// 153 bytes for writing index records
+	require.Greater(t, bytes, 0)
 
 	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 2)
-	require.Equal(t, getReqCnt, 1) // 1, read s3
-	require.Equal(t, putReqCnt, 2) // 2 times (data + stats)
-	require.Equal(t, readBytes, 0) // 0, not suitable for merge sort
-	require.Equal(t, bytes, 0)     // 0, not suitable for merge sort
+	// 1 meta, 1 get size(GCS handle.Attrs make it, others too), 1 read
+	require.Equal(t, 3, getReqCnt)
+	// 2 times (data + stats), 1 for final meta
+	require.Equal(t, 3, putReqCnt)
+	// 0, not suitable for merge sort
+	require.Equal(t, 0, readBytes)
+	// 0, not suitable for merge sort
+	require.Equal(t, 0, bytes)
 
 	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 3)
-	require.Equal(t, getReqCnt, 1) // 2, read s3
-	require.Equal(t, putReqCnt, 0) // 0, because step 3 doesn't write s3
-	require.Equal(t, readBytes, 0) // 0
-	require.Equal(t, bytes, 0)     // 0
+	// 1 meta, 2 for get size, 2 for read
+	require.Equal(t, 5, getReqCnt)
+	// 0, because step 3 doesn't write s3
+	require.Equal(t, 0, putReqCnt)
+	// 0
+	require.Equal(t, 0, readBytes)
+	// 0
+	require.Equal(t, 0, bytes)
 }
 
 func TestSplitRangeForTable(t *testing.T) {
@@ -817,4 +879,116 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 			tk.MustExec("alter table tp drop index gi")
 		})
 	}
+}
+
+func TestNextGenMetering(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Metering for next-gen only")
+	}
+	testutil.ReduceCheckInterval(t)
+	bak := metering.FlushInterval
+	metering.FlushInterval = time.Second
+	t.Cleanup(func() {
+		metering.FlushInterval = bak
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	srcDirURI := realtikvtest.GetNextGenObjStoreURI("index/meter-test/")
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_cloud_storage_uri = '%s';", srcDirURI))
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	})
+
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (id varchar(255), b int, c int, primary key(id) clustered);")
+	tk.MustExec("insert into t values ('a',1,1),('b',2,2),('c',3,3);")
+
+	baseTime := time.Now().Truncate(time.Minute).Unix()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+		// the metering library requires the timestamp to be at minute boundary, but
+		// during test, we want to reduce the flush interval.
+		*ts = baseTime
+		baseTime += 60
+	})
+	var gotMeterData uberatomic.String
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+		gotMeterData.Store(s.String())
+	})
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
+	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+		rowAndSizeMeterItems.Store(&items)
+	})
+	tk.MustExec("alter table t add index idx(c);")
+	taskManager, err := diststorage.GetTaskManager()
+	require.NoError(t, err)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, ddl.TaskKey(jobID, false))
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return gotMeterData.Load() != ""
+	}, 30*time.Second, 300*time.Millisecond)
+	require.Contains(t, gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
+	require.Contains(t, gotMeterData.Load(), "requests{get: 7, put: 6}")
+	// the read bytes is not stable, but it's more than 100B.
+	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
+	require.Regexp(t, `cluster{r: 1\d\dB, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
+	// note: the read/write of subtask meta file is also counted in obj_store part,
+	// but meta file contains file name which contains task and subtask ID, so
+	// the length may vary, we just use regexp to match here.
+	require.Regexp(t, `obj_store{r: 1.\d+KiB, w: \d.\d+KiB}`, gotMeterData.Load())
+
+	readIndexSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepReadIndex)
+	mergeSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepMergeSort)
+	ingestSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepWriteAndIngest)
+	require.EqualValues(t, 1, readIndexSum.GetReqCnt.Load())
+	require.EqualValues(t, 3, readIndexSum.PutReqCnt.Load())
+	require.Greater(t, readIndexSum.ReadBytes.Load(), int64(0))
+	require.EqualValues(t, 153, readIndexSum.Bytes.Load())
+	require.EqualValues(t, 3, readIndexSum.RowCnt.Load())
+
+	require.EqualValues(t, 3, mergeSum.GetReqCnt.Load())
+	require.EqualValues(t, 3, mergeSum.PutReqCnt.Load())
+	require.EqualValues(t, 0, mergeSum.ReadBytes.Load())
+	require.EqualValues(t, 0, mergeSum.Bytes.Load())
+
+	require.EqualValues(t, 3, ingestSum.GetReqCnt.Load())
+	require.EqualValues(t, 0, ingestSum.PutReqCnt.Load())
+	require.EqualValues(t, 0, ingestSum.ReadBytes.Load())
+	require.EqualValues(t, 0, ingestSum.Bytes.Load())
+
+	require.Eventually(t, func() bool {
+		items := *rowAndSizeMeterItems.Load()
+		return items != nil && items["row_count"].(int64) == 3 && items["index_kv_bytes"].(int64) == 153
+	}, 30*time.Second, 100*time.Millisecond)
+}
+
+func getStepSummary(t *testing.T, taskMgr *diststorage.TaskManager, taskID int64, step proto.Step) *execute.SubtaskSummary {
+	t.Helper()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	subtasks, err := taskMgr.GetSubtasksWithHistory(ctx, taskID, step)
+	require.NoError(t, err)
+	var accumSummary execute.SubtaskSummary
+	for _, subtask := range subtasks {
+		v := &execute.SubtaskSummary{}
+		require.NoError(t, json.Unmarshal([]byte(subtask.Summary), &v))
+		accumSummary.RowCnt.Add(v.RowCnt.Load())
+		accumSummary.Bytes.Add(v.Bytes.Load())
+		accumSummary.ReadBytes.Add(v.ReadBytes.Load())
+		accumSummary.PutReqCnt.Add(v.PutReqCnt.Load())
+		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
+	}
+	return &accumSummary
 }

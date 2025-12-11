@@ -151,7 +151,10 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// txn1: lockKeys on point get (index lock)
 	// txn2: lockKeys on batch point get (row lock) — waits for txn1 for index lock
 	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
-	fakeID := int64(-1988)
+	// Pick a fake table ID to reduce lock contention on mysql.stats_meta.
+	// Under repeatable-read, even non-existent keys are locked.
+	// Using the negative table ID keeps it separate from real table IDs and from other fake IDs.
+	fakeID := -tableID
 	tableIDStrs := []string{strconv.FormatInt(fakeID, 10), strconv.FormatInt(tableID, 10)}
 	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id in (%?) for update", tableIDStrs)
 	if err != nil {

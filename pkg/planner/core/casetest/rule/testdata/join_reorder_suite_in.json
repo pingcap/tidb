@@ -85,5 +85,19 @@
       "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
       "select /*+ leading(t3, t4, t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;"
     ]
+  },
+  {
+    "name": "TestJoinOrderHint4NestedLeading",
+    "cases": [
+      "select /*+ leading(t1, (t2, t3)) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a;",
+      "select /*+ leading(t1, (t2, (t3, t4))) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a;",
+      "select /*+ leading(t1, ((t2, t3), t4)) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a;",
+      "select /*+ leading((t1, (t2, (t3, (t4, t5))))) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a join t5 on t4.a=t5.a;",
+      "select /*+ leading((t1, (t2, t3)), (t4, (t5, t6))) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.a=t3.a join t4 on t3.a=t4.a join t5 on t4.a=t5.a join t6 on t5.a=t6.a;",
+      // subquery alias-based join order
+      "select /*+ leading(t1@sel_1, (t2@sel_2, t3@sel_3)) */ * from (select * from t1) t1, (select * from t2) t2, (select * from t3) t3 where t1.a=t2.a and t2.a=t3.a;",
+      "select /*+ leading((o1@sel_1, (o2@sel_2, (o3@sel_3, o4@sel_4)))) */ * from (select * from (select * from t1) x1) o1 join (select * from t2) o2 on o1.a=o2.a join (select * from t3) o3 on o2.a=o3.a join (select * from t4) o4 on o3.a=o4.a;",
+      "select /*+ leading((t1@sel_1, (t2@sel_2, (t3@sel_3, t4@sel_4)))) */ * from (select * from t1) t1 join (select * from t2) t2 on t1.a=t2.a left join (select * from t3) t3 on t2.a=t3.a join (select * from t4) t4 on t3.a=t4.a;"
+    ]
   }
 ]

@@ -59,13 +59,50 @@ import (
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle/oracles"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
+
+type concurrencySetter func(s *SessionVars, v int)
+type execConcurrencySysVarOption func(sv *SysVar)
+
+func withAllowAutoValue(allow bool) execConcurrencySysVarOption {
+	return func(sv *SysVar) { sv.AllowAutoValue = allow }
+}
+
+func withMinValue(minVal int64) execConcurrencySysVarOption {
+	return func(sv *SysVar) { sv.MinValue = minVal }
+}
+
+// newExecConcurrencySysVar creates a session/global SysVar for executor concurrency settings.
+func newExecConcurrencySysVar(name string, defValue int, setter concurrencySetter, opts ...execConcurrencySysVarOption) *SysVar {
+	sv := &SysVar{
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:  name,
+		Value: strconv.Itoa(defValue), Type: vardef.TypeInt,
+		MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
+		AllowAutoValue: true,
+		SetSession: func(s *SessionVars, val string) error {
+			setter(s, tidbOptPositiveInt32(val, vardef.ConcurrencyUnset))
+			return nil
+		},
+		Validation: func(vars *SessionVars, normalizedValue, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			appendDeprecationWarning(vars, name, vardef.TiDBExecutorConcurrency)
+			return normalizedValue, nil
+		},
+	}
+	for _, opt := range opts {
+		opt(sv)
+	}
+
+	return sv
+}
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
 //
@@ -453,6 +490,42 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.ProcessGeneralLog.Load()), nil
 	}},
+	// NOTE: The trace-event switch is experimental. It is subject to changes.
+	{Scope: vardef.ScopeInstance, Name: vardef.TiDBTraceEvent, Hidden: kerneltype.IsClassic(), Value: vardef.DefTiDBTraceEvent, Type: vardef.TypeStr,
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			if kerneltype.IsClassic() {
+				return errors.New("can only be set for TiDB X kernel")
+			}
+			if val == "" {
+				// Reset the flight recorder
+				recorder := traceevent.GetFlightRecorder()
+				if recorder != nil {
+					recorder.Close()
+				}
+				return nil
+			}
+			var config traceevent.FlightRecorderConfig
+			err := json.Unmarshal([]byte(val), &config)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = traceevent.StartLogFlightRecorder(&config)
+			return err
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			recorder := traceevent.GetFlightRecorder()
+			if recorder != nil {
+				if recorder.Config != nil {
+					data, err := json.Marshal(recorder.Config)
+					if err != nil {
+						return "", errors.Trace(err)
+					}
+					return string(data), nil
+				}
+			}
+			return "", nil
+		},
+	},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBSlowTxnLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowTxnThreshold),
 		Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 			s.SlowTxnThreshold = TidbOptUint64(val, logutil.DefaultSlowTxnThreshold)
@@ -1184,7 +1257,102 @@ var defaultSysVars = []*SysVar{
 			threshold := float64(bt) * vardef.GOGCTunerThreshold.Load()
 			gctuner.Tuning(uint64(threshold))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
+			memory.AjustGlobalMemArbitratorLimit()
 			return nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMemArbitratorSoftLimit, Value: vardef.DefTiDBMemArbitratorSoftLimitText, Type: vardef.TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if normalizedValue == memory.ArbitratorSoftLimitModDisableName {
+				return normalizedValue, nil
+			}
+			if strings.ToLower(normalizedValue) == memory.ArbitratorSoftLimitModeAutoName {
+				return memory.ArbitratorSoftLimitModeAutoName, nil
+			}
+			if v, err := strconv.ParseInt(normalizedValue, 10, 64); err == nil {
+				if v > 1 {
+					return normalizedValue, nil
+				} else if v <= 0 {
+					return "", ErrTiDBMemArbitratorSoftLimit
+				}
+				// v == 1 is legal
+			}
+			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
+			if err != nil {
+				return "", err
+			}
+			if floatValue > 0 && floatValue <= 1 {
+				return normalizedValue, nil
+			}
+			return "", ErrTiDBMemArbitratorSoftLimit
+		},
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return memory.GetGlobalMemArbitratorSoftLimitText(), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, str string) error {
+			memory.SetGlobalMemArbitratorSoftLimit(str)
+			return nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMemArbitratorMode, Value: vardef.DefTiDBMemArbitratorModeText, Type: vardef.TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			normalizedValue = strings.ToLower(normalizedValue)
+			switch normalizedValue {
+			case memory.ArbitratorModeDisableName, memory.ArbitratorModeStandardName, memory.ArbitratorModePriorityName:
+				return normalizedValue, nil
+			default:
+				return "", fmt.Errorf("%s: %s; %s; %s;",
+					vardef.TiDBMemArbitratorMode,
+					memory.ArbitratorModeDisableName,
+					memory.ArbitratorModeStandardName,
+					memory.ArbitratorModePriorityName)
+			}
+		},
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return memory.GetGlobalMemArbitratorWorkModeText(), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, str string) error {
+			memory.SetGlobalMemArbitratorWorkMode(str)
+			return nil
+		},
+	},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBMemArbitratorWaitAverse, Value: vardef.DefTiDBMemArbitratorWaitAverse, Type: vardef.TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if normalizedValue == "0" || normalizedValue == "1" || normalizedValue == "nolimit" {
+				return normalizedValue, nil
+			}
+			return "", ErrTiDBMemArbitratorWaitAverse
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			switch val {
+			case "0":
+				s.MemArbitrator.WaitAverse = MemArbitratorWaitAverseDisable
+			case "1":
+				s.MemArbitrator.WaitAverse = MemArbitratorWaitAverseEnable
+			default:
+				s.MemArbitrator.WaitAverse = MemArbitratorNolimit
+			}
+			return nil
+		},
+	},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBMemArbitratorQueryReserved, Value: vardef.DefTiDBMemArbitratorQueryReservedText, Type: vardef.TypeStr,
+		IsHintUpdatableVerified: true,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if normalizedValue == "0" {
+				return normalizedValue, nil
+			}
+			if v, err := strconv.ParseUint(normalizedValue, 10, 64); err == nil && int64(v) > 1 {
+				return normalizedValue, nil
+			}
+			return "", ErrTiDBMemArbitratorQueryReserved
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			intValue, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				s.MemArbitrator.QueryReserved = int64(intValue)
+				return nil
+			}
+			return err
 		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBServerMemoryLimitSessMinSize, Value: strconv.FormatUint(vardef.DefTiDBServerMemoryLimitSessMinSize, 10), Type: vardef.TypeStr,
@@ -2213,20 +2381,8 @@ var defaultSysVars = []*SysVar{
 		s.IndexLookupSize = tidbOptPositiveInt32(val, vardef.DefIndexLookupSize)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBIndexLookupConcurrency, Value: strconv.Itoa(vardef.DefIndexLookupConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
-		s.indexLookupConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBIndexLookupConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBIndexLookupJoinConcurrency, Value: strconv.Itoa(vardef.DefIndexLookupJoinConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
-		s.indexLookupJoinConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBIndexLookupJoinConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
+	newExecConcurrencySysVar(vardef.TiDBIndexLookupConcurrency, vardef.DefIndexLookupConcurrency, func(s *SessionVars, v int) { s.indexLookupConcurrency = v }),
+	newExecConcurrencySysVar(vardef.TiDBIndexLookupJoinConcurrency, vardef.DefIndexLookupJoinConcurrency, func(s *SessionVars, v int) { s.indexLookupJoinConcurrency = v }),
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBIndexSerialScanConcurrency, Value: strconv.Itoa(vardef.DefIndexSerialScanConcurrency), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
 		// NOTE: do nothing here because this variable is deprecated.
 		return nil
@@ -2288,62 +2444,14 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBHashJoinConcurrency, Value: strconv.Itoa(vardef.DefTiDBHashJoinConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
-		s.hashJoinConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBHashJoinConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBProjectionConcurrency, Value: strconv.Itoa(vardef.DefTiDBProjectionConcurrency), Type: vardef.TypeInt, MinValue: -1, MaxValue: vardef.MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
-		s.projectionConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBProjectionConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBHashAggPartialConcurrency, Value: strconv.Itoa(vardef.DefTiDBHashAggPartialConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
-		s.hashAggPartialConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBHashAggPartialConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBHashAggFinalConcurrency, Value: strconv.Itoa(vardef.DefTiDBHashAggFinalConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
-		s.hashAggFinalConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBHashAggFinalConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBWindowConcurrency, Value: strconv.Itoa(vardef.DefTiDBWindowConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
-		s.windowConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBWindowConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergeJoinConcurrency, Value: strconv.Itoa(vardef.DefTiDBMergeJoinConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
-		s.mergeJoinConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBMergeJoinConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBStreamAggConcurrency, Value: strconv.Itoa(vardef.DefTiDBStreamAggConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
-		s.streamAggConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBStreamAggConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBIndexMergeIntersectionConcurrency, Value: strconv.Itoa(vardef.DefTiDBIndexMergeIntersectionConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
-		s.indexMergeIntersectionConcurrency = tidbOptPositiveInt32(val, vardef.ConcurrencyUnset)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, vardef.TiDBIndexMergeIntersectionConcurrency, vardef.TiDBExecutorConcurrency)
-		return normalizedValue, nil
-	}},
+	newExecConcurrencySysVar(vardef.TiDBHashJoinConcurrency, vardef.DefTiDBHashJoinConcurrency, func(s *SessionVars, v int) { s.hashJoinConcurrency = v }),
+	newExecConcurrencySysVar(vardef.TiDBProjectionConcurrency, vardef.DefTiDBProjectionConcurrency, func(s *SessionVars, v int) { s.projectionConcurrency = v }, withMinValue(-1), withAllowAutoValue(false)),
+	newExecConcurrencySysVar(vardef.TiDBHashAggPartialConcurrency, vardef.DefTiDBHashAggPartialConcurrency, func(s *SessionVars, v int) { s.hashAggPartialConcurrency = v }),
+	newExecConcurrencySysVar(vardef.TiDBHashAggFinalConcurrency, vardef.DefTiDBHashAggFinalConcurrency, func(s *SessionVars, v int) { s.hashAggFinalConcurrency = v }),
+	newExecConcurrencySysVar(vardef.TiDBWindowConcurrency, vardef.DefTiDBWindowConcurrency, func(s *SessionVars, v int) { s.windowConcurrency = v }),
+	newExecConcurrencySysVar(vardef.TiDBMergeJoinConcurrency, vardef.DefTiDBMergeJoinConcurrency, func(s *SessionVars, v int) { s.mergeJoinConcurrency = v }),
+	newExecConcurrencySysVar(vardef.TiDBStreamAggConcurrency, vardef.DefTiDBStreamAggConcurrency, func(s *SessionVars, v int) { s.streamAggConcurrency = v }),
+	newExecConcurrencySysVar(vardef.TiDBIndexMergeIntersectionConcurrency, vardef.DefTiDBIndexMergeIntersectionConcurrency, func(s *SessionVars, v int) { s.indexMergeIntersectionConcurrency = v }),
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableParallelApply, Value: BoolToOnOff(vardef.DefTiDBEnableParallelApply), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableParallelApply = TiDBOptOn(val)
 		return nil
@@ -2839,7 +2947,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableDDLAnalyze, Value: BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			if TiDBOptOn(val) && s.AnalyzeVersion == 1 {
-				return errors.New("tidb_enable_ddl_analyze can only be enabled with tidb_analyze_version 2")
+				return errors.New("tidb_stats_update_during_ddl can only be enabled with tidb_analyze_version 2")
 			}
 			s.EnableDDLAnalyze = TiDBOptOn(val)
 			return nil
@@ -3718,6 +3826,30 @@ var defaultSysVars = []*SysVar{
 		},
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return vardef.GlobalSlowLogRules.Load().RawRules, nil
+		},
+	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBSlowLogMaxPerSec,
+		Value:    "0",
+		Type:     vardef.TypeInt,
+		MinValue: 0, MaxValue: 1000000,
+		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
+			d := TidbOptInt(s, 0)
+			if d == int(vardef.GlobalSlowLogRateLimiter.Limit()) {
+				return nil
+			}
+
+			if d == 0 {
+				vardef.GlobalSlowLogRateLimiter.SetLimit(rate.Inf)
+				return nil
+			}
+			vardef.GlobalSlowLogRateLimiter.SetLimit(rate.Limit(d))
+			vardef.GlobalSlowLogRateLimiter.SetBurst(d)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+			return strconv.Itoa(int(vardef.GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
 }

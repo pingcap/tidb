@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"go.uber.org/zap"
 )
 
@@ -778,9 +779,9 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 			return false
 		}
-		if len(priv.Priv.SSLCipher) > 0 && priv.Priv.SSLCipher != util.TLSCipher2String(tlsState.CipherSuite) {
+		if len(priv.Priv.SSLCipher) > 0 && priv.Priv.SSLCipher != tlsutil.CipherSuiteName(tlsState.CipherSuite) {
 			logutil.BgLogger().Info("ssl check failure for cipher", zap.String("user", priv.User), zap.String("host", priv.Host),
-				zap.String("require", priv.Priv.SSLCipher), zap.String("given", util.TLSCipher2String(tlsState.CipherSuite)))
+				zap.String("require", priv.Priv.SSLCipher), zap.String("given", tlsutil.CipherSuiteName(tlsState.CipherSuite)))
 			return false
 		}
 		var (

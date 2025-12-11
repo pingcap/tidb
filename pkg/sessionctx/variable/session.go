@@ -873,6 +873,10 @@ type SessionVars struct {
 	// LastCommitTS is the commit_ts of the last successful transaction in this session.
 	LastCommitTS uint64
 
+	// PrevTraceID stores the trace ID of the previous statement for chaining.
+	// This allows trace events to link statements together via prev_trace_id field.
+	PrevTraceID []byte
+
 	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
 	TxnReadTS *TxnReadTS
 
@@ -1779,6 +1783,18 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
+	MemArbitrator struct {
+		WaitAverse    MemArbitratorWaitAverseMode
+		QueryReserved int64
+	}
+
+	// InPacketBytes records the total incoming packet bytes from clients for current session.
+	InPacketBytes atomic.Uint64
+
+	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
+	OutPacketBytes atomic.Uint64
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
@@ -3539,8 +3555,13 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
-// GetMaxExecutionTime get the max execution timeout value.
+// GetMaxExecutionTime get the max execution timeout value for select statement.
+// Make sure this function is called after s.StmtCtx is already set, otherwise it will always return 0
 func (s *SessionVars) GetMaxExecutionTime() uint64 {
+	// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
+	if !s.StmtCtx.InSelectStmt {
+		return 0
+	}
 	if s.StmtCtx.HasMaxExecutionTime {
 		return s.StmtCtx.MaxExecutionTime
 	}
@@ -3752,3 +3773,21 @@ func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog 
 		return true
 	})
 }
+
+// MemArbitratorWaitAverseMode is the definition for global memory arbitrator to handle wait-averse mode.
+type MemArbitratorWaitAverseMode int
+
+// NoLimit indicates that the memory arbitrator will not control current session
+// Enable indicates that the session will be controlled by the wait-averse mode
+const (
+	MemArbitratorWaitAverseDisable MemArbitratorWaitAverseMode = iota
+	MemArbitratorWaitAverseEnable
+	MemArbitratorNolimit
+)
+
+// Error definitions for memory arbitrator session variables.
+var (
+	ErrTiDBMemArbitratorSoftLimit     = errors.New(vardef.TiDBMemArbitratorSoftLimit + ": 0 (default); (0, 1.0] float-rate * server-limit; (1, server-limit] integer bytes; auto;")
+	ErrTiDBMemArbitratorWaitAverse    = errors.New(vardef.TiDBMemArbitratorWaitAverse + ": 0 (disable); 1 (enable); nolimit;")
+	ErrTiDBMemArbitratorQueryReserved = errors.New(vardef.TiDBMemArbitratorQueryReserved + ": 0 (default); (1, server-limit] integer bytes;")
+)

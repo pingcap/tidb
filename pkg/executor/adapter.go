@@ -78,10 +78,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
+	tikvtrace "github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -104,6 +106,10 @@ type recordSet struct {
 	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
+	// traceID stores the trace ID for this statement execution.
+	// It's injected into the context during Next() to ensure trace correlation
+	// across TiDB -> client-go -> TiKV during lazy execution.
+	traceID []byte
 }
 
 func (a *recordSet) Fields() []*resolve.ResultField {
@@ -168,6 +174,15 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
+	}
+
+	// Inject trace ID into context for correlation during lazy execution.
+	// The trace ID was generated when the statement started executing, but the
+	// context passed to Next() doesn't have it (context is not stored in recordSet).
+	// We need to re-inject it here so that operations in executors (e.g., TiKV calls)
+	// can be correlated with this statement's trace ID.
+	if len(a.traceID) > 0 {
+		ctx = tikvtrace.ContextWithTraceID(ctx, a.traceID)
 	}
 
 	err = a.stmt.next(ctx, a.executor, req)
@@ -415,11 +430,15 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		}
 	}
 
+	// Extract trace ID from context to store in recordSet for lazy execution
+	traceID := tikvtrace.TraceIDFromContext(ctx)
+
 	return &recordSet{
 		executor:   executor,
 		schema:     executor.Schema(),
 		stmt:       a,
 		txnStartTS: startTs,
+		traceID:    traceID,
 	}, nil
 }
 
@@ -637,10 +656,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
-		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
-			maxExecutionTime = 0
-		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
 
@@ -678,11 +693,15 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		txnStartTS = txn.StartTS()
 	}
 
+	// Extract trace ID from context to store in recordSet for lazy execution
+	traceID := tikvtrace.TraceIDFromContext(ctx)
+
 	return &recordSet{
 		executor:   e,
 		schema:     e.Schema(),
 		stmt:       a,
 		txnStartTS: txnStartTS,
+		traceID:    traceID,
 	}, nil
 }
 
@@ -1358,6 +1377,7 @@ func (a *ExecStmt) logAudit() {
 			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
 			}
+			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, a.retryCount > 0 || sessVars.RetryInfo.Retrying)
 			if intest.InTest && (cmdBin == mysql.ComStmtPrepare ||
 				cmdBin == mysql.ComStmtExecute || cmdBin == mysql.ComStmtClose) {
 				intest.Assert(ctx.Value(plugin.PrepareStmtIDCtxKey) != nil, "prepare statement id should not be nil")
@@ -1659,6 +1679,10 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	return nil
 }
 
+func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.Type == "slow_query"
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1691,6 +1715,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 	}
 
+	if !vardef.GlobalSlowLogRateLimiter.Allow() {
+		sampleLoggerFactory().Info("slow log skipped due to rate limiting", zap.Int64("tidb_slow_log_max_per_sec", int64(vardef.GlobalSlowLogRateLimiter.Limit())))
+		return
+	}
+
 	if slowItems == nil {
 		slowItems = &variable.SlowQueryLogItems{}
 	}
@@ -1708,6 +1737,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.suspicious_event", slowQueryDumpTriggerCheck)
 
 	if !matchRules {
 		return
@@ -1885,6 +1915,14 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 	return
 }
 
+type planDigestAlias struct {
+	Digest string
+}
+
+func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.PlanDigest == digest.Digest
+}
+
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1931,6 +1969,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.Plan.TP() != plancodec.TypePointGet {
 		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
+		traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest", planDigestAlias{planDigest}.planDigestDumpTriggerCheck)
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
@@ -1995,6 +2034,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
+	stmtExecInfo.MemArbitration = stmtCtx.MemTracker.MemArbitration().Seconds()
+
 	stmtsummaryv2.Add(stmtExecInfo)
 }
 
@@ -2122,13 +2163,13 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	if !topsqlstate.TopSQLEnabled() {
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
-			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
+			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
 		}
 		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}
 
 	if stats != nil {
-		stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
+		stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
 	}
@@ -2178,7 +2219,7 @@ func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		execDuration := vars.GetTotalCostDuration()
-		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
+		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration, vars.OutPacketBytes.Load())
 	}
 }
 

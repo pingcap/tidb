@@ -317,10 +317,6 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 		return nil
 	}
 
-	if !sessVars.StmtCtx.InSelectStmt {
-		return nil
-	}
-
 	maxExecTimeMS := sessVars.GetMaxExecutionTime()
 	if maxExecTimeMS == 0 {
 		return nil
@@ -350,9 +346,10 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 
 	// Set max_execution_time deadline for SELECT statements
-	if seVars.StmtCtx.InSelectStmt && seVars.GetMaxExecutionTime() > 0 {
+	maxExectionTime := seVars.GetMaxExecutionTime()
+	if maxExectionTime > 0 {
 		if processInfo := sctx.ShowProcess(); processInfo != nil {
-			maxExecTimeMs := time.Duration(seVars.GetMaxExecutionTime()) * time.Millisecond
+			maxExecTimeMs := time.Duration(maxExectionTime) * time.Millisecond
 			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
 		}
 	}
@@ -962,10 +959,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.TableStats)
 	}
-	if sc.MDLRelatedTableIDs == nil {
-		sc.MDLRelatedTableIDs = make(map[int64]struct{})
+	if sc.RelatedTableIDs == nil {
+		sc.RelatedTableIDs = make(map[int64]struct{})
 	} else {
-		clear(sc.MDLRelatedTableIDs)
+		clear(sc.RelatedTableIDs)
 	}
 	if sc.TblInfo2UnionScan == nil {
 		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
@@ -1012,6 +1009,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if err != nil {
 			return err
 		}
+		sc.MemSensitive = true
 		_, isAnalyze = prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
 	} else if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		isAnalyze = true
@@ -1020,6 +1018,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
 		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+		sc.MemSensitive = true
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
@@ -1105,12 +1104,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
+		sc.MemSensitive = true
 		ResetUpdateStmtCtx(sc, stmt, vars)
 		errLevels = sc.ErrLevels()
 	case *ast.DeleteStmt:
+		sc.MemSensitive = true
 		ResetDeleteStmtCtx(sc, stmt, vars)
 		errLevels = sc.ErrLevels()
 	case *ast.InsertStmt:
+		sc.MemSensitive = true
 		sc.InInsertStmt = true
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
@@ -1141,15 +1143,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode))
 
 	case *ast.LoadDataStmt:
+		sc.MemSensitive = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 	case *ast.ImportIntoStmt:
+		sc.MemSensitive = true
 		inImportInto = true
 		sc.SetTypeFlags(util.GetTypeFlagsForImportInto(sc.TypeFlags(), vars.SQLMode))
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
-
+		sc.MemSensitive = true
 		// Return warning for truncate error in selection.
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
@@ -1162,6 +1166,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
+		sc.MemSensitive = true
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).

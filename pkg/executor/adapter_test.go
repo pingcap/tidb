@@ -384,6 +384,61 @@ func TestWriteSlowLog(t *testing.T) {
 	checkWriteSlowLog(true)
 }
 
+func TestSlowLogMaxPerSec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// default value
+	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
+		testkit.Rows("tidb_slow_log_max_per_sec 0"),
+	)
+	_, err := tk.Exec(`select @@SESSION.tidb_slow_log_max_per_sec`)
+	require.Equal(t, "[variable:1238]Variable 'tidb_slow_log_max_per_sec' is a GLOBAL variable", err.Error())
+	tk.MustQuery(`select @@Global.tidb_slow_log_max_per_sec`).Check(
+		testkit.Rows("0"),
+	)
+
+	// test errors
+	_, err = tk.Exec(`set session tidb_slow_log_max_per_sec="0"`)
+	require.Equal(t, "[variable:1229]Variable 'tidb_slow_log_max_per_sec' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
+	_, err = tk.Exec(`set global tidb_slow_log_max_per_sec=""`)
+	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'tidb_slow_log_max_per_sec'", err.Error())
+	_, err = tk.Exec(`set global tidb_slow_log_max_per_sec="1.23"`)
+	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'tidb_slow_log_max_per_sec'", err.Error())
+
+	// test warnings
+	_, err = tk.Exec(`set global tidb_slow_log_max_per_sec="-1"`)
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_slow_log_max_per_sec value: '-1'"))
+	tk.MustQuery(`select @@Global.tidb_slow_log_max_per_sec`).Check(
+		testkit.Rows("0"),
+	)
+	tk.MustExec(`set global tidb_slow_log_max_per_sec="1234567"`)
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_slow_log_max_per_sec value: '1234567'"))
+	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
+		testkit.Rows("tidb_slow_log_max_per_sec 1000000"),
+	)
+
+	// normal
+	tk.MustExec(`set global tidb_slow_log_max_per_sec="2"`)
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.False(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
+		testkit.Rows("tidb_slow_log_max_per_sec 2"),
+	)
+	tk.MustQuery(`select @@Global.tidb_slow_log_max_per_sec`).Check(
+		testkit.Rows("2"),
+	)
+	// no limit
+	tk.MustExec(`set global tidb_slow_log_max_per_sec="0"`)
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
+		testkit.Rows("tidb_slow_log_max_per_sec 0"),
+	)
+}
+
 func BenchmarkCheckSlowThreshold(b *testing.B) {
 	b.StopTimer()
 	b.ReportAllocs()

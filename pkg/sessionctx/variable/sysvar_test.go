@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,6 +87,39 @@ func TestSQLModeVar(t *testing.T) {
 	sqlMode, err = mysql.GetSQLMode(val)
 	require.NoError(t, err)
 	require.Equal(t, sqlMode, vars.SQLMode)
+}
+
+func TestTiDBTraceEventSysVar(t *testing.T) {
+	t.Cleanup(func() {
+		if fr := traceevent.GetFlightRecorder(); fr != nil {
+			fr.Close()
+		}
+	})
+
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiDBTraceEvent)
+
+	if kerneltype.IsClassic() {
+		err := sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["*"], "dump_trigger": {"type": "sampling", "sampling": 1}}`)
+		require.Error(t, err)
+		return
+	}
+
+	err := sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["*"], "dump_trigger": {"type": "sampling", "sampling": 1}}`)
+	require.NoError(t, err)
+	var config traceevent.FlightRecorderConfig
+	config.EnabledCategories = []string{"*"}
+	config.DumpTrigger.Type = "sampling"
+	config.DumpTrigger.Sampling = 1
+	require.Equal(t, traceevent.GetFlightRecorder().Config, &config)
+
+	config.DumpTrigger.Sampling = 10
+	config.EnabledCategories = []string{"general"}
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["general"], "dump_trigger": {"type": "sampling", "sampling": 10}}`))
+	require.Equal(t, traceevent.GetFlightRecorder().Config, &config)
+
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, ""))
+	require.Nil(t, traceevent.GetFlightRecorder())
 }
 
 func TestMaxExecutionTime(t *testing.T) {
@@ -1036,7 +1070,7 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 		val, err = mock.GetGlobalSysVar(vardef.TiDBServerMemoryLimit)
 		require.NoError(t, err)
 		require.Equal(t, "75%", val)
-		require.Equal(t, memory.ServerMemoryLimit.Load(), total/100*75)
+		require.Equal(t, memory.ServerMemoryLimit.Load(), total*75/100)
 	}
 	// Test can't obtain physical memory
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/GetMemTotalError", `return(true)`))
@@ -1845,13 +1879,6 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 		expectError         bool
 	}{
 		{
-			name:                "Both enabled, valid input",
-			autoAnalyze:         true,
-			autoAnalyzePriority: true,
-			input:               "10",
-			expectError:         false,
-		},
-		{
 			name:                "Auto analyze disabled",
 			autoAnalyze:         false,
 			autoAnalyzePriority: true,
@@ -1871,6 +1898,14 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			autoAnalyzePriority: false,
 			input:               "10",
 			expectError:         true,
+		},
+		// Last so it ends as its defaults
+		{
+			name:                "Both enabled, valid input",
+			autoAnalyze:         true,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         false,
 		},
 	}
 

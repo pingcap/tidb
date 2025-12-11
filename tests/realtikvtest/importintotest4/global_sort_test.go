@@ -27,6 +27,8 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -35,13 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -196,10 +197,8 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	checkExternalFields(s.T(), s.tk)
 }
 
-func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "taskManager")
+func (s *mockGCSSuite) prepare10Files(bucket string) []string {
+	s.T().Helper()
 	var allData []string
 	for i := range 10 {
 		var content []byte
@@ -210,11 +209,17 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 			allData = append(allData, fmt.Sprintf("%d test-%d", idx, idx))
 		}
 		s.server.CreateObject(fakestorage.Object{
-			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files", Name: fmt.Sprintf("t.%d.csv", i)},
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: bucket, Name: fmt.Sprintf("t.%d.csv", i)},
 			Content:     content,
 		})
 	}
 	slices.Sort(allData)
+	return allData
+}
+
+func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	allData := s.prepare10Files("gs-multi-files")
 	s.prepareAndUseDB("gs_multi_files")
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), key(b), key(a,b), key(b,a));")
@@ -222,7 +227,24 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
 		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
-	result := s.tk.MustQuery(importSQL + ", detached").Rows()
+	_ = s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
+}
+
+func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	allData := s.prepare10Files("gsort_step_summary")
+	s.prepareAndUseDB("gsort_step_summary")
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), key(b), key(a,b), key(b,a));")
+	// 1 subtask, encoding 10 files using 1 thread.
+	sortStorageURI := fmt.Sprintf("gs://sorted/gsort_step_summary?endpoint=%s", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gsort_step_summary/t.*.csv?endpoint=%s'
+		with thread=1, cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
+	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
+
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
@@ -237,39 +259,47 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 
-	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepEncodeAndSort)
-	s.NoError(err)
-	s.Len(subtasks, 1)
-	v := &execute.SubtaskSummary{}
-	err = json.Unmarshal([]byte(subtasks[0].Summary), &v)
-	s.NoError(err)
-	s.Equal(int64(10000), v.RowCnt.Load())
-	s.Equal(int64(147780), v.Bytes.Load())
-	s.Greater(v.PutReqCnt.Load(), uint64(0))
-	s.Equal(uint64(0), v.GetReqCnt.Load())
-	logutil.BgLogger().Info("subtasks", zap.Any("subtasks", v))
+	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
+	s.EqualValues(10000, sum.RowCnt.Load())
+	s.EqualValues(147780, sum.Bytes.Load())
+	// this GET comes from reading subtask meta from object storage.
+	s.EqualValues(1, sum.GetReqCnt.Load())
+	// we have 4 kv groups, 2 files per group, and 1 for the meta file.
+	s.EqualValues(9, sum.PutReqCnt.Load())
 
-	subtasks, err = taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
+	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
+	// 4 kv groups, each have 3 read(1 meta, 1 get kv file size, 1 read kv file)
+	// and 3 write(1 kv, 1 stat, 1 meta)
+	s.EqualValues(12, sum.GetReqCnt.Load())
+	s.EqualValues(12, sum.PutReqCnt.Load())
+
+	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
+	s.EqualValues(sum.RowCnt.Load(), 10000)
+	if kerneltype.IsClassic() {
+		s.EqualValues(sum.Bytes.Load(), 2622604)
+	} else {
+		// There are total 10000 * 4 kv pairs, each with 4 bytes keyspace prefix.
+		s.EqualValues(sum.Bytes.Load(), 2782604)
+	}
+	s.EqualValues(20, sum.GetReqCnt.Load())
+	s.EqualValues(0, sum.PutReqCnt.Load())
+}
+
+func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.TaskManager, taskID int64, step proto.Step) *execute.SubtaskSummary {
+	s.T().Helper()
+	subtasks, err := taskMgr.GetSubtasksWithHistory(ctx, taskID, step)
 	s.NoError(err)
-	s.Len(subtasks, 4)
-	totalRows := int64(0)
-	totalBytes := int64(0)
-	totalPutReq := uint64(0)
-	totalGetReq := uint64(0)
-	for i, subtask := range subtasks {
-		v = &execute.SubtaskSummary{}
+	var accumSummary execute.SubtaskSummary
+	for _, subtask := range subtasks {
+		v := &execute.SubtaskSummary{}
 		err = json.Unmarshal([]byte(subtask.Summary), &v)
 		s.NoError(err)
-		totalRows += v.RowCnt.Load()
-		totalBytes += v.Bytes.Load()
-		totalPutReq += v.PutReqCnt.Load()
-		totalGetReq += v.GetReqCnt.Load()
-		logutil.BgLogger().Info("subtasks", zap.Int("seq", i), zap.Any("subtasks", v))
+		accumSummary.RowCnt.Add(v.RowCnt.Load())
+		accumSummary.Bytes.Add(v.Bytes.Load())
+		accumSummary.PutReqCnt.Add(v.PutReqCnt.Load())
+		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
 	}
-	s.Greater(totalRows, int64(0))  // Fixme: why not 10000?
-	s.Greater(totalBytes, int64(0)) // Fixme: unstable
-	s.Equal(uint64(0), totalPutReq)
-	s.Greater(totalGetReq, uint64(0))
+	return &accumSummary
 }
 
 func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
@@ -386,4 +416,94 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	s.tk.MustExec(`import into dst FROM select * from t`)
 	require.Equal(s.T(), addCnt, 2*len(stores))
 	require.Equal(s.T(), removeCnt, addCnt)
+}
+
+func TestNextGenMetering(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Metering is not supported in classic kernel type")
+	}
+	bak := metering.FlushInterval
+	metering.FlushInterval = time.Second
+	t.Cleanup(func() {
+		metering.FlushInterval = bak
+	})
+	s := &mockGCSSuite{}
+	s.SetT(t)
+	s.SetupSuite()
+	t.Cleanup(func() {
+		s.TearDownSuite()
+	})
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	srcDirURI := realtikvtest.GetNextGenObjStoreURI("meter-test")
+	srcStore, err2 := handle.NewObjStore(ctx, srcDirURI)
+	s.NoError(err2)
+	s.NoError(srcStore.WriteFile(ctx, "t.1.csv", []byte("1,test-1\n2,test-2\n3,test-3\n")))
+	s.prepareAndUseDB("metering")
+	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort")
+	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), index(b));")
+
+	baseTime := time.Now().Truncate(time.Minute).Unix()
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+		// the metering library requires the timestamp to be at minute boundary, but
+		// during test, we want to reduce the flush interval.
+		*ts = baseTime
+		baseTime += 60
+	})
+	var gotMeterData atomic.String
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+		gotMeterData.Store(s.String())
+	})
+	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+		rowAndSizeMeterItems.Store(&items)
+	})
+
+	// 1 subtask, encoding 10 files using 4 threads.
+	importSQL := fmt.Sprintf(`import into t FROM '%s'
+		with cloud_storage_uri='%s'`, realtikvtest.GetNextGenObjStoreURI("meter-test/*.csv"), glSortURI)
+	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 test-1", "2 test-2", "3 test-3"))
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	s.NoError(err)
+	s.Eventually(func() bool {
+		return gotMeterData.Load() != ""
+	}, 30*time.Second, 300*time.Millisecond)
+
+	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
+	s.Contains(gotMeterData.Load(), "requests{get: 14, put: 11}")
+	// note: the read/write of subtask meta file is also counted in obj_store part,
+	// but meta file contains file name which contains task and subtask ID, so
+	// the length may vary, we just use regexp to match here.
+	s.Regexp(`obj_store{r: 2.\d*KiB, w: 3.\d*KiB}`, gotMeterData.Load())
+	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
+	s.Regexp(`cluster{r: 0B, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
+
+	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
+	s.EqualValues(3, sum.RowCnt.Load())
+	s.EqualValues(27, sum.Bytes.Load())
+	s.EqualValues(2, sum.GetReqCnt.Load())
+	s.EqualValues(5, sum.PutReqCnt.Load())
+
+	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
+	s.EqualValues(288, sum.Bytes.Load())
+	s.EqualValues(6, sum.GetReqCnt.Load())
+	s.EqualValues(6, sum.PutReqCnt.Load())
+
+	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
+	s.EqualValues(288, sum.Bytes.Load())
+	s.EqualValues(6, sum.GetReqCnt.Load())
+	s.EqualValues(0, sum.PutReqCnt.Load())
+
+	s.Eventually(func() bool {
+		items := *rowAndSizeMeterItems.Load()
+		return items != nil && items["row_count"].(int64) == 3 &&
+			items["data_kv_bytes"].(int64) == 114 && items["index_kv_bytes"].(int64) == 174
+	}, 30*time.Second, 100*time.Millisecond)
 }

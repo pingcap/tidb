@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -83,20 +84,69 @@ type enumerateState struct {
 	limitCopExist bool
 }
 
-// @first: indicates the best task returned.
-// @second: indicates the plan cnt in this subtree.
-// @third: indicates whether this plan apply the hint.
-// @fourth: indicates error
+// The reason the physical plan is a slice of slices is to allow preferring a specific type of plan within a slice,
+// while still performing cost comparison between slices.
+// There are three types of task in the following code: hintTask, normalPreferTask, and normalIterTask.
+// The purpose of hintTask is to always have the highest priority, both **within and across slices**,
+// meaning it will always be chosen if available, regardless of cost comparison.
+// For non-hint tasks, i.e., normalIterTask and normalPreferTask, normalPreferTask has the highest priority **within** a slice.
+// normalIterTask has the lowest priority and always depends on cost comparison to choose the least expensive task.
 func enumeratePhysicalPlans4Task(
+	super base.LogicalPlan,
+	physicalPlansSlice [][]base.PhysicalPlan,
+	prop *property.PhysicalProperty,
+	addEnforcer bool,
+) (base.Task, bool, error) {
+	if len(physicalPlansSlice) == 0 {
+		return base.InvalidTask, false, nil
+	}
+
+	var normalTask, hintTask = base.InvalidTask, base.InvalidTask
+	for _, ops := range physicalPlansSlice {
+		if len(ops) == 0 {
+			continue
+		}
+		curTask, curHintCanWork, curErr := enumeratePhysicalPlans4TaskHelper(super, ops, prop, addEnforcer)
+		if curErr != nil {
+			return nil, false, curErr
+		}
+
+		if curHintCanWork {
+			if hintTask.Invalid() {
+				hintTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				hintTask = curTask
+			}
+		} else {
+			if normalTask.Invalid() {
+				normalTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalTask = curTask
+			}
+		}
+	}
+	if !hintTask.Invalid() {
+		return hintTask, true, nil
+	}
+	return normalTask, false, nil
+}
+
+func enumeratePhysicalPlans4TaskHelper(
 	super base.LogicalPlan,
 	physicalPlans []base.PhysicalPlan,
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
 ) (base.Task, bool, error) {
-	var bestTask, preferTask = base.InvalidTask, base.InvalidTask
 	var err error
+	var normalIterTask, normalPreferTask, hintTask = base.InvalidTask, base.InvalidTask, base.InvalidTask
+	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
+
 	var fd *funcdep.FDSet
 	if addEnforcer && len(physicalPlans) != 0 {
 		switch logicalPlan := baseLP.Self().(type) {
@@ -105,10 +155,7 @@ func enumeratePhysicalPlans4Task(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
-	if len(physicalPlans) == 0 {
-		return base.InvalidTask, false, nil
-	}
-	initState := &enumerateState{}
+
 	for _, pp := range physicalPlans {
 		childTasks, err = iteration(iterObj, pp, childTasks, prop)
 		if err != nil {
@@ -134,7 +181,7 @@ func enumeratePhysicalPlans4Task(
 		// we need to check the hint is applicable before enforcing the property. otherwise
 		// what we get is Sort ot Exchanger kind of operators.
 		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		hintApplicable := applyLogicalHintVarEigen(baseLP.Self(), initState, pp, childTasks)
+		hintApplicable := applyLogicalHintVarEigen(baseLP.Self(), pp, childTasks)
 
 		// Enforce curTask property
 		if addEnforcer {
@@ -147,35 +194,56 @@ func enumeratePhysicalPlans4Task(
 			curTask = optimizeByShuffle(curTask, baseLP.Plan.SCtx())
 		}
 
-		// Get the most efficient one only by low-cost priority among all valid plans.
-		if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
-			return nil, false, err
-		} else if curIsBetter {
-			bestTask = curTask
-		}
-
 		if hintApplicable {
-			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
-			if curIsBetter, err := compareTaskCost(curTask, preferTask); err != nil {
+			if hintTask.Invalid() {
+				hintTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
-				preferTask = curTask
+				hintTask = curTask
+			}
+		}
+
+		if hintTask.Invalid() && hasNormalPreferTask(baseLP.Self(), initState, pp, childTasks) {
+			if normalPreferTask.Invalid() {
+				normalPreferTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalPreferTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalPreferTask = curTask
+			}
+		}
+
+		if hintTask.Invalid() && normalPreferTask.Invalid() {
+			if normalIterTask.Invalid() {
+				normalIterTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalIterTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalIterTask = curTask
 			}
 		}
 	}
-	// there is a valid preferred low-cost physical one, return it.
-	if !preferTask.Invalid() {
-		return preferTask, true, nil
+
+	returnedTask := base.InvalidTask
+	var hintCanWork bool
+	if !hintTask.Invalid() {
+		returnedTask = hintTask
+		hintCanWork = true
+	} else if !normalPreferTask.Invalid() {
+		returnedTask = normalPreferTask
+	} else if !normalIterTask.Invalid() {
+		returnedTask = normalIterTask
 	}
-	// if there is no valid preferred low-cost physical one, return the normal low one.
-	// if the hint is specified without any valid plan, we should also record the warnings.
-	if !bestTask.Invalid() {
+
+	if !hintCanWork && returnedTask != nil && !returnedTask.Invalid() {
+		// It means there is no hint or hint is not applicable.
+		// So record hint warning if necessary.
 		if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
-			bestTask.AppendWarning(warn)
+			returnedTask.AppendWarning(warn)
 		}
 	}
-	// return the normal lowest-cost physical one.
-	return bestTask, false, nil
+	return returnedTask, hintCanWork, nil
 }
 
 // TODO: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.
@@ -566,7 +634,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	// for childProp := prop.CloneEssentialFields(), we do not clone indexJoinProp childProp for by default.
 	// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	newProp.IndexJoinProp = prop.IndexJoinProp
-	var plansFitsProp, plansNeedEnforce []base.PhysicalPlan
+	var plansFitsProp, plansNeedEnforce [][]base.PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
@@ -684,6 +752,8 @@ type candidatePath struct {
 	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
 	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
 	matchPropResult   property.PhysicalPropMatchResult
+
+	indexJoinCols int // how many index columns are used in access conditions in this IndexJoin.
 }
 
 func compareBool(l, r bool) int {
@@ -791,6 +861,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	// predicateResult is separated out. An index may "win" because it has a better
 	// accessResult - but that access has high risk.
+	// accessResult does not differentiate between range or equal/IN predicates.
 	// Summing these 3 metrics ensures that a "high risk" index wont win ONLY on
 	// accessResult. The high risk will negate that accessResult with erOrIn being the
 	// tiebreaker or equalizer.
@@ -835,16 +906,19 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
-	if !comparable1 && !comparable2 {
-		// These aren't comparable - but compare risk and other metrics to see if we
-		// can determine a clear winner. Checking > 1 and < -1 means that the winner
-		// must win on at least 2 of the metrics below.
-		// This is to prevent a case where x wins on 1 metric but loses badly on another.
-		// Other checks in this logic only require > 0 or < 0 (1 metric is enough).
-		if riskResult > 0 && leftDidNotLose && totalSum > 1 {
+	if !comparable1 || !comparable2 {
+		// These aren't comparable - meaning that they have different combinations of columns in
+		// the access conditions or filters.
+		// One or more predicates could carry high risk - so we want to compare that risk and other
+		// metrics to see if we can determine a clear winner.
+		// The 2 key metrics here are riskResult and predicateResult.
+		// - riskResult tells us which candidate has lower risk
+		// - predicateResult already includes risk - we need ">1" or "<-1" to counteract the risk factor.
+		// "DidNotLose" and totalSum are also factored in to ensure that the winner is better overall."
+		if riskResult > 0 && leftDidNotLose && totalSum >= 0 && predicateResult > 1 {
 			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 		}
-		if riskResult < 0 && rightDidNotLose && totalSum < -1 {
+		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < -1 {
 			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 		}
 		return 0, false // No winner (0). Do not return the pseudo result
@@ -1297,6 +1371,21 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
+	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
+	candidate.matchPropResult = property.PropNotMatched
+	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	// AccessConds could miss some predicates since the DataSource can't see join predicates.
+	// For example, `where t1.a=t2.a and t2.b=1`, `t1=a=t2.a` is not pushed down to t2's accessConds since it's a join
+	// predicate. We need to set columns used as join keys to accessCondsColMap/indexCondsColMap manually.
+	for i := range indexJoinCols {
+		candidate.accessCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+	}
+	return candidate
+}
+
 func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	// since the all index path alternative paths is collected and undetermined, and we should determine a possible and concrete path for this prop.
 	possiblePath, match := matchPropForIndexMergeAlternatives(ds, path, prop)
@@ -1404,7 +1493,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 			indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-			if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
+			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
 				if !c.path.IsFullScanRange(ds.TableInfo) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
@@ -1464,6 +1553,15 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 }
 
 func (c *candidatePath) equalPredicateCount() int {
+	if c.indexJoinCols > 0 { // this candidate path is for Index Join
+		// Specially handle indexes under Index Join, since these indexes can't see the join key themselves, we can't
+		// use path.EqOrInCondCount here.
+		// For example, for "where t1.a=t2.a and t2.b=1" and index "idx(t2, a, b)", since the DataSource of t2 can't
+		// see the join key "t1.a=t2.a", it only considers "t2.b=1" as access condition, so its EqOrInCondCount is 0,
+		// but actually it should be 2.
+		return c.indexJoinCols
+	}
+
 	// Exit if this isn't a DNF condition or has no access conditions
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return c.path.EqOrInCondCount

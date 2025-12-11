@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -126,7 +127,7 @@ WHERE
 	for i, cond := range selection.Conditions {
 		conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 	}
-	cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[0])
+	cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[0])
 	require.NotNil(b, cols)
 
 	b.ResetTimer()

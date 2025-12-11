@@ -546,6 +546,10 @@ type Instance struct {
 	StmtSummaryMaxStmtCount uint64 `toml:"tidb_stmt_summary_max_stmt_count" json:"tidb_stmt_summary_max_stmt_count"`
 	// ServerMemoryLimit indicates the memory limit of the tidb-server instance.
 	ServerMemoryLimit string `toml:"tidb_server_memory_limit" json:"tidb_server_memory_limit"`
+	// MemArbitratorMode indicates the work mode of the global memory arbitrator of the tidb-server instance.
+	MemArbitratorMode string `toml:"tidb_mem_arbitrator_mode" json:"tidb_mem_arbitrator_mode"`
+	// MemArbitratorSoftLimit indicates the memory resource soft limit of the tidb-server instance.
+	MemArbitratorSoftLimit string `toml:"tidb_mem_arbitrator_soft_limit" json:"tidb_mem_arbitrator_soft_limit"`
 	// ServerMemoryLimitGCTrigger indicates the gc percentage of the ServerMemoryLimit.
 	ServerMemoryLimitGCTrigger string `toml:"tidb_server_memory_limit_gc_trigger" json:"tidb_server_memory_limit_gc_trigger"`
 	// InstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.

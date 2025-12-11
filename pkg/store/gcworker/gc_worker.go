@@ -15,7 +15,6 @@
 package gcworker
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -175,6 +175,8 @@ const (
 	tidbGCLeaderLease = "tidb_gc_leader_lease"
 	tidbGCLeaderUUID  = "tidb_gc_leader_uuid"
 	tidbGCSafePoint   = "tidb_gc_safe_point"
+
+	loadAllKeyspacesForUnifiedGCBatchSize = 50
 )
 
 var txnSafePointSyncWaitTime = tikv.GcStateCacheInterval
@@ -375,13 +377,6 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency gcCon
 	return nil
 }
 
-func (w *GCWorker) isUnifiedGC() bool {
-	const cfgGCManagementType = "gc_management_type"
-	const cfgGCManagementTypeKeyspaceLevel = "keyspace_level"
-	keyspaceMeta := w.store.GetCodec().GetKeyspaceMeta()
-	return keyspaceMeta != nil && keyspaceMeta.Config[cfgGCManagementType] != cfgGCManagementTypeKeyspaceLevel
-}
-
 // leaderTick of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
@@ -398,13 +393,13 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// Gc safe point is not separated by keyspace now. The whole cluster has only one global gc safe point.
-	// So at least one TiDB with `keyspace-name` not set is required in the whole cluster to calculate and update gc safe point.
-	// If `keyspace-name` is set, the TiDB node will only do its own delete range, and will not calculate gc safe point and resolve locks.
-	// Note that when `keyspace-name` is set, `checkLeader` will be done within the key space.
-	// Therefore only one TiDB node in each key space will be responsible to do delete range.
-	// TODO: Use result of AdvanceTxnSafePoint instead, which makes it unnecessary to manually check the config.
-	if w.isUnifiedGC() {
+	// For different keyspace configurations, there are two different GC procedure for them:
+	// * Null keyspace (keyspace not used), or keyspaces with keyspace level GC enabled:
+	//   The keyspace should manage the procedure totally by itself.
+	// * Keyspaces with keyspace level GC disabled, or to say, using unified GC mode:
+	//   The GC procedure only includes polling the GC safe point from the null keyspace
+	keyspaceMeta := w.store.GetCodec().GetKeyspaceMeta()
+	if keyspaceMeta != nil && !pd.IsKeyspaceUsingKeyspaceLevelGC(keyspaceMeta) {
 		err = w.runKeyspaceGCJobInUnifiedGCMode(ctx, concurrency)
 		if err != nil {
 			return errors.Trace(err)
@@ -1147,20 +1142,6 @@ func (w *GCWorker) getStoresForGC(ctx context.Context) ([]*metapb.Store, error) 
 	return upStores, nil
 }
 
-func (w *GCWorker) getStoresMapForGC(ctx context.Context) (map[uint64]*metapb.Store, error) {
-	stores, err := w.getStoresForGC(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	storesMap := make(map[uint64]*metapb.Store, len(stores))
-	for _, store := range stores {
-		storesMap[store.Id] = store
-	}
-
-	return storesMap, nil
-}
-
 func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	str, err := w.loadValueFromSysTable(gcConcurrencyKey)
 	if err != nil {
@@ -1212,13 +1193,13 @@ func (w *GCWorker) checkUseDistributedGC() bool {
 
 func (w *GCWorker) resolveLocks(
 	ctx context.Context,
-	safePoint uint64,
+	txnSafePoint uint64,
 	concurrency int,
 ) error {
 	metrics.GCWorkerCounter.WithLabelValues("resolve_locks").Inc()
 	logutil.Logger(ctx).Info("start resolve locks", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
-		zap.Uint64("safePoint", safePoint),
+		zap.Uint64("txnSafePoint", txnSafePoint),
 		zap.Int("concurrency", concurrency))
 	startTime := time.Now()
 
@@ -1227,7 +1208,11 @@ func (w *GCWorker) resolveLocks(
 		failpoint.Inject("lowScanLockLimit", func() {
 			scanLimit = 3
 		})
-		return tikv.ResolveLocksForRange(ctx, w.regionLockResolver, safePoint, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
+		// ResolveLocksForRange accepts a `max_version`, instead of the txn safe point, which means the maximum
+		// (inclusive) start ts of locks that should be resolved. But in our current definition, GC at some txn safe
+		// point should guarantee transactions with start ts >= txn safe point to be valid. Therefore we pass
+		// txnSafePoint - 1 to ResolveLocksForRange.
+		return tikv.ResolveLocksForRange(ctx, w.regionLockResolver, txnSafePoint-1, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
 	}
 
 	runnerName := "resolve-locks-runner"
@@ -1236,21 +1221,156 @@ func (w *GCWorker) resolveLocks(
 	}
 
 	runner := rangetask.NewRangeTaskRunner(runnerName, w.tikvStore, concurrency, handler)
-	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
-	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
-	if err != nil {
-		logutil.Logger(ctx).Warn("resolve locks failed", zap.String("category", "gc worker"),
-			zap.String("uuid", w.uuid),
-			zap.Uint64("safePoint", safePoint),
-			zap.Error(err))
-		return errors.Trace(err)
+
+	// w.store may be nil in some test environments.
+	isNullKeyspace := w.store == nil || w.store.GetCodec().GetKeyspace() == nil
+	var keyspaceBatch []*keyspacepb.KeyspaceMeta
+
+	// Failpoint to override the batch size for faster test
+	loadKeyspacesBatchSize := uint32(loadAllKeyspacesForUnifiedGCBatchSize)
+	failpoint.Inject("overrideLoadKeyspacesBatchSize", func(val failpoint.Value) {
+		v, ok := val.(int)
+		if !ok {
+			panic(fmt.Sprintf("invalid argument for failpoint overrideLoadKeyspacesBatchSize: expected integer, got %T: %v", val, val))
+		}
+		loadKeyspacesBatchSize = uint32(v)
+	})
+
+	// Counter for tests to check how many batches was done during resolving locks.
+	loadKeyspacesBatchCount := 0
+	defer func() {
+		failpoint.InjectCall("getLoadKeyspacesBatchCount", loadKeyspacesBatchCount)
+	}()
+
+	if isNullKeyspace {
+		var err error
+		keyspaceBatch, err = w.pdClient.GetAllKeyspaces(ctx, 0, loadKeyspacesBatchSize)
+		loadKeyspacesBatchCount++
+		if err != nil {
+			return err
+		}
 	}
 
-	logutil.Logger(ctx).Info("finish resolve locks", zap.String("category", "gc worker"),
-		zap.String("uuid", w.uuid),
-		zap.Uint64("safePoint", safePoint),
-		zap.Int("regions", runner.CompletedRegions()))
-	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
+	// * If the current keyspace is not the null keyspace, then it must be a keyspace with keyspace level GC enabled.
+	//   in this case, resolve locks on the unbounded range, and the keyspace prefix will be automatically
+	//   attached.
+	// * If there are no keyspaces in the cluster at all, resolve locks for the unbounded whole key range.
+	if !isNullKeyspace || len(keyspaceBatch) == 0 {
+		err := runner.RunOnRange(ctx, []byte(""), []byte(""))
+		if err != nil {
+			logutil.Logger(ctx).Warn("resolve locks failed", zap.String("category", "gc worker"),
+				zap.String("uuid", w.uuid),
+				zap.Uint64("txnSafePoint", txnSafePoint),
+				zap.Error(err))
+			return errors.Trace(err)
+		}
+
+		logutil.Logger(ctx).Info("finish resolve locks", zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Uint64("txnSafePoint", txnSafePoint),
+			zap.Int("regions", runner.CompletedRegions()))
+		metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
+		return nil
+	}
+
+	// Otherwise, the null keyspace, which is the current keyspace, has the responsibility to resolve locks for
+	// other keyspaces that are configured running unified GC, but skip keyspaces that use keyspace level GC.
+
+	isSuccessful := true
+
+	// First, resolve locks for the null keyspace (txn key range).
+	{
+		nullKeyspaceExcludePrefixes := tikv.CodecV1ExcludePrefixes()
+		nullKeyspaceKeyRanges := make([]tikvstore.KeyRange, 0, len(nullKeyspaceExcludePrefixes)+1)
+		nextStartKey := []byte("")
+
+		for _, prefix := range nullKeyspaceExcludePrefixes {
+			nullKeyspaceKeyRanges = append(nullKeyspaceKeyRanges, tikvstore.KeyRange{
+				StartKey: nextStartKey,
+				EndKey:   prefix,
+			})
+			nextStartKey = tikvstore.PrefixNextKey(prefix)
+		}
+
+		// Add the remaining range that after the last excluded prefix and until the global end.
+		// But there's theoretically a special case: if there are prefixes that has been processed but `nextStartKey`
+		// is set to empty, it means that there exist a prefix containing only `0xff` bytes, causing the `PrefixNextKey`
+		// giving the global end. In this case, there isn't such a remaining range.
+		// Currently, there's no such kind of prefix in use, but we handle this special case for strictness.
+		if !(len(nullKeyspaceExcludePrefixes) > 0 && len(nextStartKey) == 0) {
+			nullKeyspaceKeyRanges = append(nullKeyspaceKeyRanges, tikvstore.KeyRange{
+				StartKey: nextStartKey,
+				EndKey:   []byte(""),
+			})
+		}
+
+		for _, r := range nullKeyspaceKeyRanges {
+			err := runner.RunOnRange(ctx, r.StartKey, r.EndKey)
+			if err != nil {
+				logutil.Logger(ctx).Warn("resolve locks for null keyspace sub-range failed", zap.String("category", "gc worker"),
+					zap.String("uuid", w.uuid),
+					zap.Uint64("txnSafePoint", txnSafePoint),
+					zap.String("subRangeStartKey", hex.EncodeToString(r.StartKey)),
+					zap.String("subRangeEndKey", hex.EncodeToString(r.EndKey)),
+					zap.Error(err))
+				isSuccessful = false
+			}
+		}
+	}
+
+	// Then, resolve locks for keyspaces with Unified GC enabled, if any.
+	for {
+		// The first batch has already been fetched. We fetch the next batch at the end of the outer loop.
+		if len(keyspaceBatch) == 0 {
+			break
+		}
+
+		for _, keyspace := range keyspaceBatch {
+			if keyspace.GetState() != keyspacepb.KeyspaceState_ENABLED {
+				continue
+			}
+			if pd.IsKeyspaceUsingKeyspaceLevelGC(keyspace) {
+				continue
+			}
+			codecOfKeyspace, err := tikv.NewCodecV2(tikv.ModeTxn, keyspace)
+			if err != nil {
+				err = errors.Annotatef(err, "failed to find codec for keyspace when trying to resolve locks for it, keyspaceID: %v, keyspaceName: %v", keyspace.GetId(), keyspace.GetName())
+				logutil.Logger(ctx).Warn("resolve locks for unified-GC keyspace failed", zap.String("category", "gc worker"),
+					zap.String("uuid", w.uuid),
+					zap.Uint64("txnSafePoint", txnSafePoint),
+					zap.Error(err))
+				isSuccessful = false
+				continue
+			}
+			startKey, endKey := codecOfKeyspace.EncodeRange([]byte(""), []byte(""))
+			err = runner.RunOnRange(ctx, startKey, endKey)
+			if err != nil {
+				logutil.Logger(ctx).Warn("resolve locks for unified-GC keyspace failed", zap.String("category", "gc worker"),
+					zap.String("uuid", w.uuid),
+					zap.Uint64("txnSafePoint", txnSafePoint),
+					zap.Error(err))
+				isSuccessful = false
+				continue
+			}
+		}
+
+		// The current batch of keyspaces has been processed. Continue next batch.
+		// The keyspaceBatch must be non-nil here, otherwise the outer loop should have been finished.
+		nextKeyspaceID := keyspaceBatch[len(keyspaceBatch)-1].GetId() + 1
+		if nextKeyspaceID > constants.MaxKeyspaceID {
+			break
+		}
+		var err error
+		keyspaceBatch, err = w.pdClient.GetAllKeyspaces(ctx, nextKeyspaceID, loadKeyspacesBatchSize)
+		loadKeyspacesBatchCount++
+		if err != nil {
+			return err
+		}
+	}
+
+	if !isSuccessful {
+		return errors.New("resolve locks is not completely successful")
+	}
 	return nil
 }
 
@@ -1276,52 +1396,6 @@ func (w *GCWorker) broadcastGCSafePoint(ctx context.Context, gcSafePoint uint64)
 	}
 
 	return nil
-}
-
-func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (rangetask.TaskStat, error) {
-	var stat rangetask.TaskStat
-	defer func() {
-		metrics.GCActionRegionResultCounter.WithLabelValues("success").Add(float64(stat.CompletedRegions))
-		metrics.GCActionRegionResultCounter.WithLabelValues("fail").Add(float64(stat.FailedRegions))
-	}()
-	key := startKey
-	for {
-		bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
-		loc, err := w.tikvStore.GetRegionCache().LocateKey(bo, key)
-		if err != nil {
-			return stat, errors.Trace(err)
-		}
-
-		var regionErr *errorpb.Error
-		regionErr, err = w.doGCForRegion(bo, safePoint, loc.Region)
-
-		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
-		// make the process correct.
-		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
-			if err == nil {
-				continue
-			}
-		}
-
-		if err != nil {
-			logutil.BgLogger().Warn("[gc worker]",
-				zap.String("uuid", w.uuid),
-				zap.String("gc for range", fmt.Sprintf("[%d, %d)", startKey, endKey)),
-				zap.Uint64("safePoint", safePoint),
-				zap.Error(err))
-			stat.FailedRegions++
-		} else {
-			stat.CompletedRegions++
-		}
-
-		key = loc.EndKey
-		if len(key) == 0 || bytes.Compare(key, endKey) >= 0 {
-			break
-		}
-	}
-
-	return stat, nil
 }
 
 // doGCForRegion used for gc for region.
@@ -1355,13 +1429,13 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 }
 
 func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
-	var label string
-	if w.isUnifiedGC() {
-		label = "check_leader"
+	var metricLabel string
+	if !pd.IsKeyspaceUsingKeyspaceLevelGC(w.store.GetCodec().GetKeyspaceMeta()) {
+		metricLabel = "check_leader"
 	} else {
-		label = "check_leader_keyspace"
+		metricLabel = "check_leader_keyspace"
 	}
-	metrics.GCWorkerCounter.WithLabelValues(label).Inc()
+	metrics.GCWorkerCounter.WithLabelValues(metricLabel).Inc()
 	se := createSession(w.store)
 	defer se.Close()
 

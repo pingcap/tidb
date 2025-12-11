@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	clitutil "github.com/tikv/client-go/v2/util"
 )
 
@@ -373,6 +374,8 @@ func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskSta
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
+	r := tracing.StartRegion(ctx, "TaskManager.GetTaskExecInfoByExecID")
+	defer r.End()
 	var res []*TaskExecInfo
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
@@ -1082,4 +1085,40 @@ func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se se
 	sql := "update mysql.tidb_global_task set concurrency = %? where concurrency > %?;"
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, cpuCount, cpuCount)
 	return err
+}
+
+// UpdateSubtaskCheckpoint updates the checkpoint of a subtask.
+func (mgr *TaskManager) UpdateSubtaskCheckpoint(ctx context.Context, subtaskID int64, checkpoint any) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
+
+	data, err := json.Marshal(checkpoint)
+	if err != nil {
+		return err
+	}
+	checkpointJSON := string(data)
+
+	_, err = mgr.ExecuteSQLWithNewSession(ctx,
+		`UPDATE mysql.tidb_background_subtask SET checkpoint = %? WHERE id = %?`,
+		checkpointJSON, subtaskID)
+	return err
+}
+
+// GetSubtaskCheckpoint gets the checkpoint of a subtask.
+func (mgr *TaskManager) GetSubtaskCheckpoint(ctx context.Context, subtaskID int64) (string, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return "", err
+	}
+
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"SELECT checkpoint FROM mysql.tidb_background_subtask WHERE id = %?", subtaskID)
+	if err != nil {
+		return "", err
+	}
+	if len(rs) == 0 || rs[0].IsNull(0) {
+		return "", nil
+	}
+
+	return rs[0].GetString(0), nil
 }

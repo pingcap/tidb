@@ -29,6 +29,7 @@ import (
 	"iter"
 	"math"
 	"math/rand"
+	"regexp"
 	"runtime/pprof"
 	"slices"
 	"strconv"
@@ -117,6 +118,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -135,9 +137,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
@@ -231,8 +235,6 @@ type session struct {
 		syncutil.RWMutex
 		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	}
-	// allowed when tikv disk full happened.
-	diskFullOpt kvrpcpb.DiskFullOpt
 
 	// StmtStats is used to count various indicators of each SQL in this session
 	// at each point in time. These data will be periodically taken away by the
@@ -255,6 +257,11 @@ type session struct {
 
 	// Used to wait for all async commit background jobs to finish.
 	commitWaitGroup sync.WaitGroup
+}
+
+// GetTraceCtx returns the trace context of the session.
+func (s *session) GetTraceCtx() context.Context {
+	return s.currentCtx
 }
 
 // AddTableLock adds table lock to the session lock map.
@@ -810,10 +817,41 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	var err error
 	txnSize := s.txn.Size()
-	isPessimistic := s.txn.IsPessimistic()
+	isPessimistic := s.sessionVars.TxnCtx.IsPessimistic
 	isPipelined := s.txn.IsPipelined()
 	r, ctx := tracing.StartRegionEx(ctx, "session.doCommitWithRetry")
 	defer r.End()
+
+	// Emit txn.commit.start trace event
+	startTS := s.sessionVars.TxnCtx.StartTS
+	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
+		traceevent.TraceEvent(ctx, traceevent.TxnLifecycle, "txn.commit.start",
+			zap.Uint64("start_ts", startTS),
+			zap.Bool("pessimistic", isPessimistic),
+			zap.Bool("pipelined", isPipelined),
+			zap.Int("txn_size", txnSize),
+			zap.Uint64("conn_id", s.sessionVars.ConnectionID),
+		)
+	}
+
+	// Defer txn.commit.finish to capture final result
+	defer func() {
+		if traceevent.IsEnabled(traceevent.TxnLifecycle) {
+			fields := []zap.Field{
+				zap.Uint64("start_ts", startTS),
+				zap.Bool("pessimistic", isPessimistic),
+				zap.Bool("pipelined", isPipelined),
+				zap.Uint64("conn_id", s.sessionVars.ConnectionID),
+			}
+			if s.txn.lastCommitTS > 0 {
+				fields = append(fields, zap.Uint64("commit_ts", s.txn.lastCommitTS))
+			}
+			if err != nil {
+				fields = append(fields, zap.Error(err))
+			}
+			traceevent.TraceEvent(ctx, traceevent.TxnLifecycle, "txn.commit.finish", fields...)
+		}
+	}()
 
 	err = s.doCommit(ctx)
 	if err != nil {
@@ -981,6 +1019,16 @@ func (s *session) CommitTxn(ctx context.Context) error {
 func (s *session) RollbackTxn(ctx context.Context) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.RollbackTxn")
 	defer r.End()
+
+	// Emit txn.rollback trace event
+	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
+		startTS := s.sessionVars.TxnCtx.StartTS
+		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
+		traceevent.TraceEvent(ctx, traceevent.TxnLifecycle, "txn.rollback",
+			zap.Uint64("start_ts", startTS),
+			zap.Uint64("stmt_count", stmtCount),
+		)
+	}
 
 	s.setLastTxnInfoBeforeTxnEnd()
 	if s.txn.Valid() {
@@ -1431,7 +1479,235 @@ func (s *session) GetTiDBTableValue(name string) (string, error) {
 
 var _ sqlexec.SQLParser = &session{}
 
+const (
+	coreSQLToken = 1 << iota
+	bypassSQLToken
+	isSelectSQLToken
+
+	defOOMRiskCheckDur   = time.Millisecond * 100 // 100ms: sleep duration when mem-arbitrator is at memory risk
+	defSuffixSplitDot    = ", "
+	defSuffixParseSQL    = defSuffixSplitDot + "path=ParseSQL"
+	defSuffixCompilePlan = defSuffixSplitDot + "path=CompilePlan"
+
+	// mem quota for compiling plan per token.
+	// 1. prepare tpc-c
+	// 2. run tpc-c workload with multiple threads for a few minutes
+	// 3. observe the memory consumption of TiDB instance without copr-cache
+	// 4. calculate the average memory consumption of compiling plan per token:
+	//    executor.(*Compiler).Compile / threads / avg token count per SQL / 2 * 1.2(more 20%)
+	defCompilePlanQuotaPerToken = 63091 * 12 / 10
+
+	// mem quota for parsing SQL per token (similar method as above)
+	//    session.(*session).ParseSQL / threads / avg token count per SQL / 2 * 1.2(more 20%)
+	defParseSQLQuotaPerToken = 12036 * 12 / 10
+)
+
+var keySQLToken = map[string]int{
+	"select": isSelectSQLToken,
+	"from":   coreSQLToken, "insert": coreSQLToken, "update": coreSQLToken, "delete": coreSQLToken, "replace": coreSQLToken, "analyze": coreSQLToken,
+	"execute": coreSQLToken, // ignore `prepare` statement because its content will be parsed later
+	"explain": bypassSQLToken, "desc": bypassSQLToken}
+
+// approximate memory quota related token count for parsing a SQL statement which covers most DML statements
+// 1. ignore comments
+// 2. count keywords, identifiers, numbers, "?", string/identifier literals as one token
+// 3. if the SQL has `select` clause, it must have `from` clause: ignore SQL like `select expr()` or `select @@var`
+// 4. return 0 if the SQL has NO core token (e.g. `set`, `use`, `begin`, `commit`, `rollback`, etc)
+func approxParseSQLTokenCnt(sql string) (tokenCnt int64) {
+	f := false
+	buffer := struct {
+		d [10]byte
+		n int
+	}{}
+
+	hitCoreToken := false
+	hasSelect := false
+	for i := 0; i < len(sql); i++ {
+		c := sql[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if 'a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '_' {
+			f = true
+			if !hitCoreToken {
+				if buffer.n < len(buffer.d) {
+					buffer.d[buffer.n] = c
+					buffer.n++
+				}
+			}
+			continue
+		}
+		if f {
+			f = false
+			tokenCnt++
+			if !hitCoreToken {
+				token := keySQLToken[string(buffer.d[:buffer.n])]
+				if token&isSelectSQLToken > 0 {
+					hasSelect = true
+				} else if token&coreSQLToken > 0 {
+					hitCoreToken = true
+				} else if token&bypassSQLToken == 0 {
+					if !hasSelect {
+						return 0
+					}
+					// expect `from` after `select`
+				}
+				buffer.n = 0
+			}
+		}
+		if sql[i] == '/' && i+1 < len(sql) && sql[i+1] == '*' {
+			i += 2 // skip "/*"
+			for i+1 < len(sql) && !(sql[i] == '*' && sql[i+1] == '/') {
+				i++
+			}
+			i++ // skip "*/"
+			continue
+		}
+		if sql[i] == '-' && i+1 < len(sql) && sql[i+1] == '-' {
+			i += 2 // skip "--"
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if sql[i] == '#' {
+			i++ // skip "#"
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if sql[i] == '"' || sql[i] == '\'' {
+			quote := sql[i]
+			i++ // skip quote
+			for i < len(sql) && sql[i] != quote {
+				if sql[i] == '\\' && i+1 < len(sql) {
+					i++ // skip escape character
+				}
+				i++
+			}
+			tokenCnt++
+			continue
+		}
+		if sql[i] == '`' {
+			i++ // skip "`"
+			for i < len(sql) && sql[i] != '`' {
+				if sql[i] == '\\' && i+1 < len(sql) {
+					i++ // skip escape character
+				}
+				i++
+			}
+			tokenCnt++
+			continue
+		}
+		if sql[i] == '?' {
+			tokenCnt++
+			continue
+		}
+	}
+	if f {
+		tokenCnt++
+	}
+	if !hitCoreToken {
+		return 0
+	}
+	return
+}
+
+// approximate memory quota related token count for compiling plan of a `Normalized` SQL statement
+// if the SQL has `select` clause, it must have `from` clause.
+func approxCompilePlanTokenCnt(sql string, hasSelect bool) (tokenCnt int64) {
+	const tokenFrom = "from"
+	const lenTokenFrom = len(tokenFrom)
+	n := 0
+	hasSelectFrom := false
+	for i, c := range sql {
+		if 'a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '_' || c == '`' || c == '.' {
+			n++
+			continue
+		}
+		if n > 0 {
+			tokenCnt++
+			if hasSelect && !hasSelectFrom && n == lenTokenFrom && sql[i-lenTokenFrom:i] == tokenFrom {
+				hasSelectFrom = true
+			}
+			n = 0
+		}
+		if c == '?' {
+			tokenCnt++
+			continue
+		}
+	}
+	if n > 0 {
+		tokenCnt++
+	}
+	if hasSelect && !hasSelectFrom {
+		return 0
+	}
+	return
+}
+
+// approximate memory quota for parsing SQL
+func approxParseSQLMemQuota(sql string) int64 {
+	tokenCnt := approxParseSQLTokenCnt(sql)
+	return tokenCnt * defParseSQLQuotaPerToken
+}
+
+// approximate memory quota for compiling plan of a `Normalized` SQL statement
+func approxCompilePlanMemQuota(sql string, hasSelect bool) int64 {
+	tokenCnt := approxCompilePlanTokenCnt(sql, hasSelect)
+	return tokenCnt * defCompilePlanQuotaPerToken
+}
+
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
+	globalMemArbitrator := memory.GlobalMemArbitrator()
+	arbitratorMode := globalMemArbitrator.WorkMode()
+	execUseArbitrator := false
+	parseSQLMemQuota := int64(0)
+	if globalMemArbitrator != nil && s.sessionVars.ConnectionID != 0 {
+		if s.sessionVars.MemArbitrator.WaitAverse != variable.MemArbitratorNolimit {
+			parseSQLMemQuota = approxParseSQLMemQuota(sql)
+			execUseArbitrator = parseSQLMemQuota > 0
+		}
+	}
+
+	if execUseArbitrator {
+		uid := s.sessionVars.ConnectionID
+		intoErrBeforeExec := func() error {
+			if s.sessionVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable {
+				metrics.GlobalMemArbitratorSubTasks.CancelWaitAverseParse.Inc()
+				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+defSuffixParseSQL, uid)
+			}
+			if arbitratorMode == memory.ArbitratorModeStandard {
+				metrics.GlobalMemArbitratorSubTasks.CancelStandardModeParse.Inc()
+				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+defSuffixParseSQL, uid)
+			}
+			return nil
+		}
+
+		if globalMemArbitrator.AtMemRisk() {
+			if err := intoErrBeforeExec(); err != nil {
+				return nil, nil, err
+			}
+			for globalMemArbitrator.AtMemRisk() {
+				if globalMemArbitrator.AtOOMRisk() {
+					metrics.GlobalMemArbitratorSubTasks.ForceKillParse.Inc()
+					return nil, nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixParseSQL, uid)
+				}
+				time.Sleep(defOOMRiskCheckDur)
+			}
+		}
+
+		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota)
+		defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
+
+		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
+			if err := intoErrBeforeExec(); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
 	p := parserutil.GetParser()
 	defer func() {
@@ -1572,6 +1848,27 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
+	if sink := tracing.GetSink(ctx); sink == nil {
+		trace := traceevent.NewTrace()
+		ctx = tracing.WithFlightRecorder(ctx, trace)
+		defer trace.DiscardOrFlush(ctx)
+
+		// A developer debugging event so we can see what trace is missing!
+		if traceevent.IsEnabled(tracing.DevDebug) {
+			traceevent.TraceEvent(ctx, tracing.DevDebug, "ExecuteInternal missing trace ctx",
+				zap.String("sql", sql),
+				zap.Stack("stack"))
+			traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
+				return config.Event.DevDebug.Type == traceevent.DevDebugTypeExecuteInternalTraceMissing
+			})
+		}
+	}
+
+	rs, err = s.executeInternalImpl(ctx, sql, args...)
+	return rs, err
+}
+
+func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -1624,10 +1921,22 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return []sqlexec.RecordSet{rs}, err
 }
 
+type sqlRegexp struct {
+	regexp string
+}
+
+func (s sqlRegexp) sqlRegexpDumpTriggerCheck(cfg *traceevent.DumpTriggerConfig) bool {
+	// TODO: pre-compile the regexp to improve performance
+	match, err := regexp.MatchString(cfg.UserCommand.SQLRegexp, s.regexp)
+	return err == nil && match
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
+
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.sql_regexp", sqlRegexp{sql}.sqlRegexpDumpTriggerCheck)
 
 	// Load the session variables to the context.
 	// This is necessary for the parser to get the current sql_mode.
@@ -2066,7 +2375,41 @@ func (s *session) ExecuteInternalStmt(ctx context.Context, stmtNode ast.StmtNode
 	return s.ExecuteStmt(ctx, stmtNode)
 }
 
+func queryFailDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.Type == "query_fail"
+}
+
+type isInternalAlias struct {
+	bool
+}
+
+// isInternalAlias is not intuitive, but it is defined to avoid allocation.
+// If the code is written as
+//
+//		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", func(conf *traceevent.DumpTriggerConfig) {
+//	     	conf.Event.IsInternal = conf.Event.IsInternal
+//		})
+//
+// It's uncertain whether the Go compiler escape analysis is powerful enough to avoid allocation for the closure object.
+// isInternalAlias is defined to help the compiler, this coding style will not cause closure object allocation.
+//
+//	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", isInternalAlias{s.isInternal()}.isInternalDumpTriggerCheck)
+func (i isInternalAlias) isInternalDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.IsInternal == i.bool
+}
+
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	if fr := traceevent.GetFlightRecorder(); fr != nil {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", fr.CheckSampling)
+	}
+	rs, err := s.executeStmtImpl(ctx, stmtNode)
+	if err != nil {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", queryFailDumpTriggerCheck)
+	}
+	return rs, err
+}
+
+func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
 	defer r.End()
 
@@ -2079,11 +2422,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	sessVars := s.sessionVars
 	sessVars.StartTime = time.Now()
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", isInternalAlias{s.isInternal()}.isInternalDumpTriggerCheck)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
 			args, err := expression.ExecBinaryParam(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
@@ -2157,9 +2502,71 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
-	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-	compiler := executor.Compiler{Ctx: s}
-	stmt, err := compiler.Compile(ctx, stmtNode)
+	globalMemArbitrator := memory.GlobalMemArbitrator()
+	arbitratorMode := globalMemArbitrator.WorkMode()
+	enableWaitAverse := sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable
+	execUseArbitrator := globalMemArbitrator != nil && sessVars.ConnectionID != 0 &&
+		sessVars.MemArbitrator.WaitAverse != variable.MemArbitratorNolimit &&
+		sessVars.StmtCtx.MemSensitive
+	compilePlanMemQuota := int64(0) // mem quota for compiler & optimizer
+	if execUseArbitrator {
+		compilePlanMemQuota = approxCompilePlanMemQuota(normalizedSQL, sessVars.StmtCtx.InSelectStmt)
+		execUseArbitrator = compilePlanMemQuota > 0
+	}
+
+	releaseCommonQuota := func() { // release common quota
+		if compilePlanMemQuota > 0 {
+			_ = globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -compilePlanMemQuota)
+			compilePlanMemQuota = 0
+		}
+	}
+
+	if execUseArbitrator {
+		intoErrBeforeExec := func() error {
+			if enableWaitAverse {
+				metrics.GlobalMemArbitratorSubTasks.CancelWaitAversePlan.Inc()
+				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+defSuffixCompilePlan, sessVars.ConnectionID)
+			}
+			if arbitratorMode == memory.ArbitratorModeStandard {
+				metrics.GlobalMemArbitratorSubTasks.CancelStandardModePlan.Inc()
+				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+defSuffixCompilePlan, sessVars.ConnectionID)
+			}
+			return nil
+		}
+
+		if globalMemArbitrator.AtMemRisk() {
+			if err := intoErrBeforeExec(); err != nil {
+				return nil, err
+			}
+			for globalMemArbitrator.AtMemRisk() {
+				if globalMemArbitrator.AtOOMRisk() {
+					metrics.GlobalMemArbitratorSubTasks.ForceKillPlan.Inc()
+					return nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixCompilePlan, sessVars.ConnectionID)
+				}
+				time.Sleep(defOOMRiskCheckDur)
+			}
+		}
+
+		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
+		defer releaseCommonQuota()
+
+		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
+			if err := intoErrBeforeExec(); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	var stmt *executor.ExecStmt
+	var err error
+
+	{
+		// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
+		compiler := executor.Compiler{Ctx: s}
+		stmt, err = compiler.Compile(ctx, stmtNode)
+		// TODO: report precise tracked heap inuse to the global mem-arbitrator if necessary
+	}
+
 	// check if resource group hint is valid, can't do this in planner.Optimize because we can access
 	// infoschema there.
 	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
@@ -2172,6 +2579,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			}
 		}
 	}
+
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -2206,8 +2614,70 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Execute the physical plan.
 	defer logStmt(stmt, s) // defer until txnStartTS is set
 
+	if sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorNolimit {
+		metrics.GlobalMemArbitratorSubTasks.NoLimit.Inc()
+	}
+	if execUseArbitrator {
+		releaseCommonQuota()
+
+		reserveSize := min(sessVars.MemArbitrator.QueryReserved, memory.DefMaxLimit)
+
+		memPriority := memory.ArbitrationPriorityMedium
+
+		if sg, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(ast.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); ok {
+			switch sg.Priority {
+			case ast.LowPriorityValue:
+				memPriority = memory.ArbitrationPriorityLow
+			case ast.MediumPriorityValue:
+				memPriority = memory.ArbitrationPriorityMedium
+			case ast.HighPriorityValue:
+				memPriority = memory.ArbitrationPriorityHigh
+			}
+		}
+
+		digestKey := normalizedSQL
+		// digestKey := sessVars.StmtCtx.OriginalSQL
+
+		sessVars.StmtCtx.MemTracker.InitMemArbitrator(
+			globalMemArbitrator,
+			sessVars.MemQuotaQuery,
+			sessVars.MemTracker.Killer,
+			digestKey,
+			memPriority,
+			enableWaitAverse,
+			reserveSize,
+		)
+	}
+
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
+		ctx, prevTraceID := resetStmtTraceID(ctx, s)
+
+		// Emit stmt.start trace event (simplified for point-get fast path)
+		if traceevent.IsEnabled(traceevent.StmtLifecycle) {
+			fields := []zap.Field{
+				zap.Uint64("conn_id", s.sessionVars.ConnectionID),
+			}
+			// Include previous trace ID to create statement chain
+			if len(prevTraceID) > 0 {
+				fields = append(fields, zap.String("prev_trace_id", redact.Key(prevTraceID)))
+			}
+			traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.start", fields...)
+		}
+
+		// Defer stmt.finish trace event (simplified for point-get fast path)
+		defer func() {
+			if traceevent.IsEnabled(traceevent.StmtLifecycle) {
+				fields := []zap.Field{
+					zap.Uint64("conn_id", s.sessionVars.ConnectionID),
+				}
+				if err != nil {
+					fields = append(fields, zap.Error(err))
+				}
+				traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.finish", fields...)
+			}
+		}()
+
 		recordSet, err = stmt.PointGet(ctx)
 		s.setLastTxnInfoBeforeTxnEnd()
 		s.txn.changeToInvalid()
@@ -2321,6 +2791,52 @@ func (s *session) hasFileTransInConn() bool {
 	return false
 }
 
+type sqlDigestAlias struct {
+	Digest string
+}
+
+func (digest sqlDigestAlias) sqlDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.SQLDigest == digest.Digest
+}
+
+type userAlias struct {
+	user string
+}
+
+func (u userAlias) byUserDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.ByUser == u.user
+}
+
+type stmtLabelAlias struct {
+	label string
+}
+
+func (s stmtLabelAlias) stmtLabelDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.StmtLabel == s.label
+}
+
+// resetStmtTraceID generates a new trace ID for the current statement,
+// injects it into the session context for cross-statement correlation, and returns the previous trace ID.
+func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte) {
+	// Capture previous trace ID from session variables (for statement chaining)
+	// We store it in session variables instead of context because the context
+	// is recreated for each statement and doesn't persist across executions
+	prevTraceID := se.sessionVars.PrevTraceID
+
+	// Inject trace ID into context for correlation across TiDB -> client-go -> TiKV
+	// This enables trace events to be correlated by trace_id field
+	// The trace ID is generated from transaction start_ts and statement count
+	startTS := se.sessionVars.TxnCtx.StartTS
+	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
+	traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
+	ctx = trace.ContextWithTraceID(ctx, traceID)
+	se.currentCtx = ctx
+	// Store trace ID for next statement
+	se.sessionVars.PrevTraceID = traceID
+
+	return ctx, prevTraceID
+}
+
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertTxnManagerInRunStmt", func() {
@@ -2335,6 +2851,58 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if r.Span != nil {
 		r.Span.LogKV("sql", s.Text())
 	}
+
+	ctx, prevTraceID := resetStmtTraceID(ctx, se)
+	stmtCtx := se.sessionVars.StmtCtx
+	sqlDigest, _ := stmtCtx.SQLDigest()
+	// Make sure StmtType is filled even if succ is false.
+	if stmtCtx.StmtType == "" {
+		stmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, s.GetStmtNode())
+	}
+
+	// Emit stmt.start trace event
+	if traceevent.IsEnabled(traceevent.StmtLifecycle) {
+		fields := []zap.Field{
+			zap.String("sql_digest", sqlDigest),
+			zap.Bool("autocommit", se.sessionVars.IsAutocommit()),
+			zap.Uint64("conn_id", se.sessionVars.ConnectionID),
+		}
+		// Include previous trace ID to create statement chain
+		if len(prevTraceID) > 0 {
+			fields = append(fields, zap.String("prev_trace_id", redact.Key(prevTraceID)))
+		}
+		traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.start", fields...)
+	}
+	// Not using closure to avoid unnecessary memory allocation.
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.sql_digest", sqlDigestAlias{sqlDigest}.sqlDigestDumpTriggerCheck)
+	if se.sessionVars.User != nil && se.sessionVars.User.Username != "" {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.by_user", userAlias{se.sessionVars.User.Username}.byUserDumpTriggerCheck)
+	}
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.stmt_label", stmtLabelAlias{stmtCtx.StmtType}.stmtLabelDumpTriggerCheck)
+
+	// Defer stmt.finish trace event to capture final state including errors
+	defer func() {
+		if traceevent.IsEnabled(traceevent.StmtLifecycle) {
+			stmtCtx := se.sessionVars.StmtCtx
+			sqlDigest, _ := stmtCtx.SQLDigest()
+			_, planDigest := stmtCtx.GetPlanDigest()
+			var planDigestHex string
+			if planDigest != nil {
+				planDigestHex = hex.EncodeToString(planDigest.Bytes())
+			}
+			fields := []zap.Field{
+				zap.String("sql_digest", sqlDigest),
+				zap.String("plan_digest", planDigestHex),
+				zap.Bool("autocommit", se.sessionVars.IsAutocommit()),
+				zap.Uint64("conn_id", se.sessionVars.ConnectionID),
+				zap.Int("retry_count", se.sessionVars.TxnCtx.StatementCount),
+			}
+			if err != nil {
+				fields = append(fields, zap.Error(err))
+			}
+			traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.finish", fields...)
+		}
+	}()
 
 	se.SetValue(sessionctx.QueryString, s.Text())
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
@@ -2639,15 +3207,16 @@ func (s *session) Close() {
 	}
 	ctx := context.WithValue(context.TODO(), inCloseSession{}, struct{}{})
 	s.RollbackTxn(ctx)
-	if s.sessionVars != nil {
-		s.sessionVars.WithdrawAllPreparedStmt()
-	}
+	s.sessionVars.WithdrawAllPreparedStmt()
 	if s.stmtStats != nil {
 		s.stmtStats.SetFinished()
 	}
 	s.sessionVars.ClearDiskFullOpt()
 	if s.sessionPlanCache != nil {
 		s.sessionPlanCache.Close()
+	}
+	if s.sessionVars.ConnectionID != 0 {
+		memory.RemovePoolFromGlobalMemArbitrator(s.sessionVars.ConnectionID)
 	}
 }
 
@@ -3264,9 +3833,10 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if para == varTrue {
+	switch para {
+	case varTrue:
 		return true, nil
-	} else if para == varFalse {
+	case varFalse:
 		return false, nil
 	}
 	logutil.BgLogger().Warn(
@@ -3717,11 +4287,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	dom.SetupExtractHandle(extractWorkerSctxs)
 
 	// setup init stats loader
-	initStatsCtx, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	if err = dom.LoadAndUpdateStatsLoop(concurrency, initStatsCtx); err != nil {
+	if err = dom.LoadAndUpdateStatsLoop(concurrency); err != nil {
 		return nil, err
 	}
 
@@ -3832,9 +4398,10 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 	s.sessionVars.EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 
 	s.SetValue(sessionctx.Initing, true)
-	if startMode == ddl.Bootstrap {
+	switch startMode {
+	case ddl.Bootstrap:
 		bootstrap(s)
-	} else if startMode == ddl.Upgrade {
+	case ddl.Upgrade:
 		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
@@ -4961,7 +5528,7 @@ func GetDBNames(seVar *variable.SessionVars) []string {
 		}
 	}
 	if len(dbNames) == 0 {
-		dbNames[seVar.CurrentDB] = struct{}{}
+		dbNames[strings.ToLower(seVar.CurrentDB)] = struct{}{}
 	}
 	ns := make([]string, 0, len(dbNames))
 	for n := range dbNames {

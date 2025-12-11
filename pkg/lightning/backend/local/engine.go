@@ -285,6 +285,11 @@ func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
+// ConflictInfo implements common.Engine.
+func (*Engine) ConflictInfo() engineapi.ConflictInfo {
+	return engineapi.ConflictInfo{}
+}
+
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return e.UUID.String()
@@ -1568,6 +1573,13 @@ type dbSSTIngester struct {
 }
 
 func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error) {
+	failpoint.InjectCall("beforeMergeSSTs")
+	failpoint.Inject("mockErrInMergeSSTs", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mocked error in mergeSSTs"))
+		}
+	})
+
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")
 	} else if len(metas) == 1 {

@@ -645,6 +645,10 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 				}
 			}
 		}
+
+		if index.HasCondition() {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("partial index is not supported on partitioned table")
+		}
 	}
 	if tbInfo.PKIsHandle {
 		// This case is covers when the Handle is the PK (only ints), since it would not

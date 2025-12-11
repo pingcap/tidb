@@ -17,9 +17,11 @@ package addindextest_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 func init() {
@@ -50,7 +53,9 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	local.RunInTest = true
 
@@ -75,6 +80,9 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 }
 
 func TestAddIndexIngestLimitOneBackend(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -150,7 +158,9 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	tk.MustExec("create table t (a int primary key) partition by hash(a) partitions 32;")
 	var sb strings.Builder
@@ -184,7 +194,9 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 		tk.MustExec("drop database if exists addindexlit;")
 		tk.MustExec("create database addindexlit;")
 		tk.MustExec("use addindexlit;")
-		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+		if kerneltype.IsClassic() {
+			tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+		}
 
 		var sb strings.Builder
 
@@ -231,7 +243,9 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	ingest.ImporterRangeConcurrencyForTest = &atomic.Int32{}
 	ingest.ImporterRangeConcurrencyForTest.Store(2)
@@ -267,7 +281,9 @@ func TestAddIndexIngestEmptyTable(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec("create table t (a int);")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 	tk.MustExec("alter table t add index idx(a);")
 
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
@@ -286,7 +302,9 @@ func TestAddIndexIngestRestoredData(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	tk.MustExec(`
 		CREATE TABLE tbl_5 (
@@ -318,7 +336,9 @@ func TestAddIndexIngestUniqueKey(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 1), (10000, 1);")
@@ -344,7 +364,9 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	tk.MustExec("create table t (a int primary key, b int);")
 	for i := range 8 {
@@ -371,6 +393,9 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 }
 
 func TestAddIndexLoadTableRangeError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -400,6 +425,9 @@ func TestAddIndexLoadTableRangeError(t *testing.T) {
 }
 
 func TestAddIndexMockFlushError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -427,6 +455,9 @@ func TestAddIndexMockFlushError(t *testing.T) {
 }
 
 func TestAddIndexDiskQuotaTS(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF and fast-reorg is always enabled on nextgen, and we only support global sort in release")
+	}
 	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -469,7 +500,7 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 
 func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("have overlapped ingest sst, skip")
+		t.Skip("DXF is always enabled on nextgen")
 	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -505,9 +536,50 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 }
 
+func TestAddIndexTempDirDataRemoved(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen doesn't use local backend")
+	}
+	tempDir := t.TempDir()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempDir = tempDir
+	})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (1), (1);")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockErrInMergeSSTs", "1*return(true)")
+	removeOnce := sync.Once{}
+	removed := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/beforeMergeSSTs", func() {
+		removeOnce.Do(func() {
+			var filesToRemove []string
+			filepath.WalkDir(tempDir, func(path string, d fs.DirEntry, err error) error {
+				if strings.HasSuffix(path, ".sst") {
+					filesToRemove = append(filesToRemove, path)
+				}
+				return nil
+			})
+			for _, f := range filesToRemove {
+				t.Log("removed " + f)
+				err := os.RemoveAll(f)
+				require.NoError(t, err)
+				removed = true
+			}
+		})
+	})
+
+	tk.MustExec("alter table t add index idx(a);")
+	require.True(t, removed)
+}
+
 func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("have overlapped ingest sst, skip")
+		t.Skip("DXF is always enabled on nextgen")
 	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -659,6 +731,9 @@ func TestAddIndexImportFailed(t *testing.T) {
 }
 
 func TestAddEmptyMultiValueIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -685,6 +760,9 @@ func TestAddUniqueIndexDuplicatedError(t *testing.T) {
 }
 
 func TestFirstLitSlowStart(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -733,7 +811,9 @@ func TestConcFastReorg(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
 
 	tblNum := 10
 	for i := range tblNum {
@@ -792,6 +872,9 @@ func TestIssue55808(t *testing.T) {
 }
 
 func TestAddIndexBackfillLostTempIndexValues(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -849,6 +932,9 @@ func TestAddIndexBackfillLostTempIndexValues(t *testing.T) {
 }
 
 func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -883,6 +969,9 @@ func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
 }
 
 func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 

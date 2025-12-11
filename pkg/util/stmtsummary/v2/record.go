@@ -159,6 +159,9 @@ type StmtRecord struct {
 	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
 
+	SumMemArbitration float64 `json:"sum_mem_arbitration"`
+	MaxMemArbitration float64 `json:"max_mem_arbitration"`
+
 	stmtsummary.StmtNetworkTrafficSummary
 
 	StorageKV  bool `json:"storage_kv"`  // query read from TiKV
@@ -398,6 +401,11 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumMem += info.MemMax
 	if info.MemMax > r.MaxMem {
 		r.MaxMem = info.MemMax
+	}
+
+	r.SumMemArbitration += info.MemArbitration
+	if info.MemArbitration > r.MaxMemArbitration {
+		r.MaxMemArbitration = info.MemArbitration
 	}
 	r.SumDisk += info.DiskMax
 	if info.DiskMax > r.MaxDisk {
@@ -705,6 +713,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		TiKVExecDetails:   &util.ExecDetails{},
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 		LazyInfo:          &mockLazyInfo{},
+		MemArbitration:    22222,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo

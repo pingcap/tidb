@@ -402,6 +402,27 @@ var testSQLs = []struct {
 	},
 }
 
+func TestLoadBindingTimeLag(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`create global binding using select * from t`)
+	numBindings := len(tk.MustQuery(`show global bindings`).Rows())
+	require.Equal(t, 1, numBindings)
+
+	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 5*time.Second)
+	tk.MustExec(`create global binding using select * from t where a < 1`)
+	numBindings = len(tk.MustQuery(`show global bindings`).Rows())
+	require.Equal(t, 2, numBindings)
+
+	tk.Session().SetValue(bindinfo.TestTimeLagInLoadingBinding, 15*time.Second)
+	tk.MustExec(`create global binding using select * from t where a > 1`)
+	numBindings = len(tk.MustQuery(`show global bindings`).Rows())
+	require.Equal(t, 2, numBindings) // can't see the latest one since the time lag tolerance is only 10s
+}
+
 func TestGlobalBinding(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -627,6 +648,17 @@ func TestShowBindingDigestField(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show global bindings;")
 	require.Equal(t, len(result.Rows()), 0)
+}
+
+func TestIssue64558(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`create global binding using select * from t`)
+	sqlDigest := tk.MustQuery(`show global bindings`).Rows()[0][9].(string)
+	tk.MustExec(fmt.Sprintf(`set binding disabled for sql digest '%s'`, sqlDigest))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
 }
 
 func TestOptimizeOnlyOnce(t *testing.T) {

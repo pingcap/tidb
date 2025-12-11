@@ -39,6 +39,7 @@ go_library(
         "//pkg/util/size",
         "//pkg/util/tiflash",
         "//pkg/util/tiflashcompute",
+        "//pkg/util/traceevent",
         "//pkg/util/tracing",
         "//pkg/util/trxevents",
         "@com_github_dgraph_io_ristretto//:ristretto",
@@ -90,7 +91,7 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
-    shard_count = 35,
+    shard_count = 37,
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",

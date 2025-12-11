@@ -28,6 +28,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_tikv_client_go_v2//error",
@@ -46,7 +47,7 @@ go_library(
 
 go_test(
     name = "gcworker_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "gc_worker_test.go",
         "main_test.go",
@@ -54,7 +55,7 @@ go_test(
     embed = [":gcworker"],
     flaky = True,
     race = "on",
-    shard_count = 25,
+    shard_count = 36,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -67,14 +68,17 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/unistore",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//oracle/oracles",
         "@com_github_tikv_client_go_v2//testutils",
