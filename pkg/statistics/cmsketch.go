@@ -36,9 +36,11 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -629,6 +631,68 @@ type TopNMeta struct {
 	Count   uint64
 }
 
+func getEncodingType(d []byte) byte {
+	switch d[0] {
+	case 3: // intFlag
+		return types.KindInt64
+	case 4: // uintFlag
+		return types.KindUint64
+	default:
+		// We don't need such type, just set it to 0.
+		return 0
+	}
+}
+
+func convertFromUintToInt(d []byte) ([]byte, bool) {
+	back := d
+	_, datum, err := codec.DecodeOne(d)
+	if err != nil {
+		return back, false
+	}
+
+	orig := datum.GetUint64()
+	v := mathutil.Clamp(orig, 0, math.MaxInt64)
+	datum.SetInt64(int64(v))
+	d, _ = codec.EncodeKey(nil, nil, datum)
+	return d, orig != v
+}
+
+func convertFromIntToUInt(d []byte) ([]byte, bool) {
+	back := d
+	_, datum, err := codec.DecodeOne(d)
+	if err != nil {
+		return back, false
+	}
+
+	orig := datum.GetInt64()
+	v := mathutil.Clamp(orig, 0, math.MaxInt64)
+	datum.SetUint64(uint64(v))
+	d, _ = codec.EncodeKey(nil, nil, datum)
+	return d, orig != v
+}
+
+func (c *TopN) convert(d []byte) ([]byte, bool) {
+	if len(c.TopN) == 0 {
+		return d, false
+	}
+
+	storedType := getEncodingType(c.TopN[0].Encoded)
+	gotType := getEncodingType(d)
+	if gotType == storedType {
+		return d, false
+	}
+
+	switch storedType {
+	case types.KindInt64:
+		return convertFromUintToInt(d)
+	case types.KindUint64:
+		return convertFromIntToUInt(d)
+	default:
+		// Signed/unsigned conversion is the only case we may meet.
+		return d, false
+	}
+}
+
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (c *TopN) QueryTopN(sctx planctx.PlanContext, d []byte) (result uint64, found bool) {
@@ -666,6 +730,12 @@ func (c *TopN) FindTopN(d []byte) int {
 		}
 		return -1
 	}
+
+	d, clamped := c.convert(d)
+	if clamped {
+		return 0
+	}
+
 	if bytes.Compare(c.TopN[len(c.TopN)-1].Encoded, d) < 0 {
 		return -1
 	}
@@ -687,6 +757,7 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 	if c == nil {
 		return 0, false
 	}
+	d, _ = c.convert(d)
 	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
