@@ -1283,8 +1283,8 @@ func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
 
 // verifyImportedStatistics verifies the imported statistics for external engines.
 // It checks if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used (which are not yet implemented),
-// and verifies that the imported length matches the expected length.
-func verifyImportedStatistics(e engineapi.Engine, importedLength int64) error {
+// and verifies that the imported KV count matches the expected one.
+func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
 	// Check if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used.
 	// These options are not yet implemented for local backend, so we skip
 	// the statistics verification and return an error to remind future
