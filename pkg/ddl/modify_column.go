@@ -810,7 +810,7 @@ func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
-			failpoint.Return(ModifyTypeReorg)
+			failpoint.Return(true)
 		}
 	})
 
@@ -1875,7 +1875,7 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || (toUnsigned != originUnsigned)
 	}
 
-	differerntCollation := oldCol.GetCollate() != newCol.GetCollate()
+	incompatibleCollation := !collate.CompatibleCollate(oldCol.GetCollate(), newCol.GetCollate())
 
 	// Deal with the same type.
 	if oldCol.GetType() == newCol.GetType() {
@@ -1897,7 +1897,7 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 			return !(newCol.GetFlen() != types.UnspecifiedLength && oldCol.GetFlen() != newCol.GetFlen())
 		}
 
-		return !needTruncationOrToggleSign() && !differerntCollation
+		return !needTruncationOrToggleSign() && !incompatibleCollation
 	}
 
 	oldTp := oldCol.GetType()
@@ -1919,7 +1919,7 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch newCol.GetType() {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return !needTruncationOrToggleSign() && !differerntCollation
+			return !needTruncationOrToggleSign() && !incompatibleCollation
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch newCol.GetType() {
