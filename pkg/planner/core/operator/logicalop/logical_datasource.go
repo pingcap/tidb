@@ -42,6 +42,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -713,6 +714,26 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 		}
 	})
 
+	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFuncs)
+}
+
+func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
+	index *model.IndexInfo,
+	matchedFuncs map[*expression.ScalarFunction]struct{},
+) error {
+	// Fulltext index must be used. So we prune all other possible access paths.
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.Index == nil || path.Index.ID != index.ID
+	})
+	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
+		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
+	}
+
+	err := ds.preparePKRangesForTiCI(ds.PossibleAccessPaths[0], ds.PushedDownConds)
+	if err != nil {
+		return err
+	}
+
 	// Remove the matched conditions from PushedDownConds.
 	ds.PushedDownConds = slices.DeleteFunc(ds.PushedDownConds, func(cond expression.Expression) bool {
 		sf, ok := cond.(*expression.ScalarFunction)
@@ -724,26 +745,12 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 	})
 	// Re-construct the AllConds because column pruning relays on AllConds.
 	ds.AllConds = slices.Clone(ds.PushedDownConds)
-	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFuncs)
-}
-
-func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
-	index *model.IndexInfo,
-	ftsFuncs map[*expression.ScalarFunction]struct{},
-) error {
-	// Fulltext index must be used. So we prune all other possible access paths.
-	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index == nil || path.Index.ID != index.ID
-	})
-	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
-		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
-	}
 
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	client := ds.SCtx().GetBuildPBCtx().Client
 	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
-	pbExprs := make([]tipb.Expr, 0, len(ftsFuncs))
-	for ftsFunc := range ftsFuncs {
+	pbExprs := make([]tipb.Expr, 0, len(matchedFuncs))
+	for ftsFunc := range matchedFuncs {
 		pbExpr := pbConverter.ExprToPB(ftsFunc)
 		if pbExpr == nil {
 			// If the expression is not converted to PB, we should return an error.
@@ -764,7 +771,9 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 		MatchExpr:      pbExprs,
 	}
 
-	for ftsFunc := range ftsFuncs {
+	// It represets the TiCI search functions currently.
+	ds.PossibleAccessPaths[0].AccessConds = ds.PossibleAccessPaths[0].AccessConds[:0]
+	for ftsFunc := range matchedFuncs {
 		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
 	}
 	return nil
@@ -789,6 +798,83 @@ func (ds *DataSource) CleanUnusedTiCIIndexes() {
 	if origLen > nowLen && ds.HasForceHints && !stillHasHintedIndex {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
+}
+
+// preparePKRangesForTiCI prepares the pk ranges for TiCI index scan.
+// It's a tmp solution.
+// We should make it reusing the logic of building pk ranges for normal table scan.
+func (ds *DataSource) preparePKRangesForTiCI(ticiPath *util.AccessPath, pushedPredicates []expression.Expression) error {
+	if ds.TableInfo.IsCommonHandle {
+		ticiPath.Ranges = ranger.FullNotNullRange()
+		var commonHandle *model.IndexInfo
+		for _, idx := range ds.TableInfo.Indices {
+			if idx.Primary {
+				commonHandle = idx
+				break
+			}
+		}
+		ticiPath.IdxCols, ticiPath.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, commonHandle)
+		ticiPath.FullIdxCols, ticiPath.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, commonHandle)
+		if len(pushedPredicates) == 0 {
+			return nil
+		}
+		if err := detachCondAndBuildRangeForPath(ds.SCtx(), ticiPath, pushedPredicates); err != nil {
+			return err
+		}
+		ticiPath.IdxCols = ticiPath.IdxCols[:0]
+		ticiPath.IdxColLens = ticiPath.IdxColLens[:0]
+		ticiPath.FullIdxCols = ticiPath.FullIdxCols[:0]
+		ticiPath.FullIdxColLens = ticiPath.FullIdxColLens[:0]
+		return nil
+	}
+	var pkCol *expression.Column
+	isUnsigned := false
+	if ds.TableInfo.PKIsHandle {
+		if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
+			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+			pkCol = expression.ColInfo2Col(ds.Schema().Columns, pkColInfo)
+		}
+	} else {
+		pkCol = ds.Schema().GetExtraHandleColumn()
+	}
+	if pkCol == nil {
+		ticiPath.Ranges = ranger.FullIntRange(isUnsigned)
+		return nil
+	}
+
+	ticiPath.Ranges = ranger.FullIntRange(isUnsigned)
+	if len(pushedPredicates) == 0 {
+		return nil
+	}
+	// for cnf condition combination, c=1 and c=2 and (1 member of (a)),
+	// c=1 and c=2 will derive invalid range represented by an access condition as constant of 0 (false).
+	// later this constant of 0 will be built as empty range.
+	ticiPath.AccessConds, _ = ranger.DetachCondsForColumn(ds.SCtx().GetRangerCtx(), pushedPredicates, pkCol)
+	var err error
+	ticiPath.Ranges, ticiPath.AccessConds, _, err = ranger.BuildTableRange(ticiPath.AccessConds, ds.SCtx().GetRangerCtx(), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
+	if err != nil {
+		return err
+	}
+	// Row count estimation is not updated
+	return nil
+}
+
+func detachCondAndBuildRangeForPath(
+	sctx base.PlanContext,
+	path *util.AccessPath,
+	conds []expression.Expression,
+) error {
+	if len(path.IdxCols) == 0 {
+		return nil
+	}
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
+	if err != nil {
+		return err
+	}
+	path.Ranges = res.Ranges
+	path.AccessConds = res.AccessConds
+	// Row count estimation is not updated
+	return err
 }
 
 // IsSingleScan checks whether all the needed columns and conditions can be covered by the index.
