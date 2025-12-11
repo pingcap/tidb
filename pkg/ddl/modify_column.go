@@ -1025,6 +1025,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 			}
 		case model.AnalyzeStateRunning:
+			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
@@ -1232,6 +1233,7 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 			}
 		case model.AnalyzeStateRunning:
+			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")

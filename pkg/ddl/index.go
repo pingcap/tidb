@@ -1181,13 +1181,14 @@ SwitchIndexState:
 				return ver, err
 			}
 			// For multi-schema change, analyze is done by parent job.
-			if job.MultiSchemaInfo == nil {
+			if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			} else {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateRunning:
+			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			// Set column index flag.
@@ -1248,7 +1249,6 @@ SwitchIndexState:
 				zap.String("charset", job.Charset),
 				zap.String("collation", job.Collate))
 		}
-
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State)
 	}
