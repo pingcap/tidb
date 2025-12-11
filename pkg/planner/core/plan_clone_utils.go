@@ -219,6 +219,18 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *PointGetPl
 	dst.outputNames = src.outputNames
 	dst.LockWaitTime = src.LockWaitTime
 	dst.Columns = src.Columns
+	if src.unfold != nil {
+		dst.unfold = make([]bool, len(src.unfold))
+		copy(dst.unfold, src.unfold)
+	} else {
+		dst.unfold = nil
+	}
+	if src.colsInWhereClause != nil {
+		dst.colsInWhereClause = make([]string, len(src.colsInWhereClause))
+		copy(dst.colsInWhereClause, src.colsInWhereClause)
+	} else {
+		dst.colsInWhereClause = nil
+	}
 
 	// remaining fields are unnecessary to clone:
 	// cost, planCostInit, planCost, planCostVer2, accessCols

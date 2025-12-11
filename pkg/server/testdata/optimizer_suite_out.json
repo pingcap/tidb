@@ -20,84 +20,136 @@
           }
         },
         {
-          "github.com/pingcap/tidb/pkg/planner.Optimize": [
+          "Parameter datums for EXECUTE": [
+            "KindInt64 127"
+          ]
+        },
+        {
+          "github.com/pingcap/tidb/pkg/planner.optimizeNoCache": [
             {
-              "Parameter datums for EXECUTE": [
-                "KindInt64 127"
-              ]
+              "Enable binding": true,
+              "IsStmtNode": true,
+              "Matched": false,
+              "Matched bindings": null,
+              "Scope": "",
+              "Used binding": false
             },
             {
-              "github.com/pingcap/tidb/pkg/planner.Optimize": [
-                {
-                  "Enable binding": true,
-                  "IsStmtNode": true,
-                  "Matched": false,
-                  "Matched bindings": null,
-                  "Scope": "",
-                  "Used binding": false
-                },
-                {
-                  "github.com/pingcap/tidb/pkg/planner.optimize": {
-                    "github.com/pingcap/tidb/pkg/planner/core.DoOptimize": [
+              "github.com/pingcap/tidb/pkg/planner.optimize": {
+                "github.com/pingcap/tidb/pkg/planner/core.DoOptimize": [
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/core.logicalOptimize": null
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/core.physicalOptimize": [
                       {
-                        "github.com/pingcap/tidb/pkg/planner/core.logicalOptimize": null
+                        "github.com/pingcap/tidb/pkg/planner/core.getStatsTable": {
+                          "CountIsZero": false,
+                          "HandleIsNil": false,
+                          "InputPhysicalID": 100,
+                          "Outdated": false,
+                          "StatsTblInfo": {
+                            "Columns": [
+                              {
+                                "CMSketchInfo": null,
+                                "Correlation": 0,
+                                "HistogramSize": 0,
+                                "ID": 1,
+                                "LastUpdateVersion": 440930000000000000,
+                                "LoadingStatus": "unInitialized",
+                                "NDV": 0,
+                                "Name": "col1",
+                                "NullCount": 0,
+                                "StatsVer": 0,
+                                "TopNSize": -1,
+                                "TotColSize": 0
+                              }
+                            ],
+                            "Count": 10000,
+                            "Indexes": [
+                              {
+                                "CMSketchInfo": null,
+                                "Correlation": 0,
+                                "HistogramSize": 0,
+                                "ID": 1,
+                                "LastUpdateVersion": 440930000000000000,
+                                "LoadingStatus": "unInitialized",
+                                "NDV": 0,
+                                "Name": "i",
+                                "NullCount": 0,
+                                "StatsVer": 0,
+                                "TopNSize": -1,
+                                "TotColSize": 0
+                              }
+                            ],
+                            "ModifyCount": 0,
+                            "PhysicalID": 100,
+                            "Version": 440930000000000000
+                          },
+                          "TableName": "t",
+                          "TblInfoID": 100,
+                          "Uninitialized": true,
+                          "UsePartitionStats": false
+                        }
                       },
                       {
-                        "github.com/pingcap/tidb/pkg/planner/core.physicalOptimize": [
+                        "github.com/pingcap/tidb/pkg/planner/core.deriveStats4DataSource": [
                           {
-                            "github.com/pingcap/tidb/pkg/planner/core.getStatsTable": {
-                              "CountIsZero": false,
-                              "HandleIsNil": false,
-                              "InputPhysicalID": 100,
-                              "Outdated": false,
-                              "StatsTblInfo": {
-                                "Columns": [
-                                  {
-                                    "CMSketchInfo": null,
-                                    "Correlation": 0,
-                                    "HistogramSize": 0,
-                                    "ID": 1,
-                                    "LastUpdateVersion": 440930000000000000,
-                                    "LoadingStatus": "unInitialized",
-                                    "NDV": 0,
-                                    "Name": "col1",
-                                    "NullCount": 0,
-                                    "StatsVer": 0,
-                                    "TopNSize": -1,
-                                    "TotColSize": 0
+                            "github.com/pingcap/tidb/pkg/planner/core.fillIndexPath": {
+                              "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                                {
+                                  "ID": 1,
+                                  "Ranges": [
+                                    "(100,127)"
+                                  ]
+                                },
+                                {
+                                  "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                                    "CollPseudo": true,
+                                    "IsInvalid": true,
+                                    "TotalCount": 0
                                   }
-                                ],
-                                "Count": 10000,
-                                "Indexes": [
-                                  {
-                                    "CMSketchInfo": null,
-                                    "Correlation": 0,
-                                    "HistogramSize": 0,
-                                    "ID": 1,
-                                    "LastUpdateVersion": 440930000000000000,
-                                    "LoadingStatus": "unInitialized",
-                                    "NDV": 0,
-                                    "Name": "i",
-                                    "NullCount": 0,
-                                    "StatsVer": 0,
-                                    "TopNSize": -1,
-                                    "TotColSize": 0
-                                  }
-                                ],
-                                "ModifyCount": 0,
-                                "PhysicalID": 100,
-                                "Version": 440930000000000000
-                              },
-                              "TableName": "t",
-                              "TblInfoID": 100,
-                              "Uninitialized": true,
-                              "UsePartitionStats": false
+                                },
+                                {
+                                  "Name": "i",
+                                  "Result": 250
+                                }
+                              ]
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/pkg/planner/core.deriveStats4DataSource": [
-                              {
-                                "github.com/pingcap/tidb/pkg/planner/core.fillIndexPath": {
+                            "github.com/pingcap/tidb/pkg/planner/core.deriveStatsByFilter": {
+                              "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
+                                {
+                                  "Input Expressions": [
+                                    "lt(test.t.col1, 127)",
+                                    "gt(test.t.col1, 100)"
+                                  ]
+                                },
+                                {
+                                  "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                                    {
+                                      "ID": 1,
+                                      "Ranges": [
+                                        "(100,127)"
+                                      ]
+                                    },
+                                    {
+                                      "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                        "EssentialLoaded": false,
+                                        "InValidForCollPseudo": true,
+                                        "IsInvalid": true,
+                                        "NDV": 0,
+                                        "TotalCount": 0
+                                      }
+                                    },
+                                    {
+                                      "Name": "col1",
+                                      "Result": 250
+                                    }
+                                  ]
+                                },
+                                {
                                   "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
@@ -117,112 +169,56 @@
                                       "Result": 250
                                     }
                                   ]
+                                },
+                                {
+                                  "Expressions": [
+                                    "lt(test.t.col1, 127)",
+                                    "gt(test.t.col1, 100)"
+                                  ],
+                                  "Selectivity": 0.025,
+                                  "partial cover": false
+                                },
+                                {
+                                  "Result": 0.025
                                 }
+                              ]
+                            }
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/planner/core.derivePathStatsAndTryHeuristics": [
+                              {
+                                "github.com/pingcap/tidb/pkg/planner/core.deriveTablePathStats": null
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.deriveStatsByFilter": {
-                                  "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
-                                    {
-                                      "Input Expressions": [
-                                        "lt(test.t.col1, 127)",
-                                        "gt(test.t.col1, 100)"
-                                      ]
-                                    },
-                                    {
-                                      "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
-                                        {
-                                          "ID": 1,
-                                          "Ranges": [
-                                            "(100,127)"
-                                          ]
-                                        },
-                                        {
-                                          "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
-                                            "EssentialLoaded": false,
-                                            "InValidForCollPseudo": true,
-                                            "IsInvalid": true,
-                                            "NDV": 0,
-                                            "TotalCount": 0
-                                          }
-                                        },
-                                        {
-                                          "Name": "col1",
-                                          "Result": 250
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
-                                        {
-                                          "ID": 1,
-                                          "Ranges": [
-                                            "(100,127)"
-                                          ]
-                                        },
-                                        {
-                                          "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
-                                            "CollPseudo": true,
-                                            "IsInvalid": true,
-                                            "TotalCount": 0
-                                          }
-                                        },
-                                        {
-                                          "Name": "i",
-                                          "Result": 250
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "Expressions": [
-                                        "lt(test.t.col1, 127)",
-                                        "gt(test.t.col1, 100)"
-                                      ],
-                                      "Selectivity": 0.025,
-                                      "partial cover": false
-                                    },
-                                    {
-                                      "Result": 0.025
-                                    }
-                                  ]
-                                }
-                              },
+                                "github.com/pingcap/tidb/pkg/planner/core.deriveIndexPathStats": null
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/planner/core.generateIndexMergePath": null
+                          },
+                          {
+                            "Access paths": [
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.derivePathStatsAndTryHeuristics": [
-                                  {
-                                    "github.com/pingcap/tidb/pkg/planner/core.deriveTablePathStats": null
-                                  },
-                                  {
-                                    "github.com/pingcap/tidb/pkg/planner/core.deriveIndexPathStats": null
-                                  }
+                                "AccessConditions": [],
+                                "CountAfterAccess": 10000,
+                                "CountAfterIndex": 0,
+                                "IndexFilters": [],
+                                "TableFilters": [
+                                  "lt(test.t.col1, 127)",
+                                  "gt(test.t.col1, 100)"
                                 ]
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.generateIndexMergePath": null
-                              },
-                              {
-                                "Access paths": [
-                                  {
-                                    "AccessConditions": [],
-                                    "CountAfterAccess": 10000,
-                                    "CountAfterIndex": 0,
-                                    "IndexFilters": [],
-                                    "TableFilters": [
-                                      "lt(test.t.col1, 127)",
-                                      "gt(test.t.col1, 100)"
-                                    ]
-                                  },
-                                  {
-                                    "AccessConditions": [
-                                      "lt(test.t.col1, 127)",
-                                      "gt(test.t.col1, 100)"
-                                    ],
-                                    "CountAfterAccess": 250,
-                                    "CountAfterIndex": 250,
-                                    "IndexFilters": [],
-                                    "IndexName": "i",
-                                    "TableFilters": []
-                                  }
-                                ]
+                                "AccessConditions": [
+                                  "lt(test.t.col1, 127)",
+                                  "gt(test.t.col1, 100)"
+                                ],
+                                "CountAfterAccess": 250,
+                                "CountAfterIndex": 250,
+                                "IndexFilters": [],
+                                "IndexName": "i",
+                                "TableFilters": []
                               }
                             ]
                           }
@@ -230,8 +226,8 @@
                       }
                     ]
                   }
-                }
-              ]
+                ]
+              }
             }
           ]
         }
@@ -246,7 +242,7 @@
           }
         },
         {
-          "github.com/pingcap/tidb/pkg/planner.Optimize": [
+          "github.com/pingcap/tidb/pkg/planner.optimizeNoCache": [
             {
               "Enable binding": true,
               "IsStmtNode": true,
@@ -444,84 +440,139 @@
           }
         },
         {
-          "github.com/pingcap/tidb/pkg/planner.Optimize": [
+          "Parameter datums for EXECUTE": [
+            "KindInt64 1"
+          ]
+        },
+        {
+          "github.com/pingcap/tidb/pkg/planner.optimizeNoCache": [
             {
-              "Parameter datums for EXECUTE": [
-                "KindInt64 1"
-              ]
+              "Enable binding": true,
+              "IsStmtNode": true,
+              "Matched": false,
+              "Matched bindings": null,
+              "Scope": "",
+              "Used binding": false
             },
             {
-              "github.com/pingcap/tidb/pkg/planner.Optimize": [
-                {
-                  "Enable binding": true,
-                  "IsStmtNode": true,
-                  "Matched": false,
-                  "Matched bindings": null,
-                  "Scope": "",
-                  "Used binding": false
-                },
-                {
-                  "github.com/pingcap/tidb/pkg/planner.optimize": {
-                    "github.com/pingcap/tidb/pkg/planner/core.DoOptimize": [
+              "github.com/pingcap/tidb/pkg/planner.optimize": {
+                "github.com/pingcap/tidb/pkg/planner/core.DoOptimize": [
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/core.logicalOptimize": null
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/core.physicalOptimize": [
                       {
-                        "github.com/pingcap/tidb/pkg/planner/core.logicalOptimize": null
+                        "github.com/pingcap/tidb/pkg/planner/core.getStatsTable": {
+                          "CountIsZero": false,
+                          "HandleIsNil": false,
+                          "InputPhysicalID": 100,
+                          "Outdated": false,
+                          "StatsTblInfo": {
+                            "Columns": [
+                              {
+                                "CMSketchInfo": null,
+                                "Correlation": 0,
+                                "HistogramSize": 0,
+                                "ID": 1,
+                                "LastUpdateVersion": 440930000000000000,
+                                "LoadingStatus": "unInitialized",
+                                "NDV": 0,
+                                "Name": "col1",
+                                "NullCount": 0,
+                                "StatsVer": 0,
+                                "TopNSize": -1,
+                                "TotColSize": 0
+                              }
+                            ],
+                            "Count": 10000,
+                            "Indexes": [
+                              {
+                                "CMSketchInfo": null,
+                                "Correlation": 0,
+                                "HistogramSize": 0,
+                                "ID": 1,
+                                "LastUpdateVersion": 440930000000000000,
+                                "LoadingStatus": "unInitialized",
+                                "NDV": 0,
+                                "Name": "i",
+                                "NullCount": 0,
+                                "StatsVer": 0,
+                                "TopNSize": -1,
+                                "TotColSize": 0
+                              }
+                            ],
+                            "ModifyCount": 0,
+                            "PhysicalID": 100,
+                            "Version": 440930000000000000
+                          },
+                          "TableName": "t",
+                          "TblInfoID": 100,
+                          "Uninitialized": true,
+                          "UsePartitionStats": false
+                        }
                       },
                       {
-                        "github.com/pingcap/tidb/pkg/planner/core.physicalOptimize": [
+                        "github.com/pingcap/tidb/pkg/planner/core.deriveStats4DataSource": [
                           {
-                            "github.com/pingcap/tidb/pkg/planner/core.getStatsTable": {
-                              "CountIsZero": false,
-                              "HandleIsNil": false,
-                              "InputPhysicalID": 100,
-                              "Outdated": false,
-                              "StatsTblInfo": {
-                                "Columns": [
-                                  {
-                                    "CMSketchInfo": null,
-                                    "Correlation": 0,
-                                    "HistogramSize": 0,
-                                    "ID": 1,
-                                    "LastUpdateVersion": 440930000000000000,
-                                    "LoadingStatus": "unInitialized",
-                                    "NDV": 0,
-                                    "Name": "col1",
-                                    "NullCount": 0,
-                                    "StatsVer": 0,
-                                    "TopNSize": -1,
-                                    "TotColSize": 0
+                            "github.com/pingcap/tidb/pkg/planner/core.fillIndexPath": {
+                              "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                                {
+                                  "ID": 1,
+                                  "Ranges": [
+                                    "[1,1]",
+                                    "[2,2]",
+                                    "[3,3]"
+                                  ]
+                                },
+                                {
+                                  "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                                    "CollPseudo": true,
+                                    "IsInvalid": true,
+                                    "TotalCount": 0
                                   }
-                                ],
-                                "Count": 10000,
-                                "Indexes": [
-                                  {
-                                    "CMSketchInfo": null,
-                                    "Correlation": 0,
-                                    "HistogramSize": 0,
-                                    "ID": 1,
-                                    "LastUpdateVersion": 440930000000000000,
-                                    "LoadingStatus": "unInitialized",
-                                    "NDV": 0,
-                                    "Name": "i",
-                                    "NullCount": 0,
-                                    "StatsVer": 0,
-                                    "TopNSize": -1,
-                                    "TotColSize": 0
-                                  }
-                                ],
-                                "ModifyCount": 0,
-                                "PhysicalID": 100,
-                                "Version": 440930000000000000
-                              },
-                              "TableName": "t",
-                              "TblInfoID": 100,
-                              "Uninitialized": true,
-                              "UsePartitionStats": false
+                                },
+                                {
+                                  "Name": "i",
+                                  "Result": 30
+                                }
+                              ]
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/pkg/planner/core.deriveStats4DataSource": [
-                              {
-                                "github.com/pingcap/tidb/pkg/planner/core.fillIndexPath": {
+                            "github.com/pingcap/tidb/pkg/planner/core.deriveStatsByFilter": {
+                              "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
+                                {
+                                  "Input Expressions": [
+                                    "in(test.t.col1, 1, 2, 3)"
+                                  ]
+                                },
+                                {
+                                  "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                                    {
+                                      "ID": 1,
+                                      "Ranges": [
+                                        "[1,1]",
+                                        "[2,2]",
+                                        "[3,3]"
+                                      ]
+                                    },
+                                    {
+                                      "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                        "EssentialLoaded": false,
+                                        "InValidForCollPseudo": true,
+                                        "IsInvalid": true,
+                                        "NDV": 0,
+                                        "TotalCount": 0
+                                      }
+                                    },
+                                    {
+                                      "Name": "col1",
+                                      "Result": 30
+                                    }
+                                  ]
+                                },
+                                {
                                   "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
@@ -543,112 +594,53 @@
                                       "Result": 30
                                     }
                                   ]
+                                },
+                                {
+                                  "Expressions": [
+                                    "in(test.t.col1, 1, 2, 3)"
+                                  ],
+                                  "Selectivity": 0.003,
+                                  "partial cover": false
+                                },
+                                {
+                                  "Result": 0.003
                                 }
+                              ]
+                            }
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/planner/core.derivePathStatsAndTryHeuristics": [
+                              {
+                                "github.com/pingcap/tidb/pkg/planner/core.deriveTablePathStats": null
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.deriveStatsByFilter": {
-                                  "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
-                                    {
-                                      "Input Expressions": [
-                                        "in(test.t.col1, 1, 2, 3)"
-                                      ]
-                                    },
-                                    {
-                                      "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
-                                        {
-                                          "ID": 1,
-                                          "Ranges": [
-                                            "[1,1]",
-                                            "[2,2]",
-                                            "[3,3]"
-                                          ]
-                                        },
-                                        {
-                                          "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
-                                            "EssentialLoaded": false,
-                                            "InValidForCollPseudo": true,
-                                            "IsInvalid": true,
-                                            "NDV": 0,
-                                            "TotalCount": 0
-                                          }
-                                        },
-                                        {
-                                          "Name": "col1",
-                                          "Result": 30
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
-                                        {
-                                          "ID": 1,
-                                          "Ranges": [
-                                            "[1,1]",
-                                            "[2,2]",
-                                            "[3,3]"
-                                          ]
-                                        },
-                                        {
-                                          "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
-                                            "CollPseudo": true,
-                                            "IsInvalid": true,
-                                            "TotalCount": 0
-                                          }
-                                        },
-                                        {
-                                          "Name": "i",
-                                          "Result": 30
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "Expressions": [
-                                        "in(test.t.col1, 1, 2, 3)"
-                                      ],
-                                      "Selectivity": 0.003,
-                                      "partial cover": false
-                                    },
-                                    {
-                                      "Result": 0.003
-                                    }
-                                  ]
-                                }
-                              },
+                                "github.com/pingcap/tidb/pkg/planner/core.deriveIndexPathStats": null
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/planner/core.generateIndexMergePath": null
+                          },
+                          {
+                            "Access paths": [
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.derivePathStatsAndTryHeuristics": [
-                                  {
-                                    "github.com/pingcap/tidb/pkg/planner/core.deriveTablePathStats": null
-                                  },
-                                  {
-                                    "github.com/pingcap/tidb/pkg/planner/core.deriveIndexPathStats": null
-                                  }
+                                "AccessConditions": [],
+                                "CountAfterAccess": 10000,
+                                "CountAfterIndex": 0,
+                                "IndexFilters": [],
+                                "TableFilters": [
+                                  "in(test.t.col1, 1, 2, 3)"
                                 ]
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.generateIndexMergePath": null
-                              },
-                              {
-                                "Access paths": [
-                                  {
-                                    "AccessConditions": [],
-                                    "CountAfterAccess": 10000,
-                                    "CountAfterIndex": 0,
-                                    "IndexFilters": [],
-                                    "TableFilters": [
-                                      "in(test.t.col1, 1, 2, 3)"
-                                    ]
-                                  },
-                                  {
-                                    "AccessConditions": [
-                                      "in(test.t.col1, 1, 2, 3)"
-                                    ],
-                                    "CountAfterAccess": 30,
-                                    "CountAfterIndex": 30,
-                                    "IndexFilters": [],
-                                    "IndexName": "i",
-                                    "TableFilters": []
-                                  }
-                                ]
+                                "AccessConditions": [
+                                  "in(test.t.col1, 1, 2, 3)"
+                                ],
+                                "CountAfterAccess": 30,
+                                "CountAfterIndex": 30,
+                                "IndexFilters": [],
+                                "IndexName": "i",
+                                "TableFilters": []
                               }
                             ]
                           }
@@ -656,8 +648,8 @@
                       }
                     ]
                   }
-                }
-              ]
+                ]
+              }
             }
           ]
         }
