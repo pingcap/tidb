@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -621,7 +620,7 @@ func NewParquetParser(
 		colTypes: colTypes,
 		colNames: colNames,
 		alloc:    allocator,
-		logger:   litlog.Logger{logger},
+		logger:   log.Logger{Logger: logger},
 		rowPool:  &pool,
 	}
 	if err := parser.Init(meta.Loc); err != nil {
