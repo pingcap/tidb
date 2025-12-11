@@ -222,7 +222,7 @@ func (ba *bindingAuto) getBindingPlanInfo(currentDB, sqlOrDigest, charset, colla
 			return nil, errors.NewNoStackErrorf("failed to normalize the SQL: %v", err)
 		}
 		db := utilparser.GetDefaultDB(stmtNode, currentDB)
-		sqlOrDigest, _ = NormalizeStmtForBinding(stmtNode, db, false)
+		sqlOrDigest, _, _ = NormalizeStmtForBinding(stmtNode, db, false)
 		whereCond = "where original_sql = %?"
 	}
 	bindings, err := readBindingsFromStorage(ba.sPool, whereCond, sqlOrDigest)

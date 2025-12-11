@@ -604,8 +604,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	aliasChecker := &aliasChecker{}
 	originNode.Accept(aliasChecker)
 	hintedNode.Accept(aliasChecker)
-	originSQL, _ := bindinfo.NormalizeStmtForBinding(originNode, defaultDB, false)
-	hintedSQL, _ := bindinfo.NormalizeStmtForBinding(hintedNode, defaultDB, false)
+	_, originSQL, _ := bindinfo.NormalizeStmtForBinding(originNode, defaultDB, false)
+	_, hintedSQL, _ := bindinfo.NormalizeStmtForBinding(hintedNode, defaultDB, false)
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}

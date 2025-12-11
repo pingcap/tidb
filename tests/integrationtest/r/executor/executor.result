@@ -4180,11 +4180,11 @@ create index index_t on testbind(i,s);
 create global binding for select * from testbind using select * from testbind use index for join(index_t);
 show global bindings where default_db='executor__executor';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `executor__executor` . `testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
+SELECT * FROM `executor__executor`.`testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
 create session binding for select * from testbind using select * from testbind use index for join(index_t);
 show session bindings where default_db='executor__executor';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `executor__executor` . `testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
+SELECT * FROM `executor__executor`.`testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
 drop session binding for select * from testbind using select * from testbind use index for join(index_t);
 drop global binding for select * from testbind using select * from testbind use index for join(index_t);
 drop table if EXISTS t1;

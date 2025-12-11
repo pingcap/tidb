@@ -308,7 +308,7 @@ create table t(a int, b int, key(a));
 create global binding for select * from t using select * from t use index(a);
 select original_sql, bind_sql from mysql.bind_info where bind_sql = 'SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)';
 original_sql	bind_sql
-select * from `bindinfo__bind` . `t`	SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)
+SELECT * FROM `bindinfo__bind`.`t`	SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)
 explain format = 'verbose' select * from t;
 id	estRows	estCost	task	access object	operator info
 IndexLookUp_7	10000.00	19517254.40	root		
@@ -338,50 +338,50 @@ create binding for select * from t where a in(1,2) using select * from t where a
 create binding for select * from t where a in(1,2,3) using select * from t where a in(1,2,3);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
 drop binding for select * from t where a in(1);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
 create binding for select * from t where a in(1,2,3) using select * from t where a in(1);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
 drop binding for select * from t where a in(1);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
 create binding for select * from t where a in(1) using select * from t where a in(1);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
 drop binding for select * from t where a in(1,2,3);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
 create binding for select * from t where a in(1) using select * from t where a in(1);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
 drop binding for select * from t where a in(1,2,3,4,5,6,7,8,9,0,11,12);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
 create global binding for select * from t where a in(1,2,3) using select * from t where a in(1);
 show global bindings where original_sql like '%bindinfo__bind%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
 set binding disabled for select * from t where a in(1);
 show global bindings where original_sql like '%bindinfo__bind%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	disabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
 set binding enabled for select * from t where a in(1,2,3,4,5);
 show global bindings where original_sql like '%bindinfo__bind%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
 drop global binding for select * from t where a in(1,2,3);
 drop table if exists t;
 create table t (a varchar(10) CHARACTER SET utf8);
 create global binding for select * from t where a = 'aa' using select * from t where a = 'aa';
 show global bindings where original_sql like '%bindinfo__bind%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t` where `a` = ?	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` = 'aa'	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	6d1a1929b70cc162e7e4a9e635a920d811556a2fad8c86a98cd36f5ef0ac2d8e	
+SELECT * FROM `bindinfo__bind`.`t` WHERE `a` = 'aa'	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` = 'aa'	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	6d1a1929b70cc162e7e4a9e635a920d811556a2fad8c86a98cd36f5ef0ac2d8e	
 drop global binding for select * from t where a = 'aa';
 drop table if exists t;
 create table t (a int);
@@ -389,7 +389,7 @@ create global binding for select * from (select * from t where a = 1) tt using s
 create global binding for select * from ((select * from t where a = 1)) tt using select * from (select * from t where a = 1) tt;
 show global bindings where original_sql like '%bindinfo__bind%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from ( select * from `bindinfo__bind` . `t` where `a` = ? ) as `tt`	SELECT * FROM (SELECT * FROM `bindinfo__bind`.`t` WHERE `a` = 1) AS `tt`	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b2066cb17a2e393e9b1304af7a880aff99a8b7c918daa5d08374e6a9d3cc5bdb	
+SELECT * FROM (SELECT * FROM `bindinfo__bind`.`t` WHERE `a` = 1) AS `tt`	SELECT * FROM (SELECT * FROM `bindinfo__bind`.`t` WHERE `a` = 1) AS `tt`	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b2066cb17a2e393e9b1304af7a880aff99a8b7c918daa5d08374e6a9d3cc5bdb	
 drop global binding for select * from ((select * from t where a = 1)) tt;
 drop table if exists t;
 drop user if exists test@'%';
@@ -397,7 +397,7 @@ create table t(a int, b int, index idx(a));
 create global binding for select * from t using select * from t use index(idx);
 show global bindings where original_sql like '%bindinfo__bind%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t`	SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`idx`)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7bfe86d915f554b2714045c1f8006e44f9586ea258b605cb6de2f79753674c20	
+SELECT * FROM `bindinfo__bind`.`t`	SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`idx`)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7bfe86d915f554b2714045c1f8006e44f9586ea258b605cb6de2f79753674c20	
 create user test@'%';
 show global bindings where original_sql like '%bindinfo__bind%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
@@ -479,18 +479,18 @@ Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collatio
 create global binding for select * from t using select * from t;
 select original_sql, status from mysql.bind_info where original_sql like '%bindinfo__bind_test%';
 original_sql	status
-select * from `bindinfo__bind_test` . `t`	enabled
+SELECT * FROM `bindinfo__bind_test`.`t`	enabled
 show global bindings where original_sql like '%bindinfo__bind_test%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind_test` . `t`	SELECT * FROM `bindinfo__bind_test`.`t`	bindinfo__bind_test	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7b6e1829d138552ad533ff6ee71b33faeda4e30020fdba3bdf36eee580d5a500	
+SELECT * FROM `bindinfo__bind_test`.`t`	SELECT * FROM `bindinfo__bind_test`.`t`	bindinfo__bind_test	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7b6e1829d138552ad533ff6ee71b33faeda4e30020fdba3bdf36eee580d5a500	
 create global binding for select * from t using select * from t;
 select original_sql, status from mysql.bind_info where original_sql like '%bindinfo__bind_test%';
 original_sql	status
-select * from `bindinfo__bind_test` . `t`	deleted
-select * from `bindinfo__bind_test` . `t`	enabled
+SELECT * FROM `bindinfo__bind_test`.`t`	deleted
+SELECT * FROM `bindinfo__bind_test`.`t`	enabled
 show global bindings where original_sql like '%bindinfo__bind_test%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `bindinfo__bind_test` . `t`	SELECT * FROM `bindinfo__bind_test`.`t`	bindinfo__bind_test	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7b6e1829d138552ad533ff6ee71b33faeda4e30020fdba3bdf36eee580d5a500	
+SELECT * FROM `bindinfo__bind_test`.`t`	SELECT * FROM `bindinfo__bind_test`.`t`	bindinfo__bind_test	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7b6e1829d138552ad533ff6ee71b33faeda4e30020fdba3bdf36eee580d5a500	
 drop global binding for select * from t;
 use bindinfo__bind;
 drop database bindinfo__bind_test;

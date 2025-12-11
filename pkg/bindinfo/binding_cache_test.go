@@ -30,7 +30,7 @@ func bindingNoDBDigest(t *testing.T, b *Binding) string {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(b.BindSQL, b.Charset, b.Collation)
 	require.NoError(t, err)
-	_, noDBDigest := NormalizeStmtForBinding(stmt, "", true)
+	_, _, noDBDigest := NormalizeStmtForBinding(stmt, "", true)
 	return noDBDigest
 }
 

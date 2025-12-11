@@ -61,7 +61,7 @@ select @@last_plan_from_binding;
 1
 show global bindings where original_sql like '%planner__core__physical_plan%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from ( `planner__core__physical_plan` . `t1` join `planner__core__physical_plan` . `t2` on `t1` . `a` = `t2` . `a` ) join `planner__core__physical_plan` . `t3` on `t2` . `b` = `t3` . `b`	SELECT /*+ hash_join_build(`t1`)*/ * FROM (`planner__core__physical_plan`.`t1` JOIN `planner__core__physical_plan`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__physical_plan`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__physical_plan	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	ac0814c7f1fc1102b1622bb8b8d084931aa2352d5c0deb30034c63b6f4e2b28e	
+SELECT * FROM (`planner__core__physical_plan`.`t1` JOIN `planner__core__physical_plan`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__physical_plan`.`t3` ON `t2`.`b` = `t3`.`b`	SELECT /*+ hash_join_build(`t1`)*/ * FROM (`planner__core__physical_plan`.`t1` JOIN `planner__core__physical_plan`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__physical_plan`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__physical_plan	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	ac0814c7f1fc1102b1622bb8b8d084931aa2352d5c0deb30034c63b6f4e2b28e	
 create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ hash_join_probe(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 a	b	a	b	a	b
@@ -70,7 +70,7 @@ select @@last_plan_from_binding;
 1
 show global bindings where original_sql like '%planner__core__physical_plan%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from ( `planner__core__physical_plan` . `t1` join `planner__core__physical_plan` . `t2` on `t1` . `a` = `t2` . `a` ) join `planner__core__physical_plan` . `t3` on `t2` . `b` = `t3` . `b`	SELECT /*+ hash_join_probe(`t1`)*/ * FROM (`planner__core__physical_plan`.`t1` JOIN `planner__core__physical_plan`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__physical_plan`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__physical_plan	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	ac0814c7f1fc1102b1622bb8b8d084931aa2352d5c0deb30034c63b6f4e2b28e	
+SELECT * FROM (`planner__core__physical_plan`.`t1` JOIN `planner__core__physical_plan`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__physical_plan`.`t3` ON `t2`.`b` = `t3`.`b`	SELECT /*+ hash_join_probe(`t1`)*/ * FROM (`planner__core__physical_plan`.`t1` JOIN `planner__core__physical_plan`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__physical_plan`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__physical_plan	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	ac0814c7f1fc1102b1622bb8b8d084931aa2352d5c0deb30034c63b6f4e2b28e	
 drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 a	b	a	b	a	b

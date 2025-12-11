@@ -4190,7 +4190,7 @@ select @@last_plan_from_binding;
 1
 show global bindings where original_sql like '%planner__core__integration%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `planner__core__integration` . `v2`	SELECT /*+ qb_name(`qb_v_2` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_2`) merge_join(`t1`@`qb_v_2`) stream_agg(@`qb_v_2`) qb_name(`qb_v_1` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_1`) merge_join(`t`@`qb_v_1`)*/ * FROM `planner__core__integration`.`v2`	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d1c36cc45519f8c3ec7ffd42ebcc49b1fe160d7a93e23d1568843517ac4009e6	
+SELECT * FROM `planner__core__integration`.`v2`	SELECT /*+ qb_name(`qb_v_2` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_2`) merge_join(`t1`@`qb_v_2`) stream_agg(@`qb_v_2`) qb_name(`qb_v_1` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_1`) merge_join(`t`@`qb_v_1`)*/ * FROM `planner__core__integration`.`v2`	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d1c36cc45519f8c3ec7ffd42ebcc49b1fe160d7a93e23d1568843517ac4009e6	
 drop global binding for select * from v2;
 select * from v2;
 a	b
@@ -4218,7 +4218,7 @@ select @@last_plan_from_binding;
 1
 show global bindings where original_sql like '%planner__core__integration%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `planner__core__integration` . `t1` where `a` < ? order by `a` limit ?	SELECT /*+ order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
+SELECT * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	SELECT /*+ order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
 
 drop global binding for select * from t1 where a<10 order by a limit 1;
 select * from t1 where a<10 order by a limit 1;
@@ -4238,7 +4238,7 @@ select @@last_plan_from_binding;
 1
 show global bindings where original_sql like '%planner__core__integration%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select * from `planner__core__integration` . `t1` where `a` < ? order by `a` limit ?	SELECT /*+ no_order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
+SELECT * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	SELECT /*+ no_order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
 
 drop global binding for select * from t1 where a<10 order by a limit 1;
 select * from t1 where a<10 order by a limit 1;
