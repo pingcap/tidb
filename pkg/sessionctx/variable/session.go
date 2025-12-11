@@ -1292,6 +1292,9 @@ type SessionVars struct {
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
 
+	// SoftDeleteRewrite enables SQL rewritting for softdelete tables.
+	SoftDeleteRewrite bool
+
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 	// ReplicaClosestReadThreshold is the minimum response body size that a cop request should be sent to the closest replica.

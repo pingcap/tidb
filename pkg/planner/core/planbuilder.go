@@ -4268,7 +4268,6 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 // It creates an expression: NOT(ISNULL(_tidb_softdelete_time)) to check if a row is soft-deleted.
 func (b *PlanBuilder) buildSoftDeleteReplaceExpr(insertPlan *physicalop.Insert, tableInfo *model.TableInfo) {
 	if tableInfo.SoftdeleteInfo == nil ||
-		!tableInfo.SoftdeleteInfo.Enable ||
 		!insertPlan.SCtx().GetSessionVars().SoftDeleteRewrite {
 		return
 	}

@@ -1,13 +1,15 @@
 drop database if exists test_sd;
-create database test_sd softdelete = 'ON';
+create database test_sd softdelete = RETENTION 7 DAY;
 show create database test_sd;
 drop database test_sd;
-create database test_sd softdelete_retention = '7d' softdelete_job_enable = 'ON' softdelete_job_interval = '1h' softdelete = 'OFF';
+create database test_sd softdelete retention 7 DAY softdelete_job_enable = 'ON' softdelete_job_interval = '1h';
 show create database test_sd;
 
 alter database test_sd softdelete = 'OFF';
 show create database test_sd;
-alter database test_sd softdelete_retention = '8d' softdelete_job_interval = '3h';
+-- error 8200
+alter database test_sd softdelete_job_interval = '3h';
+alter database test_sd softdelete retention 8 DAY softdelete_job_interval = '3h';
 show create database test_sd;
 
 drop database test_sd;
@@ -15,26 +17,26 @@ create database test_sd;
 use test_sd;
 
 # Create table
-create table t1 (id int primary key, name varchar(50)) softdelete = 'ON';
+create table t1 (id int primary key, name varchar(50)) softdelete = retention 7 day;
 show create table t1;
-create table t2 (id int primary key, name varchar(50)) softdelete = 'ON' softdelete_retention = '14d';
+create table t2 (id int primary key, name varchar(50)) softdelete retention 7 hour;
 show create table t2;
-create table t3 (id int primary key, name varchar(50)) softdelete = 'ON' softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
+create table t3 (id int primary key, name varchar(50)) softdelete retention 4 hour softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
 show create table t3;
-alter database test_sd softdelete = 'ON';
+alter database test_sd softdelete retention 7 hour;
 create table t4 (id int primary key, name varchar(50));
 show create table t4;
+alter database test_sd softdelete = 'off';
+create table t5 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+show create table t5;
 
--- error 8274
-create table t5 (id int primary key, name varchar(50)) softdelete = 'OFF' softdelete_retention = '14d';
-alter database test_sd softdelete = 'OFF';
--- error 8274
-create table t5 (id int primary key, name varchar(50)) softdelete_retention = '14d';
+-- error 8200
+create table t6 (id int primary key, name varchar(50)) softdelete_job_interval = '2h' softdelete_job_enable = 'ON' softdelete = 'OFF';
+-- error 8200
+create table t6 (id int primary key, name varchar(50)) softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
 
 # Alter table
-alter table t4 softdelete = 'ON';
-show create table t4;
-alter table t4 softdelete_retention = '30d';
+alter table t4 softdelete retention 30 DAY;
 show create table t4;
 alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
 show create table t4;
@@ -52,6 +54,6 @@ create table t5 (id int) softdelete = 'YES';
 alter table t1 softdelete_job_enable = 'MAYBE';
 
 -- error 1064
-create table t6 (id int) softdelete_retention = 'invalid_duration';
+create table t6 (id int) softdelete = retention 'invalid_duration' DAY;
 
 drop database test_sd;

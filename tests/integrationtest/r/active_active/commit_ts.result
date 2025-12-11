@@ -65,8 +65,7 @@ TSO	3
 # TODO
 # coprocessor is not supported yet
 drop table if exists t;
-create table t (a bigint primary key, b int, c int) softdelete = 'on' active_active = 'on';
-alter table t drop column _tidb_commit_ts;
+create table t (a bigint primary key, b int, c int) softdelete retention 7 day active_active = 'on';
 insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
 insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
 select * from t;

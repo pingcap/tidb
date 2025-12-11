@@ -26,6 +26,7 @@
 package parser
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -584,6 +585,7 @@ import (
 	restore                    "RESTORE"
 	restores                   "RESTORES"
 	resume                     "RESUME"
+	retention                  "RETENTION"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
 	role                       "ROLE"
@@ -624,7 +626,6 @@ import (
 	softdelete                 "SOFTDELETE"
 	softdeleteJobEnable        "SOFTDELETE_JOB_ENABLE"
 	softdeleteJobInterval      "SOFTDELETE_JOB_INTERVAL"
-	softdeleteRetention        "SOFTDELETE_RETENTION"
 	some                       "SOME"
 	source                     "SOURCE"
 	sqlBufferResult            "SQL_BUFFER_RESULT"
@@ -4553,25 +4554,27 @@ DatabaseOption:
 			yylex.AppendError(yylex.Errorf("The ACTIVE_ACTIVE option must be 'ON' or 'OFF'"))
 			return 1
 		}
-		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionActiveActive, Value: val}
+		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionActiveActive, BoolValue: val == "ON"}
+	}
+|	"SOFTDELETE" EqOpt "RETENTION" NUM TimeUnit
+	{
+		$$ = &ast.DatabaseOption{
+			Tp:            ast.DatabaseOptionSoftDeleteRetention,
+			Value:         strconv.Itoa(int($4.(int64))),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: $5.(ast.TimeUnitType)},
+		}
 	}
 |	"SOFTDELETE" EqOpt stringLit
 	{
 		val := strings.ToUpper($3)
-		if val != "ON" && val != "OFF" {
-			yylex.AppendError(yylex.Errorf("The SOFTDELETE option must be 'ON' or 'OFF'"))
+		if val != "OFF" {
+			yylex.AppendError(yylex.Errorf("The SOFTDELETE option must be RETENTION XXX or 'OFF'"))
 			return 1
 		}
-		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionSoftDelete, Value: val}
-	}
-|	"SOFTDELETE_RETENTION" EqOpt stringLit
-	{
-		_, err := duration.ParseDuration($3)
-		if err != nil {
-			yylex.AppendError(yylex.Errorf("The SOFTDELETE_RETENTION option is not a valid duration: %s", err.Error()))
-			return 1
+		$$ = &ast.DatabaseOption{
+			Tp:        ast.DatabaseOptionSoftDelete,
+			BoolValue: val == "ON",
 		}
-		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionSoftDeleteRetention, Value: $3}
 	}
 |	"SOFTDELETE_JOB_ENABLE" EqOpt stringLit
 	{
@@ -4580,7 +4583,7 @@ DatabaseOption:
 			yylex.AppendError(yylex.Errorf("The SOFTDELETE_JOB_ENABLE option must be 'ON' or 'OFF'"))
 			return 1
 		}
-		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionSoftDeleteJobEnable, Value: val}
+		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionSoftDeleteJobEnable, BoolValue: val == "ON"}
 	}
 |	"SOFTDELETE_JOB_INTERVAL" EqOpt stringLit
 	{
@@ -5349,10 +5352,10 @@ DeleteWithoutUsingStmt:
 		tn.PartitionNames = $8.([]ast.CIStr)
 		join := &ast.Join{Left: &ast.TableSource{Source: tn, AsName: $9.(ast.CIStr)}, Right: nil}
 		x := &ast.DeleteStmt{
-			TableRefs:  &ast.TableRefsClause{TableRefs: join},
-			Priority:   $3.(mysql.PriorityEnum),
-			Quick:      $4.(bool),
-			IgnoreErr:  $5.(bool),
+			TableRefs: &ast.TableRefsClause{TableRefs: join},
+			Priority:  $3.(mysql.PriorityEnum),
+			Quick:     $4.(bool),
+			IgnoreErr: $5.(bool),
 		}
 		if $2 != nil {
 			x.TableHints = $2.([]*ast.TableOptimizerHint)
@@ -7376,7 +7379,7 @@ UnReservedKeyword:
 |	"TTL_ENABLE"
 |	"TTL_JOB_INTERVAL"
 |	"SOFTDELETE"
-|	"SOFTDELETE_RETENTION"
+|	"RETENTION"
 |	"SOFTDELETE_JOB_INTERVAL"
 |	"SOFTDELETE_JOB_ENABLE"
 |	"ACTIVE_ACTIVE"
@@ -13079,24 +13082,25 @@ TableOption:
 		}
 		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
 	}
-|	"SOFTDELETE" EqOpt stringLit
+|	"SOFTDELETE" EqOpt "RETENTION" NUM TimeUnit
 	{
-		onOrOff := strings.ToLower($3)
-		if onOrOff == "on" || onOrOff == "off" {
-			$$ = &ast.TableOption{Tp: ast.TableOptionSoftDelete, BoolValue: onOrOff == "on"}
-		} else {
-			yylex.AppendError(yylex.Errorf("The SOFTDELETE option must be 'ON' or 'OFF': %s, %d", onOrOff, len(onOrOff)))
-			return 1
+		$$ = &ast.TableOption{
+			Tp:            ast.TableOptionSoftDeleteRetention,
+			StrValue:      strconv.Itoa(int($4.(int64))),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: $5.(ast.TimeUnitType)},
 		}
 	}
-|	"SOFTDELETE_RETENTION" EqOpt stringLit
+|	"SOFTDELETE" EqOpt stringLit
 	{
-		_, err := duration.ParseDuration($3)
-		if err != nil {
-			yylex.AppendError(yylex.Errorf("The SOFTDELETE_RETENTION option is not a valid duration: %s", err.Error()))
+		val := strings.ToUpper($3)
+		if val != "OFF" {
+			yylex.AppendError(yylex.Errorf("The SOFTDELETE option must be RETENTION XXX or 'OFF'"))
 			return 1
 		}
-		$$ = &ast.TableOption{Tp: ast.TableOptionSoftDeleteRetention, StrValue: $3}
+		$$ = &ast.TableOption{
+			Tp:        ast.TableOptionSoftDelete,
+			BoolValue: val == "ON",
+		}
 	}
 |	"SOFTDELETE_JOB_INTERVAL" EqOpt stringLit
 	{
@@ -13109,9 +13113,9 @@ TableOption:
 	}
 |	"SOFTDELETE_JOB_ENABLE" EqOpt stringLit
 	{
-		onOrOff := strings.ToLower($3)
-		if onOrOff == "on" || onOrOff == "off" {
-			$$ = &ast.TableOption{Tp: ast.TableOptionSoftDeleteJobEnable, BoolValue: onOrOff == "on"}
+		onOrOff := strings.ToUpper($3)
+		if onOrOff == "ON" || onOrOff == "OFF" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionSoftDeleteJobEnable, BoolValue: onOrOff == "ON"}
 		} else {
 			yylex.AppendError(yylex.Errorf("The SOFTDELETE_JOB_ENABLE option must be 'ON' or 'OFF'"))
 			return 1
@@ -13119,9 +13123,9 @@ TableOption:
 	}
 |	"ACTIVE_ACTIVE" EqOpt stringLit
 	{
-		onOrOff := strings.ToLower($3)
-		if onOrOff == "on" || onOrOff == "off" {
-			$$ = &ast.TableOption{Tp: ast.TableOptionActiveActive, BoolValue: onOrOff == "on"}
+		onOrOff := strings.ToUpper($3)
+		if onOrOff == "ON" || onOrOff == "OFF" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionActiveActive, BoolValue: onOrOff == "ON"}
 		} else {
 			yylex.AppendError(yylex.Errorf("The ACTIVE_ACTIVE option must be 'ON' or 'OFF'"))
 			return 1

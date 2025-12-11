@@ -130,7 +130,6 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
-        "//pkg/parser/duration",
         "//pkg/parser/format",
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",

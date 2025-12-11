@@ -90,7 +90,9 @@ const (
 type DatabaseOption struct {
 	Tp             DatabaseOptionType
 	Value          string
+	BoolValue      bool
 	UintValue      uint64
+	TimeUnitValue  *TimeUnitExpr
 	TiFlashReplica *TiFlashReplicaSpec
 }
 
@@ -133,28 +135,42 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
 			ctx.WriteKeyWord("ACTIVE_ACTIVE ")
 			ctx.WritePlain("= ")
-			ctx.WriteString(n.Value)
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
 			return nil
 		})
 	case DatabaseOptionSoftDelete:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			ctx.WriteKeyWord("SOFTDELETE ")
 			ctx.WritePlain("= ")
-			ctx.WriteString(n.Value)
+			if n.BoolValue {
+				ctx.WriteString("ON`")
+			} else {
+				ctx.WriteString("OFF")
+			}
 			return nil
 		})
 	case DatabaseOptionSoftDeleteRetention:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
-			ctx.WriteKeyWord("SOFTDELETE_RETENTION ")
+			ctx.WriteKeyWord("SOFTDELETE ")
 			ctx.WritePlain("= ")
-			ctx.WriteString(n.Value)
-			return nil
+			ctx.WriteKeyWord("RETENTION ")
+			ctx.WritePlain(n.Value)
+			ctx.WritePlain(" ")
+			return n.TimeUnitValue.Restore(ctx)
 		})
 	case DatabaseOptionSoftDeleteJobEnable:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			ctx.WriteKeyWord("SOFTDELETE_JOB_ENABLE ")
 			ctx.WritePlain("= ")
-			ctx.WriteString(n.Value)
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
 			return nil
 		})
 	case DatabaseOptionSoftDeleteJobInterval:
@@ -3036,10 +3052,12 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		})
 	case TableOptionSoftDeleteRetention:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
-			ctx.WriteKeyWord("SOFTDELETE_RETENTION ")
+			ctx.WriteKeyWord("SOFTDELETE ")
 			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-			return nil
+			ctx.WriteKeyWord("RETENTION ")
+			ctx.WritePlain(n.StrValue)
+			ctx.WritePlain(" ")
+			return n.TimeUnitValue.Restore(ctx)
 		})
 	case TableOptionSoftDeleteJobInterval:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {

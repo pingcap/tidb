@@ -1078,7 +1078,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col == nil || col.Hidden {
+		if col == nil || col.Hidden || model.IsInternalColumn(col.Name) {
 			continue
 		}
 		if needAddComma {
@@ -1496,21 +1496,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			restoreCtx.WriteKeyWord("SOFTDELETE")
 			restoreCtx.WritePlain("=")
-			if info.Enable {
-				restoreCtx.WriteString("ON")
-			} else {
-				restoreCtx.WriteString("OFF")
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-
-		restoreCtx.WritePlain(" ")
-		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
-			restoreCtx.WriteKeyWord("SOFTDELETE_RETENTION")
-			restoreCtx.WritePlain("=")
-			restoreCtx.WriteString(info.Retention)
+			restoreCtx.WriteKeyWord("RETENTION ")
+			restoreCtx.WritePlain(info.Retention)
+			restoreCtx.WritePlain(" ")
+			restoreCtx.WritePlain(info.RetentionUnit.String())
 			return nil
 		}); err != nil {
 			return err
@@ -1711,56 +1700,54 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 
 	restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
 	restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
-	if dbInfo.IsActiveActive != "" {
+	if dbInfo.IsActiveActive {
 		restoreCtx.WritePlain(" ")
 		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
 			restoreCtx.WriteKeyWord("ACTIVE_ACTIVE")
 			restoreCtx.WritePlain("=")
-			restoreCtx.WriteString(dbInfo.IsActiveActive)
+			if dbInfo.IsActiveActive {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
 			return nil
 		}); err != nil {
 			return err
 		}
 	}
-	if dbInfo.SoftDeleteEnable != "" {
+	if info := dbInfo.SoftdeleteInfo; info != nil {
 		restoreCtx.WritePlain(" ")
 		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			restoreCtx.WriteKeyWord("SOFTDELETE")
 			restoreCtx.WritePlain("=")
-			restoreCtx.WriteString(dbInfo.SoftDeleteEnable)
+			restoreCtx.WriteKeyWord("RETENTION ")
+			restoreCtx.WritePlain(info.Retention)
+			restoreCtx.WritePlain(" ")
+			restoreCtx.WritePlain(info.RetentionUnit.String())
 			return nil
 		}); err != nil {
 			return err
 		}
-	}
-	if dbInfo.SoftDeleteRetention != "" {
-		restoreCtx.WritePlain(" ")
-		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
-			restoreCtx.WriteKeyWord("SOFTDELETE_RETENTION")
-			restoreCtx.WritePlain("=")
-			restoreCtx.WriteString(dbInfo.SoftDeleteRetention)
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
-	if dbInfo.SoftDeleteJobEnable != "" {
+
 		restoreCtx.WritePlain(" ")
 		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_ENABLE")
 			restoreCtx.WritePlain("=")
-			restoreCtx.WriteString(dbInfo.SoftDeleteJobEnable)
+			if info.JobEnable {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
 			return nil
 		}); err != nil {
 			return err
 		}
-	}
-	if dbInfo.SoftDeleteJobInterval != "" {
+
 		restoreCtx.WritePlain(" ")
 		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL")
 			restoreCtx.WritePlain("=")
-			restoreCtx.WriteString(dbInfo.SoftDeleteJobInterval)
+			restoreCtx.WriteString(info.JobInterval)
 			return nil
 		}); err != nil {
 			return err

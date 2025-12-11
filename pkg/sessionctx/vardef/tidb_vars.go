@@ -866,6 +866,9 @@ const (
 	// TiDBIgnorePreparedCacheCloseStmt indicates whether to ignore close-stmt commands for prepared statements.
 	TiDBIgnorePreparedCacheCloseStmt = "tidb_ignore_prepared_cache_close_stmt"
 
+	// TiDBTranslateSoftDeleteSQL indicates whether to rewrite SQL for softdelete tables.
+	TiDBTranslateSoftDeleteSQL = "tidb_translate_softdelete_sql"
+
 	// TiDBEnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
 	TiDBEnableNewCostInterface = "tidb_enable_new_cost_interface"
 
@@ -1475,6 +1478,7 @@ const (
 	DefTiDBAllowTiFlashCop                  = false
 	DefTiDBHashExchangeWithNewCollation     = true
 	DefTiDBEnforceMPPExecution              = false
+	DefTiDBTranslateSoftdeleteSQL           = true
 	DefTiFlashMaxThreads                    = -1
 	DefTiFlashMaxBytesBeforeExternalJoin    = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy = -1

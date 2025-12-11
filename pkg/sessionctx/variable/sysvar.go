@@ -637,6 +637,10 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableRCReadCheckTS.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTranslateSoftDeleteSQL, Type: vardef.TypeBool, Value: BoolToOnOff(vardef.DefTiDBTranslateSoftdeleteSQL), SetSession: func(s *SessionVars, val string) error {
+		s.SoftDeleteRewrite = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent), nil
 	}},
