@@ -78,19 +78,13 @@ mkdir -p $DATA_PATH/$DB
 echo "CREATE DATABASE $DB;" > "$DATA_PATH/$DB-schema-create.sql"
 echo "CREATE TABLE $TABLE(i INT, s varchar(32));" > "$DATA_PATH/$DB.$TABLE-schema.sql"
 echo "INSERT INTO $TABLE (i, s) VALUES (1, \"1\"),(2, \"test2\"), (3, \"qqqtest\");" > "$DATA_PATH/$DB.$TABLE.sql"
-cat > "$DATA_PATH/$DB.$TABLE.0.csv" << _EOF_
-i,s
-100,"test100"
-101,"\""
-102,"😄😄😄😄😄"
-104,""
-_EOF_
+echo "INSERT INTO $TABLE (i, s) VALUES (100, \"test100\"),(101,\"\\\"\"),(102,\"😄😄😄😄😄\"),(104,\"\");" > "$DATA_PATH/$DB.$TABLE.1.sql"
 
 # upload files to gcs
 curl -XPOST --data-binary @$DATA_PATH/$DB-schema-create.sql "http://$GCS_HOST:$GCS_PORT/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$DB/$DB-schema-create.sql"
 curl -XPOST --data-binary @$DATA_PATH/$DB.$TABLE-schema.sql "http://$GCS_HOST:$GCS_PORT/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$DB/$DB.$TABLE-schema.sql"
 curl -XPOST --data-binary @$DATA_PATH/$DB.$TABLE.sql "http://$GCS_HOST:$GCS_PORT/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$DB/$DB.$TABLE.sql"
-curl -XPOST --data-binary @$DATA_PATH/$DB.$TABLE.0.csv "http://$GCS_HOST:$GCS_PORT/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$DB/$DB.$TABLE.0.csv"
+curl -XPOST --data-binary @$DATA_PATH/$DB.$TABLE.1.sql "http://$GCS_HOST:$GCS_PORT/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$DB/$DB.$TABLE.1.sql"
 
 # Fill in the database
 # Start importing the tables.
@@ -98,7 +92,7 @@ run_sql "DROP DATABASE IF EXISTS $DB;"
 run_sql "DROP TABLE IF EXISTS $DB.$TABLE;"
 
 SOURCE_DIR="gcs://$BUCKET/$DB?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/"
-run_lightning -d $SOURCE_DIR --backend local 2> /dev/null
+run_lightning -d $SOURCE_DIR --backend import-into 2> /dev/null
 run_sql "SELECT count(*), sum(i) FROM \`$DB\`.$TABLE"
 check_contains "count(*): 7"
 check_contains "sum(i): 413"

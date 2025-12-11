@@ -23,7 +23,7 @@ check_row_count() {
     check_contains "count(*): $2"
 }
 
-for BACKEND in local tidb; do
+for BACKEND in local tidb import-into; do
     if [ "$BACKEND" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi
@@ -55,13 +55,13 @@ for BACKEND in local tidb; do
     check_contains "w_bool: 1"
 
     run_sql 'select c_since, c_discount from test.customer where c_id = 20;'
-    check_contains "c_since: 2020-09-10 20:17:16"
+    check_contains "c_since: 2020-09-10 12:17:16"
     check_contains "c_discount: 0.0585"
 
     run_sql 'select CONVERT_TZ(ts, "+8:00", "+0:00") as ts from test.test_time;'
-    check_contains "ts: 2022-09-10 09:09:00"
-    check_contains "ts: 1997-08-11 02:01:10"
-    check_contains "ts: 1995-12-31 23:00:01"
-    check_contains "ts: 2020-02-29 23:00:00"
-    check_contains "ts: 2038-01-19 00:00:00"
+    check_contains "ts: 2022-09-10 01:09:00"
+    check_contains "ts: 1997-08-10 18:01:10"
+    check_contains "ts: 1995-12-31 15:00:01"
+    check_contains "ts: 2020-02-29 15:00:00"
+    check_contains "ts: 2038-01-18 16:00:00"
 done

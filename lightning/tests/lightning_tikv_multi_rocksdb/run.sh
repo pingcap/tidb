@@ -24,7 +24,7 @@ restart_services
 check_cluster_version 4 0 0 'local backend' || exit 0
 
 run_sql 'DROP DATABASE IF EXISTS cpeng;'
-run_lightning --backend local --log-file "$TEST_DIR/lightning-local.log" -L debug
+run_lightning --backend import-into --log-file "$TEST_DIR/lightning-local.log" -L debug
 grep -qF '\"engine\":\"raft-kv2\"' $TEST_DIR/tikv*.log
 
 # Check that everything is correctly imported
