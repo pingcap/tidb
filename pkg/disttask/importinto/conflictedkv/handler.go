@@ -18,7 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -34,17 +33,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// (1+2+4+8)*0.1s + (10-4)*1s = 7.5s
-	storeOpMinBackoff       = 100 * time.Millisecond
-	storeOpMaxBackoff       = time.Second
-	storeOpMaxRetryCnt      = 10
-	snapshotRefreshInterval = 15 * time.Second
-	// we define those limit to be within how client define big transaction, see
-	// https://github.com/tikv/client-go/blob/3150e385e39fbbb324fe975d68abe4fdf5dbd6ba/txnkv/transaction/2pc.go#L695-L696
-	bufferedKeySizeLimit  = 2 * units.MiB
-	bufferedKeyCountLimit = 9600
-)
+const snapshotRefreshInterval = 15 * time.Second
 
 var (
 	// BufferedHandleLimit is the max number of handles buffered before processing.
@@ -123,8 +112,12 @@ func (h *BaseHandler) Run(ctx context.Context, pairCh chan *external.KVPair) err
 }
 
 // Close implements Handler interface.
-func (h *BaseHandler) Close(context.Context) error {
-	return h.encoder.Close()
+func (h *BaseHandler) Close(context.Context) (err error) {
+	if h.encoder != nil {
+		// in some test, we don't set encoder
+		err = h.encoder.Close()
+	}
+	return err
 }
 
 // re-encode the row from the handle and value of data KV into KV pairs and handle
