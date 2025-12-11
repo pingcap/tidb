@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/statistics"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"path"
 	"strconv"
 	"sync"
@@ -615,6 +617,7 @@ type WriteExternalStoreOperator struct {
 	*operator.AsyncOperator[IndexRecordChunk, IndexWriteResult]
 	logger     *zap.Logger
 	totalCount *atomic.Int64
+	sampled    *atomic.Int64
 }
 
 // NewWriteExternalStoreOperator creates a new WriteExternalStoreOperator.
@@ -641,6 +644,7 @@ func NewWriteExternalStoreOperator(
 	})
 
 	totalCount := new(atomic.Int64)
+	sampledCount := new(atomic.Int64)
 	blockSize := external.GetAdjustedBlockSize(memoryQuota, external.DefaultBlockSize)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
@@ -648,6 +652,7 @@ func NewWriteExternalStoreOperator(
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
+			statsWrite := make([]ingest.Writer, 0, len(indexes))
 			for i := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
@@ -662,6 +667,21 @@ func NewWriteExternalStoreOperator(
 				writers = append(writers, writer)
 			}
 
+			for i := range indexes {
+				builder := external.NewWriterBuilder().
+					SetOnCloseFunc(onClose).
+					SetMemorySizeLimit(memoryQuota).
+					SetTiKVCodec(tikvCodec).
+					SetBlockSize(blockSize).
+					SetGroupOffset(i).
+					SetOnDup(onDuplicateKey)
+				writerID := uuid.New().String()
+				prefix := path.Join(disttaskutil.StatsSampled, strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
+				logutil.BgLogger().Info("build stats prefix", zap.String("prefix", prefix))
+				writer := builder.Build(store, prefix, writerID)
+				statsWrite = append(statsWrite, writer)
+			}
+
 			w := &indexIngestWorker{
 				ctx:          ctx,
 				tbl:          tbl,
@@ -670,10 +690,15 @@ func NewWriteExternalStoreOperator(
 				se:           nil,
 				sessPool:     sessPool,
 				writers:      writers,
+				statsWriter:  statsWrite,
 				srcChunkPool: srcChunkPool,
 				reorgMeta:    reorgMeta,
 				totalCount:   totalCount,
+				sampledCount: sampledCount,
 				collector:    collector,
+				extStore:     store,
+				fms:          statistics.NewFMSketch(statistics.MaxSketchSize),
+				fmsS3Path:    path.Join("fms", strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10)),
 			}
 			err := w.initIndexConditionCheckers()
 			if err != nil {
@@ -687,6 +712,7 @@ func NewWriteExternalStoreOperator(
 		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
 		logger:        logutil.Logger(ctx),
 		totalCount:    totalCount,
+		sampled:       sampledCount,
 	}
 }
 
@@ -694,7 +720,9 @@ func NewWriteExternalStoreOperator(
 func (o *WriteExternalStoreOperator) Close() error {
 	err := o.AsyncOperator.Close()
 	o.logger.Info("write external storage operator total count",
-		zap.Int64("count", o.totalCount.Load()))
+		zap.Int64("count", o.totalCount.Load()),
+		zap.Int64("sampled", o.sampled.Load()),
+	)
 	return err
 }
 
@@ -782,10 +810,15 @@ type indexIngestWorker struct {
 	restore  func(sessionctx.Context)
 
 	writers      []ingest.Writer
+	statsWriter  []ingest.Writer
 	srcChunkPool *sync.Pool
 	// only available in global sort
-	totalCount *atomic.Int64
-	collector  execute.Collector
+	totalCount   *atomic.Int64
+	sampledCount *atomic.Int64
+	collector    execute.Collector
+	extStore     storage.ExternalStorage
+	fms          *statistics.FMSketch
+	fmsS3Path    string
 }
 
 func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) error {
@@ -803,7 +836,7 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 		return err
 	}
 	// TODO: find a place to display the added count
-	_, bytes, err := w.WriteChunk(&ck)
+	_, bytes, sampled, err := w.WriteChunk(&ck)
 	if err != nil {
 		return err
 	}
@@ -811,6 +844,9 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 	scannedCount := ck.tableScanRowCount
 	if w.totalCount != nil {
 		w.totalCount.Add(scannedCount)
+	}
+	if w.sampledCount != nil {
+		w.sampledCount.Add(int64(sampled))
 	}
 	result.RowCnt = int(ck.tableScanRowCount)
 	if ResultCounterForTest != nil {
@@ -860,7 +896,26 @@ func (w *indexIngestWorker) Close() error {
 	// writer.
 	var gerr error
 
+	// write fms to s3
+	if w.fms != nil && w.fms.NDV() != 0 {
+		data, err := statistics.EncodeFMSketch(w.fms)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		path := path.Join(w.fmsS3Path, uuid.New().String(), "fms.json")
+		w.extStore.WriteFile(w.ctx, path, data)
+	}
+
 	for i, writer := range w.writers {
+		ew, ok := writer.(*external.Writer)
+		if !ok {
+			break
+		}
+		if err := ew.Close(w.ctx); err != nil {
+			gerr = ingest.TryConvertToKeyExistsErr(err, w.indexes[i].Meta(), w.tbl.Meta())
+		}
+	}
+	for i, writer := range w.statsWriter {
 		ew, ok := writer.(*external.Writer)
 		if !ok {
 			break
@@ -878,7 +933,7 @@ func (w *indexIngestWorker) Close() error {
 }
 
 // WriteChunk will write index records to lightning engine.
-func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes int, err error) {
+func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes int, sampled int, err error) {
 	failpoint.Inject("mockWriteLocalError", func(_ failpoint.Value) {
 		failpoint.Return(0, 0, errors.New("mock write local error"))
 	})
@@ -894,12 +949,12 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes i
 		// skip running the checker in TiDB side.
 		indexConditionCheckers = nil
 	}
-	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
+	cnt, kvBytes, sampled, err := writeChunk(w.ctx, w.writers, w.statsWriter, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta(), w.fms)
 	if err != nil || cnt == 0 {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	logSlowOperations(time.Since(oprStartTime), "writeChunk", 3000)
-	return cnt, kvBytes, nil
+	return cnt, kvBytes, sampled, nil
 }
 
 type indexWriteResultSink struct {

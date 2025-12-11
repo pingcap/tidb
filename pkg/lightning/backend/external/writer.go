@@ -843,6 +843,7 @@ func (w *Writer) createDupWriter(ctx context.Context) (string, storage.ExternalF
 }
 
 func (w *Writer) getPartitionedPrefix() string {
+	logutil.BgLogger().Info("get partitioned prefix Writer")
 	return randPartitionedPrefix(w.filenamePrefix, w.rnd)
 }
 

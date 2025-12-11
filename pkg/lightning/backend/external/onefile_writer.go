@@ -374,6 +374,7 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 }
 
 func (w *OneFileWriter) getPartitionedPrefix() string {
+	logutil.BgLogger().Info("get partitioned prefix OneFileWriter")
 	return randPartitionedPrefix(w.filenamePrefix, w.rnd)
 }
 

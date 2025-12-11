@@ -22,6 +22,8 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"math/rand"
 	"os"
 	"slices"
 	"strconv"
@@ -2582,6 +2584,7 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
+	statsWriters []ingest.Writer,
 	indexes []table.Index,
 	indexConditionCheckers []func(row chunk.Row) (bool, error),
 	copCtx copr.CopContext,
@@ -2590,7 +2593,8 @@ func writeChunk(
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
 	tblInfo *model.TableInfo,
-) (rowCnt int, bytes int, err error) {
+	fms *statistics.FMSketch,
+) (rowCnt int, bytes int, sampledCnt int, err error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
 	ectx := c.ExprCtx.GetEvalCtx()
@@ -2600,6 +2604,7 @@ func writeChunk(
 	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
 	var restoreDataBuf []types.Datum
 	count := 0
+	sampled := 0
 	totalBytes := 0
 
 	unlockFns := make([]func(), 0, len(writers))
@@ -2612,6 +2617,17 @@ func writeChunk(
 			unlock()
 		}
 	}()
+	unlockFnsForStats := make([]func(), 0, len(statsWriters))
+	for _, w := range statsWriters {
+		unlock := w.LockForWrite()
+		unlockFnsForStats = append(unlockFnsForStats, unlock)
+	}
+	defer func() {
+		for _, unlock := range unlockFnsForStats {
+			unlock()
+		}
+	}()
+
 	needRestoreForIndexes := make([]bool, len(indexes))
 	restore, pkNeedRestore := false, false
 	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
@@ -2636,7 +2652,7 @@ func writeChunk(
 		}
 		h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
 		if err != nil {
-			return 0, totalBytes, errors.Trace(err)
+			return 0, totalBytes, 0, errors.Trace(err)
 		}
 		for i, index := range indexes {
 			// If the `IndexRecordChunk.conditionPushed` is true and we have only 1 index, the `indexConditionCheckers`
@@ -2644,7 +2660,7 @@ func writeChunk(
 			if index.Meta().HasCondition() && indexConditionCheckers != nil {
 				ok, err := indexConditionCheckers[i](row)
 				if err != nil {
-					return 0, 0, errors.Trace(err)
+					return 0, 0, 0, errors.Trace(err)
 				}
 				if !ok {
 					continue
@@ -2662,13 +2678,32 @@ func writeChunk(
 			kvBytes, err := writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
-				return 0, totalBytes, errors.Trace(err)
+				return 0, totalBytes, 0, errors.Trace(err)
+			}
+
+			//sample and write to s3
+			fms.InsertIndexVal(loc, idxData[0])
+			if len(statsWriters) != 0 && sample() {
+				// logutil.DDLLogger().Info("sample index kv", zap.Int64("indexID", index.Meta().ID), zap.Int64("handle", handleDataBuf[0].GetInt64()))
+				_, err := writeOneKV(ctx, statsWriters[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+				if err != nil {
+					return 0, totalBytes, 0, errors.Trace(err)
+				}
+				sampled++
 			}
 			totalBytes += int(kvBytes)
 		}
 		count++
 	}
-	return count, totalBytes, nil
+	ks, vs := fms.KV()
+	logutil.DDLLogger().Info("fm sketch hashset by index", zap.Uint64s("k", ks), zap.Bools("v", vs))
+	return count, totalBytes, sampled, nil
+}
+
+func sample() bool {
+	//sample 110000 of 49000000 the total rows
+	return true
+	return rand.Intn(49000000) < 10000
 }
 
 func maxIndexColumnCount(indexes []table.Index) int {
