@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/types"
 	ast "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -1492,13 +1491,13 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 	if fromType == toType {
 		if fromType == mysql.TypeEnum || fromType == mysql.TypeSet {
 			if len(to.GetElems()) < len(origin.GetElems()) {
-				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", types.TypeStr(fromType), len(origin.GetElems()))
+				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", ast.TypeStr(fromType), len(origin.GetElems()))
 				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 			for index, originElem := range origin.GetElems() {
 				toElem := to.GetElems()[index]
 				if originElem != toElem {
-					msg := fmt.Sprintf("cannot modify %s column value %s to %s", types.TypeStr(fromType), originElem, toElem)
+					msg := fmt.Sprintf("cannot modify %s column value %s to %s", ast.TypeStr(fromType), originElem, toElem)
 					return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
