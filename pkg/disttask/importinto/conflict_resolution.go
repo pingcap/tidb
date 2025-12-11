@@ -15,11 +15,8 @@
 package importinto
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	goerrors "errors"
-	"io"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -51,6 +48,22 @@ type conflictResolutionStepExecutor struct {
 }
 
 var _ execute.StepExecutor = &conflictResolutionStepExecutor{}
+
+// NewConflictResolutionStepExecutor creates a new StepExecutor for conflict
+// resolution step, exported for test.
+func NewConflictResolutionStepExecutor(
+	taskID int64,
+	store tidbkv.Storage,
+	taskMeta *TaskMeta,
+	logger *zap.Logger,
+) execute.StepExecutor {
+	return &conflictResolutionStepExecutor{
+		taskID:   taskID,
+		taskMeta: taskMeta,
+		logger:   logger,
+		store:    store,
+	}
+}
 
 func (e *conflictResolutionStepExecutor) Init(ctx context.Context) error {
 	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store, e.logger)
@@ -138,14 +151,6 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 func (e *conflictResolutionStepExecutor) Cleanup(_ context.Context) (err error) {
 	e.logger.Info("cleanup subtask env")
 	return e.tableImporter.Close()
-}
-
-func (*conflictResolutionStepExecutor) TaskMetaModified(context.Context, []byte) error {
-	return nil
-}
-
-func (*conflictResolutionStepExecutor) ResourceModified(context.Context, *proto.StepResource) error {
-	return nil
 }
 
 func (e *conflictResolutionStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
