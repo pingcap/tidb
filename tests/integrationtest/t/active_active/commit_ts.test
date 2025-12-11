@@ -64,3 +64,11 @@ select _tidb_commit_ts, id from t where id in (1, 2, 3);
 # explain format = 'brief' select _tidb_commit_ts, id from t;
 # select _tidb_commit_ts, id from t;
 # select _tidb_commit_ts, id from t where id < 5;
+
+drop table if exists t;
+create table t (a bigint primary key, b int, c int) softdelete = 'on' active_active = 'on';
+alter table t drop column _tidb_commit_ts;
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+--replace_regex /^[1-9][0-9]+/TSO/
+select * from t;

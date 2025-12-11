@@ -81,6 +81,7 @@ type Insert struct {
 	Names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
 
 	ReplaceConflictIfExpr []expression.Expression
+	NeedExtraCommitTS     bool
 
 	GenCols InsertGeneratedColumns
 

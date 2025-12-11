@@ -1351,7 +1351,7 @@ func (e *InsertValues) removeRow(
 	r toBeCheckedRow,
 	inReplace bool,
 ) (bool, error) {
-	oldRow, _, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+	oldRow, _, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs, false)
 	if err != nil {
 		logutil.BgLogger().Error(
 			"get old row failed when replace",

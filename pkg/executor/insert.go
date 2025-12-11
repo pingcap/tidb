@@ -53,6 +53,7 @@ type InsertExec struct {
 	curInsertVals         chunk.MutRow
 	row4Update            []types.Datum
 	replaceConflictIfExpr []expression.Expression
+	needExtraCommitTS     bool
 
 	Priority mysql.PriorityEnum
 }
@@ -296,13 +297,15 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			oldRow, commitTS, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+			oldRow, commitTS, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs, e.needExtraCommitTS)
 			if err != nil && !kv.IsErrNotFound(err) {
 				return err
 			}
 
 			if oldRow != nil {
-				oldRow = append(oldRow, types.NewUintDatum(commitTS))
+				if e.needExtraCommitTS {
+					oldRow = append(oldRow, types.NewUintDatum(commitTS))
+				}
 				var done bool
 				done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, r.handleKey, updateDupKeyCheck, autoColIdx, removeOldRows)
 				if err != nil {
@@ -323,7 +326,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				continue
 			}
 
-			oldRow, commitTS, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+			oldRow, commitTS, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs, e.needExtraCommitTS)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -335,7 +338,9 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
-			oldRow = append(oldRow, types.NewUintDatum(commitTS))
+			if e.needExtraCommitTS {
+				oldRow = append(oldRow, types.NewUintDatum(commitTS))
+			}
 
 			var done bool
 			done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, uk, updateDupKeyCheck, autoColIdx, removeOldRows)
@@ -511,7 +516,7 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 	// Use public columns for new row.
 	numCols := len(e.Table.Cols())
 	// Use writable columns for old row for update.
-	numWritableCols := len(e.Table.WritableCols()) + 1
+	numWritableCols := len(e.Table.WritableCols())
 
 	extraLen := 0
 	if e.SelectExec != nil {
@@ -524,9 +529,13 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 	for _, col := range e.Table.WritableCols() {
 		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))
 	}
-	commitTSFt := types.NewFieldType(mysql.TypeLonglong)
-	commitTSFt.SetFlag(mysql.UnsignedFlag)
-	evalBufferTypes = append(evalBufferTypes, commitTSFt)
+	newRowStartIdx := numWritableCols + extraLen
+	if e.needExtraCommitTS {
+		commitTSFt := types.NewFieldType(mysql.TypeLonglong)
+		commitTSFt.SetFlag(mysql.UnsignedFlag)
+		evalBufferTypes = append(evalBufferTypes, commitTSFt)
+		newRowStartIdx++
+	}
 	if extraLen > 0 {
 		evalBufferTypes = append(evalBufferTypes, e.SelectExec.RetFieldTypes()[e.rowLen:]...)
 	}
@@ -537,7 +546,8 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
 	}
 	e.evalBuffer4Dup = chunk.MutRowFromTypes(evalBufferTypes)
-	e.curInsertVals = chunk.MutRowFromTypes(evalBufferTypes[numWritableCols+extraLen:])
+
+	e.curInsertVals = chunk.MutRowFromTypes(evalBufferTypes[newRowStartIdx:])
 	e.row4Update = make([]types.Datum, 0, len(evalBufferTypes))
 }
 
