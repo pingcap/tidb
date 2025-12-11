@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/pkg/circuitbreaker"
+	"github.com/tikv/pd/client/circuitbreaker"
 )
 
 // initDomainSysVars() is called when a domain is initialized.
