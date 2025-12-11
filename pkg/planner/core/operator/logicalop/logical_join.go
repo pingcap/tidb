@@ -963,23 +963,11 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(filtersFromApply []expression.Expres
 		// find the equivalence FD across left and right cols.
 		outerConditionUniqueIDs := intset.NewFastIntSet()
 		if len(outerCondition) != 0 {
-<<<<<<< HEAD
-			outConditionCols = append(outConditionCols, expression.ExtractColumnsFromExpressions(nil, outerCondition, nil)...)
-		}
-		if len(p.OtherConditions) != 0 {
-			// other condition may contain right side cols, it doesn't affect the judgement of intersection of non-left-equiv cols.
-			outConditionCols = append(outConditionCols, expression.ExtractColumnsFromExpressions(nil, p.OtherConditions, nil)...)
-		}
-		outerConditionUniqueIDs := intset.NewFastIntSet()
-		for _, col := range outConditionCols {
-			outerConditionUniqueIDs.Insert(int(col.UniqueID))
-=======
 			expression.ExtractColumnsSetFromExpressions(&outerConditionUniqueIDs, nil, outerCondition...)
 		}
 		if len(p.OtherConditions) != 0 {
 			// other condition may contain right side cols, it doesn't affect the judgement of intersection of non-left-equiv cols.
 			expression.ExtractColumnsSetFromExpressions(&outerConditionUniqueIDs, nil, p.OtherConditions...)
->>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 		}
 		// judge whether left filters is on non-left-equiv cols.
 		if outerConditionUniqueIDs.Intersects(outerCols.Difference(equivOuterUniqueIDs)) {

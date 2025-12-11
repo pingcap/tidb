@@ -81,12 +81,7 @@ func (*AggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.AggFu
 // 0 stands for left, 1 stands for right, -1 stands for both, 2 stands for neither (e.g. count(*), sum(1) ...)
 func (*AggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, lSchema, rSchema *expression.Schema) int {
 	fromLeft, fromRight := false, false
-<<<<<<< HEAD
-	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.Args, nil)
-=======
 	cols := expression.ExtractColumnsMapFromExpressions(nil, aggFunc.Args...)
->>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	for _, col := range cols {
 		if lSchema.Contains(col) {
 			fromLeft = true

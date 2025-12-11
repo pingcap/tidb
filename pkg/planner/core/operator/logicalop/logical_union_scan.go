@@ -91,7 +91,7 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 			parentUsedCols = append(parentUsedCols, col)
 		}
 	}
-	condCols := expression.ExtractColumnsFromExpressions(nil, p.Conditions, nil)
+	condCols := expression.ExtractColumnsFromExpressions( p.Conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)

@@ -291,12 +291,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-<<<<<<< HEAD
-	cols := make([]*Column, 0, 1)
-	cols = ExtractColumnsFromExpressions(cols, sf.GetArgs(), isColumnInOperand)
-=======
 	cols := ExtractColumnsMapFromExpressions(isColumnInOperand, sf.GetArgs()...)
->>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	return len(cols) > 0
 }
 

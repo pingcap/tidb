@@ -20,10 +20,12 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -125,8 +127,14 @@ func extractDependentColumns(result []*Column, expr Expression) []*Column {
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
-	result := make([]*Column, 0, 8)
-	return extractColumns(result, expr, nil)
+	tmp := make(map[int64]*Column, 8)
+	extractColumns(tmp, expr, nil)
+	result := slices.Collect(maps.Values(tmp))
+	// The keys in a map are unordered, so to ensure stability, we need to sort them here.
+	slices.SortFunc(result, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	return result
 }
 
 // ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
@@ -185,16 +193,22 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 //
 // Provide an additional filter argument, this can be done in one step.
 // To avoid allocation for cols that not need.
-func ExtractColumnsFromExpressions(result []*Column, exprs []Expression, filter func(*Column) bool) []*Column {
-	for _, expr := range exprs {
-		result = extractColumns(result, expr, filter)
+func ExtractColumnsFromExpressions(exprs []Expression, filter func(*Column) bool) []*Column {
+	if len(exprs) == 0 {
+		return nil
 	}
+	m := make(map[int64]*Column, len(exprs))
+	for _, expr := range exprs {
+		extractColumns(m, expr, filter)
+	}
+	result := slices.Collect(maps.Values(m))
+	// The keys in a map are unordered, so to ensure stability, we need to sort them here.
+	slices.SortFunc(result, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
 	return result
 }
 
-<<<<<<< HEAD
-func extractColumns(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
-=======
 // ExtractColumnsMapFromExpressions it the same as ExtractColumnsFromExpressions, but return a map
 func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expression) map[int64]*Column {
 	if len(exprs) == 0 {
@@ -205,6 +219,23 @@ func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expres
 		extractColumns(m, expr, filter)
 	}
 	return m
+}
+
+var uniqueIDToColumnMapPool = sync.Pool{
+	New: func() any {
+		return make(map[int64]*Column, 4)
+	},
+}
+
+// GetUniqueIDToColumnMap gets map[int64]*Column map from the pool.
+func GetUniqueIDToColumnMap() map[int64]*Column {
+	return uniqueIDToColumnMapPool.Get().(map[int64]*Column)
+}
+
+// PutUniqueIDToColumnMap puts map[int64]*Column map back to the pool.
+func PutUniqueIDToColumnMap(m map[int64]*Column) {
+	clear(m)
+	uniqueIDToColumnMapPool.Put(m)
 }
 
 // ExtractColumnsMapFromExpressionsWithReusedMap is the same as ExtractColumnsFromExpressions, but map can be reused.
@@ -218,6 +249,23 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 	for _, expr := range exprs {
 		extractColumns(m, expr, filter)
 	}
+}
+
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr, filter)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
 }
 
 // ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
@@ -245,18 +293,16 @@ func ExtractColumnsSetFromExpressions(m *intset.FastIntSet, filter func(*Column)
 }
 
 func extractColumns(result map[int64]*Column, expr Expression, filter func(*Column) bool) {
->>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	switch v := expr.(type) {
 	case *Column:
 		if filter == nil || filter(v) {
-			result = append(result, v)
+			result[v.UniqueID] = v
 		}
 	case *ScalarFunction:
 		for _, arg := range v.GetArgs() {
-			result = extractColumns(result, arg, filter)
+			extractColumns(result, arg, filter)
 		}
 	}
-	return result
 }
 
 func extractColumnsSlices(result []*Column, expr Expression, filter func(*Column) bool) []*Column {

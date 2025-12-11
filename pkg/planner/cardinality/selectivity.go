@@ -116,12 +116,7 @@ func Selectivity(
 		ret *= sel
 	}
 
-<<<<<<< HEAD
-	extractedCols := make([]*expression.Column, 0, coll.ColNum())
-	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
-=======
 	extractedCols := slices.Collect(maps.Values(expression.ExtractColumnsMapFromExpressions(nil, remainedExprs...)))
->>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
@@ -507,13 +502,7 @@ func CalcTotalSelectivityForMVIdxPath(
 					break
 				}
 			}
-<<<<<<< HEAD
-			cols := expression.ExtractColumnsFromExpressions(
-				nil,
-				path.AccessConds,
-=======
 			cols := expression.ExtractColumnsMapFromExpressions(
->>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 				func(column *expression.Column) bool {
 					return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
 				},
@@ -899,24 +888,13 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
 	//   (3) and this column is not a "new collation" string column so that we're able to restore values from the stats.
-<<<<<<< HEAD
-	for _, filter := range filters {
-		if expression.IsMutableEffectsExpr(filter) {
-			return false, 0, nil
-		}
-=======
 	if expression.IsMutableEffectsExpr(filters) {
 		return false, 0, nil
->>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	}
 	if expression.ContainCorrelatedColumn(filters) {
 		return false, 0, nil
 	}
-<<<<<<< HEAD
-	cols := expression.ExtractColumnsFromExpressions(nil, filters, nil)
-=======
 	cols := expression.ExtractColumnsMapFromExpressions(nil, filters)
->>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	if len(cols) != 1 {
 		return false, 0, nil
 	}

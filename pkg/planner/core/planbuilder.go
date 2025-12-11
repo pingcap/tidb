@@ -2113,7 +2113,7 @@ func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *
 	virtualExprs := columnSelector(columns)
 	relatedCols := make([]*expression.Column, 0, len(tblInfo.Columns))
 	for len(virtualExprs) > 0 {
-		relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
+		relatedCols = expression.ExtractAllColumnsFromExpressionsInUsedSlices(relatedCols, nil, virtualExprs...)
 		virtualExprs = virtualExprs[:0]
 		for _, col := range relatedCols {
 			cols.data[col.ID] = struct{}{}
@@ -2159,34 +2159,6 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 		if err != nil {
 			return nil, err
 		}
-<<<<<<< HEAD
-=======
-		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
-		for _, idx := range tblInfo.Indices {
-			if idx.State != model.StatePublic || idx.MVIndex || idx.IsColumnarIndex() {
-				continue
-			}
-			for _, idxCol := range idx.Columns {
-				colInfo := tblInfo.Columns[idxCol.Offset]
-				cols.data[colInfo.ID] = struct{}{}
-				if expr := columns[idxCol.Offset].VirtualExpr; expr != nil {
-					virtualExprs = append(virtualExprs, expr)
-				}
-			}
-		}
-		relatedCols := make(map[int64]*expression.Column, len(tblInfo.Columns))
-		for len(virtualExprs) > 0 {
-			expression.ExtractColumnsMapFromExpressionsWithReusedMap(relatedCols, nil, virtualExprs...)
-			virtualExprs = virtualExprs[:0]
-			for _, col := range relatedCols {
-				cols.data[col.ID] = struct{}{}
-				if col.VirtualExpr != nil {
-					virtualExprs = append(virtualExprs, col.VirtualExpr)
-				}
-			}
-			clear(relatedCols)
-		}
->>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	}
 	if tblInfo.PKIsHandle {
 		pkCol := tblInfo.GetPkColInfo()
