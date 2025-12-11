@@ -286,10 +286,10 @@ func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
 	opt.indexesLayoutOffset = idx
 }
 
-// WithExtraOriginTSOffset is an option to specify the offset of _tidb_origin_ts column.
-type WithExtraOriginTSOffset int
+// ExtraOriginTSOffset is an option to specify the offset of _tidb_origin_ts column.
+type ExtraOriginTSOffset int
 
-func (offset WithExtraOriginTSOffset) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+func (offset ExtraOriginTSOffset) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
 	opt.extraOriginTSOffset = int(offset)
 }
 

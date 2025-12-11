@@ -319,7 +319,7 @@ type TblColPosInfo struct {
 
 	// ExtraOriginTSOffset stores the offset of _tidb_origin_ts column in the pruned row for active-active tables.
 	// -1 means the column is not present or not an active-active table.
-	ExtraOriginTSOffset int
+	ExtraOriginTSOffset table.ExtraOriginTSOffset
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo

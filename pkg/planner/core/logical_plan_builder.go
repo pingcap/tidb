@@ -5445,7 +5445,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 
 	// Fix the ExtraOriginTS column offset for active-active tables
 	if extraOriginTSColOffset >= 0 {
-		colPosInfo.ExtraOriginTSOffset = fixedPos[extraOriginTSColOffset]
+		colPosInfo.ExtraOriginTSOffset = table.ExtraOriginTSOffset(fixedPos[extraOriginTSColOffset])
 	}
 
 	return nil
