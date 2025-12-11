@@ -92,7 +92,7 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 		setupMeterForTest(t, meter)
 		r := RegisterRecorder(&proto.TaskBase{ID: 1})
 		require.Contains(t, meter.recorders, int64(1))
-		r.objStoreReqs.Get.Add(1)
+		r.objStoreAccess.Requests.Get.Add(1)
 		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).Return(nil)
 		meter.flush(ctx, 1000000)
 		require.Contains(t, meter.recorders, int64(1))
@@ -104,7 +104,7 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 		setupMeterForTest(t, meter)
 		r := RegisterRecorder(&proto.TaskBase{ID: 1})
 		require.Contains(t, meter.recorders, int64(1))
-		r.objStoreReqs.Get.Add(1)
+		r.objStoreAccess.Requests.Get.Add(1)
 		UnregisterRecorder(1)
 		require.Contains(t, meter.recorders, int64(1))
 		require.True(t, meter.recorders[1].unregistered)
@@ -127,12 +127,12 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 		setupMeterForTest(t, meter)
 		r := RegisterRecorder(&proto.TaskBase{ID: 1})
 		require.Contains(t, meter.recorders, int64(1))
-		r.objStoreReqs.Get.Add(1)
+		r.objStoreAccess.Requests.Get.Add(1)
 		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
 			md := data.(*common.MeteringData)
 			require.EqualValues(t, 1, md.Data[0][getRequestsField])
 			require.NotContains(t, md.Data[0], putRequestsField)
-			r.objStoreReqs.Put.Add(2)
+			r.objStoreAccess.Requests.Put.Add(2)
 			// unregister after scrape, but before write, the onSuccessFlush
 			// shouldn't remove it
 			UnregisterRecorder(1)
@@ -158,7 +158,7 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 		setupMeterForTest(t, meter)
 		r := RegisterRecorder(&proto.TaskBase{ID: 1})
 		require.Contains(t, meter.recorders, int64(1))
-		r.objStoreReqs.Get.Add(1)
+		r.objStoreAccess.Requests.Get.Add(1)
 		UnregisterRecorder(1)
 		require.Contains(t, meter.recorders, int64(1))
 		require.True(t, meter.recorders[1].unregistered)
@@ -175,6 +175,42 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 		require.Contains(t, meter.recorders, int64(1))
 		require.True(t, ctrl.Satisfied())
 	})
+
+	t.Run("if we register again after unregister, data should be start from zero", func(t *testing.T) {
+		meter := newMeterWithWriter(logger, mockWriter)
+		setupMeterForTest(t, meter)
+		r := RegisterRecorder(&proto.TaskBase{ID: 1})
+		r.clusterTraffic.Read.Add(123456789)
+		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
+			md := data.(*common.MeteringData)
+			require.EqualValues(t, 123456789, md.Data[0][clusterReadBytesField])
+			require.NotContains(t, md.Data[0], putRequestsField)
+			UnregisterRecorder(1)
+			require.True(t, meter.recorders[1].unregistered)
+			return nil
+		})
+		meter.flush(ctx, 1000000)
+		require.NotContains(t, meter.lastFlushedData, int64(1))
+		require.NotContains(t, meter.recorders, int64(1))
+
+		// register again, data should start from zero
+		r = RegisterRecorder(&proto.TaskBase{ID: 1})
+		r.clusterTraffic.Read.Add(123)
+		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
+			md := data.(*common.MeteringData)
+			require.EqualValues(t, 123, md.Data[0][clusterReadBytesField])
+			require.False(t, meter.recorders[1].unregistered)
+			return nil
+		})
+		meter.flush(ctx, 1000000)
+		require.Contains(t, meter.lastFlushedData, int64(1))
+		require.Contains(t, meter.recorders, int64(1))
+
+		UnregisterRecorder(1)
+		meter.flush(ctx, 1000000)
+		require.NotContains(t, meter.lastFlushedData, int64(1))
+		require.NotContains(t, meter.recorders, int64(1))
+	})
 }
 
 func checkMeterData(t *testing.T, expected, got map[string]any) {
@@ -182,7 +218,9 @@ func checkMeterData(t *testing.T, expected, got map[string]any) {
 	for k, v := range expected {
 		require.EqualValues(t, v, got[k], "field %s not equal", k)
 	}
-	for _, f := range []string{getRequestsField, putRequestsField, readBytesField, writeBytesField} {
+	for _, f := range []string{getRequestsField, putRequestsField,
+		objStoreReadBytesField, objStoreWriteBytesField,
+		clusterReadBytesField, clusterWriteBytesField} {
 		if _, ok := expected[f]; !ok {
 			require.NotContains(t, got, f, "field %s should not exist", f)
 		}
@@ -205,18 +243,22 @@ func TestMeterFlush(t *testing.T) {
 		setupMeterForTest(t, meter)
 		r := RegisterRecorder(&proto.TaskBase{ID: 1})
 		require.Contains(t, meter.recorders, int64(1))
-		r.objStoreReqs.Get.Add(1)
-		r.objStoreReqs.Put.Add(2)
-		r.IncReadBytes(3)
-		r.IncWriteBytes(4)
+		r.objStoreAccess.Requests.Get.Add(1)
+		r.objStoreAccess.Requests.Put.Add(2)
+		r.objStoreAccess.RecRead(11)
+		r.objStoreAccess.RecWrite(22)
+		r.IncClusterReadBytes(3)
+		r.IncClusterWriteBytes(4)
 		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
 			md := data.(*common.MeteringData)
 			require.Len(t, md.Data, 1)
 			checkMeterData(t, map[string]any{
-				getRequestsField: 1,
-				putRequestsField: 2,
-				readBytesField:   3,
-				writeBytesField:  4,
+				getRequestsField:        1,
+				putRequestsField:        2,
+				objStoreReadBytesField:  11,
+				objStoreWriteBytesField: 22,
+				clusterReadBytesField:   3,
+				clusterWriteBytesField:  4,
 			}, md.Data[0])
 			return nil
 		})
@@ -228,7 +270,7 @@ func TestMeterFlush(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 
 		// flush with new data, only new data are written.
-		r.objStoreReqs.Put.Add(100)
+		r.objStoreAccess.Requests.Put.Add(100)
 		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
 			md := data.(*common.MeteringData)
 			require.Len(t, md.Data, 1)
@@ -246,7 +288,7 @@ func TestMeterFlush(t *testing.T) {
 		setupMeterForTest(t, meter)
 		r := RegisterRecorder(&proto.TaskBase{ID: 1})
 		require.Contains(t, meter.recorders, int64(1))
-		r.objStoreReqs.Get.Add(1)
+		r.objStoreAccess.Requests.Get.Add(1)
 		require.Empty(t, meter.lastFlushedData)
 		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
 			return goerrors.New("some err")
@@ -256,7 +298,7 @@ func TestMeterFlush(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 
 		// flush again, we should write the accumulated data
-		r.objStoreReqs.Get.Add(3)
+		r.objStoreAccess.Requests.Get.Add(3)
 		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
 			md := data.(*common.MeteringData)
 			require.Len(t, md.Data, 1)
@@ -309,10 +351,12 @@ func TestMeterSimpleFlushAndReadBack(t *testing.T) {
 	data := readMeteringData(t, reader, writeTime.Add(-time.Minute).Unix())
 	require.Len(t, data, 0)
 	recorder := RegisterRecorder(&proto.TaskBase{ID: 1, Keyspace: "ks1"})
-	recorder.objStoreReqs.Get.Add(10)
-	recorder.objStoreReqs.Put.Add(20)
-	recorder.IncReadBytes(300)
-	recorder.IncWriteBytes(400)
+	recorder.objStoreAccess.Requests.Get.Add(10)
+	recorder.objStoreAccess.Requests.Put.Add(20)
+	recorder.objStoreAccess.RecRead(11)
+	recorder.objStoreAccess.RecWrite(22)
+	recorder.IncClusterReadBytes(300)
+	recorder.IncClusterWriteBytes(400)
 	meter.flush(context.Background(), writeTime.Unix())
 	data = readMeteringData(t, reader, writeTime.Add(-time.Minute).Unix())
 	require.Len(t, data, 0)
@@ -323,8 +367,10 @@ func TestMeterSimpleFlushAndReadBack(t *testing.T) {
 	require.Equal(t, "dxf", data[0]["source_name"])
 	require.Equal(t, float64(10), data[0][getRequestsField].(float64))
 	require.Equal(t, float64(20), data[0][putRequestsField].(float64))
-	require.Equal(t, float64(300), data[0][readBytesField].(float64))
-	require.Equal(t, float64(400), data[0][writeBytesField].(float64))
+	require.Equal(t, float64(11), data[0][objStoreReadBytesField].(float64))
+	require.Equal(t, float64(22), data[0][objStoreWriteBytesField].(float64))
+	require.Equal(t, float64(300), data[0][clusterReadBytesField].(float64))
+	require.Equal(t, float64(400), data[0][clusterWriteBytesField].(float64))
 }
 
 func createLocalMeter(t *testing.T, dir string) (*Meter, *meteringreader.MeteringReader) {

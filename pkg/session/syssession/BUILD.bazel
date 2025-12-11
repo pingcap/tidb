@@ -45,6 +45,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessiontxn",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",

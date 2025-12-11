@@ -207,18 +207,18 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	}
 
 	var (
-		reqRec   = &recording.Requests{}
-		objStore storage.ExternalStorage
+		accessRec = &recording.AccessStats{}
+		objStore  storage.ExternalStorage
 	)
 	if r.isGlobalSort() {
-		reqRec, objStore, err = handle.NewObjStoreWithRecording(ctx, r.cloudStorageURI)
+		accessRec, objStore, err = handle.NewObjStoreWithRecording(ctx, r.cloudStorageURI)
 		if err != nil {
 			return err
 		}
 		defer func() {
 			objStore.Close()
-			r.summary.MergeObjStoreRequests(reqRec)
-			r.GetMeterRecorder().MergeObjStoreRequests(reqRec)
+			r.summary.MergeObjStoreRequests(&accessRec.Requests)
+			r.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 		}()
 	}
 	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
@@ -228,7 +228,6 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	wctx := workerpool.NewContext(ctx)
 	defer wctx.Cancel()
-	r.summary.Reset()
 
 	concurrency := int(r.GetResource().CPU.Capacity())
 	if r.isGlobalSort() {
@@ -239,6 +238,10 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return r.summary
+}
+
+func (r *readIndexStepExecutor) ResetSummary() {
+	r.summary.Reset()
 }
 
 func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
@@ -483,12 +486,11 @@ func newDistTaskRowCntCollector(
 
 func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
-	d.meterRec.IncReadBytes(uint64(bytes))
+	d.meterRec.IncClusterReadBytes(uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
-	d.meterRec.IncWriteBytes(uint64(bytes))
 }

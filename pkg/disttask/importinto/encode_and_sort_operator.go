@@ -120,13 +120,14 @@ func newChunkWorker(
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
+					op.sharedVars.indexKVFileCount.Add(int64(summary.KVFileCount))
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
 				SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
-			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
+			writerID := path.Join("index", external.IndexID2KVGroup(indexID), workerUUID)
 			writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 			return writer, nil
 		}
@@ -135,13 +136,14 @@ func newChunkWorker(
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
+				op.sharedVars.dataKVFileCount.Add(int64(summary.KVFileCount))
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
-		writerID := path.Join("data", workerUUID)
+		writerID := path.Join(external.DataKVGroup, workerUUID)
 		writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 		w.dataWriter = external.NewEngineWriter(writer)
 

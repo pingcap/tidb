@@ -17,6 +17,7 @@ package importinto
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -76,12 +77,6 @@ func (m *ImportStepMeta) Marshal() ([]byte, error) {
 	return m.BaseExternalMeta.Marshal(m)
 }
 
-const (
-	// dataKVGroup is the group name of the sorted kv for data.
-	// index kv will be stored in a group named as index-id.
-	dataKVGroup = "data"
-)
-
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
 	external.BaseExternalMeta
@@ -139,6 +134,8 @@ type SharedVars struct {
 	SortedIndexMetas map[int64]*external.SortedKVMeta
 	ShareMu          sync.Mutex
 	globalSortStore  storage.ExternalStorage
+	dataKVFileCount  *atomic.Int64
+	indexKVFileCount *atomic.Int64
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {

@@ -101,7 +101,7 @@ type countPartialWithDistinct4Int struct {
 func (*countPartialWithDistinct4Int) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4CountDistinctInt)(src), (*partialResult4CountDistinctInt)(dst)
 
-	for val := range s.valSet.Int64Set {
+	for val := range s.valSet.M {
 		if d.valSet.Exist(val) {
 			continue
 		}
@@ -168,7 +168,7 @@ type countPartialWithDistinct4Real struct {
 func (*countPartialWithDistinct4Real) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4CountDistinctReal)(src), (*partialResult4CountDistinctReal)(dst)
 
-	for val := range s.valSet.Float64Set {
+	for val := range s.valSet.M {
 		if d.valSet.Exist(val) {
 			continue
 		}
@@ -235,7 +235,7 @@ type countPartialWithDistinct4Decimal struct {
 func (*countPartialWithDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4CountDistinctDecimal)(src), (*partialResult4CountDistinctDecimal)(dst)
 
-	for val := range s.valSet.StringSet {
+	for val := range s.valSet.M {
 		if d.valSet.Exist(val) {
 			continue
 		}
@@ -309,7 +309,7 @@ type countPartialWithDistinct4Duration struct {
 func (*countPartialWithDistinct4Duration) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4CountDistinctDuration)(src), (*partialResult4CountDistinctDuration)(dst)
 
-	for val := range s.valSet.Int64Set {
+	for val := range s.valSet.M {
 		if d.valSet.Exist(val) {
 			continue
 		}
@@ -377,7 +377,7 @@ type countPartialWithDistinct4String struct {
 func (*countPartialWithDistinct4String) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4CountDistinctString)(src), (*partialResult4CountDistinctString)(dst)
 
-	for val := range s.valSet.StringSet {
+	for val := range s.valSet.M {
 		if d.valSet.Exist(val) {
 			continue
 		}
@@ -446,7 +446,7 @@ type countPartialWithDistinct struct {
 func (*countPartialWithDistinct) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4CountWithDistinct)(src), (*partialResult4CountWithDistinct)(dst)
 
-	for val := range s.valSet.StringSet {
+	for val := range s.valSet.M {
 		if d.valSet.Exist(val) {
 			continue
 		}

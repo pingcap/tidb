@@ -110,12 +110,12 @@ type baseGroupConcatDistinct4String struct {
 func (e *baseGroupConcatDistinct4String) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 
-	if len(p.valSet.Data) == 0 {
+	if p.valSet.Len() == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
 
-	for _, val := range p.valSet.Data {
+	for _, val := range p.valSet.M {
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
 		} else {
@@ -271,7 +271,7 @@ type groupPartialConcatDistinct struct {
 func (e *groupPartialConcatDistinct) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4GroupConcatDistinct)(src), (*partialResult4GroupConcatDistinct)(dst)
 
-	for key, val := range s.valSet.Data {
+	for key, val := range s.valSet.M {
 		if d.valSet.Exist(key) {
 			continue
 		}

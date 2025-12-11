@@ -10,6 +10,7 @@ go_library(
         "file.go",
         "iter.go",
         "kv_reader.go",
+        "kvgroup.go",
         "merge.go",
         "merge_v2.go",
         "onefile_writer.go",

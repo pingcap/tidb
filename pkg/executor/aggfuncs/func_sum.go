@@ -361,7 +361,7 @@ type sum4PartialDistinctFloat64 struct {
 
 func (*sum4PartialDistinctFloat64) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4SumDistinctFloat64)(src), (*partialResult4SumDistinctFloat64)(dst)
-	for val := range s.valSet.Float64Set {
+	for val := range s.valSet.M {
 		if d.valSet.Exist(val) {
 			continue
 		}
@@ -432,7 +432,7 @@ type sum4PartialDistinct4Decimal struct {
 
 func (*sum4PartialDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4SumDistinctDecimal)(src), (*partialResult4SumDistinctDecimal)(dst)
-	for key, val := range s.valSet.Data {
+	for key, val := range s.valSet.M {
 		if d.valSet.Exist(key) {
 			continue
 		}

@@ -316,6 +316,21 @@ const (
 	Version2 = 2
 )
 
+// IsAnalyzed checks whether statistics are analyzed based on stats version.
+func IsAnalyzed(statsVer int64) bool {
+	return statsVer != Version0
+}
+
+// IsColumnAnalyzedOrSynthesized checks whether column statistics are available based on raw storage values.
+// This includes both analyzed stats (statsVer != Version0) and synthesized stats from default values
+// (which have statsVer == Version0 but ndv > 0 or nullCount > 0).
+// This function is used to determine the 'analyzed' flag when inserting column stats into ColAndIdxExistenceMap.
+// NOTE: Synthesized stats are only applicable to column stats, not index stats.
+// They are only created when adding a column with a default value. See: InsertColStats2KV
+func IsColumnAnalyzedOrSynthesized(statsVer int64, ndv int64, nullCount int64) bool {
+	return IsAnalyzed(statsVer) || ndv > 0 || nullCount > 0
+}
+
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
 func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {

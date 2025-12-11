@@ -15,7 +15,7 @@
 package recording
 
 import (
-	"context"
+	"fmt"
 	"net/http"
 	"sync/atomic"
 )
@@ -26,8 +26,8 @@ type Requests struct {
 	Put atomic.Uint64
 }
 
-// Rec records a request made to the object storage.
-func (r *Requests) Rec(httpReq *http.Request) {
+// rec records a request made to the object storage.
+func (r *Requests) rec(httpReq *http.Request) {
 	if httpReq == nil {
 		return
 	}
@@ -48,25 +48,60 @@ func (r *Requests) Merge(other *Requests) {
 	r.Put.Add(other.Put.Load())
 }
 
-// Traffic records the amount of data read and written to object storage.
+// String implements the fmt.Stringer interface.
+func (r *Requests) String() string {
+	return fmt.Sprintf("{get: %d, put: %d}", r.Get.Load(), r.Put.Load())
+}
+
+// Traffic records the amount of bytes read and written to object storage.
 type Traffic struct {
 	Read  atomic.Uint64
 	Write atomic.Uint64
 }
 
-type contextKeyType struct{}
-
-var contextKey = contextKeyType{}
-
-// WithRequests returns a new context with the recording info.
-func WithRequests(ctx context.Context, store *Requests) context.Context {
-	return context.WithValue(ctx, contextKey, store)
+// String implements the fmt.Stringer interface.
+func (t *Traffic) String() string {
+	return fmt.Sprintf("{r: %d, w: %d}", t.Read.Load(), t.Write.Load())
 }
 
-// GetRequests the recording info of this context.
-func GetRequests(ctx context.Context) *Requests {
-	if r, ok := ctx.Value(contextKey).(*Requests); ok {
-		return r
+// AccessStats records the access statistics of object storage.
+type AccessStats struct {
+	Requests Requests
+	Traffic  Traffic
+}
+
+// Merge merges another AccessStats into this one.
+func (s *AccessStats) Merge(other *AccessStats) {
+	s.Requests.Merge(&other.Requests)
+	s.Traffic.Read.Add(other.Traffic.Read.Load())
+	s.Traffic.Write.Add(other.Traffic.Write.Load())
+}
+
+// RecRequest records a request made to the object storage.
+func (s *AccessStats) RecRequest(httpReq *http.Request) {
+	if s == nil {
+		return
 	}
-	return nil
+	s.Requests.rec(httpReq)
+}
+
+// RecRead records n bytes read from object storage.
+func (s *AccessStats) RecRead(n int) {
+	if s == nil {
+		return
+	}
+	s.Traffic.Read.Add(uint64(n))
+}
+
+// RecWrite records n bytes written to object storage.
+func (s *AccessStats) RecWrite(n int) {
+	if s == nil {
+		return
+	}
+	s.Traffic.Write.Add(uint64(n))
+}
+
+// String implements the fmt.Stringer interface.
+func (s *AccessStats) String() string {
+	return fmt.Sprintf("{requests: %s, traffic: %s}", s.Requests.String(), s.Traffic.String())
 }

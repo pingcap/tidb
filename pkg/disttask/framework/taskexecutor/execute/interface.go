@@ -49,6 +49,9 @@ type StepExecutor interface {
 	// RealtimeSummary returns the realtime summary of the running subtask by this executor.
 	RealtimeSummary() *SubtaskSummary
 
+	// ResetSummary resets the summary of the running subtask by this executor.
+	ResetSummary()
+
 	// Cleanup is used to clean up the environment for this step.
 	// the returned error will not affect task/subtask state, it's only logged,
 	// so don't put code that's prone to error in it.

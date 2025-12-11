@@ -52,8 +52,9 @@ const (
 
 // KS3Storage acts almost same as S3Storage except it's used for kingsoft s3.
 type KS3Storage struct {
-	svc     *s3.S3 // https://github.com/ks3sdklib/aws-sdk-go/issues/28
-	options *backuppb.S3
+	svc       *s3.S3 // https://github.com/ks3sdklib/aws-sdk-go/issues/28
+	options   *backuppb.S3
+	accessRec *recording.AccessStats
 }
 
 // NewKS3Storage initialize a new s3 storage for metadata.
@@ -106,11 +107,11 @@ func NewKS3Storage(
 	}
 	c := s3.New(awsConfig)
 
-	if reqRec := recording.GetRequests(ctx); reqRec != nil {
+	if opts.AccessRecording != nil {
 		// unlike AWS SDK, ks3 only support change handlers after we initialize
 		// the client, so no need to call defaults.Handlers().
 		c.Handlers.Send.PushBack(func(r *aws.Request) {
-			reqRec.Rec(r.HTTPRequest)
+			opts.AccessRecording.RecRequest(r.HTTPRequest)
 		})
 	}
 
@@ -126,8 +127,9 @@ func NewKS3Storage(
 	}
 
 	return &KS3Storage{
-		svc:     c,
-		options: &qs,
+		svc:       c,
+		options:   &qs,
+		accessRec: opts.AccessRecording,
 	}, nil
 }
 
@@ -281,6 +283,7 @@ func (rs *KS3Storage) WriteFile(ctx context.Context, file string, data []byte) e
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
+	rs.accessRec.RecWrite(len(data))
 	return errors.Trace(err)
 }
 
@@ -301,6 +304,7 @@ func (rs *KS3Storage) ReadFile(ctx context.Context, file string) ([]byte, error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	rs.accessRec.RecRead(len(data))
 	return data, nil
 }
 
@@ -590,6 +594,7 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
+	r.storage.accessRec.RecRead(n)
 	r.pos += int64(n)
 	return
 }
@@ -737,7 +742,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 

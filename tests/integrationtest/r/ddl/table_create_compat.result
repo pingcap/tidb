@@ -1,0 +1,51 @@
+CREATE TABLE a (id INT PRIMARY KEY) AUTOEXTEND_SIZE=4M;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 54 near ""The AUTOEXTEND_SIZE option is parsed but ignored by all storage engines. 
+DROP TABLE a;
+CREATE TABLE a (id INT PRIMARY KEY) PAGE_CHECKSUM=1;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near ""The PAGE_CHECKSUM option is parsed but ignored by all storage engines. 
+DROP TABLE a;
+CREATE TABLE b (id INT PRIMARY KEY) PAGE_COMPRESSED=1;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 53 near ""The PAGE_COMPRESSED option is parsed but ignored by all storage engines. 
+DROP TABLE b;
+CREATE TABLE c (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 60 near ""The PAGE_COMPRESSION_LEVEL option is parsed but ignored by all storage engines. 
+DROP TABLE c;
+CREATE TABLE d (id int PRIMARY KEY) TRANSACTIONAL=0;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near ""The TRANSACTIONAL option is parsed but ignored by all storage engines. 
+DROP TABLE d;
+CREATE TABLE e (id int PRIMARY KEY) IETF_QUOTES=YES;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near ""The IETF_QUOTES option is parsed but ignored by all storage engines. 
+DROP TABLE e;
+CREATE TABLE f (id int PRIMARY KEY) SEQUENCE=1;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 46 near ""The SEQUENCE option is parsed but ignored by all storage engines. Use CREATE SEQUENCE instead. 
+DROP TABLE f;
+CREATE TABLE g (id int PRIMARY KEY) ENGINE=MyISAM;
+SHOW WARNINGS;
+Level	Code	Message
+DROP TABLE g;
+CREATE TABLE h (id int PRIMARY KEY) ENGINE=Aria;
+SHOW WARNINGS;
+Level	Code	Message
+DROP TABLE h;
+CREATE TABLE i (id int PRIMARY KEY) ENGINE=MyRocks;
+SHOW WARNINGS;
+Level	Code	Message
+DROP TABLE i;
+CREATE TABLE j (id int PRIMARY KEY) ENGINE=TokuDB;
+SHOW WARNINGS;
+Level	Code	Message
+DROP TABLE j;

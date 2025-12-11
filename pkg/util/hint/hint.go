@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -579,6 +578,14 @@ type HintedTable struct {
 	Matched      bool        // whether this hint is applied successfully
 }
 
+// Match checks whether the hint is matched with the given dbName and tblName.
+func (hint *HintedTable) Match(other *HintedTable) bool {
+	return hint.SelectOffset == other.SelectOffset &&
+		hint.TblName.L == other.TblName.L &&
+		(hint.DBName.L == other.DBName.L ||
+			hint.DBName.L == "*" || other.DBName.L == "*") // for cross-db bindings, e.g. *.t
+}
+
 // HintedIndex indicates which index this hint should take effect on.
 type HintedIndex struct {
 	DBName         ast.CIStr      // the database name
@@ -719,7 +726,7 @@ func (*PlanHints) matchTiKVOrTiFlash(tableName *HintedTable, hintTables []Hinted
 		return nil
 	}
 	for i, tbl := range hintTables {
-		if tableName.DBName.L == tbl.DBName.L && tableName.TblName.L == tbl.TblName.L && tbl.SelectOffset == tableName.SelectOffset {
+		if tbl.Match(tableName) {
 			hintTables[i].Matched = true
 			return &tbl
 		}
@@ -742,9 +749,7 @@ func (*PlanHints) MatchTableName(tables []*HintedTable, hintTables []HintedTable
 			if table == nil {
 				continue
 			}
-			if (curEntry.DBName.L == table.DBName.L || curEntry.DBName.L == "*") &&
-				curEntry.TblName.L == table.TblName.L &&
-				table.SelectOffset == curEntry.SelectOffset {
+			if curEntry.Match(table) {
 				hintTables[i].Matched = true
 				hintMatched = true
 				break
@@ -856,15 +861,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			case HintNoOrderIndex:
 				hintType = ast.HintNoOrderIndex
 			case HintIndexLookUpPushDown:
-				inapplicableMsg := ""
-				switch {
-				case !kerneltype.IsClassic():
-					inapplicableMsg = "only classic kernel type is supported"
-				case len(hint.Indexes) == 0:
-					inapplicableMsg = "the index names should be specified"
-				}
-				if inapplicableMsg != "" {
-					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, " + inapplicableMsg)
+				if len(hint.Indexes) == 0 {
+					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified")
 					continue
 				}
 				hintType = ast.HintUse

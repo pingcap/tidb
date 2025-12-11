@@ -26,6 +26,7 @@ go_library(
         "//pkg/ddl",
         "//pkg/disttask/framework/dxfmetric",
         "//pkg/disttask/framework/handle",
+        "//pkg/disttask/framework/metering",
         "//pkg/disttask/framework/planner",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler",

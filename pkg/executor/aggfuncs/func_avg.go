@@ -292,7 +292,7 @@ type avgPartial4DistinctDecimal struct {
 
 func (*avgPartial4DistinctDecimal) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4AvgDistinctDecimal)(src), (*partialResult4AvgDistinctDecimal)(dst)
-	for key, val := range s.valSet.Data {
+	for key, val := range s.valSet.M {
 		if d.valSet.Exist(key) {
 			continue
 		}
@@ -530,7 +530,7 @@ type avgPartial4DistinctFloat64 struct {
 
 func (*avgPartial4DistinctFloat64) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	s, d := (*partialResult4AvgDistinctFloat64)(src), (*partialResult4AvgDistinctFloat64)(dst)
-	for val := range s.valSet.Float64Set {
+	for val := range s.valSet.M {
 		if d.valSet.Exist(val) {
 			continue
 		}
