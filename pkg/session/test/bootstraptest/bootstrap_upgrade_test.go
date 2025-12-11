@@ -994,6 +994,9 @@ func TestUpgradeBindInfo(t *testing.T) {
 }
 
 func TestUpgradeVersion254(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	ctx := context.Background()
 
 	// Test case 1: Pre-8.3.0 cluster (version 209) upgrading to current
