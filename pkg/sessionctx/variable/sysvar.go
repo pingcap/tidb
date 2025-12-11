@@ -3833,15 +3833,6 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(vardef.GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
-	{
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
-		Name:  vardef.TiDBTranslateSoftDeleteSQL,
-		Type:  vardef.TypeBool,
-		Value: BoolToOnOff(vardef.DefTiDBTranslateSoftdeleteSQL),
-		SetSession: func(s *SessionVars, val string) error {
-			s.SoftDeleteRewrite = TiDBOptOn(val)
-			return nil
-		}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

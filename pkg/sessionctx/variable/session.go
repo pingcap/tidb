@@ -1798,9 +1798,6 @@ type SessionVars struct {
 
 	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
 	OutPacketBytes atomic.Uint64
-
-	// SoftDeleteRewrite enables SQL rewriting for softdelete tables.
-	SoftDeleteRewrite bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
