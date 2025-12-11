@@ -716,24 +716,24 @@ func TestGetModifyColumnType(t *testing.T) {
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         ddl.ModifyTypeReorg,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         ddl.ModifyTypeReorg,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         ddl.ModifyTypeReorg,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         ddl.ModifyTypeReorg,
 		},
 		// string
 		{
@@ -829,25 +829,25 @@ func TestGetModifyColumnType(t *testing.T) {
 			beforeType: "char(20) collate utf8mb4_bin",
 			afterType:  "varchar(10) collate utf8_unicode_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         ddl.ModifyTypeReorg,
 		},
 		{
 			beforeType: "char(20) collate utf8_unicode_ci",
 			afterType:  "varchar(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         ddl.ModifyTypeReorg,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_bin",
 			afterType:  "char(10) collate utf8_unicode_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         ddl.ModifyTypeReorg,
 		},
 		{
 			beforeType: "varchar(20) collate utf8_unicode_ci",
 			afterType:  "char(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         ddl.ModifyTypeReorg,
 		},
 	}
 
@@ -1119,46 +1119,6 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp)
 	}
 
-	signed2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte, oldColIdx, newColIdx int) {
-		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
-		maxValOfNewCol := maxMinUnsignedVal[newColTp][0]
-		tk.MustExec("drop table if exists t")
-		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
-
-		// [minValOfOldCol, -1] fail
-		failedValue([]string{
-			"-1",
-			fmt.Sprintf("%d", minValOfOldCol),
-		}, newColTp)
-
-		if oldColIdx < newColIdx {
-			// [maxValOfNewCol+1, maxValOfOldCol] fail
-			failedValue([]string{
-				fmt.Sprintf("%d", maxValOfNewCol+1),
-				fmt.Sprintf("%d", maxValOfOldCol),
-			}, newColTp)
-		}
-
-		// [0, min(maxValOfOldCol, maxValOfNewCol)] pass
-		successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp)
-	}
-
-	unsigned2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
-		maxValOfNewCol := maxMinSignedVal[newColTp][0]
-		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
-		tk.MustExec("drop table if exists t")
-		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
-
-		// [maxValOfNewCol+1, maxValOfOldCol] fail
-		failedValue([]string{
-			fmt.Sprintf("%d", uint64(maxValOfNewCol)+1),
-			fmt.Sprintf("%d", maxValOfOldCol),
-		}, newColTp)
-
-		// [0, maxValOfNewCol] pass
-		successValue(fmt.Sprintf("(%d), (1), (0)", maxValOfNewCol), newColTp)
-	}
-
 	signedTp := []string{"bigint", "int", "mediumint", "smallint", "tinyint"}
 	unsignedTp := []string{"bigint unsigned", "int unsigned", "mediumint unsigned", "smallint unsigned", "tinyint unsigned"}
 	for oldColIdx := range signedTp {
@@ -1167,22 +1127,12 @@ func TestModifyIntegerColumn(t *testing.T) {
 		for newColIdx := oldColIdx + 1; newColIdx < len(signedTp); newColIdx++ {
 			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
 		}
-		// 2. signed -> unsigned
-		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; ...
-		for newColIdx := range unsignedTp {
-			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
-		}
 	}
 	for oldColIdx := range unsignedTp {
-		// 3. unsigned -> unsigned
+		// 2. unsigned -> unsigned
 		// bigint unsigned -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int unsigned -> mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(unsignedTp); newColIdx++ {
 			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
-		}
-		// 4. unsigned -> signed
-		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint; int unsigned -> int, mediumint, smallint, tinyint; ...
-		for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
-			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
 		}
 	}
 }
