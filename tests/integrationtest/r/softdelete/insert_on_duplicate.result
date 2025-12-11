@@ -9,6 +9,13 @@ id	v
 3	666
 4	666
 5	15
+select * from t;
+id	v
+1	11
+2	12
+3	666
+4	666
+5	15
 truncate table t;
 insert into t (id, v) values (1, 1), (2, 2), (3, 3);
 update t set _tidb_softdelete_time = now() where id = 1;
@@ -20,7 +27,6 @@ Level	Code	Message
 Warning	1366	Incorrect int value: '0' for column 'v' at row 1
 select id, v, isnull(_tidb_softdelete_time) from t;
 id	v	isnull(_tidb_softdelete_time)
-1	1	0
 2	0	1
 3	3	1
 insert into t values (2, 22) on duplicate key update id = 3;
@@ -31,7 +37,6 @@ Level	Code	Message
 Warning	1062	Duplicate entry '3' for key 't.PRIMARY'
 select id, v, isnull(_tidb_softdelete_time) from t;
 id	v	isnull(_tidb_softdelete_time)
-1	1	0
 2	0	1
 3	3	1
 drop table t;
@@ -58,7 +63,6 @@ Level	Code	Message
 Warning	1366	Incorrect int value: '0' for column 'v' at row 1
 select id, v, isnull(_tidb_softdelete_time) from t;
 id	v	isnull(_tidb_softdelete_time)
-1	1	0
 2	0	1
 3	3	1
 insert into t values (2, 22) on duplicate key update id = 3;
@@ -69,7 +73,6 @@ Level	Code	Message
 Warning	1062	Duplicate entry '3' for key 't.PRIMARY'
 select id, v, isnull(_tidb_softdelete_time) from t;
 id	v	isnull(_tidb_softdelete_time)
-1	1	0
 2	0	1
 3	3	1
 create table t1 (id int primary key, v1 int unique, v2 int unique, v3 int unique) softdelete = 'on';

@@ -783,11 +783,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		commonNames := make([]string, 0, len(lNames))
 		lNameMap := make(map[string]int, len(lNames))
 		rNameMap := make(map[string]int, len(rNames))
-		for _, name := range lNames {
+		for i, name := range lNames {
 			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
-			if name.ColName.L == model.ExtraHandleName.L ||
-				name.ColName.L == model.ExtraCommitTSName.L ||
-				name.ColName.L == model.ExtraPhysTblIDName.L {
+			if lColumns[i].IsInvisible {
 				continue
 			}
 			// record left map
@@ -797,11 +795,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 				lNameMap[name.ColName.L] = 1
 			}
 		}
-		for _, name := range rNames {
+		for i, name := range rNames {
 			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
-			if name.ColName.L == model.ExtraHandleName.L ||
-				name.ColName.L == model.ExtraCommitTSName.L ||
-				name.ColName.L == model.ExtraPhysTblIDName.L {
+			if rColumns[i].IsInvisible {
 				continue
 			}
 			// record right map
@@ -830,9 +826,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	commonLen := 0
 	for i, lName := range lNames {
 		// Natural join should ignore _tidb_rowid and _tidb_commit_ts
-		if lName.ColName.L == model.ExtraHandleName.L ||
-			lName.ColName.L == model.ExtraCommitTSName.L ||
-			lName.ColName.L == model.ExtraPhysTblIDName.L {
+		if lColumns[i].IsInvisible {
 			continue
 		}
 		for j := commonLen; j < len(rNames); j++ {
@@ -3585,7 +3579,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID && col.ID != model.ExtraCommitTSID {
+			!col.IsInvisible {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -3816,6 +3810,15 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 		originalFields = sel.Fields.Fields
+	}
+
+	// After unfolding wildstar and all join conditions are handled, we need to reset the IsInvisible flag of columns
+	// in the schema. This is because this flag will be passed to upper operators, but in the outer select block of the
+	// original SQL, these columns should not be invisible. For example:
+	// SELECT * FROM (SELECT _tidb_rowid FROM t) as tmp;
+	// The _tidb_rowid column should be visible in the outer select block.
+	for _, col := range p.Schema().Columns {
+		col.IsInvisible = false
 	}
 
 	var gbyExprs []ast.ExprNode
@@ -4114,10 +4117,11 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 		}
 	}
 	pidCol := &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraPhysTblID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraPhysTblIDName),
+		RetType:     types.NewFieldType(mysql.TypeLonglong),
+		UniqueID:    ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:          model.ExtraPhysTblID,
+		OrigName:    fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraPhysTblIDName),
+		IsInvisible: true,
 	}
 
 	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
@@ -4634,6 +4638,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 		if col.IsPKHandleColumn(tableInfo) {
 			handleCols = util.NewIntHandleCols(newCol)
+		}
+		if (tableInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+			(tableInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L) {
+			newCol.IsInvisible = true
 		}
 		schema.Append(newCol)
 		ds.AppendTableCol(newCol)

@@ -6,6 +6,7 @@ update t set _tidb_softdelete_time = now() where id in (1, 2);
 # multiple duplicate id = 3, 4, multiple tombstone id = 1, 2
 insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666;
 select id, v from t where _tidb_softdelete_time is null;
+select * from t;
 
 # test insert ignore + on duplicate
 truncate table t;
