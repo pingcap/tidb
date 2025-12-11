@@ -176,7 +176,7 @@ func createEncoders(concurrency int, tableImporter *importer.TableImporter) (enc
 			}
 		}
 	}()
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		encoder, err := tableImporter.GetKVEncoderForDupResolve()
 		if err != nil {
 			return nil, err
