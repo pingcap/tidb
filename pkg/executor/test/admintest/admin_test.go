@@ -1530,8 +1530,8 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	getIndex := func() table.Index {
 		sctx.Store = store
 		is := domain.InfoSchema()
-		dbName := ast.NewCIStr("test")
-		tblName := ast.NewCIStr("admin_test")
+		dbName := pmodel..NewCIStr("test")
+		tblName := pmodel..NewCIStr("admin_test")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
