@@ -171,10 +171,6 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if job.IsRollingback() {
-		job.FinishDBJob(model.JobStateRollbackDone, model.StateNone, ver, dbInfo)
-		return ver, nil
-	}
 
 	if job.SchemaState == model.StateNone && dbInfo.ReadOnly == args.ReadOnly {
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)

@@ -779,7 +779,7 @@ func TestTTLDeleteError(t *testing.T) {
 	tk.MustExec("set global tidb_ttl_job_enable = off")
 	tk.MustExec("create database if not exists test; use test;drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(id BIGINT PRIMARY KEY, ts TIMESTAMP NOT NULL) TTL = `ts` + INTERVAL 1 SECOND  TTL_JOB_INTERVAL = '1m';")
-	tk.MustExec("insert into t values (1, now());")
+	tk.MustExec("insert into t values (1, now() - interval 10 second);")
 	tk.MustExec("alter schema test read only = 1")
 	tk.MustExec("set global tidb_ttl_job_enable = on")
 	lastJobSummary := "select last_job_summary from mysql.tidb_ttl_table_status;"
@@ -792,5 +792,5 @@ func TestTTLDeleteError(t *testing.T) {
 		json.Unmarshal([]byte(res[0][0].(string)), &m)
 		a := m["error_rows"] == 1
 		return a
-	}, 3*time.Minute, 5*time.Second)
+	}, time.Minute, 2*time.Second)
 }
