@@ -163,6 +163,7 @@ var tokenMap = map[string]int{
 	"ADD_COLUMNAR_REPLICA_ON_DEMAND": addColumnarReplicaOnDemand,
 	"ADMIN":                          admin,
 	"ADVISE":                         advise,
+	"AFFINITY":                       affinity,
 	"AFTER":                          after,
 	"AGAINST":                        against,
 	"AGO":                            ago,
