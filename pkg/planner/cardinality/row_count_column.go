@@ -29,12 +29,12 @@ import (
 
 func init() {
 	statistics.GetRowCountByColumnRanges = GetRowCountByColumnRanges
-	statistics.GetRowCountByIntColumnRanges = GetRowCountByIntColumnRanges
 	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
-func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range) (result statistics.RowEstimate, err error) {
+// PKIsHandle indicates whether the column is the single primary key column.
+func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range, pkIsHandle bool) (result statistics.RowEstimate, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c := coll.GetCol(colUniqueID)
 	colInfoID := colUniqueID
@@ -44,42 +44,24 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
 	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
 		var pseudoResult float64
-		pseudoResult, err = getPseudoRowCountByColumnRanges(sc.TypeCtx(), float64(coll.RealtimeCount), colRanges, 0)
-		if err != nil {
-			return statistics.DefaultRowEst(0), err
-		}
-		result = statistics.DefaultRowEst(pseudoResult)
-		return result, nil
-	}
-	result, err = GetColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
-	if err != nil {
-		return statistics.DefaultRowEst(0), errors.Trace(err)
-	}
-	return result, nil
-}
-
-// GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func GetRowCountByIntColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, intRanges []*ranger.Range) (result statistics.RowEstimate, err error) {
-	c := coll.GetCol(colUniqueID)
-	colInfoID := colUniqueID
-	if len(coll.UniqueID2colInfoID) > 0 {
-		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
-	}
-	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
-	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
-		if len(intRanges) == 0 {
-			return statistics.DefaultRowEst(0), nil
-		}
-		var pseudoResult float64
-		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
-			pseudoResult = getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.RealtimeCount))
+		if pkIsHandle {
+			if len(colRanges) == 0 {
+				return statistics.DefaultRowEst(0), nil
+			}
+			if colRanges[0].LowVal[0].Kind() == types.KindInt64 {
+				pseudoResult = getPseudoRowCountBySignedIntRanges(colRanges, float64(coll.RealtimeCount))
+			} else {
+				pseudoResult = getPseudoRowCountByUnsignedIntRanges(colRanges, float64(coll.RealtimeCount))
+			}
 		} else {
-			pseudoResult = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.RealtimeCount))
+			pseudoResult, err = getPseudoRowCountByColumnRanges(sc.TypeCtx(), float64(coll.RealtimeCount), colRanges, 0)
+			if err != nil {
+				return statistics.DefaultRowEst(0), err
+			}
 		}
-		result = statistics.DefaultRowEst(pseudoResult)
-		return result, nil
+		return statistics.DefaultRowEst(pseudoResult), nil
 	}
-	result, err = GetColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
+	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, pkIsHandle)
 	if err != nil {
 		return statistics.DefaultRowEst(0), errors.Trace(err)
 	}
@@ -135,8 +117,8 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	return rowEstimate, nil
 }
 
-// GetColumnRowCount estimates the row count by a slice of Range.
-func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (statistics.RowEstimate, error) {
+// getColumnRowCount estimates the row count by a slice of Range.
+func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (statistics.RowEstimate, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	var totalCount statistics.RowEstimate
 	for _, rg := range ranges {
@@ -283,7 +265,7 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 	// If it is a single column index, directly use column estimation instead.
 	if len(idxCols) == 1 {
 		var countEst statistics.RowEstimate
-		countEst, err = GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges)
+		countEst, err = GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges, false)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -316,7 +298,7 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 			colID = idxCols[i].UniqueID
 			// GetRowCountByColumnRanges handles invalid stats internally by using pseudo estimation
 			var countEst statistics.RowEstimate
-			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan, false)
 			if err != nil {
 				return 0, 0, errors.Trace(err)
 			}
