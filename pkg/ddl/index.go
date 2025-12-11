@@ -1434,29 +1434,6 @@ func extractColumnForModifyColumn(job *model.Job, tblInfo *model.TableInfo) *mod
 	return nil
 }
 
-func extractExtraColumns(job *model.Job, tblInfo *model.TableInfo) []string {
-	var extraColNames []string
-	switch job.Type {
-	case model.ActionModifyColumn:
-		if col := extractColumnForModifyColumn(job, tblInfo); col != nil {
-			extraColNames = append(extraColNames, col.Name.L)
-		}
-	case model.ActionMultiSchemaChange:
-		for i, subJob := range job.MultiSchemaInfo.SubJobs {
-			switch subJob.Type {
-			case model.ActionModifyColumn:
-				proxyJob := subJob.ToProxyJob(job, i)
-				if col := extractColumnForModifyColumn(&proxyJob, tblInfo); col != nil {
-					extraColNames = append(extraColNames, col.Name.L)
-				}
-			}
-		}
-
-	}
-
-	return extraColNames
-}
-
 func (w *worker) startAnalyzeAndWait(job *model.Job, tblInfo *model.TableInfo) {
 	done, timedOut, failed := w.analyzeTableInner(job, tblInfo, job.SchemaName)
 	failpoint.InjectCall("analyzeTableDone", job)
@@ -1522,12 +1499,7 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 				w.sessPool.Put(sessCtx)
 				close(doneCh)
 			}()
-
-			sql := fmt.Sprintf("ANALYZE TABLE `%s`.`%s`", dbName, tblName)
-			extraCols := extractExtraColumns(job, tblInfo)
-			if len(extraCols) > 0 {
-				sql = fmt.Sprintf("%s COLUMNS %s", sql, strings.Join(extraCols, ", "))
-			}
+			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
 
 			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
 			if !ok {
@@ -1539,12 +1511,7 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 				return err
 			}
 			failpoint.InjectCall("beforeAnalyzeTable")
-			_, _, err = exec.ExecRestrictedSQL(
-				w.ctx,
-				[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze},
-				sql,
-				"ddl analyze table",
-			)
+			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			failpoint.InjectCall("afterAnalyzeTable", &err)
 			if err != nil {
 				logutil.DDLLogger().Warn("analyze table failed",
