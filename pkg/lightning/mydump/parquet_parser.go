@@ -27,16 +27,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
-<<<<<<< HEAD
-	"github.com/xitongsys/parquet-go/parquet"
-	preader "github.com/xitongsys/parquet-go/reader"
-	"github.com/xitongsys/parquet-go/source"
-=======
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 	"go.uber.org/zap"
 )
 
@@ -277,7 +272,7 @@ func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeekerOpener, error) {
+func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
 	reader, err := pf.store.Open(pf.ctx, pf.path, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -296,7 +291,7 @@ func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeekerOpener, error) {
 // ParquetParser parses a parquet file for import
 // It implements the Parser interface.
 type ParquetParser struct {
-	reader   *file.Reader
+	readers  []*file.Reader
 	colTypes []convertedType
 	colNames []string
 
@@ -321,9 +316,9 @@ type ParquetParser struct {
 
 // Init initializes the Parquet parser and allocate necessary buffers
 func (pp *ParquetParser) Init(loc *time.Location) error {
-	meta := pp.reader.MetaData()
+	meta := pp.readers[0].MetaData()
 
-	pp.curRowGroup, pp.totalRowGroup, pp.totalRows = -1, pp.reader.NumRowGroups(), int(meta.NumRows)
+	pp.curRowGroup, pp.totalRowGroup, pp.totalRows = -1, pp.readers[0].NumRowGroups(), int(meta.NumRows)
 
 	numCols := meta.Schema.NumColumns()
 	pp.iterators = make([]iterator, numCols)
@@ -371,15 +366,15 @@ func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 			return io.EOF
 		}
 
-		rowGroup := pp.reader.RowGroup(pp.curRowGroup)
 		for c := range len(pp.iterators) {
+			rowGroup := pp.readers[c].RowGroup(pp.curRowGroup)
 			colReader, err := rowGroup.Column(c)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			pp.iterators[c].SetReader(colReader)
 		}
-		pp.readRowInGroup, pp.totalRowsInGroup = 0, int(pp.reader.MetaData().RowGroups[pp.curRowGroup].NumRows)
+		pp.readRowInGroup, pp.totalRowsInGroup = 0, int(pp.readers[0].MetaData().RowGroups[pp.curRowGroup].NumRows)
 	}
 
 	// Read in this group
@@ -389,112 +384,9 @@ func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 		}
 	}
 
-<<<<<<< HEAD
-	return &ParquetParser{
-		Reader:         reader,
-		columns:        columns,
-		columnMetas:    columnMetas,
-		logger:         log.FromContext(ctx),
-		readSeekCloser: wrapper,
-	}, nil
-}
-
-func convertToLogicType(se *parquet.SchemaElement) error {
-	logicalType := &parquet.LogicalType{}
-	switch *se.ConvertedType {
-	case parquet.ConvertedType_UTF8:
-		logicalType.STRING = &parquet.StringType{}
-	case parquet.ConvertedType_ENUM:
-		logicalType.ENUM = &parquet.EnumType{}
-	case parquet.ConvertedType_DECIMAL:
-		logicalType.DECIMAL = &parquet.DecimalType{
-			Scale:     *se.Scale,
-			Precision: *se.Precision,
-		}
-	case parquet.ConvertedType_DATE:
-		logicalType.DATE = &parquet.DateType{}
-	case parquet.ConvertedType_TIME_MILLIS:
-		logicalType.TIME = &parquet.TimeType{
-			IsAdjustedToUTC: true,
-			Unit: &parquet.TimeUnit{
-				MILLIS: parquet.NewMilliSeconds(),
-			},
-		}
-	case parquet.ConvertedType_TIME_MICROS:
-		logicalType.TIME = &parquet.TimeType{
-			IsAdjustedToUTC: true,
-			Unit: &parquet.TimeUnit{
-				MICROS: parquet.NewMicroSeconds(),
-			},
-		}
-	case parquet.ConvertedType_TIMESTAMP_MILLIS:
-		logicalType.TIMESTAMP = &parquet.TimestampType{
-			IsAdjustedToUTC: true,
-			Unit: &parquet.TimeUnit{
-				MILLIS: parquet.NewMilliSeconds(),
-			},
-		}
-	case parquet.ConvertedType_TIMESTAMP_MICROS:
-		logicalType.TIMESTAMP = &parquet.TimestampType{
-			IsAdjustedToUTC: true,
-			Unit: &parquet.TimeUnit{
-				MICROS: parquet.NewMicroSeconds(),
-			},
-		}
-	case parquet.ConvertedType_UINT_8:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 8,
-			IsSigned: false,
-		}
-	case parquet.ConvertedType_UINT_16:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 16,
-			IsSigned: false,
-		}
-	case parquet.ConvertedType_UINT_32:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 32,
-			IsSigned: false,
-		}
-	case parquet.ConvertedType_UINT_64:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 64,
-			IsSigned: false,
-		}
-	case parquet.ConvertedType_INT_8:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 8,
-			IsSigned: true,
-		}
-	case parquet.ConvertedType_INT_16:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 16,
-			IsSigned: true,
-		}
-	case parquet.ConvertedType_INT_32:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 32,
-			IsSigned: true,
-		}
-	case parquet.ConvertedType_INT_64:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 64,
-			IsSigned: true,
-		}
-	case parquet.ConvertedType_JSON:
-		logicalType.JSON = &parquet.JsonType{}
-	case parquet.ConvertedType_BSON:
-		logicalType.BSON = &parquet.BsonType{}
-	// case parquet.ConvertedType_INTERVAL, parquet.ConvertedType_MAP, parquet.ConvertedType_MAP_KEY_VALUE, parquet.ConvertedType_LIST:
-	default:
-		return errors.Errorf("unsupported type: '%s'", *se.ConvertedType)
-	}
-	se.LogicalType = logicalType
-=======
 	pp.totalReadBytes += estimateRowSize(row)
 	pp.totalReadRows++
 	pp.readRowInGroup++
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 	return nil
 }
 
@@ -541,7 +433,12 @@ func (pp *ParquetParser) Close() error {
 	if err := pp.resetIterators(); err != nil {
 		pp.logger.Warn("Close parquet parser get error", zap.Error(err))
 	}
-	return pp.reader.Close()
+	for _, r := range pp.readers {
+		if err := r.Close(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // ReadRow reads a row in the parquet file by the parser.
@@ -557,183 +454,11 @@ func (pp *ParquetParser) ReadRow() error {
 		return err
 	}
 
-<<<<<<< HEAD
-	row := pp.rows[pp.curIndex]
-	pp.curIndex++
-
-	v := reflect.ValueOf(row)
-	length := v.NumField()
-	if cap(pp.lastRow.Row) < length {
-		pp.lastRow.Row = make([]types.Datum, length)
-	} else {
-		pp.lastRow.Row = pp.lastRow.Row[:length]
-	}
-	for i := 0; i < length; i++ {
-		pp.lastRow.Length += getDatumLen(v.Field(i))
-		if err := setDatumValue(&pp.lastRow.Row[i], v.Field(i), pp.columnMetas[i], pp.logger); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func getDatumLen(v reflect.Value) int {
-	if v.Kind() == reflect.Ptr {
-		if v.IsNil() {
-			return 0
-		}
-		return getDatumLen(v.Elem())
-	}
-	if v.Kind() == reflect.String {
-		return len(v.String())
-	}
-	return 8
-}
-
-// convert a parquet value to Datum
-//
-// See: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md
-func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement, logger log.Logger) error {
-	switch v.Kind() {
-	case reflect.Bool:
-		if v.Bool() {
-			d.SetUint64(1)
-		} else {
-			d.SetUint64(0)
-		}
-	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		d.SetUint64(v.Uint())
-	case reflect.Int8, reflect.Int16:
-		d.SetInt64(v.Int())
-	case reflect.Int32, reflect.Int64:
-		return setDatumByInt(d, v.Int(), meta)
-	case reflect.String:
-		setDatumByString(d, v.String(), meta)
-	case reflect.Float32, reflect.Float64:
-		d.SetFloat64(v.Float())
-	case reflect.Ptr:
-		if !v.IsNil() {
-			return setDatumValue(d, v.Elem(), meta, logger)
-		}
-		d.SetNull()
-	default:
-		logger.Error("unknown value", zap.Stringer("kind", v.Kind()),
-			zap.String("type", v.Type().Name()), zap.Reflect("value", v.Interface()))
-		return errors.Errorf("unknown value: %v", v)
-	}
-	return nil
-}
-
-func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
-	if meta.LogicalType != nil && meta.LogicalType.DECIMAL != nil {
-		v = binaryToDecimalStr([]byte(v), int(meta.LogicalType.DECIMAL.Scale))
-	}
-	if meta.Type != nil && *meta.Type == parquet.Type_INT96 && len(v) == 96/8 {
-		ts := int96ToTime([]byte(v))
-		ts = ts.UTC()
-		v = ts.Format(utcTimeLayout)
-	}
-	d.SetString(v, "utf8mb4_bin")
-}
-
-func binaryToDecimalStr(rawBytes []byte, scale int) string {
-	negative := rawBytes[0] > 127
-	if negative {
-		for i := 0; i < len(rawBytes); i++ {
-			rawBytes[i] = ^rawBytes[i]
-		}
-		for i := len(rawBytes) - 1; i >= 0; i-- {
-			rawBytes[i]++
-			if rawBytes[i] != 0 {
-				break
-			}
-		}
-	}
-
-	intValue := big.NewInt(0)
-	intValue = intValue.SetBytes(rawBytes)
-	val := fmt.Sprintf("%0*d", scale, intValue)
-	dotIndex := len(val) - scale
-	var res strings.Builder
-	if negative {
-		res.WriteByte('-')
-	}
-	if dotIndex == 0 {
-		res.WriteByte('0')
-	} else {
-		res.WriteString(val[:dotIndex])
-	}
-	if scale > 0 {
-		res.WriteByte('.')
-		res.WriteString(val[dotIndex:])
-	}
-	return res.String()
-}
-
-// when the value type is int32/int64, convert to value to target logical type in tidb
-func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
-	if meta.ConvertedType == nil && meta.LogicalType == nil {
-		d.SetInt64(v)
-		return nil
-	}
-
-	logicalType := meta.LogicalType
-	switch {
-	case logicalType.DECIMAL != nil:
-		if logicalType.DECIMAL.Scale == 0 {
-			d.SetInt64(v)
-			return nil
-		}
-		minLen := logicalType.DECIMAL.Scale + 1
-		if v < 0 {
-			minLen++
-		}
-		val := fmt.Sprintf("%0*d", minLen, v)
-		dotIndex := len(val) - int(*meta.Scale)
-		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "utf8mb4_bin")
-	case logicalType.DATE != nil:
-		dateStr := time.Unix(v*86400, 0).Format(time.DateOnly)
-		d.SetString(dateStr, "utf8mb4_bin")
-	case logicalType.TIMESTAMP != nil:
-		// convert all timestamp types (datetime/timestamp) to string
-		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, timeLayout,
-			utcTimeLayout, logicalType.TIMESTAMP.IsAdjustedToUTC)
-		d.SetString(timeStr, "utf8mb4_bin")
-	case logicalType.TIME != nil:
-		// convert all timestamp types (datetime/timestamp) to string
-		timeStr := formatTime(v, logicalType.TIME.Unit, "15:04:05.999999", "15:04:05.999999Z",
-			logicalType.TIME.IsAdjustedToUTC)
-		d.SetString(timeStr, "utf8mb4_bin")
-	default:
-		d.SetInt64(v)
-	}
-	return nil
-}
-
-func formatTime(v int64, units *parquet.TimeUnit, format, utcFormat string, utc bool) string {
-	var t time.Time
-	if units.MICROS != nil {
-		t = time.UnixMicro(v)
-	} else if units.MILLIS != nil {
-		t = time.UnixMilli(v)
-	} else {
-		// nano
-		t = time.Unix(0, v)
-	}
-	t = t.UTC()
-	if utc {
-		return t.Format(utcFormat)
-	}
-	return t.Format(format)
-}
-
-=======
 	pp.lastRow.Row = row
 	pp.lastRow.Length = estimateRowSize(row)
 	return nil
 }
 
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 // LastRow gets the last row parsed by the parser.
 // It implements the Parser interface.
 func (pp *ParquetParser) LastRow() Row {
@@ -816,7 +541,7 @@ func NewParquetParser(
 	path string,
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
-	logger := log.Wrap(logutil.Logger(ctx))
+	logger := logutil.Logger(ctx)
 	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
 		wrapper = &parquetFileWrapper{
@@ -833,7 +558,7 @@ func NewParquetParser(
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
 
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop), file.WithPrefetch(8))
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -866,17 +591,37 @@ func NewParquetParser(
 		}
 	}
 
+	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
+	subreaders = append(subreaders, reader)
+	for i := 1; i < fileSchema.NumColumns(); i++ {
+		var newWrapper parquet.ReaderAtSeeker
+		// Open file for each column.
+		newWrapper, err = wrapper.Open()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		reader, err := file.NewParquetReader(newWrapper,
+			file.WithReadProps(prop),
+			file.WithMetadata(reader.MetaData()),
+		)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		subreaders = append(subreaders, reader)
+	}
+
 	numColumns := len(colTypes)
 	pool := zeropool.New(func() []types.Datum {
 		return make([]types.Datum, numColumns)
 	})
 
 	parser := &ParquetParser{
-		reader:   reader,
+		readers:  subreaders,
 		colTypes: colTypes,
 		colNames: colNames,
 		alloc:    allocator,
-		logger:   logger,
+		logger:   litlog.Logger{logger},
 		rowPool:  &pool,
 	}
 	if err := parser.Init(meta.Loc); err != nil {
@@ -911,7 +656,7 @@ func SampleStatisticsFromParquet(
 
 	var rowSize int64
 
-	reader := parser.reader
+	reader := parser.readers[0]
 	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
 		return 0, 0, nil
 	}

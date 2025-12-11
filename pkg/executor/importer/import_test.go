@@ -36,12 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -416,39 +411,6 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 		gotPath = append(gotPath, f.Path)
 	}
 	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
-<<<<<<< HEAD
-=======
-
-	testcases := []struct {
-		fileNames    []string
-		expectFormat string
-	}{
-		{
-			expectFormat: DataFormatCSV,
-			fileNames:    []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz", "file1.CSV.GZIP", "file1.CSV.gzip", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"},
-		},
-		{
-			expectFormat: DataFormatSQL,
-			fileNames:    []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zstd", "file2.sql.zst", "file2.sql.zst", "file2.sql.snappy"},
-		},
-		{
-			expectFormat: DataFormatParquet,
-			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy"},
-		},
-	}
-
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
-	for _, testcase := range testcases {
-		for _, fileName := range testcase.fileNames {
-			c.Format = DataFormatAuto
-			c.Path = path.Join(tempDir, fileName)
-			err = os.WriteFile(c.Path, []byte{}, 0o644)
-			require.NoError(t, err)
-			require.NoError(t, c.InitDataFiles(ctx))
-			require.Equal(t, testcase.expectFormat, c.Format)
-		}
-	}
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 }
 
 func TestGetDataSourceType(t *testing.T) {

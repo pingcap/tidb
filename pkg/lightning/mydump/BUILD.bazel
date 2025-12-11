@@ -35,6 +35,7 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/filter",
+        "//pkg/util/logutil",
         "//pkg/util/regexpr-router",
         "//pkg/util/set",
         "//pkg/util/slice",
@@ -42,15 +43,11 @@ go_library(
         "//pkg/util/table-filter",
         "//pkg/util/timeutil",
         "//pkg/util/zeropool",
-<<<<<<< HEAD
-=======
         "@com_github_apache_arrow_go_v18//arrow/memory",
         "@com_github_apache_arrow_go_v18//parquet",
         "@com_github_apache_arrow_go_v18//parquet/compress",
         "@com_github_apache_arrow_go_v18//parquet/file",
         "@com_github_apache_arrow_go_v18//parquet/schema",
-        "@com_github_go_sql_driver_mysql//:mysql",
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_spkg_bom//:bom",
@@ -109,13 +106,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
-<<<<<<< HEAD
-        "@com_github_xitongsys_parquet_go//parquet",
-        "@com_github_xitongsys_parquet_go//writer",
-        "@com_github_xitongsys_parquet_go_source//local",
-=======
-        "@org_uber_go_atomic//:atomic",
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",

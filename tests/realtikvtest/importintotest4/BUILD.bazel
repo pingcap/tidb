@@ -4,6 +4,7 @@ go_test(
     name = "importintotest4_test",
     timeout = "moderate",
     srcs = [
+        "cloud_sdk_test.go",
         "global_sort_test.go",
         "main_test.go",
         "split_file_test.go",
@@ -20,27 +21,20 @@ go_test(
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/config",
+        "//pkg/lightning/mydump",
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
-<<<<<<< HEAD
-=======
-        "//tests/realtikvtest/testutils",
         "@com_github_apache_arrow_go_v18//parquet",
         "@com_github_apache_arrow_go_v18//parquet/schema",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
         "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_golang_snappy//:snappy",
+        "@com_github_klauspost_compress//zstd",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//util",
-<<<<<<< HEAD
         "@com_github_tikv_pd_client//:client",
-=======
-        "@com_github_tikv_pd_client//opt",
-        "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_zap//:zap",
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
     ],
 )

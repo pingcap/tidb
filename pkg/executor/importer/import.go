@@ -26,9 +26,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
@@ -1113,15 +1115,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	s := e.dataStore
-<<<<<<< HEAD
-	var totalSize int64
-=======
 	var (
 		totalSize        int64
-		sourceType       mydump.SourceType
 		compressionRatio = 1.0
 	)
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 	dataFiles := []*mydump.SourceFileMeta{}
 	// check glob pattern is present in filename.
 	idx := strings.IndexAny(fileNameKey, "*[")
@@ -1139,15 +1136,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
-<<<<<<< HEAD
-=======
-		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
 		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
 		if err != nil {
 			return errors.Trace(err)
 		}
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1188,22 +1181,19 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		var err error
+		var once sync.Once
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				path, size := f.Path, f.Size
-<<<<<<< HEAD
-=======
 				// pick arbitrary one file to detect the format.
 				var err2 error
 				once.Do(func() {
-					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
 					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
 				})
 				if err2 != nil {
 					return nil, err2
 				}
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,

@@ -39,12 +39,6 @@ import (
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-<<<<<<< HEAD
-	"github.com/xitongsys/parquet-go/parquet"
-	"github.com/xitongsys/parquet-go/writer"
-=======
-	"go.uber.org/atomic"
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 )
 
 type testMydumpLoaderSuite struct {
@@ -1148,27 +1142,6 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	seed := time.Now().Unix()
 	t.Logf("seed: %d. To reproduce the random behaviour, manually set `rand.New(rand.NewSource(seed))`", seed)
 	rnd := rand.New(rand.NewSource(seed))
-<<<<<<< HEAD
-	totalRowSize := 0
-	for i := 0; i < count; i++ {
-		kl := rnd.Intn(20) + 1
-		key := make([]byte, kl)
-		kl, err = rnd.Read(key)
-		require.NoError(t, err)
-		vl := rnd.Intn(20) + 1
-		value := make([]byte, vl)
-		vl, err = rnd.Read(value)
-		require.NoError(t, err)
-
-		totalRowSize += kl + vl + 8
-		row := row{
-			ID:    int64(i),
-			Key:   string(key[:kl]),
-			Value: string(value[:vl]),
-		}
-		err = pwriter.Write(row)
-		require.NoError(t, err)
-=======
 	pc := []md.ParquetColumn{
 		{
 			Name:      "id",
@@ -1217,21 +1190,10 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 				return data, defLevels
 			},
 		},
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 	}
 	md.WriteParquetFile(s.sourceDir, fileName, pc, count)
 
-<<<<<<< HEAD
-	fileName := "test_1.t1.parquet"
-	err = store.WriteFile(ctx, fileName, bf.Bytes())
-	require.NoError(t, err)
-
-	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
-		Path: fileName,
-	}, store)
-=======
 	rowCount, rowSize, err := md.SampleStatisticsFromParquet(ctx, fileName, store)
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 	require.NoError(t, err)
 	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
 		Path: fileName,

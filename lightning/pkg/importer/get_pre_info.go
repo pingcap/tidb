@@ -507,14 +507,10 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 			}
 			break
 		}
-<<<<<<< HEAD
-		lastRowDatums := append([]types.Datum{}, parser.LastRow().Row...)
-=======
 		lastRowDatums := make([]types.Datum, 0, len(parser.LastRow().Row))
 		for _, d := range parser.LastRow().Row {
 			lastRowDatums = append(lastRowDatums, *d.Clone())
 		}
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 		rows = append(rows, lastRowDatums)
 	}
 	return parser.Columns(), rows, nil

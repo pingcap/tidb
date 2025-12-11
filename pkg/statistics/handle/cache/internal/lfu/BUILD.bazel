@@ -17,11 +17,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "@com_github_dgraph_io_ristretto//:ristretto",
-<<<<<<< HEAD
         "@org_golang_x_exp//maps",
-        "@org_golang_x_exp//rand",
-=======
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
         "@org_uber_go_zap//:zap",
     ],
 )

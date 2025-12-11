@@ -68,25 +68,7 @@ func TestParquetParser(t *testing.T) {
 
 	dir := t.TempDir()
 	name := "test123.parquet"
-<<<<<<< HEAD
-	testPath := filepath.Join(dir, name)
-	pf, err := local.NewLocalFileWriter(testPath)
-	require.NoError(t, err)
-	test := &Test{}
-	writer, err := writer2.NewParquetWriter(pf, test, 2)
-	require.NoError(t, err)
-
-	for i := 0; i < 100; i++ {
-		test.A = int32(i)
-		test.S = strconv.Itoa(i)
-		require.NoError(t, writer.Write(test))
-	}
-
-	require.NoError(t, writer.WriteStop())
-	require.NoError(t, pf.Close())
-=======
 	WriteParquetFile(dir, name, pc, 100)
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
@@ -245,18 +227,10 @@ func TestParquetVariousTypes(t *testing.T) {
 		"2020-10-29 09:27:52.356956Z",
 		"-123456.78", "0.0456", "1234567890123456.78", "-0.0001",
 	}
-<<<<<<< HEAD
-	row := reader.lastRow.Row
-	require.Len(t, rowValue, len(row))
-	for i := 0; i < len(row); i++ {
-		assert.Equal(t, types.KindString, row[i].Kind())
-		assert.Equal(t, row[i].GetString(), rowValue[i])
-=======
 	expectedTypes := []byte{
 		mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeTimestamp,
 		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 	}
 
 	row := reader.lastRow.Row

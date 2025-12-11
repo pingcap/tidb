@@ -86,23 +86,6 @@ var (
 	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
-<<<<<<< HEAD
-=======
-// Chunk records the chunk information.
-type Chunk struct {
-	Path         string
-	FileSize     int64
-	Offset       int64
-	EndOffset    int64
-	PrevRowIDMax int64
-	RowIDMax     int64
-	Type         mydump.SourceType
-	Compression  mydump.Compression
-	Timestamp    int64
-	ParquetMeta  mydump.ParquetFileMeta
-}
-
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
 func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (string, error) {
 	importDir := GetImportRootDir(tidbCfg)
@@ -449,22 +432,6 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		if region.Chunk.RowIDMax > maxRowID {
 			maxRowID = region.Chunk.RowIDMax
 		}
-<<<<<<< HEAD
-=======
-
-		engineChunks[region.EngineID] = append(chunks, Chunk{
-			Path:         region.FileMeta.Path,
-			FileSize:     region.FileMeta.FileSize,
-			Offset:       region.Chunk.Offset,
-			EndOffset:    region.Chunk.EndOffset,
-			PrevRowIDMax: region.Chunk.PrevRowIDMax,
-			RowIDMax:     region.Chunk.RowIDMax,
-			Type:         region.FileMeta.Type,
-			Compression:  region.FileMeta.Compression,
-			Timestamp:    timestamp,
-			ParquetMeta:  region.FileMeta.ParquetMeta,
-		})
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
 	}
 
 	// Add index engine checkpoint

@@ -177,12 +177,6 @@ go_test(
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
-<<<<<<< HEAD
-        "@com_github_xitongsys_parquet_go//writer",
-        "@com_github_xitongsys_parquet_go_source//buffer",
-=======
-        "@com_github_tikv_pd_client//pkg/caller",
->>>>>>> 779e2987721 (importinto/lightning: change library for parquet import (#63979))
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_uber_go_mock//gomock",
