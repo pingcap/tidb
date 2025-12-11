@@ -1363,9 +1363,7 @@ func TestActiveActiveTableSetCommitWaitUntilTSO(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, v int) softdelete = 'on', active_active = 'on'")
-	// TODO: remove this line when DDL is fixed
-	tk.MustExec("alter table t drop column _tidb_commit_ts")
+	tk.MustExec("create table t (id int primary key, v int) softdelete retention 7 day, active_active = 'on'")
 
 	resetStateclockDriftNone := func(t *testing.T, tk *testkit.TestKit) uint64 {
 		tk.MustExec("truncate table t")
