@@ -1111,8 +1111,9 @@ func outOfRangeFullNDV(origRowCount, notNullCount, realtimeRowCount float64, mod
 		newRows = min(notNullCount, realtimeRowCount)
 	}
 
-	// Since the searched value is not in the topN, then the prior NDV can't represent the new data,
-	// in this case we use the Sqrt to derive a new NDV.
+	// Since the searched value is not in the topN, the prior NDV cannot represent the new data.
+	// We use the square root of the row count to derive a new NDV estimate, which provides
+	// a conservative approximation when the actual distribution is unknown.
 	ndv := math.Sqrt(max(notNullCount, realtimeRowCount))
 
 	// If topN represents all NDV values, the NDV should be relatively small.
