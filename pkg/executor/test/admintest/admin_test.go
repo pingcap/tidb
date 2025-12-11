@@ -1525,16 +1525,6 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 
 	sctx := mock.NewContext()
 	ctx := sctx.GetTableCtx()
-<<<<<<< HEAD
-	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
-	tbl, err := is.TableByName(context.Background(), dbName, tblName)
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	idxInfo := tblInfo.Indices[0]
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-=======
 
 	// Make some corrupted index. Build the index information.
 	getIndex := func() table.Index {
@@ -1551,7 +1541,6 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	indexOpr := getIndex()
->>>>>>> 0587d81370a (executor: fix unexpected successful admin check in the table when no index record exists (#63871))
 
 	pattern := "handle:\\s(\\d+)"
 	r := regexp.MustCompile(pattern)
