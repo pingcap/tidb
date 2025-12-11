@@ -24,13 +24,17 @@
 // generated region job too small due to too many duplicated KVs being removed,
 // then to avoid the target region to be too much undersized.
 //
+// in below, duplicated KVs means the key is duplicated, and the value might or
+// might not be the same.
+//
 //   - during encode step, the duplicated data and UK KVs due to conflicted rows
-//     are collected and write to the cloud storage as a separate file, there might
-//     be duplicated KVs due to secondary indices, but they are not usefully for
+//     are collected and write to the cloud storage as a separate file. there might
+//     be duplicated KVs due to non-unique indices, but they are not usefully for
 //     later conflict resolution, so they are removed directly without recording.
-//     We only record KVs that duplicate more than 2 times, as we only have a
-//     local view of the KVs being imported at this step, we have to keep 2 copies
-//     to ensure we can find other duplicated KVs later.
+//     We only record KVs that duplicate more than 2 times, such as if a key has
+//     5 duplicates, we record 3 of them, and keep other 2 in the KV files, as
+//     we only have a local view of the KVs being imported at this step, we have
+//     to keep 2 copies to ensure we can find other duplicated KVs later.
 //   - during merge step, we also record the duplicated KVs, same as the encode step.
 //   - during ingest step, we also record the duplicated KVs, but since we have
 //     a global view of all conflicted KVs at this step, we will record all
@@ -45,18 +49,19 @@
 // the remote checksum. And we also record all the conflicted rows into the cloud
 // storage for user to check later, we record them under the 'conflicted_rows/'
 // prefix.
-// duplicated data KV and UK kv are handled differently:
+// duplicated data KV and UK KV are handled differently:
 //   - for duplicated data KVs, we can decode to get Datum of all columns and
 //     re-encode into KVs, and we can calculate the checksum of the original rows
 //   - for duplicated UK KVs, we can only get the handle of the row, we have to
 //     get the data KV from the cluster, if not found, it means the data KV is
-//     also duplicated and recorded before, so we can skip it. Otherwise, we can
-//     decode and re-encode to get the checksum of the original row.
-//     since there might be multiple UKs for a single row, we need to avoid
-//     calculating the checksum multiple times for the same row. currently, we
-//     do this deduplication in memory by maintaining a set of handles processed.
-//     if the number of handles is too large to fit in memory, we will skip the
-//     later checksum part, as we cannot get the exact checksum in this case.
+//     also duplicated and recorded before, it will be handled in previous step,
+//     so we can skip it. Otherwise, we can decode and re-encode to get the
+//     checksum of the original row. since there might be multiple UKs for a
+//     single row, we need to avoid calculating the checksum multiple times for
+//     the same row. currently, we do this deduplication in memory by maintaining
+//     a set of handles processed. if the number of handles is too large to fit
+//     in memory, we will skip the later checksum part, as we cannot get the exact
+//     checksum in this case.
 //
 // the latter step resolves the conflicts by deleting all the KVs related to the
 // conflicted rows from the cluster, the logic to get all those KVs is similar
