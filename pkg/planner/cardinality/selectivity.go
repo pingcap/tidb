@@ -1092,8 +1092,7 @@ func outOfRangeEQSelectivity(_ planctx.PlanContext, ndv, realtimeRowCount, colum
 
 // outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
 // and the searched value does not appear in the topN
-func outOfRangeFullNDV(origRowCount, notNullCount, realtimeRowCount float64, modifyCount int64) (result float64) {
-	// TODO: align or merge this out-of-range-est methods with `Histogram.OutOfRangeRowCount`.
+func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64, modifyCount int64) (result float64) {	// TODO: align or merge this out-of-range-est methods with `Histogram.OutOfRangeRowCount`.
 	// If the table hasn't been modified, it's safe to return 0.
 	if modifyCount == 0 {
 		return 0
@@ -1111,10 +1110,14 @@ func outOfRangeFullNDV(origRowCount, notNullCount, realtimeRowCount float64, mod
 		newRows = min(notNullCount, realtimeRowCount)
 	}
 
-	// Since the searched value is not in the topN, the prior NDV cannot represent the new data.
-	// We use the square root of the row count to derive a new NDV estimate, which provides
-	// a conservative approximation when the actual distribution is unknown.
-	ndv := math.Sqrt(max(notNullCount, realtimeRowCount))
+	// if no NDV - derive an NDV using sqrt, this could happen for unanalyzed tables
+	if ndv <= 0 {
+		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
+	} else {
+		// We need to increase the ndv by increaseFactor because the estimate will be increased by
+		// the caller of the function
+		ndv *= increaseFactor
+	}
 
 	// If topN represents all NDV values, the NDV should be relatively small.
 	// Small NDV could cause extremely inaccurate result, use `outOfRangeBetweenRate` to smooth the result.
