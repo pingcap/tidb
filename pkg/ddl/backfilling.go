@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -740,8 +741,8 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job
-	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
-	defer cancel()
+	wctx := NewLocalWorkerCtx(ctx, job.ID)
+	defer wctx.Cancel()
 
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
@@ -812,7 +813,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	}
 	importConc := job.ReorgMeta.GetConcurrency()
 	pipe, err := NewAddIndexIngestPipeline(
-		opCtx,
+		wctx,
 		dc.store,
 		sessPool,
 		bcCtx,
@@ -830,7 +831,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe, reorgInfo, bcCtx, avgRowSize)
+	err = executeAndClosePipeline(wctx, pipe, reorgInfo, bcCtx, avgRowSize)
 	if err != nil {
 		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 		if err1 != nil {
@@ -883,7 +884,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 	}
 }
 
-func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, reorgInfo *reorgInfo, bcCtx ingest.BackendCtx, avgRowSize int) error {
+func executeAndClosePipeline(ctx *workerpool.Context, pipe *operator.AsyncPipeline, reorgInfo *reorgInfo, bcCtx ingest.BackendCtx, avgRowSize int) error {
 	err := pipe.Execute()
 	if err != nil {
 		return err

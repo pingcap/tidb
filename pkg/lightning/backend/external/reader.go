@@ -32,17 +32,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// ReaderSummary is used to collect some statistics during reading.
-type ReaderSummary struct {
-	GetRequestCount uint64
-}
-
-// OnReaderCloseFunc is the callback function when a reader is closed.
-type OnReaderCloseFunc func(summary *ReaderSummary)
-
-// dummyOnReaderCloseFunc is a dummy OnReaderCloseFunc.
-func dummyOnReaderCloseFunc(*ReaderSummary) {}
-
 func readAllData(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -51,7 +40,6 @@ func readAllData(
 	smallBlockBufPool *membuf.Pool,
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
-	onClose OnReaderCloseFunc,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
 	task.Info("arguments",
@@ -118,7 +106,6 @@ func readAllData(
 						smallBlockBuf,
 						largeBlockBuf,
 						output,
-						onClose,
 					)
 					if err2 != nil {
 						return errors.Annotatef(err2, "failed to read file %s", dataFiles[fileIdx])
@@ -149,7 +136,6 @@ func readOneFile(
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBuf *membuf.Buffer,
 	output *memKVsAndBuffers,
-	onClose OnReaderCloseFunc,
 ) error {
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
 
@@ -161,9 +147,6 @@ func readOneFile(
 	}
 	defer func() {
 		rd.Close()
-		onClose(&ReaderSummary{
-			GetRequestCount: uint64(rd.byteReader.requestCnt.Load()),
-		})
 	}()
 	if concurrency > 1 {
 		rd.byteReader.enableConcurrentRead(
@@ -184,7 +167,7 @@ func readOneFile(
 	droppedSize := 0
 
 	for {
-		k, v, err := rd.nextKV()
+		k, v, err := rd.NextKV()
 		if err != nil {
 			if goerrors.Is(err, io.EOF) {
 				break
@@ -209,5 +192,50 @@ func readOneFile(
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
+	return nil
+}
+
+// ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
+// to the returned channel, the channel will be closed when finish read.
+func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
+	store storage.ExternalStorage, files []string) chan *KVPair {
+	pairCh := make(chan *KVPair)
+	eg.Go(func() error {
+		defer close(pairCh)
+		for _, file := range files {
+			if err := readOneKVFile2Ch(ctx, store, file, pairCh); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
+	return pairCh
+}
+
+func readOneKVFile2Ch(ctx context.Context, store storage.ExternalStorage, file string, outCh chan *KVPair) error {
+	reader, err := NewKVReader(ctx, file, store, 0, 3*DefaultReadBufferSize)
+	if err != nil {
+		return err
+	}
+	// if we successfully read all data, it's ok to ignore the error of Close
+	//nolint: errcheck
+	defer reader.Close()
+	for {
+		key, val, err := reader.NextKV()
+		if err != nil {
+			if goerrors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- &KVPair{
+			Key:   bytes.Clone(key),
+			Value: bytes.Clone(val),
+		}:
+		}
+	}
 	return nil
 }

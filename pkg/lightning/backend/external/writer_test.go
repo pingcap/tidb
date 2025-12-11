@@ -108,11 +108,17 @@ func TestWriter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 
-	var kvAndStat [2]string
+	var (
+		kvFileCount int
+		kvAndStat   [2]string
+	)
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
-		SetOnCloseFunc(func(s *WriterSummary) { kvAndStat = s.MultipleFilesStats[0].Filenames[0] }).
+		SetOnCloseFunc(func(s *WriterSummary) {
+			kvFileCount = s.KVFileCount
+			kvAndStat = s.MultipleFilesStats[0].Filenames[0]
+		}).
 		Build(memStore, "/test", "0")
 
 	writer := NewEngineWriter(w)
@@ -133,6 +139,7 @@ func TestWriter(t *testing.T) {
 	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
 	_, err := writer.Close(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 1, kvFileCount)
 
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
@@ -142,12 +149,12 @@ func TestWriter(t *testing.T) {
 	kvReader, err := NewKVReader(ctx, kvAndStat[0], memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
@@ -346,6 +353,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 
 	err := writer.Close(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 9, summary.KVFileCount)
 
 	require.Equal(t, 3, len(summary.MultipleFilesStats))
 	expected := MultipleFilesStat{
@@ -562,7 +570,7 @@ func readKVFile(t *testing.T, store storage.ExternalStorage, filename string) []
 	require.NoError(t, err)
 	kvs := make([]KVPair, 0)
 	for {
-		key, value, err := reader.nextKV()
+		key, value, err := reader.NextKV()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}

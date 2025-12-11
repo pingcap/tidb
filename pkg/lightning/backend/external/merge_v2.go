@@ -48,7 +48,6 @@ func MergeOverlappingFilesV2(
 	propSizeDist uint64,
 	propKeysDist uint64,
 	onWriterClose OnWriterCloseFunc,
-	onReaderClose OnReaderCloseFunc,
 	concurrency int,
 	checkHotspot bool,
 ) (err error) {
@@ -133,7 +132,6 @@ func MergeOverlappingFilesV2(
 			bufPool,
 			bufPool,
 			loaded,
-			onReaderClose,
 		)
 		if err1 != nil {
 			logutil.Logger(ctx).Warn("read all data failed", zap.Error(err1))

@@ -90,24 +90,15 @@ func (m *BackfillSubTaskMeta) Marshal() ([]byte, error) {
 	return m.BaseExternalMeta.Marshal(m)
 }
 
-func decodeBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, raw []byte) (*BackfillSubTaskMeta, error) {
+func decodeBackfillSubTaskMeta(ctx context.Context, extStore storage.ExternalStorage, raw []byte) (*BackfillSubTaskMeta, error) {
 	var subtask BackfillSubTaskMeta
 	err := json.Unmarshal(raw, &subtask)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if cloudStorageURI != "" && subtask.ExternalPath != "" {
+	if extStore != nil && subtask.ExternalPath != "" {
 		// read external meta to storage when using global sort
-		backend, err := storage.ParseBackend(cloudStorageURI, nil)
-		if err != nil {
-			return nil, err
-		}
-		extStore, err := storage.NewWithDefaultOpt(ctx, backend)
-		if err != nil {
-			return nil, err
-		}
-		defer extStore.Close()
 		if err := subtask.ReadJSONFromExternalStorage(ctx, extStore, &subtask); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -125,19 +116,10 @@ func decodeBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, raw 
 	return &subtask, nil
 }
 
-func writeExternalBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, subtask *BackfillSubTaskMeta, externalPath string) error {
-	if cloudStorageURI == "" {
+func writeExternalBackfillSubTaskMeta(ctx context.Context, extStore storage.ExternalStorage, subtask *BackfillSubTaskMeta, externalPath string) error {
+	if extStore == nil {
 		return nil
 	}
-	backend, err := storage.ParseBackend(cloudStorageURI, nil)
-	if err != nil {
-		return err
-	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
-	if err != nil {
-		return err
-	}
-	defer extStore.Close()
 	subtask.ExternalPath = externalPath
 	return subtask.WriteJSONToExternalStorage(ctx, extStore, subtask)
 }

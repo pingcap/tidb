@@ -82,3 +82,103 @@ func TestOuter2InnerIssue55886(t *testing.T) {
 		}
 	})
 }
+
+func TestIssue58836(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, name varchar(100));")
+	tk.MustExec("insert into t values (1, null), (2, 1);")
+	tk.MustQuery(`with tmp as (
+select
+row_number() over() as id,
+(select '1' from dual where id in (2)) as name
+from t
+)
+select 'ok' from dual
+where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows())
+	tk.MustQuery(`explain format = 'plan_tree' with tmp as (
+select
+row_number() over() as id,
+(select '1' from dual where id in (2)) as name
+from t
+)
+select 'ok' from dual
+where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
+		`Projection root  ok->Column#13`,
+		`└─HashJoin root  CARTESIAN inner join`,
+		`  ├─TableDual(Build) root  rows:1`,
+		`  └─HashAgg(Probe) root  group by:Column#11, Column#12, funcs:firstrow(1)->Column#18`,
+		`    └─Selection root  eq(Column#11, "1"), eq(Column#12, 1)`,
+		`      └─Window root  row_number()->Column#12 over(rows between current row and current row)`,
+		`        └─Apply root  CARTESIAN left outer join, left side:TableReader`,
+		`          ├─TableReader(Build) root  data:TableFullScan`,
+		`          │ └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo`,
+		`          └─Projection(Probe) root  1->Column#11`,
+		`            └─Selection root  eq(test.t.id, 2)`,
+		`              └─TableDual root  rows:1`))
+	// https://github.com/pingcap/tidb/issues/61327
+	tk.MustExec(`CREATE TABLE t0(c0 INT);`)
+	tk.MustExec(`CREATE TABLE t2(c0 INT);`)
+	tk.MustExec(`CREATE TABLE t3(c0 INT);`)
+	tk.MustExec(`INSERT INTO t0 VALUES(0);`)
+	tk.MustExec(`INSERT INTO t3 VALUES(3);`)
+	tk.MustQuery(`explain format = 'plan_tree' SELECT *
+FROM t0
+         LEFT JOIN (SELECT NULL AS col_2
+                    FROM t2) as subQuery1
+                   ON true
+         INNER JOIN t3 ON (((((CASE 1
+                                   WHEN subQuery1.col_2 THEN t3.c0
+                                   ELSE NULL END)) AND (((t0.c0))))) < 1);`).
+		Check(testkit.Rows(`Projection root  test.t0.c0, Column#5, test.t3.c0`,
+			`└─HashJoin root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column#5, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)`,
+			`  ├─TableReader(Build) root  data:TableFullScan`,
+			`  │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`,
+			`  └─HashJoin(Probe) root  CARTESIAN left outer join, left side:TableReader`,
+			`    ├─TableReader(Build) root  data:TableFullScan`,
+			`    │ └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo`,
+			`    └─Projection(Probe) root  <nil>->Column#5`,
+			`      └─TableReader root  data:TableFullScan`,
+			`        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
+	tk.MustQuery(`SELECT *
+FROM t0
+         LEFT JOIN (SELECT NULL AS col_2
+                    FROM t2) as subQuery1
+                   ON true
+         INNER JOIN t3 ON (((((CASE 1
+                                   WHEN subQuery1.col_2 THEN t3.c0
+                                   ELSE NULL END)) AND (((t0.c0))))) < 1);`).Check(testkit.Rows("0 <nil> 3"))
+	tk.MustExec("create table chqin(id int, f1 date);")
+	tk.MustExec("insert into chqin values (1,null);")
+	tk.MustExec("insert into chqin values (2,null);")
+	tk.MustExec("insert into chqin values (3,null);")
+	tk.MustExec("create table chqin2(id int, f1 date);")
+	tk.MustExec("insert into chqin2 values (1,'1990-11-27');")
+	tk.MustExec("insert into chqin2 values (2,'1990-11-27');")
+	tk.MustExec("insert into chqin2 values (3,'1990-11-27');")
+	tk.MustQuery(`explain format='plan_tree' select 1 from chqin where  '2008-05-28' NOT IN
+		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
+		Check(testkit.Rows(
+			`Projection root  1->Column#14`,
+			`└─HashJoin root  Null-aware anti semi join, left side:Projection, equal:[eq(Column#16, Column#13)]`,
+			`  ├─HashAgg(Build) root  group by:Column#13, funcs:firstrow(Column#13)->Column#13`,
+			`  │ └─Union root  `,
+			`  │   ├─HashJoin root  right outer join, left side:TableReader, equal:[eq(test.chqin.id, test.chqin2.id) eq(test.chqin.f1, test.chqin2.f1)]`,
+			`  │   │ ├─TableReader(Build) root  data:Selection`,
+			`  │   │ │ └─Selection cop[tikv]  ge(test.chqin.f1, 1990-11-27 00:00:00.000000), not(isnull(test.chqin.f1)), not(isnull(test.chqin.id))`,
+			`  │   │ │   └─TableFullScan cop[tikv] table:a1 keep order:false, stats:pseudo`,
+			`  │   │ └─TableReader(Probe) root  data:Selection`,
+			`  │   │   └─Selection cop[tikv]  ge(test.chqin2.f1, 1990-11-27 00:00:00.000000)`,
+			`  │   │     └─TableFullScan cop[tikv] table:a2 keep order:false, stats:pseudo`,
+			`  │   └─TableReader root  data:Projection`,
+			`  │     └─Projection cop[tikv]  test.chqin.f1->Column#13`,
+			`  │       └─Selection cop[tikv]  eq(test.chqin.id, 5)`,
+			`  │         └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo`,
+			`  └─Projection(Probe) root  2008-05-28 00:00:00.000000->Column#16`,
+			`    └─TableReader root  data:TableFullScan`,
+			`      └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo`))
+	tk.MustQuery(`select 1 from chqin where  '2008-05-28' NOT IN
+		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
+		Check(testkit.Rows())
+}

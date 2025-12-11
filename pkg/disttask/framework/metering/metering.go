@@ -23,12 +23,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/metering_sdk/common"
 	mconfig "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/metering_sdk/storage"
+	meteringwriterapi "github.com/pingcap/metering_sdk/writer"
 	meteringwriter "github.com/pingcap/metering_sdk/writer/metering"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -39,66 +41,46 @@ const (
 	category     = "dxf"
 )
 
-// TaskType is the type of metering during DXF execution.
-type TaskType string
+var (
+	// FlushInterval is the interval to flush metering data.
+	// exported for testing.
+	FlushInterval = time.Minute
 
-const (
-	// TaskTypeUnknown is the type of metering when task type is unknown.
-	TaskTypeUnknown TaskType = ""
-	// TaskTypeAddIndex is the type of metering during add index.
-	TaskTypeAddIndex TaskType = "add-index"
-	// TaskTypeImportInto is the type of metering during import into.
-	TaskTypeImportInto TaskType = "import-into"
+	meteringInstance atomic.Pointer[Meter]
 )
 
-var meteringInstance atomic.Pointer[Meter]
-
-// Recorder is used to record metering data.
-type Recorder struct {
-	m        *Meter
-	taskID   int64
-	taskType TaskType
-	keyspace string
-}
-
-// NewRecorder creates a new recorder.
-func NewRecorder(store kv.Storage, taskType TaskType, taskID int64) *Recorder {
-	if kerneltype.IsClassic() || meteringInstance.Load() == nil {
+// RegisterRecorder returns the Recorder for the given task.
+func RegisterRecorder(task *proto.TaskBase) *Recorder {
+	meter := meteringInstance.Load()
+	if kerneltype.IsClassic() || meter == nil {
 		return &Recorder{}
 	}
-	return &Recorder{
-		m:        meteringInstance.Load(),
-		taskID:   taskID,
-		taskType: taskType,
-		keyspace: store.GetKeyspace(),
-	}
+	return meter.getOrRegisterRecorder(&Recorder{
+		taskID:   task.ID,
+		taskType: task.Type.String(),
+		keyspace: task.Keyspace,
+	})
 }
 
-// RecordGetRequestCount records the get request count.
-func (r *Recorder) RecordGetRequestCount(v uint64) {
-	r.record(&Data{getRequests: v})
-}
-
-// RecordPutRequestCount records the put request count.
-func (r *Recorder) RecordPutRequestCount(v uint64) {
-	r.record(&Data{putRequests: v})
-}
-
-// RecordReadDataBytes records the read data bytes.
-func (r *Recorder) RecordReadDataBytes(v uint64) {
-	r.record(&Data{readDataBytes: v})
-}
-
-// RecordWriteDataBytes records the write data bytes.
-func (r *Recorder) RecordWriteDataBytes(v uint64) {
-	r.record(&Data{writeDataBytes: v})
-}
-
-func (r *Recorder) record(d *Data) {
-	if r.m == nil {
+// UnregisterRecorder unregisters the Recorder for the given task.
+// metering should make sure to flush the un-flushed data after unregistering.
+func UnregisterRecorder(taskID int64) {
+	meter := meteringInstance.Load()
+	if kerneltype.IsClassic() || meter == nil {
 		return
 	}
-	r.m.Record(r.keyspace, r.taskType, r.taskID, d)
+	meter.unregisterRecorder(taskID)
+}
+
+// WriteMeterData writes the metering data.
+// ts+category+uuid uniquely identifies a metering data file, the SDK also use the
+// shared-pool-id in the file name, but for each meter writer, it's the same.
+func WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
+	meter := meteringInstance.Load()
+	if kerneltype.IsClassic() || meter == nil {
+		return nil
+	}
+	return meter.WriteMeterData(ctx, ts, uuid, items)
 }
 
 // SetMetering sets the metering instance for dxf.
@@ -106,31 +88,22 @@ func SetMetering(m *Meter) {
 	meteringInstance.Store(m)
 }
 
-// Data represents the metering data.
-type Data struct {
-	keyspace string
-	taskType TaskType
-
-	putRequests    uint64
-	getRequests    uint64
-	readDataBytes  uint64
-	writeDataBytes uint64
-}
-
-func (m *Data) merge(other *Data) {
-	m.putRequests += other.putRequests
-	m.getRequests += other.getRequests
-	m.readDataBytes += other.readDataBytes
-	m.writeDataBytes += other.writeDataBytes
+type wrappedRecorder struct {
+	*Recorder
+	unregistered bool
 }
 
 // Meter is responsible for recording and reporting metering data.
 type Meter struct {
 	sync.Mutex
-	data   map[int64]*Data // taskID -> meter data
-	uuid   string
-	writer *meteringwriter.MeteringWriter
-	logger *zap.Logger
+	recorders map[int64]*wrappedRecorder
+	// taskID -> last flushed data
+	// when flushing, we scrape the latest data from recorders and calculate the
+	// delta and write to the metering storage.
+	lastFlushedData map[int64]*Data
+	uuid            string
+	writer          meteringwriterapi.MeteringWriter
+	logger          *zap.Logger
 }
 
 // NewMeter creates a new Meter instance.
@@ -144,40 +117,129 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create storage provider")
 	}
-	meteringConfig := mconfig.DefaultConfig().WithLogger(logger)
+	// if there are network issues, we might successfully write the metering data,
+	// but the writer still returns error, we will retry write with the same TS
+	// in this case, which means the metering data file will have the same name,
+	// we set WithOverwriteExisting to true to avoid the retry write report error
+	// in this case.
+	// IgnoreExisting wound be more appropriate, but the SDK doesn't provide it.
+	meteringConfig := mconfig.DefaultConfig().WithLogger(logger).WithOverwriteExisting(true)
 	writer := meteringwriter.NewMeteringWriterFromConfig(provider, meteringConfig, cfg)
-	return &Meter{
-		logger: logger,
-		data:   make(map[int64]*Data),
-		writer: writer,
-		uuid:   strings.ReplaceAll(uuid.New().String(), "-", "_"), // no dash in the metering sdk
-	}, nil
+	return newMeterWithWriter(logger, writer), nil
 }
 
-// Record records a meter data.
-func (m *Meter) Record(keyspace string, taskType TaskType, taskID int64, other *Data) {
+func newMeterWithWriter(logger *zap.Logger, writer meteringwriterapi.MeteringWriter) *Meter {
+	return &Meter{
+		logger:          logger,
+		recorders:       make(map[int64]*wrappedRecorder),
+		lastFlushedData: make(map[int64]*Data),
+		writer:          writer,
+		uuid:            strings.ReplaceAll(uuid.New().String(), "-", "_"), // no dash in the metering sdk
+	}
+}
+
+func (m *Meter) getOrRegisterRecorder(r *Recorder) *Recorder {
 	m.Lock()
 	defer m.Unlock()
-	if m.data[taskID] == nil {
-		m.data[taskID] = &Data{
-			keyspace: keyspace,
-			taskType: taskType,
+	if old, ok := m.recorders[r.taskID]; ok {
+		// each task might have different steps, it's possible for below sequence
+		//  - step 1 get recorder
+		//  - step 1 executor exist, and unregisters recorder, but not flushed yet
+		//  - step 2 get recorder again, we should reset the unregistered flag
+		if old.unregistered {
+			old.unregistered = false
+		}
+		return old.Recorder
+	}
+	m.recorders[r.taskID] = &wrappedRecorder{Recorder: r}
+	return r
+}
+
+// UnregisterRecorder unregisters a recorder.
+func (m *Meter) unregisterRecorder(taskID int64) {
+	m.Lock()
+	defer m.Unlock()
+	// we still need to flush for the unregistered recorder once more, so we only
+	// mark it here, and delete when it's flushed.
+	if r, ok := m.recorders[taskID]; ok {
+		r.unregistered = true
+	}
+}
+
+func (m *Meter) cleanupUnregisteredRecorders() []*Recorder {
+	removed := make([]*Recorder, 0, 1)
+	m.Lock()
+	defer m.Unlock()
+	for taskID, r := range m.recorders {
+		if !r.unregistered {
+			continue
+		}
+		// since register and flush run in async, it's possible that:
+		//  - flush start, and scrape current data(without recorder R)
+		//  - register recorder R, and unregister fast
+		//  - flush finish, so here lastFlushedData doesn't contain R, we should
+		//    keep the recorder and do a final flush.
+		if fd, ok := m.lastFlushedData[taskID]; ok {
+			// unregister and scrape is run in async, it's possible there are still
+			// some non-flushed data even the recorder is unregistered, so we check
+			// current data too.
+			if fd.equals(r.currData()) {
+				delete(m.recorders, taskID)
+				delete(m.lastFlushedData, taskID)
+				removed = append(removed, r.Recorder)
+			}
 		}
 	}
-	m.data[taskID].merge(other)
+
+	return removed
+}
+
+func (m *Meter) onSuccessFlush(flushedData map[int64]*Data) {
+	m.lastFlushedData = flushedData
+	removedRecorders := m.cleanupUnregisteredRecorders()
+	for _, r := range removedRecorders {
+		data := r.currData()
+		failpoint.InjectCall("meteringFinalFlush", data)
+		m.logger.Info("recorder unregistered and finished final flush",
+			zap.Stringer("accumulatedData", data))
+	}
+}
+
+func (m *Meter) scrapeCurrData() map[int64]*Data {
+	m.Lock()
+	defer m.Unlock()
+	data := make(map[int64]*Data, len(m.recorders))
+	for taskID, r := range m.recorders {
+		data[taskID] = r.currData()
+	}
+	return data
+}
+
+func (m *Meter) calculateDataItems(currData map[int64]*Data) []map[string]any {
+	items := make([]map[string]any, 0, len(currData))
+	for taskID, curr := range currData {
+		theLast := &Data{}
+		if last, ok := m.lastFlushedData[taskID]; ok {
+			theLast = last
+		}
+		if item := curr.calMeterDataItem(theLast); item != nil {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 // StartFlushLoop creates a flush loop.
 func (m *Meter) StartFlushLoop(ctx context.Context) {
 	// Control the writing timestamp accurately enough so that the previous round won't be overwritten by the next round.
 	curTime := time.Now()
-	nextTime := curTime.Truncate(time.Minute).Add(time.Minute)
+	nextTime := curTime.Truncate(FlushInterval).Add(FlushInterval)
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
 		case <-time.After(nextTime.Sub(curTime)):
 			m.flush(ctx, nextTime.Unix())
-			nextTime = nextTime.Add(time.Minute)
+			nextTime = nextTime.Add(FlushInterval)
 			curTime = time.Now()
 		}
 	}
@@ -191,48 +253,42 @@ func (m *Meter) StartFlushLoop(ctx context.Context) {
 
 func (m *Meter) flush(ctx context.Context, ts int64) {
 	startTime := time.Now()
-	var data map[int64]*Data
-	m.Lock()
-	data = m.data
-	m.data = make(map[int64]*Data, len(data))
-	m.Unlock()
-
-	if len(data) == 0 {
+	currData := m.scrapeCurrData()
+	items := m.calculateDataItems(currData)
+	logger := m.logger.With(zap.Int64("timestamp", ts))
+	if len(items) == 0 {
+		logger.Info("no metering data to flush", zap.Int("recorder-count", len(currData)),
+			zap.Duration("duration", time.Since(startTime)))
+		m.onSuccessFlush(currData)
 		return
 	}
-	array := make([]map[string]any, 0, len(data))
-	for taskID, d := range data {
-		array = append(array, map[string]any{
-			"version":               "1",
-			"cluster_id":            d.keyspace,
-			"source_name":           category,
-			"task_type":             d.taskType,
-			"task_id":               taskID,
-			"put_external_requests": d.putRequests,
-			"get_external_requests": d.getRequests,
-			"read_data_bytes":       &common.MeteringValue{Value: d.readDataBytes, Unit: "bytes"},
-			"write_data_bytes":      &common.MeteringValue{Value: d.writeDataBytes, Unit: "bytes"},
-		})
-	}
 
+	// each metering background loop sends data with the same uuid.
+	if err := m.WriteMeterData(ctx, ts, m.uuid, items); err != nil {
+		logger.Warn("failed to write metering data", zap.Error(err),
+			zap.Duration("duration", time.Since(startTime)),
+			zap.Any("data", items))
+	} else {
+		logger.Info("succeed to write metering data",
+			zap.Duration("duration", time.Since(startTime)),
+			zap.Any("data", items))
+		m.onSuccessFlush(currData)
+	}
+}
+
+// WriteMeterData writes the metering data.
+func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
+	failpoint.InjectCall("forceTSAtMinuteBoundary", &ts)
 	meteringData := &common.MeteringData{
-		SelfID:    m.uuid,
+		SelfID:    uuid,
 		Timestamp: ts,
 		Category:  category,
-		Data:      array,
+		Data:      items,
 	}
 	flushCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	if err := m.writer.Write(flushCtx, meteringData); err != nil {
-		m.logger.Warn("failed to write metering data",
-			zap.Error(err),
-			zap.Duration("duration", time.Since(startTime)),
-			zap.Any("data", meteringData))
-	} else {
-		m.logger.Info("succeed to write metering data",
-			zap.Duration("duration", time.Since(startTime)),
-			zap.Any("data", meteringData))
-	}
+
+	return m.writer.Write(flushCtx, meteringData)
 }
 
 // Close closes the metering writer.

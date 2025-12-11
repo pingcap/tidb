@@ -300,7 +300,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	require.True(t, domain.DDL().OwnerManager().IsOwner())
 
 	d2, de2 := ddl.NewDDL(context.Background(),
-		ddl.WithEtcdClient(domain.EtcdClient()),
+		ddl.WithEtcdClient(domain.GetEtcdClient()),
 		ddl.WithStore(store),
 		ddl.WithInfoCache(domain.InfoCache()),
 		ddl.WithLease(testLease),

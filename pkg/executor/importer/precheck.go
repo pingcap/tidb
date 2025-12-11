@@ -17,7 +17,6 @@ package importer
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -30,10 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-)
-
-const (
-	etcdDialTimeout = 5 * time.Second
 )
 
 // GetEtcdClient returns an etcd client.

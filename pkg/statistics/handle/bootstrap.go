@@ -36,6 +36,7 @@ import (
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	tableinfo "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -98,10 +99,10 @@ func genInitStatsMetaSQL(tableIDs ...int64) string {
 	return selectPrefix + whereClausePrefix + inListStr + whereClauseSuffix
 }
 
-func (h *Handle) initStatsMeta(ctx context.Context, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
+func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sql := genInitStatsMetaSQL(tableIDs...)
-	rc, err := util.Exec(h.initStatsCtx, sql)
+	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -162,7 +163,9 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 			}
 		} else {
-			table.ColAndIdxExistenceMap.InsertCol(id, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			// Column stats can be synthesized when adding a column with default values, which keeps statsVer at 0 but
+			// still records NDV/null counts, so mark them as existing whenever any value is present.
+			table.ColAndIdxExistenceMap.InsertCol(id, statistics.IsColumnAnalyzedOrSynthesized(statsVer, ndv, nullCount))
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
@@ -181,34 +184,47 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				zap.Stack("stack"))
 		}
 	}()
-	var table *statistics.Table
+	var (
+		table        *statistics.Table
+		tblInfo      tableinfo.Table
+		tblInfoValid bool
+	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
 		if table == nil || table.PhysicalID != tblID {
+			tblInfoValid = false
 			if table != nil {
 				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
 			var ok bool
+			// This table must be already in the cache since we load stats_meta first.
 			table, ok = cache.Get(tblID)
 			if !ok {
 				continue
 			}
 			table = table.CopyAs(statistics.BothMapsWritable)
+			// Fetch table info only once per table instead of once per row
+			tblInfo, ok = h.TableInfoByIDForInitStats(is, tblID)
+			if !ok {
+				// Table not found - likely dropped but stats metadata not yet garbage collected. Skip loading stats for this table.
+				statslogutil.StatsSampleLogger().Warn("table info not found during stats initialization, skipping", zap.Int64("physicalID", table.PhysicalID))
+				continue
+			}
+			tblInfoValid = true
+		}
+		// Skip all rows for tables that could not find table info.
+		// This happens when a table is dropped but its stats metadata is not yet garbage collected.
+		if !tblInfoValid {
+			continue
 		}
 		// All the objects in the table share the same stats version.
 		if statsVer != statistics.Version0 {
 			table.StatsVer = int(statsVer)
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
-		tbl, ok := h.TableInfoByID(is, table.PhysicalID)
-		if !ok {
-			// this table has been dropped. but stats meta still exists and wait for being deleted.
-			logutil.BgLogger().Warn("cannot find this table when to init stats", zap.Int64("tableID", table.PhysicalID))
-			continue
-		}
 		if row.GetInt64(1) > 0 {
 			var idxInfo *model.IndexInfo
-			for _, idx := range tbl.Meta().Indices {
+			for _, idx := range tblInfo.Meta().Indices {
 				if idx.ID == id {
 					idxInfo = idx
 					break
@@ -248,7 +264,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
 		} else {
 			var colInfo *model.ColumnInfo
-			for _, col := range tbl.Meta().Columns {
+			for _, col := range tblInfo.Meta().Columns {
 				if col.ID == id {
 					colInfo = col
 					break
@@ -263,11 +279,11 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				Histogram:  *hist,
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
-				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				IsHandle:   tblInfo.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				StatsVer:   statsVer,
 			}
 			table.SetCol(hist.ID, col)
-			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statistics.IsColumnAnalyzedOrSynthesized(statsVer, ndv, nullCount))
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
@@ -356,9 +372,9 @@ func genInitStatsHistogramsSQL(options genHistSQLOptions) string {
 	return selectPrefix + " where table_id in (" + inListStr + ")" + orderSuffix
 }
 
-func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.StatsCache, tableIDs ...int64) error {
+func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Context, cache statstypes.StatsCache, tableIDs ...int64) error {
 	sql := genInitStatsHistogramsSQL(newGenHistSQLOptionsForTableIDs(tableIDs))
-	rc, err := util.Exec(h.initStatsCtx, sql)
+	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -745,26 +761,34 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 // 3. TopN, Bucket, FMSketch are not loaded.
 // And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
-func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) (err error) {
+func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) error {
+	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return h.initStatsLiteWithSession(ctx, sctx, tableIDs...)
+		})
+	})
+}
+
+func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (err error) {
 	defer func() {
-		_, err1 := util.Exec(h.initStatsCtx, "commit")
+		_, err1 := util.Exec(sctx, "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
 	}()
-	_, err = util.Exec(h.initStatsCtx, "begin")
+	_, err = util.Exec(sctx, "begin")
 	if err != nil {
 		return err
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
-	cache, _, err := h.initStatsMeta(ctx, tableIDs...)
+	cache, _, err := h.initStatsMeta(ctx, sctx, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
 	start = time.Now()
-	err = h.initStatsHistogramsLite(ctx, cache, tableIDs...)
+	err = h.initStatsHistogramsLite(ctx, sctx, cache, tableIDs...)
 	if err != nil {
 		cache.Close()
 		return errors.Trace(err)
@@ -793,7 +817,15 @@ func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) (err erro
 // To work with auto-analyze's needs, we need to read all stats meta info into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 // If tableIDs is provided, we only load the stats for the specified tables.
-func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) (err error) {
+func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
+	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return h.initStatsWithSession(ctx, sctx, is, tableIDs...)
+		})
+	})
+}
+
+func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (err error) {
 	initstats.InitStatsPercentage.Store(0)
 	defer initstats.InitStatsPercentage.Store(100)
 	totalMemory, err := memory.MemTotal()
@@ -801,20 +833,20 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableI
 		return err
 	}
 	defer func() {
-		_, err1 := util.Exec(h.initStatsCtx, "commit")
+		_, err1 := util.Exec(sctx, "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
 	}()
 
-	_, err = util.Exec(h.initStatsCtx, "begin")
+	_, err = util.Exec(sctx, "begin")
 	if err != nil {
 		return err
 	}
 	failpoint.Inject("beforeInitStats", func() {})
 
 	start := time.Now()
-	cache, maxTableID, err := h.initStatsMeta(ctx, tableIDs...)
+	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}

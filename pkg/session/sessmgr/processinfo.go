@@ -258,4 +258,9 @@ type Manager interface {
 	GetInternalSessionStartTSList() []uint64
 	// GetConAttrs gets the connection attributes
 	GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string
+
+	// GetStatusVars gets status variables
+	// This returns a map with the processid as key and the value is another map
+	// with the key and value of each available status variable.
+	GetStatusVars() map[uint64]map[string]string
 }

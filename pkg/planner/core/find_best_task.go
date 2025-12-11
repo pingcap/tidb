@@ -861,6 +861,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	// predicateResult is separated out. An index may "win" because it has a better
 	// accessResult - but that access has high risk.
+	// accessResult does not differentiate between range or equal/IN predicates.
 	// Summing these 3 metrics ensures that a "high risk" index wont win ONLY on
 	// accessResult. The high risk will negate that accessResult with erOrIn being the
 	// tiebreaker or equalizer.
@@ -905,16 +906,19 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
-	if !comparable1 && !comparable2 {
-		// These aren't comparable - but compare risk and other metrics to see if we
-		// can determine a clear winner. Checking > 1 and < -1 means that the winner
-		// must win on at least 2 of the metrics below.
-		// This is to prevent a case where x wins on 1 metric but loses badly on another.
-		// Other checks in this logic only require > 0 or < 0 (1 metric is enough).
-		if riskResult > 0 && leftDidNotLose && totalSum > 1 {
+	if !comparable1 || !comparable2 {
+		// These aren't comparable - meaning that they have different combinations of columns in
+		// the access conditions or filters.
+		// One or more predicates could carry high risk - so we want to compare that risk and other
+		// metrics to see if we can determine a clear winner.
+		// The 2 key metrics here are riskResult and predicateResult.
+		// - riskResult tells us which candidate has lower risk
+		// - predicateResult already includes risk - we need ">1" or "<-1" to counteract the risk factor.
+		// "DidNotLose" and totalSum are also factored in to ensure that the winner is better overall."
+		if riskResult > 0 && leftDidNotLose && totalSum >= 0 && predicateResult > 1 {
 			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 		}
-		if riskResult < 0 && rightDidNotLose && totalSum < -1 {
+		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < -1 {
 			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 		}
 		return 0, false // No winner (0). Do not return the pseudo result
@@ -1489,7 +1493,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 			indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-			if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
+			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
 				if !c.path.IsFullScanRange(ds.TableInfo) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true

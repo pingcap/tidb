@@ -22,6 +22,7 @@ go_test(
     name = "traceevent_test",
     timeout = "short",
     srcs = [
+        "adapter_test.go",
         "flightrecorder_test.go",
         "integration_test.go",
         "traceevent_test.go",
@@ -29,10 +30,13 @@ go_test(
     embed = [":traceevent"],
     flaky = True,
     deps = [
+        "//pkg/config",
         "//pkg/config/kerneltype",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/session",
         "//pkg/testkit",
+        "//pkg/util/logutil",
         "//pkg/util/tracing",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//trace",

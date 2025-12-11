@@ -287,6 +287,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName ast.CIStr) error {
 	if err != nil {
 		return err
 	}
+	err = checkColumnReferencedByPartialCondition(tblInfo, colName)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -553,11 +557,10 @@ func (w *worker) updatePhysicalTableRow(
 				model.ActionRemovePartitioning,
 				model.ActionAlterTablePartitioning:
 				// Expected
+			case model.ActionModifyColumn:
+				workType = typeUpdateColumnWorker
 			default:
-				// workType = typeUpdateColumnWorker
-				// TODO: Support Modify Column on partitioned table
-				// https://github.com/pingcap/tidb/issues/38297
-				return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
+				return dbterror.ErrCancelledDDLJob.GenWithStack("Unsupported job Type.")
 			}
 			err := w.writePhysicalTableRecord(ctx, w.sessPool, p, workType, reorgInfo)
 			if err != nil {
@@ -592,20 +595,13 @@ func (w *worker) modifyTableColumn(
 		// Job is cancelled. So it can't be done.
 		failpoint.Return(dbterror.ErrCancelledDDLJob)
 	})
-	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(ctx, t.(table.PhysicalTable), reorgInfo)
+		err := w.updatePhysicalTableRow(ctx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	if _, ok := t.(table.PartitionedTable); ok {
-		// TODO: remove when modify column of partitioned table is supported
-		// https://github.com/pingcap/tidb/issues/38297
-		return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
-	}
 	return nil
 }
 

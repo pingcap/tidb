@@ -89,6 +89,7 @@ go_library(
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//pkg/caller",
         "@io_etcd_go_etcd_client_v3//:client",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
     ],
@@ -112,7 +113,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 32,
+    shard_count = 33,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",

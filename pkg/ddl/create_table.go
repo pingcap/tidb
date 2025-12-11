@@ -49,6 +49,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -195,6 +196,7 @@ func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableIn
 		}
 	}
 
+	failpoint.InjectCall("handleAutoIncID")
 	return nil
 }
 
@@ -204,6 +206,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 			failpoint.Return(ver, errors.New("mock do job error"))
 		}
 	})
+
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.onCreateTable")
+	defer r.End()
 
 	args, err := model.GetCreateTableArgs(job)
 	if err != nil {

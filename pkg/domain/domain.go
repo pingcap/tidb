@@ -241,11 +241,6 @@ func (do *Domain) InfoCache() *infoschema.InfoCache {
 	return do.infoCache
 }
 
-// EtcdClient export for test.
-func (do *Domain) EtcdClient() *clientv3.Client {
-	return do.etcdClient
-}
-
 // UnprefixedEtcdCli export for test.
 func (do *Domain) UnprefixedEtcdCli() *clientv3.Client {
 	return do.unprefixedEtcdCli
@@ -1103,6 +1098,9 @@ func (do *Domain) InitDistTaskLoop() error {
 			}
 			metering.SetMetering(m)
 			do.wg.Run(func() {
+				defer func() {
+					metering.SetMetering(nil)
+				}()
 				m.StartFlushLoop(do.ctx)
 			}, "dxfMeteringFlushLoop")
 		}
@@ -1870,10 +1868,9 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
-		initStatsCtx,
 		do.statsLease,
 		do.advancedSysSessionPool,
 		&do.sysProcesses,
@@ -1904,8 +1901,8 @@ func (do *Domain) SetStatsUpdating(val bool) {
 }
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
-func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
+func (do *Domain) LoadAndUpdateStatsLoop(concurrency int) error {
+	if err := do.UpdateTableStatsLoop(); err != nil {
 		return err
 	}
 	do.StartLoadStatsSubWorkers(concurrency)
@@ -1915,10 +1912,9 @@ func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionct
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
+func (do *Domain) UpdateTableStatsLoop() error {
 	statsHandle, err := handle.NewHandle(
 		do.ctx,
-		initStatsCtx,
 		do.statsLease,
 		do.advancedSysSessionPool,
 		&do.sysProcesses,
@@ -1976,29 +1972,6 @@ func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(func() { waitStartTask(do, do.autoAnalyzeWorker) }, "autoAnalyzeWorker")
 	do.wg.Run(func() { waitStartTask(do, do.analyzeJobsCleanupWorker) }, "analyzeJobsCleanupWorker")
-	do.wg.Run(
-		func() {
-			// The initStatsCtx is used to store the internal session for initializing stats,
-			// so we need the gc min start ts calculation to track it as an internal session.
-			// Since the session manager may not be ready at this moment, `infosync.StoreInternalSession` can fail.
-			// we need to retry until the session manager is ready or the init stats completes.
-			for !infosync.StoreInternalSession(initStatsCtx) {
-				waitRetry := time.After(time.Second)
-				select {
-				case <-do.StatsHandle().InitStatsDone:
-					return
-				case <-waitRetry:
-				}
-			}
-			select {
-			case <-do.StatsHandle().InitStatsDone:
-			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
-				return
-			}
-			infosync.DeleteInternalSession(initStatsCtx)
-		},
-		"RemoveInitStatsFromInternalSessions",
-	)
 	return nil
 }
 
