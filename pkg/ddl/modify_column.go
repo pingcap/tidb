@@ -658,17 +658,10 @@ func (w *worker) doModifyColumnWithCheck(
 
 	failpoint.InjectCall("afterDoModifyColumnSkipReorgCheck")
 
-	if job.MultiSchemaInfo != nil {
-		if job.MultiSchemaInfo.Revertible {
-			job.MarkNonRevertible()
-			// Store the mark and enter the next DDL handling loop.
-			return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
-		}
-	} else {
-		finished := w.doAnalyzeWithoutReorg(job, tblInfo, checkFnForModifyColumn)
-		if !finished {
-			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		}
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		// Store the mark and enter the next DDL handling loop.
+		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
 	return finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
@@ -1033,7 +1026,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
 				// For multi-schema change, analyze is done by parent job.
-				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo, checkFnForModifyColumn) {
+				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				} else {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
@@ -1240,7 +1233,7 @@ func (w *worker) doModifyColumnIndexReorg(
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
 				// For multi-schema change, analyze is done by parent job.
-				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo, checkFnForModifyColumn) {
+				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				} else {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
@@ -1307,38 +1300,6 @@ func (w *worker) doModifyColumnIndexReorg(
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", oldIdxInfos[0].State)
 	}
 	return ver, errors.Trace(err)
-}
-
-// checkFnForModifyColumn checks whether we need to analyze the table after modifying column.
-func checkFnForModifyColumn(job *model.Job, tblInfo *model.TableInfo) bool {
-	args, err := model.GetModifyColumnArgs(job)
-	if err != nil {
-		logutil.DDLLogger().Warn("get modify column args failed", zap.Stringer("job", job), zap.Error(err))
-		return false
-	}
-
-	oldCol := getOldColumnFromArgs(tblInfo, args)
-	oldFt := oldCol.FieldType
-	newFt := args.Column.FieldType
-
-	switch args.ModifyColumnType {
-	case model.ModifyTypeNoReorg:
-		return false
-	case model.ModifyTypeNone, model.ModifyTypePrecheck:
-		// This shouldn't happen.
-		return false
-	case model.ModifyTypeIndexReorg, model.ModifyTypeReorg:
-		return true
-	case model.ModifyTypeNoReorgWithCheck:
-		// Although no reorg is needed, we still need to analyze in some cases.
-		if mysql.IsIntegerType(oldFt.GetType()) && mysql.IsIntegerType(newFt.GetType()) {
-			return mysql.HasUnsignedFlag(oldFt.GetFlag()) != mysql.HasUnsignedFlag(newFt.GetFlag())
-		} else if types.IsTypeChar(oldFt.GetType()) && types.IsTypeChar(newFt.GetType()) {
-			return oldFt.GetCollate() != newFt.GetCollate()
-		}
-	}
-
-	return false
 }
 
 // checkAndMarkNonRevertible should be called when the job is in the final revertible state before public.

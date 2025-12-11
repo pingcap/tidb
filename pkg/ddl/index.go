@@ -1386,13 +1386,10 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 
 // doAnalyzeWithoutReorg performs analyze for the table if needed without the logic of
 // reorg and and returns whether the table info is updated.
-func (w *worker) doAnalyzeWithoutReorg(
-	job *model.Job, tblInfo *model.TableInfo,
-	checkFn func(*model.Job, *model.TableInfo) bool,
-) (finished bool) {
+func (w *worker) doAnalyzeWithoutReorg(job *model.Job, tblInfo *model.TableInfo) (finished bool) {
 	switch job.ReorgMeta.AnalyzeState {
 	case model.AnalyzeStateNone:
-		if checkNeedAnalyze(job, tblInfo, checkFn) {
+		if checkNeedAnalyze(job, tblInfo) {
 			// Start analyze for the next time.
 			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 		} else {
@@ -1407,31 +1404,6 @@ func (w *worker) doAnalyzeWithoutReorg(
 			zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
 		return true
 	}
-}
-
-func extractColumnForModifyColumn(job *model.Job, tblInfo *model.TableInfo) *model.ColumnInfo {
-	args, err := model.GetModifyColumnArgs(job)
-	if err != nil {
-		logutil.DDLLogger().Warn("get modify column args failed", zap.Stringer("job", job), zap.Error(err))
-		return nil
-	}
-
-	oldCol := getOldColumnFromArgs(tblInfo, args)
-	oldFt := oldCol.FieldType
-	newFt := args.Column.FieldType
-
-	switch args.ModifyColumnType {
-	case model.ModifyTypeNoReorgWithCheck:
-		// Although no reorg is needed, we still need to analyze in some cases.
-		if mysql.IsIntegerType(oldFt.GetType()) && mysql.IsIntegerType(newFt.GetType()) &&
-			mysql.HasUnsignedFlag(oldFt.GetFlag()) != mysql.HasUnsignedFlag(newFt.GetFlag()) {
-			return oldCol
-		} else if types.IsTypeChar(oldFt.GetType()) && types.IsTypeChar(newFt.GetType()) && oldFt.GetCollate() != newFt.GetCollate() {
-			return oldCol
-		}
-	}
-
-	return nil
 }
 
 func (w *worker) startAnalyzeAndWait(job *model.Job, tblInfo *model.TableInfo) {

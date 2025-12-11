@@ -81,7 +81,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			return ver, err
 		}
 
-		finished := w.doAnalyzeWithoutReorg(job, tblInfo, checkFnForMultiSchemaChange)
+		finished := w.doAnalyzeWithoutReorg(job, tblInfo)
 		if !finished {
 			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		}
@@ -377,27 +377,8 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	info.SubJobs = newSubJobs
 }
 
-func checkFnForMultiSchemaChange(job *model.Job, tblInfo *model.TableInfo) bool {
-	for i, subJob := range job.MultiSchemaInfo.SubJobs {
-		switch subJob.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			return true
-		case model.ActionModifyColumn:
-			proxyJob := subJob.ToProxyJob(job, i)
-			if checkFnForModifyColumn(&proxyJob, tblInfo) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
 // checkNeedAnalyze check if the job need analyze.
-func checkNeedAnalyze(
-	job *model.Job, tblInfo *model.TableInfo,
-	checkFn func(job *model.Job, tblInfo *model.TableInfo) bool,
-) bool {
+func checkNeedAnalyze(job *model.Job, tblInfo *model.TableInfo) bool {
 	analyzeVer := vardef.DefTiDBAnalyzeVersion
 	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
 		analyzeVer = variable.TidbOptInt(val, analyzeVer)
@@ -415,7 +396,15 @@ func checkNeedAnalyze(
 		return false
 	}
 
-	return checkFn(job, tblInfo)
+	// If we reach here, it means all the reorg work has been done, either after
+	// MODIFY COLUMN or ADD INDEX. So we can just check the index state to decide
+	// whether there are new indexes added.
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StateWriteReorganization {
+			return true
+		}
+	}
+	return false
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {

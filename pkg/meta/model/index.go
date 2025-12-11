@@ -270,17 +270,17 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	return &ni
 }
 
-// IsChanging checks if the column is a new column added in modify column.
+// IsChanging checks if the index is a new index added in modify column.
 func (index *IndexInfo) IsChanging() bool {
-	return strings.HasPrefix(index.Name.O, changingColumnPrefix)
+	return strings.HasPrefix(index.Name.O, changingIndexPrefix)
 }
 
-// IsRemoving checks if the column is a column to be removed used in modify column.
+// IsRemoving checks if the index is a index to be removed in modify column.
 func (index *IndexInfo) IsRemoving() bool {
 	return strings.HasPrefix(index.Name.O, removingObjPrefix)
 }
 
-// GetRemovingOriginName gets the origin name of the removing object.
+// GetRemovingOriginName gets the origin name of the removing index.
 func (index *IndexInfo) GetRemovingOriginName() string {
 	return strings.TrimPrefix(index.Name.O, removingObjPrefix)
 }
