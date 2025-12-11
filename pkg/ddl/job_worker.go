@@ -948,10 +948,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onRecoverSchema(jobCtx, job)
 	case model.ActionModifySchemaDefaultPlacement:
 		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
-	case model.ActionModifySchemaActiveActive:
-		ver, err = onModifySchemaActiveActive(jobCtx, job)
-	case model.ActionModifySchemaSoftDelete:
-		ver, err = onModifySchemaSoftDelete(jobCtx, job)
+	case model.ActionModifySchemaSoftDeleteAndActiveActive:
+		ver, err = onModifySchemaSoftDeleteAndActiveActive(jobCtx, job)
 	case model.ActionCreateTable:
 		ver, err = w.onCreateTable(jobCtx, job)
 	case model.ActionCreateTables:

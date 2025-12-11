@@ -1,16 +1,18 @@
 drop database if exists test_aa;
 create database test_aa active_active = 'ON';
+Error 8200 (HY000): Unsupported ActiveActive enabled but SoftDelete disabled
+create database test_aa;
 show create database test_aa;
 Database	Create Database
-test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='ON' */
-alter database test_aa active_active = 'OFF' softdelete = 'ON';
+test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */
+alter database test_aa active_active = 'OFF' softdelete = retention 4 day;
 show create database test_aa;
 Database	Create Database
-test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='OFF' */ /*T![softdelete] SOFTDELETE='ON' */
-alter database test_aa active_active = 'ON' softdelete = 'ON';
+test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![softdelete] SOFTDELETE=RETENTION 4 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+alter database test_aa active_active = 'ON' softdelete = retention 7 day;
 show create database test_aa;
 Database	Create Database
-test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE='ON' */
+test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 use test_aa;
 create table t1 (id int primary key, name varchar(50));
 show create table t1;
@@ -18,26 +20,20 @@ Table	Create Table
 t1	CREATE TABLE `t1` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
-  `_tidb_commit_ts` bigint DEFAULT NULL,
-  `_tidb_origin_ts` bigint DEFAULT NULL,
-  `_tidb_softdelete_time` bigint DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 alter database test_aa active_active = 'OFF' softdelete = 'OFF';
 show create database test_aa;
 Database	Create Database
-test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='OFF' */ /*T![softdelete] SOFTDELETE='OFF' */
-create table t2 (id int primary key, name varchar(50)) active_active = 'ON' softdelete = 'on';
+test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */
+create table t2 (id int primary key, name varchar(50)) active_active = 'ON' softdelete = retention 7 day;
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
-  `_tidb_commit_ts` bigint DEFAULT NULL,
-  `_tidb_origin_ts` bigint DEFAULT NULL,
-  `_tidb_softdelete_time` bigint DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE='ON' */ /*T![softdelete] SOFTDELETE_RETENTION='7d' */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 create table t3 (id int primary key, name varchar(50)) active_active = 'OFF';
 show create table t3;
 Table	Create Table
@@ -46,10 +42,18 @@ t3	CREATE TABLE `t3` (
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-create table t4 (id int primary key, name varchar(50)) active_active = 'ON';
-Error 8274 (HY000): Cannot set ACTIVE_ACTIVE on a table without SOFTDELETE config
-create table t4 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
-Error 8274 (HY000): Cannot set SOFTDELETE on a table without SOFTDELETE config
+create table t4 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+show create table t4;
+Table	Create Table
+t4	CREATE TABLE `t4` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON';
+Error 8200 (HY000): Unsupported ActiveActive enabled but SoftDelete disabled
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
+Error 8200 (HY000): Unsupported ACTIVE_ACTIVE = 'ON' but SOFTDELETE = 'OFF'
 alter table t3 active_active = 'ON';
 Error 8200 (HY000): This type of ALTER TABLE is currently unsupported
 alter database test_aa active_active = 'INVALID';

@@ -348,10 +348,8 @@ func NewExtraSoftDeleteTimeColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
 		Name: ExtraSoftDeleteTimeName,
 	}
-	colInfo.SetType(mysql.TypeLonglong)
-	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
-	colInfo.SetFlen(flen)
-	colInfo.SetDecimal(decimal)
+	colInfo.SetType(mysql.TypeTimestamp)
+	colInfo.SetFlen(6)
 	colInfo.SetCharset(charset.CharsetBin)
 	colInfo.SetCollate(charset.CollationBin)
 	return colInfo

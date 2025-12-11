@@ -98,107 +98,105 @@ const (
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
 	// not used
-	ActionAlterTableStatsOptions   ActionType = 58
-	ActionAlterNoCacheTable        ActionType = 59
-	ActionCreateTables             ActionType = 60
-	ActionMultiSchemaChange        ActionType = 61
-	ActionFlashbackCluster         ActionType = 62
-	ActionRecoverSchema            ActionType = 63
-	ActionReorganizePartition      ActionType = 64
-	ActionAlterTTLInfo             ActionType = 65
-	ActionAlterTTLRemove           ActionType = 67
-	ActionCreateResourceGroup      ActionType = 68
-	ActionAlterResourceGroup       ActionType = 69
-	ActionDropResourceGroup        ActionType = 70
-	ActionAlterTablePartitioning   ActionType = 71
-	ActionRemovePartitioning       ActionType = 72
-	ActionAddColumnarIndex         ActionType = 73
-	ActionModifyEngineAttribute    ActionType = 74
-	ActionAlterTableMode           ActionType = 75
-	ActionRefreshMeta              ActionType = 76
-	ActionModifySchemaReadOnly     ActionType = 77 // reserve for database read-only feature
-	ActionAlterTableSoftDeleteInfo ActionType = 78
-	ActionModifySchemaActiveActive ActionType = 79
-	ActionModifySchemaSoftDelete   ActionType = 80
+	ActionAlterTableStatsOptions                ActionType = 58
+	ActionAlterNoCacheTable                     ActionType = 59
+	ActionCreateTables                          ActionType = 60
+	ActionMultiSchemaChange                     ActionType = 61
+	ActionFlashbackCluster                      ActionType = 62
+	ActionRecoverSchema                         ActionType = 63
+	ActionReorganizePartition                   ActionType = 64
+	ActionAlterTTLInfo                          ActionType = 65
+	ActionAlterTTLRemove                        ActionType = 67
+	ActionCreateResourceGroup                   ActionType = 68
+	ActionAlterResourceGroup                    ActionType = 69
+	ActionDropResourceGroup                     ActionType = 70
+	ActionAlterTablePartitioning                ActionType = 71
+	ActionRemovePartitioning                    ActionType = 72
+	ActionAddColumnarIndex                      ActionType = 73
+	ActionModifyEngineAttribute                 ActionType = 74
+	ActionAlterTableMode                        ActionType = 75
+	ActionRefreshMeta                           ActionType = 76
+	ActionModifySchemaReadOnly                  ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableSoftDeleteInfo              ActionType = 78
+	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 79
 )
 
 // ActionMap is the map of DDL ActionType to string.
 var ActionMap = map[ActionType]string{
-	ActionCreateSchema:                  "create schema",
-	ActionDropSchema:                    "drop schema",
-	ActionCreateTable:                   "create table",
-	ActionCreateTables:                  "create tables",
-	ActionDropTable:                     "drop table",
-	ActionAddColumn:                     "add column",
-	ActionDropColumn:                    "drop column",
-	ActionAddIndex:                      "add index",
-	ActionDropIndex:                     "drop index",
-	ActionAddForeignKey:                 "add foreign key",
-	ActionDropForeignKey:                "drop foreign key",
-	ActionTruncateTable:                 "truncate table",
-	ActionModifyColumn:                  "modify column",
-	ActionRebaseAutoID:                  "rebase auto_increment ID",
-	ActionRenameTable:                   "rename table",
-	ActionRenameTables:                  "rename tables",
-	ActionSetDefaultValue:               "set default value",
-	ActionShardRowID:                    "shard row ID",
-	ActionModifyTableComment:            "modify table comment",
-	ActionRenameIndex:                   "rename index",
-	ActionAddTablePartition:             "add partition",
-	ActionDropTablePartition:            "drop partition",
-	ActionCreateView:                    "create view",
-	ActionModifyTableCharsetAndCollate:  "modify table charset and collate",
-	ActionTruncateTablePartition:        "truncate partition",
-	ActionDropView:                      "drop view",
-	ActionRecoverTable:                  "recover table",
-	ActionModifySchemaCharsetAndCollate: "modify schema charset and collate",
-	ActionLockTable:                     "lock table",
-	ActionUnlockTable:                   "unlock table",
-	ActionRepairTable:                   "repair table",
-	ActionSetTiFlashReplica:             "set tiflash replica",
-	ActionUpdateTiFlashReplicaStatus:    "update tiflash replica status",
-	ActionAddPrimaryKey:                 "add primary key",
-	ActionDropPrimaryKey:                "drop primary key",
-	ActionCreateSequence:                "create sequence",
-	ActionAlterSequence:                 "alter sequence",
-	ActionDropSequence:                  "drop sequence",
-	ActionModifyTableAutoIDCache:        "modify auto id cache",
-	ActionRebaseAutoRandomBase:          "rebase auto_random ID",
-	ActionAlterIndexVisibility:          "alter index visibility",
-	ActionExchangeTablePartition:        "exchange partition",
-	ActionAddCheckConstraint:            "add check constraint",
-	ActionDropCheckConstraint:           "drop check constraint",
-	ActionAlterCheckConstraint:          "alter check constraint",
-	ActionAlterTableAttributes:          "alter table attributes",
-	ActionAlterTablePartitionPlacement:  "alter table partition placement",
-	ActionAlterTablePartitionAttributes: "alter table partition attributes",
-	ActionCreatePlacementPolicy:         "create placement policy",
-	ActionAlterPlacementPolicy:          "alter placement policy",
-	ActionDropPlacementPolicy:           "drop placement policy",
-	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
-	ActionAlterTablePlacement:           "alter table placement",
-	ActionAlterCacheTable:               "alter table cache",
-	ActionAlterNoCacheTable:             "alter table nocache",
-	ActionAlterTableStatsOptions:        "alter table statistics options",
-	ActionMultiSchemaChange:             "alter table multi-schema change",
-	ActionFlashbackCluster:              "flashback cluster",
-	ActionRecoverSchema:                 "flashback schema",
-	ActionReorganizePartition:           "alter table reorganize partition",
-	ActionAlterTTLInfo:                  "alter table ttl",
-	ActionAlterTTLRemove:                "alter table no_ttl",
-	ActionAlterTableSoftDeleteInfo:      "alter soft delete info",
-	ActionModifySchemaActiveActive:      "modify schema active-active",
-	ActionModifySchemaSoftDelete:        "modify schema soft delete",
-	ActionCreateResourceGroup:           "create resource group",
-	ActionAlterResourceGroup:            "alter resource group",
-	ActionDropResourceGroup:             "drop resource group",
-	ActionAlterTablePartitioning:        "alter table partition by",
-	ActionRemovePartitioning:            "alter table remove partitioning",
-	ActionAddColumnarIndex:              "add columnar index",
-	ActionModifyEngineAttribute:         "modify engine attribute",
-	ActionAlterTableMode:                "alter table mode",
-	ActionRefreshMeta:                   "refresh meta",
-	ActionModifySchemaReadOnly:          "modify schema read only",
+	ActionCreateSchema:                          "create schema",
+	ActionDropSchema:                            "drop schema",
+	ActionCreateTable:                           "create table",
+	ActionCreateTables:                          "create tables",
+	ActionDropTable:                             "drop table",
+	ActionAddColumn:                             "add column",
+	ActionDropColumn:                            "drop column",
+	ActionAddIndex:                              "add index",
+	ActionDropIndex:                             "drop index",
+	ActionAddForeignKey:                         "add foreign key",
+	ActionDropForeignKey:                        "drop foreign key",
+	ActionTruncateTable:                         "truncate table",
+	ActionModifyColumn:                          "modify column",
+	ActionRebaseAutoID:                          "rebase auto_increment ID",
+	ActionRenameTable:                           "rename table",
+	ActionRenameTables:                          "rename tables",
+	ActionSetDefaultValue:                       "set default value",
+	ActionShardRowID:                            "shard row ID",
+	ActionModifyTableComment:                    "modify table comment",
+	ActionRenameIndex:                           "rename index",
+	ActionAddTablePartition:                     "add partition",
+	ActionDropTablePartition:                    "drop partition",
+	ActionCreateView:                            "create view",
+	ActionModifyTableCharsetAndCollate:          "modify table charset and collate",
+	ActionTruncateTablePartition:                "truncate partition",
+	ActionDropView:                              "drop view",
+	ActionRecoverTable:                          "recover table",
+	ActionModifySchemaCharsetAndCollate:         "modify schema charset and collate",
+	ActionLockTable:                             "lock table",
+	ActionUnlockTable:                           "unlock table",
+	ActionRepairTable:                           "repair table",
+	ActionSetTiFlashReplica:                     "set tiflash replica",
+	ActionUpdateTiFlashReplicaStatus:            "update tiflash replica status",
+	ActionAddPrimaryKey:                         "add primary key",
+	ActionDropPrimaryKey:                        "drop primary key",
+	ActionCreateSequence:                        "create sequence",
+	ActionAlterSequence:                         "alter sequence",
+	ActionDropSequence:                          "drop sequence",
+	ActionModifyTableAutoIDCache:                "modify auto id cache",
+	ActionRebaseAutoRandomBase:                  "rebase auto_random ID",
+	ActionAlterIndexVisibility:                  "alter index visibility",
+	ActionExchangeTablePartition:                "exchange partition",
+	ActionAddCheckConstraint:                    "add check constraint",
+	ActionDropCheckConstraint:                   "drop check constraint",
+	ActionAlterCheckConstraint:                  "alter check constraint",
+	ActionAlterTableAttributes:                  "alter table attributes",
+	ActionAlterTablePartitionPlacement:          "alter table partition placement",
+	ActionAlterTablePartitionAttributes:         "alter table partition attributes",
+	ActionCreatePlacementPolicy:                 "create placement policy",
+	ActionAlterPlacementPolicy:                  "alter placement policy",
+	ActionDropPlacementPolicy:                   "drop placement policy",
+	ActionModifySchemaDefaultPlacement:          "modify schema default placement",
+	ActionAlterTablePlacement:                   "alter table placement",
+	ActionAlterCacheTable:                       "alter table cache",
+	ActionAlterNoCacheTable:                     "alter table nocache",
+	ActionAlterTableStatsOptions:                "alter table statistics options",
+	ActionMultiSchemaChange:                     "alter table multi-schema change",
+	ActionFlashbackCluster:                      "flashback cluster",
+	ActionRecoverSchema:                         "flashback schema",
+	ActionReorganizePartition:                   "alter table reorganize partition",
+	ActionAlterTTLInfo:                          "alter table ttl",
+	ActionAlterTTLRemove:                        "alter table no_ttl",
+	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
+	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
+	ActionCreateResourceGroup:                   "create resource group",
+	ActionAlterResourceGroup:                    "alter resource group",
+	ActionDropResourceGroup:                     "drop resource group",
+	ActionAlterTablePartitioning:                "alter table partition by",
+	ActionRemovePartitioning:                    "alter table remove partitioning",
+	ActionAddColumnarIndex:                      "add columnar index",
+	ActionModifyEngineAttribute:                 "modify engine attribute",
+	ActionAlterTableMode:                        "alter table mode",
+	ActionRefreshMeta:                           "refresh meta",
+	ActionModifySchemaReadOnly:                  "modify schema read only",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -790,7 +788,7 @@ func (job *Job) IsRollbackable() bool {
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
-		ActionModifySchemaActiveActive, ActionModifySchemaSoftDelete,
+		ActionModifySchemaSoftDeleteAndActiveActive,
 		ActionModifyTableAutoIDCache, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:

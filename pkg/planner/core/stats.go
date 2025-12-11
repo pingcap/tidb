@@ -126,7 +126,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	}
 
 	// Add soft delete filter if the table has soft delete enabled.
-	if ds.TableInfo.SoftdeleteInfo != nil && ds.TableInfo.SoftdeleteInfo.Enable {
+	if ds.TableInfo.SoftdeleteInfo != nil {
 		// Find the soft delete column in the schema
 		var softDeleteCol *expression.Column
 		for _, col := range ds.Schema().Columns {

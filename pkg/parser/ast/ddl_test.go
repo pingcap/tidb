@@ -1125,10 +1125,10 @@ func TestResourceGroupDDLStmtRestore(t *testing.T) {
 func TestActiveActiveAndSoftDeleteRestore(t *testing.T) {
 	// Test with default restore flags
 	sourceSQLBasic := []NodeRestoreTestCase{
-		{"create table t (created_at datetime) softdelete = 'on'",
-			"CREATE TABLE `t` (`created_at` DATETIME) SOFTDELETE = 'ON'"},
-		{"create table t (id int) softdelete_retention = '7d'",
-			"CREATE TABLE `t` (`id` INT) SOFTDELETE_RETENTION = '7d'"},
+		{"create table t (id int) softdelete 'OFF'",
+			"CREATE TABLE `t` (`id` INT) SOFTDELETE = 'OFF'"},
+		{"create table t (id int) softdelete retention 7 DAY",
+			"CREATE TABLE `t` (`id` INT) SOFTDELETE = RETENTION 7 DAY"},
 		{"alter table t softdelete_job_interval = '1h'",
 			"ALTER TABLE `t` SOFTDELETE_JOB_INTERVAL = '1h'"},
 		{"alter table t softdelete_job_enable = 'on'",
@@ -1138,42 +1138,40 @@ func TestActiveActiveAndSoftDeleteRestore(t *testing.T) {
 		{"create table t (id int) active_active = 'off'",
 			"CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'OFF'"},
 
-		{"create database db1 softdelete_retention = '7d'",
-			"CREATE DATABASE `db1` SOFTDELETE_RETENTION = '7d'"},
+		{"create database db1 softdelete = 'OFF'",
+			"CREATE DATABASE `db1` SOFTDELETE = 'OFF'"},
+		{"create database db1 softdelete retention 7 DAY",
+			"CREATE DATABASE `db1` SOFTDELETE = RETENTION 7 DAY"},
 		{"create database db1 active_active = 'on'",
 			"CREATE DATABASE `db1` ACTIVE_ACTIVE = 'ON'"},
-		{"alter database db1 softdelete = 'on'",
-			"ALTER DATABASE `db1` SOFTDELETE = 'ON'"},
 		{"alter database db1 active_active = 'on'",
 			"ALTER DATABASE `db1` ACTIVE_ACTIVE = 'ON'"},
-		{"alter database db1 active_active = 'on' softdelete = 'on'",
-			"ALTER DATABASE `db1` ACTIVE_ACTIVE = 'ON' SOFTDELETE = 'ON'"},
+		{"alter database db1 active_active = 'on' softdelete = retention 7 HOUR",
+			"ALTER DATABASE `db1` ACTIVE_ACTIVE = 'ON' SOFTDELETE = RETENTION 7 HOUR"},
 
-		{"create table t (id int) active_active = 'on' softdelete = 'on'",
-			"CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'ON' SOFTDELETE = 'ON'"},
-		{"create table t (id int) active_active = 'on' softdelete = 'on' softdelete_retention = '7d'",
-			"CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'ON' SOFTDELETE = 'ON' SOFTDELETE_RETENTION = '7d'"},
+		{"create table t (id int) active_active = 'on' softdelete retention 7 DAY",
+			"CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'ON' SOFTDELETE = RETENTION 7 DAY"},
 	}
 
 	// Test with special comment flags (like TTL does)
 	sourceSQLSpecial := []NodeRestoreTestCase{
-		{"create table t (id int) softdelete = 'on'",
-			"CREATE TABLE `t` (`id` INT) /*T![softdelete] SOFTDELETE = 'ON' */"},
-		{"create table t (id int) softdelete_retention = '168h'",
-			"CREATE TABLE `t` (`id` INT) /*T![softdelete] SOFTDELETE_RETENTION = '168h' */"},
+		{"create table t (id int) softdelete 'OFF'",
+			"CREATE TABLE `t` (`id` INT) /*T![softdelete] SOFTDELETE = 'OFF' */"},
+		{"create table t (id int) softdelete retention 168 HOUR",
+			"CREATE TABLE `t` (`id` INT) /*T![softdelete] SOFTDELETE = RETENTION 168 HOUR */"},
 		{"alter table t softdelete_job_interval = '1h'",
 			"ALTER TABLE `t` /*T![softdelete] SOFTDELETE_JOB_INTERVAL = '1h' */"},
 		{"create table t (id int) active_active = 'on'",
 			"CREATE TABLE `t` (`id` INT) /*T![active_active] ACTIVE_ACTIVE = 'ON' */"},
-		{"create table t (id int) active_active = 'on' softdelete = 'on'",
-			"CREATE TABLE `t` (`id` INT) /*T![active_active] ACTIVE_ACTIVE = 'ON' */ /*T![softdelete] SOFTDELETE = 'ON' */"},
+		{"create table t (id int) active_active = 'on' softdelete = retention 168 HOUR ",
+			"CREATE TABLE `t` (`id` INT) /*T![active_active] ACTIVE_ACTIVE = 'ON' */ /*T![softdelete] SOFTDELETE = RETENTION 168 HOUR */"},
 
-		{"create database db1 softdelete_retention = '168h'",
-			"CREATE DATABASE `db1` /*T![softdelete] SOFTDELETE_RETENTION = '168h' */"},
+		{"create database db1 softdelete retention 168 HOUR",
+			"CREATE DATABASE `db1` /*T![softdelete] SOFTDELETE = RETENTION 168 HOUR */"},
 		{"create database db1 active_active = 'on'",
 			"CREATE DATABASE `db1` /*T![active_active] ACTIVE_ACTIVE = 'ON' */"},
-		{"alter database db1 active_active = 'on' softdelete = 'on'",
-			"ALTER DATABASE `db1` /*T![active_active] ACTIVE_ACTIVE = 'ON' */ /*T![softdelete] SOFTDELETE = 'ON' */"},
+		{"alter database db1 active_active = 'on' softdelete = retention 168 HOUR",
+			"ALTER DATABASE `db1` /*T![active_active] ACTIVE_ACTIVE = 'ON' */ /*T![softdelete] SOFTDELETE = RETENTION 168 HOUR */"},
 	}
 
 	extractNodeFunc := func(node Node) Node {
