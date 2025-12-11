@@ -15,15 +15,21 @@
 package metrics
 
 import (
+	"fmt"
 	"maps"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -96,6 +102,59 @@ var (
 	DDLRunningJobCount    *prometheus.GaugeVec
 	AddIndexScanRate      *prometheus.HistogramVec
 )
+
+var (
+	errMapMutex sync.Mutex
+	errMapLimit int                 = 64
+	errMap      map[string]struct{} = make(map[string]struct{}, errMapLimit)
+)
+
+// normalizeErrorString replaces all consecutive digits in the string with a single '?'
+// to avoid creating too many unique metric labels that only differ in numbers.
+func normalizeErrorString(s string) string {
+	runes := []rune(s)
+	result := make([]rune, 0, len(runes))
+	inNumber := false
+
+	for _, r := range runes {
+		if r >= '0' && r <= '9' {
+			if !inNumber {
+				result = append(result, '?')
+				inNumber = true
+			}
+		} else {
+			result = append(result, r)
+			inNumber = false
+		}
+	}
+	return string(result)
+}
+
+// AddRetryableError increments the retryable error counter with the given error.
+func AddRetryableError(err error) {
+	var s string
+	err = errors.Cause(err)
+	if e, ok := err.(*errors.Error); ok {
+		s = string(e.RFCCode())
+	} else if rpcStatus, ok := status.FromError(err); ok && rpcStatus.Code() != codes.Unknown {
+		s = fmt.Sprintf("rpc error: %s", rpcStatus.Code())
+	} else {
+		// TODO(joechenrh): the error displayed here may be still too long,
+		// consider mapping common errors to short strings.
+		s = normalizeErrorString(err.Error())
+	}
+
+	errMapMutex.Lock()
+	defer errMapMutex.Unlock()
+
+	errMap[s] = struct{}{}
+	if len(errMap) > errMapLimit {
+		errMap = make(map[string]struct{}, errMapLimit)
+		RetryableErrorCount.Reset()
+	}
+
+	RetryableErrorCount.WithLabelValues(s).Inc()
+}
 
 // InitDDLMetrics initializes defines DDL metrics.
 func InitDDLMetrics() {
@@ -234,9 +293,9 @@ var (
 	DDLCommitTempIndexWrite = func(connID uint64) {}
 	// DDLRollbackTempIndexWrite rolls back the writes to a temporary index.
 	DDLRollbackTempIndexWrite = func(connID uint64) {}
-	// DDLResetTempIndexWrite resets the write count for a temporary index.
-	DDLResetTempIndexWrite = func(tblID int64) {}
-	// DDLClearTempIndexWrite clears the write count for a temporary index.
+	// DDLRemoveTempIndex remove the record for a temporary index.
+	DDLRemoveTempIndex = func(tblID int64) {}
+	// DDLClearTempIndexWrite clears the temporary index writes for a connection.
 	DDLClearTempIndexWrite = func(connID uint64) {}
 	// DDLSetTempIndexScanAndMerge sets the scan count and merge count for a temporary index.
 	DDLSetTempIndexScanAndMerge = func(tableID int64, scanCnt, mergeCnt uint64) {}
@@ -260,35 +319,60 @@ const (
 	LblReorgPartitionRate = "reorg_partition_rate"
 )
 
-// generateReorgLabel returns the label with schema name, table name and optional column/index names.
-// Multiple columns/indexes can be concatenated with "+".
-func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) string {
-	var stringBuilder strings.Builder
-	if len(colOrIdxNames) == 0 {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
-	} else {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + len(colOrIdxNames) + 3)
+var cleanupFuncs = make(map[int64]map[string]func(), 8)
+
+// CleanupAllMetricsForJob cleans up all metrics registered for the given job ID.
+func CleanupAllMetricsForJob(id int64) {
+	mu.Lock()
+	defer mu.Unlock()
+	if funcs, ok := cleanupFuncs[id]; ok {
+		for _, fn := range funcs {
+			fn()
+		}
+		delete(cleanupFuncs, id)
 	}
-	stringBuilder.WriteString(label)
-	stringBuilder.WriteString("-")
-	stringBuilder.WriteString(schemaName)
-	stringBuilder.WriteString("-")
-	stringBuilder.WriteString(tableName)
-	if len(colOrIdxNames) > 0 {
-		stringBuilder.WriteString("-")
-		stringBuilder.WriteString(colOrIdxNames)
-	}
-	return stringBuilder.String()
 }
 
 // GetBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
-func GetBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
-	return BackfillTotalCounter.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
+func GetBackfillTotalByLabel(id int64, labels ...string) prometheus.Counter {
+	mu.Lock()
+	defer mu.Unlock()
+	lv := strings.Join(labels, "-")
+	counter := BackfillTotalCounter.WithLabelValues(lv)
+
+	if _, ok := cleanupFuncs[id]; !ok {
+		cleanupFuncs[id] = make(map[string]func(), 8)
+	}
+
+	if _, ok := cleanupFuncs[id][lv]; !ok {
+		logutil.BgLogger().Debug("add backfill total counter metric", zap.Int64("jobID", id), zap.String("label", lv))
+		cleanupFuncs[id][lv] = func() {
+			logutil.BgLogger().Debug("cleanup backfill total counter metric", zap.Int64("jobID", id), zap.String("label", lv))
+			BackfillTotalCounter.DeleteLabelValues(lv)
+		}
+	}
+	return counter
 }
 
 // GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
-	return BackfillProgressGauge.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
+func GetBackfillProgressByLabel(id int64, labels ...string) prometheus.Gauge {
+	mu.Lock()
+	defer mu.Unlock()
+	lv := strings.Join(labels, "-")
+	counter := BackfillProgressGauge.WithLabelValues(lv)
+
+	if _, ok := cleanupFuncs[id]; !ok {
+		cleanupFuncs[id] = make(map[string]func(), 8)
+	}
+
+	if _, ok := cleanupFuncs[id][lv]; !ok {
+		logutil.BgLogger().Info("add backfill progress gauge metric", zap.Int64("jobID", id), zap.String("label", lv))
+		cleanupFuncs[id][lv] = func() {
+			logutil.BgLogger().Info("cleanup backfill progress gauge metric", zap.Int64("jobID", id), zap.String("label", lv))
+			BackfillProgressGauge.DeleteLabelValues(lv)
+		}
+	}
+	return counter
 }
 
 // RegisterLightningCommonMetricsForDDL returns the registered common metrics.

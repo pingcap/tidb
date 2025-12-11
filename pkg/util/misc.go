@@ -74,7 +74,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		if err == nil || !retryAble {
 			return errors.Trace(err)
 		}
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.AddRetryableError(err)
 		sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
 		time.Sleep(sleepTime)
 	}

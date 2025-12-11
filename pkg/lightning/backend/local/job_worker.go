@@ -203,7 +203,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				if !w.isRetryableImportTiKVError(err) {
 					return err
 				}
-				metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+				metrics.AddRetryableError(err)
 				// currently only one case will restart write
 				if strings.Contains(err.Error(), "RequestTooNew") {
 					// TiKV hasn't synced the newest region info with PD, it's ok to
@@ -233,7 +233,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				if !w.isRetryableImportTiKVError(err) {
 					return err
 				}
-				metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+				metrics.AddRetryableError(err)
 
 				newRegion, nextStage := getNextStageOnIngestError(err)
 				job.convertStageTo(nextStage)

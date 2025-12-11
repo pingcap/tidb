@@ -196,7 +196,8 @@ type worker struct {
 }
 
 // ReorgContext contains context info for reorg job.
-// TODO there is another reorgCtx, merge them.
+// TODO there is another reorgCtx, move some fields to reorgCtx, as some of
+// fields are only used in reorg job, while others are used in all DDL jobs.
 type ReorgContext struct {
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
@@ -445,6 +446,7 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 	}
 	job.SeqNum = w.seqAllocator.Add(1)
 	w.removeJobCtx(job)
+	metrics.CleanupAllMetricsForJob(job.ID)
 	failpoint.InjectCall("afterFinishDDLJob", job)
 	err = AddHistoryDDLJob(w.workCtx, w.sess, metaMut, job, updateRawArgs)
 	return errors.Trace(err)
@@ -513,12 +515,12 @@ func getDDLRequestSource(jobType model.ActionType) string {
 	return kv.InternalTxnDDL
 }
 
-func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
+func (w *ReorgContext) setRequestSource(jobType model.ActionType) {
 	if w.tp != "" {
 		return
 	}
 	w.tp = getDDLRequestSource(jobType)
-	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.tp, kvutil.ExplicitTypeDDL)
 }
 
 func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
@@ -564,7 +566,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
 	w.setDDLLabelForTopSQL(job.ID, job.Query)
-	w.setDDLSourceForDiagnosis(job.ID, job.Type)
+	w.setRequestSource(job.ID, job.Type)
 	jobContext := w.jobContext(job.ID, job.ReorgMeta)
 	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
@@ -691,7 +693,7 @@ func (w *worker) transitOneJobStep(
 
 	// If error is non-retryable, we can ignore the sleep.
 	if runJobErr != nil && isRetryableJobError(runJobErr, job.ErrorCount) {
-		metrics.RetryableErrorCount.WithLabelValues(runJobErr.Error()).Inc()
+		metrics.AddRetryableError(runJobErr)
 		jobCtx.logger.Info("run DDL job failed, sleeps a while then retries it.",
 			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,

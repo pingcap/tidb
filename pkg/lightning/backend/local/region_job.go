@@ -691,7 +691,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			if common.IsContextCanceledError(err) {
 				return err
 			}
-			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+			metrics.AddRetryableError(err)
 			tidblogutil.Logger(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),

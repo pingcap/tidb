@@ -717,7 +717,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 				return nil, errors.Annotatef(readErr, "failed to read body from get object result, file info: input.bucket='%s', input.key='%s', retryCnt='%d'",
 					*input.Bucket, *input.Key, retryCnt)
 			}
-			metrics.RetryableErrorCount.WithLabelValues(readErr.Error()).Inc()
+			metrics.AddRetryableError(readErr)
 			continue
 		}
 		return data, nil
@@ -1050,7 +1050,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && r.ctx.Err() == nil && retryCnt < maxErrorRetries { //nolint:errorlint
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.AddRetryableError(err)
 		log.L().Warn(
 			"read s3 object failed, will retry",
 			zap.String("file", r.name),
@@ -1319,7 +1319,7 @@ func (rl retryerWithLog) ShouldRetry(r *request.Request) (retry bool) {
 	defer func() {
 		log.Warn("failed to request s3, checking whether we can retry", zap.Error(r.Error), zap.Bool("retry", retry))
 		if retry {
-			metrics.RetryableErrorCount.WithLabelValues(r.Error.Error()).Inc()
+			metrics.AddRetryableError(r.Error)
 		}
 	}()
 

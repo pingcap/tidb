@@ -1000,7 +1000,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
+		metrics.GetBackfillProgressByLabel(job.ID, metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingColumn = changingCol
 		args.ChangingIdxs = changingIdxs
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
@@ -1231,7 +1231,6 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingIdxs = changingIdxInfos
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
 		job.FillArgs(args)

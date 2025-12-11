@@ -854,7 +854,7 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		}
 	}
 	if allIndexPublic {
-		metrics.DDLResetTempIndexWrite(tblInfo.ID)
+		metrics.DDLRemoveTempIndex(tblInfo.ID)
 	}
 
 	if !b.enableV2 {
@@ -924,6 +924,9 @@ func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, t
 	}
 	// Remove the table in sorted table slice.
 	b.infoSchema.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
+
+	// Remove the temporary index metrics.
+	metrics.DDLRemoveTempIndex(tableID)
 
 	// Remove the table in temporaryTables
 	if b.infoSchema.temporaryTableIDs != nil {

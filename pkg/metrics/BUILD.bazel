@@ -44,6 +44,8 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_prometheus_client_model//go",
         "@com_github_tikv_client_go_v2//metrics",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
         "@org_uber_go_zap//:zap",
     ],
 )
