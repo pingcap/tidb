@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -47,12 +48,37 @@ import (
 // InsertExec represents an insert executor.
 type InsertExec struct {
 	*InsertValues
-	OnDuplicate    []*expression.Assignment
-	evalBuffer4Dup chunk.MutRow
-	curInsertVals  chunk.MutRow
-	row4Update     []types.Datum
+	OnDuplicate           []*expression.Assignment
+	evalBuffer4Dup        chunk.MutRow
+	curInsertVals         chunk.MutRow
+	row4Update            []types.Datum
+	replaceConflictIfExpr []expression.Expression
+	needExtraCommitTS     bool
 
 	Priority mysql.PriorityEnum
+}
+
+func (e *InsertExec) replaceConflictIf(evalCtx expression.EvalContext, row []types.Datum) (bool, error) {
+	chunkRow := chunk.MutRowFromDatums(row).ToRow()
+	tc := evalCtx.TypeCtx()
+	for _, expr := range e.replaceConflictIfExpr {
+		data, err := expr.Eval(evalCtx, chunkRow)
+		if err != nil {
+			return false, err
+		}
+		if data.IsNull() {
+			return false, nil
+		}
+		isBool, err := data.ToBool(tc)
+		if err != nil {
+			return false, err
+		}
+		if isBool == 0 {
+			return false, nil
+		}
+	}
+	// All expressions are true
+	return true, nil
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
@@ -87,7 +113,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
-	if len(e.OnDuplicate) > 0 {
+	if len(e.OnDuplicate) > 0 || len(e.replaceConflictIfExpr) > 0 {
 		err := e.batchUpdateDupRows(ctx, rows)
 		if err != nil {
 			return err
@@ -124,7 +150,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	return txn.MayFlush()
 }
 
-func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
+func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string]kv.ValueEntry, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchUniqueIndices")
 	defer r.End()
 
@@ -153,7 +179,7 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 	return txn.BatchGet(ctx, batchKeys)
 }
 
-func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string][]byte) error {
+func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string]kv.ValueEntry) error {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchConflictedOldRows")
 	defer r.End()
 
@@ -167,7 +193,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 					// temp indexes.
 					continue
 				}
-				handle, err := tablecodec.DecodeHandleInIndexValue(val)
+				handle, err := tablecodec.DecodeHandleInIndexValue(val.Value)
 				if err != nil {
 					return err
 				}
@@ -197,17 +223,12 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 func (e *InsertExec) updateDupRow(
 	ctx context.Context,
 	idxInBatch int,
-	txn kv.Transaction,
 	row toBeCheckedRow,
+	oldRow []types.Datum,
 	handle kv.Handle,
-	_ []*expression.Assignment,
 	dupKeyCheck table.DupKeyCheckMode,
 	autoColIdx int,
-) error {
-	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
-	if err != nil {
-		return err
-	}
+) (err error) {
 	// get the extra columns from the SELECT clause.
 	var extraCols []types.Datum
 	if len(e.Ctx().GetSessionVars().CurrInsertBatchExtraCols) > 0 {
@@ -220,6 +241,11 @@ func (e *InsertExec) updateDupRow(
 		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
 	}
 	return err
+}
+
+type removeOldRow struct {
+	handle kv.Handle
+	oldRow []types.Datum
 }
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
@@ -263,6 +289,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		autoColIdx = -1
 	}
 
+	var removeOldRows []removeOldRow
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -270,24 +297,36 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck, autoColIdx)
-			if err == nil {
-				continue
-			}
-			if !kv.IsErrNotFound(err) {
+			oldRow, commitTS, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs, e.needExtraCommitTS)
+			if err != nil && !kv.IsErrNotFound(err) {
 				return err
+			}
+
+			if oldRow != nil {
+				if e.needExtraCommitTS {
+					oldRow = append(oldRow, types.NewUintDatum(commitTS))
+				}
+				var done bool
+				done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, r.handleKey, updateDupKeyCheck, autoColIdx, removeOldRows)
+				if err != nil {
+					return err
+				}
+				if done {
+					continue
+				}
 			}
 		}
 
 		for _, uk := range r.uniqueKeys {
-			_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn)
+			handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn)
 			if err != nil {
 				return err
 			}
 			if handle == nil {
 				continue
 			}
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck, autoColIdx)
+
+			oldRow, commitTS, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs, e.needExtraCommitTS)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -299,10 +338,31 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
+			if e.needExtraCommitTS {
+				oldRow = append(oldRow, types.NewUintDatum(commitTS))
+			}
 
-			newRows[i] = nil
-			break
+			var done bool
+			done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, uk, updateDupKeyCheck, autoColIdx, removeOldRows)
+			if err != nil {
+				return err
+			}
+			if done {
+				newRows[i] = nil
+				break
+			}
 		}
+
+		// In ignore mode, the inserted row is not applied, so we should not delete the related tombstone rows.
+		// In update mode, the tombstone conflict rows may not be the same as those in insert mode; we should recompute them.
+		for _, rm := range removeOldRows {
+			unchanged, err := e.removeOldRow(txn, rm.handle, rm.oldRow, r, false)
+			if err != nil {
+				return err
+			}
+			intest.Assert(!unchanged, "old row should not be identical to the new row, it's supposed that change happens")
+		}
+		removeOldRows = removeOldRows[:0]
 
 		// If row was checked with no duplicate keys,
 		// we should do insert the row,
@@ -319,6 +379,50 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		e.stats.CheckInsertTime += time.Since(start)
 	}
 	return nil
+}
+
+func (e *InsertExec) handleConflictWithOldRow(ctx context.Context,
+	idxInBatch int,
+	row toBeCheckedRow,
+	oldRow []types.Datum,
+	handle kv.Handle,
+	dupKeyInfo *keyValueWithDupInfo,
+	dupKeyCheck table.DupKeyCheckMode,
+	autoColIdx int,
+	removeOldRows []removeOldRow) (done bool, _ []removeOldRow, err error) {
+	if len(e.replaceConflictIfExpr) > 0 {
+		shouldRemoveOldRow := false
+		shouldRemoveOldRow, err = e.replaceConflictIf(e.Ctx().GetExprCtx().GetEvalCtx(), oldRow)
+		if err != nil {
+			return false, nil, err
+		}
+		if shouldRemoveOldRow {
+			removeOldRows = append(removeOldRows, removeOldRow{
+				handle: handle,
+				oldRow: oldRow,
+			})
+			return false, removeOldRows, nil
+		}
+	}
+
+	if len(e.OnDuplicate) > 0 {
+		if err = e.updateDupRow(ctx, idxInBatch, row, oldRow, handle, dupKeyCheck, autoColIdx); err != nil {
+			return false, nil, err
+		}
+		return true, removeOldRows, nil
+	}
+
+	if e.ignoreErr {
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(dupKeyInfo.dupErr)
+		if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
+			e.Ctx().GetSessionVars().LockUnchangedKeys {
+			// lock duplicated row key on insert-ignore
+			txnCtx.AddUnchangedKeyForLock(dupKeyInfo.newKey)
+		}
+		return true, removeOldRows, nil
+	}
+
+	return false, removeOldRows, nil
 }
 
 // optimizeDupKeyCheckForNormalInsert trys to optimize the DupKeyCheckMode for an insert statement according to the
@@ -419,11 +523,18 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 		extraLen = e.SelectExec.Schema().Len() - e.rowLen
 	}
 
-	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols+extraLen)
+	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols+extraLen+1)
 
 	// Append the old row before the new row, to be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
 	for _, col := range e.Table.WritableCols() {
 		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))
+	}
+	newRowStartIdx := numWritableCols + extraLen
+	if e.needExtraCommitTS {
+		commitTSFt := types.NewFieldType(mysql.TypeLonglong)
+		commitTSFt.SetFlag(mysql.UnsignedFlag)
+		evalBufferTypes = append(evalBufferTypes, commitTSFt)
+		newRowStartIdx++
 	}
 	if extraLen > 0 {
 		evalBufferTypes = append(evalBufferTypes, e.SelectExec.RetFieldTypes()[e.rowLen:]...)
@@ -435,7 +546,8 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
 	}
 	e.evalBuffer4Dup = chunk.MutRowFromTypes(evalBufferTypes)
-	e.curInsertVals = chunk.MutRowFromTypes(evalBufferTypes[numWritableCols+extraLen:])
+
+	e.curInsertVals = chunk.MutRowFromTypes(evalBufferTypes[newRowStartIdx:])
 	e.row4Update = make([]types.Datum, 0, len(evalBufferTypes))
 }
 
@@ -453,6 +565,18 @@ func (e *InsertExec) doDupRowUpdate(
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
 	e.Ctx().GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
+
+	updateOriginTSCol := -1
+	if e.Table.Meta().IsActiveActive {
+		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+		// should be set to null rather than copy the old value.
+		for _, col := range e.Table.Cols() {
+			if col.Name.Equals(&model.ExtraOriginTSName) {
+				updateOriginTSCol = col.Offset
+			}
+		}
+	}
+
 	// NOTE: In order to execute the expression inside the column assignment,
 	// we have to put the value of "oldRow" and "extraCols" before "newRow" in
 	// "row4Update" to be consistent with "Schema4OnDuplicate" in the "Insert"
@@ -519,7 +643,11 @@ func (e *InsertExec) doDupRowUpdate(
 		assignFlag[assign.Col.Index] = true
 	}
 
-	newData := e.row4Update[:len(oldRow)]
+	newData := e.row4Update[:len(e.Table.WritableCols())]
+	if updateOriginTSCol >= 0 && !assignFlag[updateOriginTSCol] {
+		newData[updateOriginTSCol].SetNull()
+	}
+
 	_, ignored, err := updateRecord(
 		ctx, e.Ctx(),
 		handle, oldRow, newData,
