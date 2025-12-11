@@ -1261,11 +1261,21 @@ func getHarmonicMean(rs []float64) float64 {
 	if len(rs) == 0 {
 		return 1.0
 	}
-	var sumInverse float64
+	var (
+		sumInverse float64
+		count      int
+	)
 	for _, r := range rs {
-		sumInverse += 1.0 / r
+		if r > 0 {
+			sumInverse += 1.0 / r
+			count++
+		}
 	}
-	return float64(len(rs)) / sumInverse
+
+	if count == 0 {
+		return 1.0
+	}
+	return float64(count) / sumInverse
 }
 
 func (r *compressionEstimator) estimate(
