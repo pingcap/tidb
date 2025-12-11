@@ -293,19 +293,12 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 		}
 
 		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
-			for physicalID, totalKvs := range oldTable.TotalKvsMap {
-				// the total kvs contains the index kvs, but the stats meta needs the count of rows
-				count := int64(totalKvs / uint64(len(oldTable.Info.Indices)+1))
-				// Not need to return err when failed because of update analysis-meta
-				log.Info("start update metas",
-					zap.Stringer("table", oldTable.Info.Name),
-					zap.Stringer("db", oldTable.DB.Name),
-					zap.Int64("physical id", physicalID),
-					zap.Int64("count", count),
-				)
-				if statsErr = statsHandler.SaveMetaToStorage(physicalID, count, 0, "br restore", false); statsErr != nil {
-					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
-				}
+			// Not need to return err when failed because of update analysis-meta
+			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
+			// the total kvs contains the index kvs, but the stats meta needs the count of rows
+			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
+			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore", false); statsErr != nil {
+				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
 			}
 		}
 		updateCh.Inc()
