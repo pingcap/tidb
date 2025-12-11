@@ -445,36 +445,6 @@ func rollbackModifyColumnJobWithIndexReorg(
 	return ver, nil
 }
 
-func getOldColumnFromArgs(
-	tblInfo *model.TableInfo,
-	args *model.ModifyColumnArgs,
-) *model.ColumnInfo {
-	var oldCol *model.ColumnInfo
-	// Use column ID to locate the old column.
-	// It is persisted to job arguments after the first execution.
-	if args.OldColumnID > 0 {
-		return model.FindColumnInfoByID(tblInfo.Columns, args.OldColumnID)
-	}
-
-	// Lower version TiDB doesn't persist the old column ID to job arguments.
-	// We have to use the old column name to locate the old column.
-	oldCol = model.FindColumnInfo(tblInfo.Columns, model.GenRemovingObjName(args.OldColumnName.L))
-	if oldCol == nil {
-		// The old column maybe not in removing state.
-		oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
-	}
-
-	if oldCol != nil {
-		args.OldColumnID = oldCol.ID
-		logutil.DDLLogger().Info("run modify column job, find old column by name",
-			zap.String("oldColumnName", args.OldColumnName.L),
-			zap.Int64("oldColumnID", oldCol.ID),
-		)
-	}
-
-	return oldCol
-}
-
 func getModifyColumnInfo(
 	t *meta.Mutator, job *model.Job, args *model.ModifyColumnArgs,
 ) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, error) {
@@ -488,7 +458,28 @@ func getModifyColumnInfo(
 		return nil, nil, nil, errors.Trace(err)
 	}
 
-	oldCol := getOldColumnFromArgs(tblInfo, args)
+	var oldCol *model.ColumnInfo
+	// Use column ID to locate the old column.
+	// It is persisted to job arguments after the first execution.
+	if args.OldColumnID > 0 {
+		oldCol = model.FindColumnInfoByID(tblInfo.Columns, args.OldColumnID)
+	} else {
+		// Lower version TiDB doesn't persist the old column ID to job arguments.
+		// We have to use the old column name to locate the old column.
+		oldCol = model.FindColumnInfo(tblInfo.Columns, model.GenRemovingObjName(args.OldColumnName.L))
+		if oldCol == nil {
+			// The old column maybe not in removing state.
+			oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
+		}
+		if oldCol != nil {
+			args.OldColumnID = oldCol.ID
+			logutil.DDLLogger().Info("run modify column job, find old column by name",
+				zap.Int64("jobID", job.ID),
+				zap.String("oldColumnName", args.OldColumnName.L),
+				zap.Int64("oldColumnID", oldCol.ID),
+			)
+		}
+	}
 	if oldCol == nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(args.OldColumnName, tblInfo.Name))
