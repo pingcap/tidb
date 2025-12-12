@@ -10,7 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/streamhelper/config",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
         "@com_github_spf13_pflag//:pflag",
     ],
 )

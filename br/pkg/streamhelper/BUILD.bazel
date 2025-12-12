@@ -80,7 +80,7 @@ go_test(
         "//br/pkg/streamhelper/spans",
         "//br/pkg/utils",
         "//pkg/kv",
-        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
         "//pkg/tablecodec",
         "//pkg/util/codec",
         "//pkg/util/redact",
