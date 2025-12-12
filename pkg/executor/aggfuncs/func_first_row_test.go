@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 func TestMergePartialResult4FirstRow(t *testing.T) {
@@ -78,14 +77,14 @@ func TestMemFirstRow(t *testing.T) {
 	}
 }
 
-func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
-	for i := range srcChk.NumRows() {
-		row := srcChk.GetRow(i)
+func firstRowUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
+	for i := range param.srcChk.NumRows() {
+		row := param.srcChk.GetRow(i)
 		if i > 0 {
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
-		switch dataType.GetType() {
+		switch param.keyType.GetType() {
 		case mysql.TypeString:
 			val := row.GetString(0)
 			memDeltas = append(memDeltas, int64(len(val)))

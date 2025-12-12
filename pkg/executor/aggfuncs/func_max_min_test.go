@@ -86,12 +86,12 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 	return memDeltas, nil
 }
 
-func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
-	return maxMinUpdateMemDeltaGens(srcChk, dataType, true)
+func maxUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
+	return maxMinUpdateMemDeltaGens(param.srcChk, param.keyType, true)
 }
 
-func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
-	return maxMinUpdateMemDeltaGens(srcChk, dataType, false)
+func minUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
+	return maxMinUpdateMemDeltaGens(param.srcChk, param.keyType, false)
 }
 
 func TestMergePartialResult4MaxMin(t *testing.T) {
