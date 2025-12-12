@@ -554,8 +554,6 @@ SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2
 FROM test_table t1
 JOIN test_table t2 ON t1.id = t2.id;
 `)
-<<<<<<< HEAD
-=======
 	tk.MustExec(`create database test2`)
 	tk.MustExec(`use test2`)
 	tk.MustExec(`CREATE TABLE test_table (
@@ -582,7 +580,6 @@ JOIN test_table t2 ON t1.id = t2.id;
 			require.NoError(t, failpoint.Disable(fpName))
 		}()
 	}
->>>>>>> 2042309765f (planner,executor: fix cannot dump plan replayer when query happen to panic (#64836))
 	rows := tk.MustQuery("plan replayer dump explain SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2 FROM test_table t1 JOIN test_table t2 ON t1.id = t2.id;")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename string

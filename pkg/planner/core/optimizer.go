@@ -283,16 +283,12 @@ func doOptimize(
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-<<<<<<< HEAD
+	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
 	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
 		planCounter = -1
 	}
 	physical, cost, err := physicalOptimize(logic, &planCounter)
-=======
-	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
-	physical, cost, err := physicalOptimize(logic)
->>>>>>> 2042309765f (planner,executor: fix cannot dump plan replayer when query happen to panic (#64836))
 	if err != nil {
 		return nil, nil, 0, err
 	}
