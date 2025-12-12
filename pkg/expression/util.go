@@ -25,7 +25,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -188,23 +187,6 @@ func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expres
 		extractColumns(m, expr, filter)
 	}
 	return m
-}
-
-var uniqueIDToColumnMapPool = sync.Pool{
-	New: func() any {
-		return make(map[int64]*Column, 4)
-	},
-}
-
-// GetUniqueIDToColumnMap gets map[int64]*Column map from the pool.
-func GetUniqueIDToColumnMap() map[int64]*Column {
-	return uniqueIDToColumnMapPool.Get().(map[int64]*Column)
-}
-
-// PutUniqueIDToColumnMap puts map[int64]*Column map back to the pool.
-func PutUniqueIDToColumnMap(m map[int64]*Column) {
-	clear(m)
-	uniqueIDToColumnMapPool.Put(m)
 }
 
 // ExtractColumnsMapFromExpressionsWithReusedMap is the same as ExtractColumnsFromExpressions, but map can be reused.
