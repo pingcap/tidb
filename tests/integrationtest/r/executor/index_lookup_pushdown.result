@@ -1,4 +1,5 @@
 drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
+set @@tidb_scatter_region='table';
 create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
 create table t2(a varchar(32), b int, c int, d int, e int, primary key(a, b) CLUSTERED, index i(c), unique index u(e)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 create table t3 (
@@ -472,3 +473,4 @@ id	a	b
 1	2	3
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_scatter_region=default;
