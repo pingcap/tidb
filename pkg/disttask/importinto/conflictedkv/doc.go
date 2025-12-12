@@ -19,13 +19,19 @@
 //
 // # 1. collect duplicated KVs during global sort and ingest phase
 //
+// in below, duplicated KVs means the key is duplicated, and the value might or
+// might not be the same.
+//
+// When find duplicated KV in the steps of global sort, we either
+//   - record, which means the KV is deleted from the encode-merge-ingest workflow,
+//     and is recorded to the cloud storage for later conflict resolution. we do
+//     this for duplicated data KVs and unique key (UK) KVs.
+//   - or remove directly. we do this for duplicated non-unique index KVs.
+//
 // We record the duplicated KVs in encode and merge step too, to avoid have too
 // many duplicated KVs to be recorded during ingest step, and to avoid the
 // generated region job too small due to too many duplicated KVs being removed,
 // then to avoid the target region to be too much undersized.
-//
-// in below, duplicated KVs means the key is duplicated, and the value might or
-// might not be the same.
 //
 //   - during encode step, the duplicated data and UK KVs due to conflicted rows
 //     are collected and write to the cloud storage as a separate file. there might
@@ -49,6 +55,7 @@
 // the remote checksum. And we also record all the conflicted rows into the cloud
 // storage for user to check later, we record them under the 'conflicted_rows/'
 // prefix.
+//
 // duplicated data KV and UK KV are handled differently:
 //   - for duplicated data KVs, we can decode to get Datum of all columns and
 //     re-encode into KVs, and we can calculate the checksum of the original rows
@@ -73,4 +80,86 @@
 // from the total checksum calculated during the encode step to get the final
 // checksum of the data ingested into the cluster, and verify it with the remote
 // checksum.
+//
+// # 4. an example of the whole workflow
+//
+// as an example, suppose we have below table:
+//
+//	create table t(
+//	    id int primary key clustered,
+//	    c1 int,
+//	    c2 int,
+//	    unique(c1),
+//	    index(c2)
+//	);
+//
+// and we have below rows to be imported:
+//
+//		id,c1,c2
+//		1,1,1
+//		1,1,1
+//		2,1,1
+//	 3,3,3
+//
+// they will generate below KVs:
+//
+//	<1,1,1> -> [(handle=1 -> <1,1,1>), (c1=1 -> handle=1), (c2=1,handle=1 -> "0")]
+//	<1,1,1> -> [(handle=1 -> <1,1,1>), (c1=1 -> handle=1), (c2=1,handle=1 -> "0")]
+//	<2,1,1> -> [(handle=2 -> <2,1,1>), (c1=1 -> handle=2), (c2=1,handle=2 -> "0")]
+//	<3,3,3> -> [(handle=3 -> <3,3,3>), (c1=3 -> handle=3), (c2=3,handle=3 -> "0")]
+//
+// during encode->merge->ingest workflow, below KVs will be recorded for later
+// conflict resolution:
+//
+//   - data KVs: [(handle=1 -> <1,1,1>), (handle=1 -> <1,1,1>)]
+//   - UK KVs: [(c1=1 -> handle=1), (c1=1 -> handle=1), (c1=1 -> handle=2)]
+//
+// and below KVs will be removed directly:
+//
+// - non-unique index KVs: [(c2=1,handle=1 -> "0"), (c2=1,handle=1 -> "0")]
+//
+// after the ingest phase, the cluster will only have below KVs:
+//
+//   - data KVs: [(handle=2 -> <2,1,1>), (handle=3 -> <3,3,3>)]
+//   - UK KVs: [(c1=3 -> handle=3)]
+//   - non-unique index KVs: [(c2=1,handle=2 -> "0"), (c2=3,handle=3 -> "0")]
+//
+// we can see that the KVs ingested into the cluster is not consistent.
+//
+// during the collect-conflicts step of conflict resolution phase, we will
+// process the recorded duplicated KVs one by one, and calculated the checksum
+// of the original conflicted rows, i.e. checksum of [(1,1,1), (1,1,1), (2,1,1)].
+//
+// during the resolve-conflicts step of conflict resolution phase, we will also
+// process the recorded duplicated KVs one by one, and delete all KVs related
+// to the conflicted rows from the cluster.
+//
+// as an example for the recorded data KV (handle=1 -> <1,1,1>), we will re-encode
+// it to get all KVs for the row <1,1,1>:
+//
+//	1,1,1 -> [(handle=1 -> <1,1,1>), (c1=1 -> handle=1), (c2=1,handle=1 -> "0")]
+//
+// and delete them from the cluster, but since the all those KVs are already
+// removed during encode-merge-ingest workflow, there will be no change to the
+// cluster.
+//
+// s an example for the recorded UK KV (c1=1 -> handle=2), we will get its data
+// KV from the cluster which is (handle=2 -> <2,1,1>), and re-encode it to get
+// all KVs for the row <2,1,1>:
+//
+//	2,1,1 -> [(handle=2 -> <2,1,1>), (c1=1 -> handle=2), (c2=1,handle=2 -> "0")]
+//
+// and delete them from the cluster, after deleting, the cluster will only have
+// below KVs:
+//
+//   - data KVs: [(handle=3 -> <3,3,3>)]
+//   - UK KVs: [(c1=3 -> handle=3)]
+//   - non-unique index KVs: [(c2=3,handle=3 -> "0")]
+//
+// we can see that the KVs in the cluster is consistent now.
+//
+// during the encode step, we have calculated the checksum of all KVs to the rows
+// in the data file, and we will minus the checksum of [(1,1,1), (1,1,1), (2,1,1)]
+// so only checksum of [(3,3,3)] is left, which is consistent with the data in
+// the cluster.
 package conflictedkv
