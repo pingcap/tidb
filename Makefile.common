@@ -141,8 +141,8 @@ TEST_COVERAGE_DIR := "test_coverage"
 
 ifneq ("$(CI)", "")
 	BAZEL_GLOBAL_CONFIG := --output_user_root=/home/jenkins/.tidb/tmp
-	BAZEL_CMD_CONFIG := --config=ci --repository_cache=/home/jenkins/.tidb/tmp
-	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
+	BAZEL_CMD_CONFIG := --config=ci
+	BAZEL_SYNC_CONFIG :=
 endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
 TIDB_SERVER_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server
