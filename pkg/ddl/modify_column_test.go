@@ -1313,3 +1313,22 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 		}
 	}
 }
+
+func TestStatsAfterModifyColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a bigint, b char(16) collate utf8mb4_bin)")
+	for i := range 128 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+	}
+
+	// Trigger analyze for columns a, b manually.
+	tk.MustExec("analyze table t columns a, b")
+
+	rs1 := tk.MustQuery("explain select * from t use index() where a > 10").Rows()[0][1].(string)
+
+	tk.MustExec("alter table t modify column a int unsigned, modify column b varchar(16) collate utf8mb4_bin")
+	rs2 := tk.MustQuery("explain select * from t use index() where a > 10").Rows()[0][1].(string)
+	require.Equal(t, rs1, rs2)
+}
