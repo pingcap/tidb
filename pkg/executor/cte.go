@@ -356,6 +356,20 @@ func (p *cteProducer) genCTEResult(ctx context.Context) (err error) {
 	if p.resTbl.Error() != nil {
 		return p.resTbl.Error()
 	}
+
+	// For recursive CTEs in strict SQL mode, disable TruncateAsWarning during execution.
+	// This ensures data truncation errors are caught during materialization to iterInTbl/iterOutTbl.
+	// Non-recursive CTEs don't need this because constant folding during optimization already handles truncation.
+	// We only apply this when: (1) strict mode is enabled, and (2) this is a recursive CTE.
+	sessVars := p.ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
+	originalFlags := sc.TypeFlags()
+	if p.recursiveExec != nil && sessVars.SQLMode.HasStrictMode() && originalFlags.TruncateAsWarning() {
+		sc.SetTypeFlags(originalFlags.WithTruncateAsWarning(false))
+		defer func() {
+			sc.SetTypeFlags(originalFlags)
+		}()
+	}
 	resAction := setupCTEStorageTracker(p.resTbl, p.ctx, p.memTracker, p.diskTracker)
 	iterInAction := setupCTEStorageTracker(p.iterInTbl, p.ctx, p.memTracker, p.diskTracker)
 	var iterOutAction *chunk.SpillDiskAction
