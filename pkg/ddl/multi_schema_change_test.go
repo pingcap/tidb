@@ -865,8 +865,13 @@ func TestMultiSchemaChangePollJobCount(t *testing.T) {
 	})
 	// Should not test reorg DDL because the result can be unstable.
 	tk.MustExec("alter table t add column b int,  modify column a bigint, add column c char(10);")
+<<<<<<< HEAD
 	require.Equal(t, 19, runOneJobCounter)
 	require.Equal(t, 9, pollJobCounter)
+=======
+	require.Equal(t, 30, runOneJobCounter)
+	require.Equal(t, 10, pollJobCounter)
+>>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 }
 
 type cancelOnceHook struct {

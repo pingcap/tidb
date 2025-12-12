@@ -696,7 +696,7 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	})
 	tk.MustExec("alter table t modify column a char(5)")
 	tk.MustExec("admin check table t")
-	require.Equal(t, ddl.ModifyTypeReorg, gotTp)
+	require.Equal(t, model.ModifyTypeReorg, gotTp)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(10))")
@@ -708,7 +708,7 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	})
 	tk.MustExec("alter table t modify column a char(5)")
 	tk.MustExec("admin check table t")
-	require.Equal(t, ddl.ModifyTypeNoReorgWithCheck, gotTp)
+	require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotTp)
 }
 
 func TestGetModifyColumnType(t *testing.T) {
@@ -729,154 +729,154 @@ func TestGetModifyColumnType(t *testing.T) {
 		{
 			beforeType: "int",
 			afterType:  "bigint",
-			tp:         ddl.ModifyTypeNoReorg,
+			tp:         model.ModifyTypeNoReorg,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "int",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "int",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		// string
 		{
 			beforeType: "char(10)",
 			afterType:  "char(20)",
-			tp:         ddl.ModifyTypeNoReorg,
+			tp:         model.ModifyTypeNoReorg,
 		},
 		{
 			beforeType: "char(20)",
 			afterType:  "char(10)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "char(20) collate utf8mb4_bin",
 			afterType:  "char(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "char(20) collate utf8mb4_general_ci",
 			afterType:  "char(10) collate utf8mb4_general_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "char(10)",
 			afterType:  "varchar(20)",
-			tp:         ddl.ModifyTypeNoReorg,
+			tp:         model.ModifyTypeNoReorg,
 		},
 		{
 			beforeType: "char(20)",
 			afterType:  "varchar(10)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "char(20) collate utf8mb4_bin",
 			afterType:  "varchar(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "char(20) collate utf8mb4_general_ci",
 			afterType:  "varchar(10) collate utf8mb4_general_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(10)",
 			afterType:  "varchar(20)",
-			tp:         ddl.ModifyTypeNoReorg,
+			tp:         model.ModifyTypeNoReorg,
 		},
 		{
 			beforeType: "varchar(20)",
 			afterType:  "varchar(10)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_bin",
 			afterType:  "varchar(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_general_ci",
 			afterType:  "varchar(10) collate utf8mb4_general_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(10)",
 			afterType:  "char(20)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(20)",
 			afterType:  "char(10)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_bin",
 			afterType:  "char(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_general_ci",
 			afterType:  "char(10) collate utf8mb4_general_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		// different collation
 		{
 			beforeType: "char(20) collate utf8mb4_bin",
 			afterType:  "varchar(10) collate utf8_unicode_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "char(20) collate utf8_unicode_ci",
 			afterType:  "varchar(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_bin",
 			afterType:  "char(10) collate utf8_unicode_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "varchar(20) collate utf8_unicode_ci",
 			afterType:  "char(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 	}
 
@@ -908,27 +908,27 @@ func TestGetModifyColumnType(t *testing.T) {
 		{
 			beforeType: "bigint",
 			afterType:  "int",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "char(20)",
 			afterType:  "char(10)",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "varchar(20)",
 			afterType:  "varchar(10)",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "char(20)",
 			afterType:  "varchar(10)",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "varchar(20)",
 			afterType:  "char(10)",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 	}
 
@@ -1108,7 +1108,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 	successValue := func(insertVal string, newColTp string) {
 		tk.MustExec(fmt.Sprintf("insert into t values %s", insertVal))
 		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Equal(t, ddl.ModifyTypeNoReorgWithCheck, reorgType)
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, reorgType)
 	}
 
 	signed2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
@@ -1195,24 +1195,24 @@ func TestModifyIntegerColumn(t *testing.T) {
 		// 1. signed -> signed
 		// bigint -> int, mediumint, smallint, tinyint; int -> mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(signedTp); newColIdx++ {
-			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck)
 		}
 		// 2. signed -> unsigned
 		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := range unsignedTp {
-			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
+			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
 		}
 	}
 	for oldColIdx := range unsignedTp {
 		// 3. unsigned -> unsigned
 		// bigint unsigned -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int unsigned -> mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(unsignedTp); newColIdx++ {
-			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck)
 		}
 		// 4. unsigned -> signed
 		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint; int unsigned -> int, mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
-			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck)
 		}
 	}
 }
@@ -1277,7 +1277,7 @@ func TestModifyStringColumn(t *testing.T) {
 			newColTp:        "char(20)",
 			insertVal:       paddingStrLen5,
 			pass:            true,
-			expectedReorgTp: ddl.ModifyTypeReorg,
+			expectedReorgTp: model.ModifyTypeReorg,
 		},
 		{
 			oldColTp:  "varchar(10)",
@@ -1290,14 +1290,14 @@ func TestModifyStringColumn(t *testing.T) {
 			newColTp:        "char(10)",
 			insertVal:       paddingStrLen5,
 			pass:            true,
-			expectedReorgTp: ddl.ModifyTypeReorg,
+			expectedReorgTp: model.ModifyTypeReorg,
 		},
 		{
 			oldColTp:        "varchar(20)",
 			newColTp:        "char(10)",
 			insertVal:       paddingStrLen15,
 			pass:            true,
-			expectedReorgTp: ddl.ModifyTypeReorg,
+			expectedReorgTp: model.ModifyTypeReorg,
 		},
 		{
 			oldColTp:  "varchar(20)",
@@ -1320,8 +1320,8 @@ func TestModifyStringColumn(t *testing.T) {
 		if tc.pass {
 			require.Nil(t, err)
 			expectedReorgTp := tc.expectedReorgTp
-			if tc.expectedReorgTp == ddl.ModifyTypeNone {
-				expectedReorgTp = ddl.ModifyTypeNoReorgWithCheck
+			if tc.expectedReorgTp == model.ModifyTypeNone {
+				expectedReorgTp = model.ModifyTypeNoReorgWithCheck
 			}
 			require.Equal(t, expectedReorgTp, reorgType)
 		} else {

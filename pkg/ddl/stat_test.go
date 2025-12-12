@@ -37,8 +37,6 @@ func TestGetDDLInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	sess := tk.Session()
 	tk.MustExec("begin")
-	txn, err := sess.Txn(true)
-	require.NoError(t, err)
 
 	dbInfo2 := &model.DBInfo{
 		ID: 2,
@@ -58,7 +56,7 @@ func TestGetDDLInfo(t *testing.T) {
 		RowCount: 0,
 	}
 
-	err = addDDLJobs(sess, txn, job)
+	err := addDDLJobs(sess, job)
 	require.NoError(t, err)
 
 	info, err := ddl.GetDDLInfo(sess)
@@ -68,7 +66,7 @@ func TestGetDDLInfo(t *testing.T) {
 	require.Nil(t, info.ReorgHandle)
 
 	// two jobs
-	err = addDDLJobs(sess, txn, job1)
+	err = addDDLJobs(sess, job1)
 	require.NoError(t, err)
 
 	info, err = ddl.GetDDLInfo(sess)
@@ -81,7 +79,11 @@ func TestGetDDLInfo(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+<<<<<<< HEAD
 func addDDLJobs(sess sessiontypes.Session, txn kv.Transaction, job *model.Job) error {
+=======
+func addDDLJobs(sess sessionapi.Session, job *model.Job) error {
+>>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 	b, err := job.Encode(true)
 	if err != nil {
 		return err
