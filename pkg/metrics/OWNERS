@@ -3,3 +3,5 @@ options:
   no_parent_owners: true
 approvers:
   - sig-approvers-metrics
+labels:
+  - component/metrics
