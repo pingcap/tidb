@@ -920,7 +920,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// Extract downstream IDs from tableMappingManager
 		// ApplyFilterToDBReplaceMap has already filtered the DBReplaceMap based on PiTRTableTracker,
 		// so we can directly iterate through it and collect non-filtered IDs
-		var downstreamTableIds []int64
+		downstreamTableIds := make(map[int64]struct{})
 		var downstreamDbIds []int64
 
 		// Iterate through DBReplaceMap which has already been filtered by ApplyFilterToDBReplaceMap
@@ -937,11 +937,11 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 					continue
 				}
 				// Collect downstream table ID
-				downstreamTableIds = append(downstreamTableIds, tableReplace.TableID)
+				downstreamTableIds[tableReplace.TableID] = struct{}{}
 
 				// Collect all partition IDs for this table
 				for _, downstreamPartitionId := range tableReplace.PartitionMap {
-					downstreamTableIds = append(downstreamTableIds, downstreamPartitionId)
+					downstreamTableIds[downstreamPartitionId] = struct{}{}
 				}
 			}
 		}
@@ -951,7 +951,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Warn("restoreStartTS is not set, skip building blocklist")
 			return
 		}
-		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, cfg.RewriteTS, downstreamTableIds, downstreamDbIds)
+		// Convert map to slice for function call
+		tableIdsSlice := make([]int64, 0, len(downstreamTableIds))
+		for id := range downstreamTableIds {
+			tableIdsSlice = append(tableIdsSlice, id)
+		}
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, cfg.RewriteTS, tableIdsSlice, downstreamDbIds)
 		if err != nil {
 			restoreErr = err
 			return
