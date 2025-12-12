@@ -117,7 +117,7 @@ const (
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
 	ActionModifySchemaReadOnly   ActionType = 77 // reserve for database read-only feature
-	ActionAlterTableAffinity     ActionType = 80
+	ActionAlterTableAffinity     ActionType = 78
 )
 
 // ActionMap is the map of DDL ActionType to string.

@@ -12,6 +12,18 @@ show create table tp1;
 create table tp2(a int) /*T![affinity] AFFINITY='partition' */ partition by hash(a) partitions 4;
 show create table tp2;
 
+# test create like
+drop table if exists t2, tp2;
+create table t2 like t1;
+show create table t2;
+create table tp2 like tp1;
+show create table tp2;
+
+# test rename
+create table t3 like t2;
+show create table t3;
+drop table t3;
+
 # test create a table with affinity 'none' or '' will skip affinity
 create table t3(a int) affinity = 'none';
 show create table t3;
