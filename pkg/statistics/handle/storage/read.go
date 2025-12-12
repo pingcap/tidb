@@ -574,16 +574,16 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		hasStats := false
 		allZero := true
 		table.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			hasStats = true
 			if statistics.IsAnalyzed(c.StatsVer) {
-				hasStats = true
 				allZero = false
 				return true
 			}
 			return false
 		})
 		table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			hasStats = true
 			if statistics.IsAnalyzed(idx.StatsVer) {
-				hasStats = true
 				allZero = false
 				return true
 			}
