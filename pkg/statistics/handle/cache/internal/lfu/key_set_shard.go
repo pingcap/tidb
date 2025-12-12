@@ -28,7 +28,7 @@ func newKeySetShard() *keySetShard {
 	result := keySetShard{}
 	for i := range keySetCnt {
 		result.resultKeySet[i] = keySet{
-			set: make(map[int64]*statistics.Table),
+			set: make(map[int64]*tableWithCost),
 		}
 	}
 	return &result
@@ -38,8 +38,12 @@ func (kss *keySetShard) Get(key int64) (*statistics.Table, bool) {
 	return kss.resultKeySet[key%keySetCnt].Get(key)
 }
 
-func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table) {
-	kss.resultKeySet[key%keySetCnt].AddKeyValue(key, table)
+func (kss *keySetShard) GetWithCost(key int64) (*statistics.Table, int64, bool) {
+	return kss.resultKeySet[key%keySetCnt].GetWithCost(key)
+}
+
+func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table, cost int64) {
+	kss.resultKeySet[key%keySetCnt].AddKeyValue(key, table, cost)
 }
 
 func (kss *keySetShard) Remove(key int64) {

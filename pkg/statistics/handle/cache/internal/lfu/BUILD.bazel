@@ -28,8 +28,9 @@ go_test(
     embed = [":lfu"],
     flaky = True,
     race = "on",
-    shard_count = 10,
+    shard_count = 13,
     deps = [
+        "//pkg/meta/model",
         "//pkg/statistics",
         "//pkg/statistics/handle/cache/internal/testutil",
         "@com_github_stretchr_testify//require",
