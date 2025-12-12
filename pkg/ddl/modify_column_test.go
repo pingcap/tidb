@@ -1315,20 +1315,88 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 }
 
 func TestStatsAfterModifyColumn(t *testing.T) {
+	type query struct {
+		pred string
+		idx  string
+	}
+
+	type testCase struct {
+		caseName       string
+		createTableSQL string
+		queries        []query
+	}
+
+	tcs := []testCase{
+		{
+			caseName:       "without index",
+			createTableSQL: "create table t (a bigint, b char(16) collate utf8mb4_bin)",
+			queries: []query{
+				{"a < 10", ""},
+				{"a <= 10", ""},
+				{"a > 10", ""},
+				{"a >= 10", ""},
+				{"a = 10", ""},
+				{"a = -1", ""},
+				{"b < '10'", ""},
+				{"b <= '10'", ""},
+				{"b > '10'", ""},
+				{"b >= '10'", ""},
+				{"b = '10'", ""},
+				{"b = 'non-exist'", ""},
+			},
+		},
+		{
+			caseName:       "with index",
+			createTableSQL: "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
+			queries: []query{
+				{"a < 10", "i1"},
+				{"a <= 10", "i1"},
+				{"a > 10", "i1"},
+				{"a >= 10", "i1"},
+				{"a = 10", "i1"},
+				{"a = -1", "i1"},
+				{"b < '10'", "i2"},
+				{"b <= '10'", "i2"},
+				{"b > '10'", "i2"},
+				{"b >= '10'", "i2"},
+				{"b = '10'", "i2"},
+				{"b = 'non-exist'", "i2"},
+			},
+		},
+	}
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a bigint, b char(16) collate utf8mb4_bin)")
-	for i := range 128 {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+	tk.MustExec("set @@tidb_stats_update_during_ddl = true;")
+
+	for _, tc := range tcs {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))")
+			for i := range 128 {
+				tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+			}
+
+			tk.MustExec("analyze table t columns a, b")
+
+			oldRs := make([]string, 0, len(tc.queries))
+			for _, q := range tc.queries {
+				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
+				oldRs = append(oldRs, rs[0][1].(string))
+			}
+
+			tk.MustExec("alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin")
+
+			newRs := make([]string, 0, len(tc.queries))
+			for _, q := range tc.queries {
+				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
+				newRs = append(newRs, rs[0][1].(string))
+			}
+
+			for i := range oldRs {
+				require.Equal(t, oldRs[i], newRs[i], "predicate: %s", tc.queries[i].pred)
+			}
+		})
 	}
-
-	// Trigger analyze for columns a, b manually.
-	tk.MustExec("analyze table t columns a, b")
-
-	rs1 := tk.MustQuery("explain select * from t use index() where a > 10").Rows()[0][1].(string)
-
-	tk.MustExec("alter table t modify column a int unsigned, modify column b varchar(16) collate utf8mb4_bin")
-	rs2 := tk.MustQuery("explain select * from t use index() where a > 10").Rows()[0][1].(string)
-	require.Equal(t, rs1, rs2)
 }
