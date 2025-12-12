@@ -242,8 +242,8 @@ func (gs GroupingSet) AllColIDs() *intset.FastIntSet {
 }
 
 // ExtractCols is used to extract basic columns from one grouping set.
-func (gs GroupingSet) ExtractCols() []*Column {
-	cols := make([]*Column, 0, len(gs))
+// the param cols is used for reuse the slice.
+func (gs GroupingSet) ExtractCols(cols []*Column) []*Column {
 	for _, groupingExprs := range gs {
 		for _, one := range groupingExprs {
 			cols = append(cols, one.(*Column))

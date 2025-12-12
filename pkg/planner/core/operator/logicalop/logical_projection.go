@@ -104,8 +104,8 @@ func (p *LogicalProjection) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Exprs {
-		ruleutil.ResolveExprAndReplace(expr, replace)
+	for i, expr := range p.Exprs {
+		p.Exprs[i] = ruleutil.ResolveExprAndReplace(expr, replace)
 	}
 }
 
@@ -313,7 +313,7 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 			continue
 		}
 		clonePredicate := predicate.Clone()
-		ruleutil.ResolveExprAndReplace(clonePredicate, replace)
+		clonePredicate = ruleutil.ResolveExprAndReplace(clonePredicate, replace)
 		result = append(result, clonePredicate)
 	}
 	return result
@@ -333,9 +333,12 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		RowCount: childProfile.RowCount,
 		ColNDVs:  make(map[int64]float64, len(p.Exprs)),
 	})
+	cols := make([]*expression.Column, 0, 8)
 	for i, expr := range p.Exprs {
-		cols := expression.ExtractColumns(expr)
-		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
+		cols = expression.ExtractAllColumnsFromExpressionsInUsedSlices(cols, nil, expr)
+		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(
+			cols, childSchema[0], childProfile)
+		cols = cols[:0]
 	}
 	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
 	return p.StatsInfo(), nil

@@ -44,6 +44,20 @@ var statsTables = map[string]map[string]struct{}{
 	},
 }
 
+var renameableSysTables = map[string]map[string]struct{}{
+	"mysql": {
+		"bind_info":     {},
+		"user":          {},
+		"db":            {},
+		"tables_priv":   {},
+		"columns_priv":  {},
+		"default_roles": {},
+		"role_edges":    {},
+		"global_priv":   {},
+		"global_grants": {},
+	},
+}
+
 // tables in this map is restored when fullClusterRestore=true
 var sysPrivilegeTableMap = map[string]string{
 	"user":          "(user = '%s' and host = '%%')",       // since v1.0.0
@@ -70,12 +84,160 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		// replace into view is not supported now
 		"tidb_mdl_view": {},
 
-		"tidb_pitr_id_map": {},
+		"tidb_pitr_id_map":      {},
+		"tidb_restore_registry": {},
 	},
 	"sys": {
 		// replace into view is not supported now
 		"schema_unused_indexes": {},
 	},
+}
+
+type SchemaVersionPairT struct {
+	UpstreamVersionMajor   int64
+	UpstreamVersionMinor   int64
+	DownstreamVersionMajor int64
+	DownstreamVersionMinor int64
+}
+
+func (t *SchemaVersionPairT) UpstreamVersion() string {
+	return fmt.Sprintf("%d.%d", t.UpstreamVersionMajor, t.UpstreamVersionMinor)
+}
+
+func (t *SchemaVersionPairT) DownstreamVersion() string {
+	return fmt.Sprintf("%d.%d", t.DownstreamVersionMajor, t.DownstreamVersionMinor)
+}
+
+type schemaUpdateSQL struct {
+	schemaName string
+	tableName  string
+	sql        string
+}
+
+type versionSchemaUpdateSQL struct {
+	versionMajor int64
+	versionMinor int64
+	updateSQLs   []schemaUpdateSQL
+}
+
+var upgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
+	// upgrade from v8.1.0 to v8.5.0, update stats table schema
+	{versionMajor: 8, versionMinor: 1, updateSQLs: []schemaUpdateSQL{
+		{
+			schemaName: "mysql",
+			tableName:  "stats_meta",
+			sql:        "ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta ADD COLUMN IF NOT EXISTS last_stats_histograms_version bigint unsigned DEFAULT NULL",
+		},
+	}},
+	// TODO: add new update here if version > 8.1.0
+}
+
+var downgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
+	// TODO: add new update here if version > 8.5.0
+	// downgrade from v8.5.0 to v8.1.0, update stats table schema
+	{versionMajor: 8, versionMinor: 5, updateSQLs: []schemaUpdateSQL{
+		{
+			schemaName: "mysql",
+			tableName:  "stats_meta",
+			sql:        "ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta DROP COLUMN IF EXISTS last_stats_histograms_version",
+		},
+	}},
+}
+
+func upgradeStatsTableSchema(
+	ctx context.Context,
+	renamedTables map[string]map[string]struct{},
+	fromMajor, fromMinor, toMajor, toMinor int64,
+	execution func(context.Context, string) error,
+) error {
+	for _, updateSQL := range upgradeStatsTableSchemaList {
+		if fromMajor > updateSQL.versionMajor || (fromMajor == updateSQL.versionMajor && fromMinor > updateSQL.versionMinor) {
+			continue
+		}
+		if toMajor < updateSQL.versionMajor || (toMajor == updateSQL.versionMajor && toMinor <= updateSQL.versionMinor) {
+			break
+		}
+		for _, sql := range updateSQL.updateSQLs {
+			if tables, ok := renamedTables[sql.schemaName]; ok {
+				if _, ok := tables[sql.tableName]; ok {
+					if err := execution(ctx, sql.sql); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func downgradeStatsTableSchema(
+	ctx context.Context,
+	statisticTables map[string]map[string]struct{},
+	fromMajor, fromMinor, toMajor, toMinor int64,
+	execution func(context.Context, string) error,
+) error {
+	for _, updateSQL := range downgradeStatsTableSchemaList {
+		if fromMajor < updateSQL.versionMajor || (fromMajor == updateSQL.versionMajor && fromMinor < updateSQL.versionMinor) {
+			continue
+		}
+		if toMajor > updateSQL.versionMajor || (toMajor == updateSQL.versionMajor && toMinor >= updateSQL.versionMinor) {
+			break
+		}
+		for _, sql := range updateSQL.updateSQLs {
+			if tables, ok := statisticTables[sql.schemaName]; ok {
+				if _, ok := tables[sql.tableName]; ok {
+					if err := execution(ctx, sql.sql); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func updateStatsTableSchema(
+	ctx context.Context,
+	renamedTables map[string]map[string]struct{},
+	versionPair SchemaVersionPairT,
+	execution func(context.Context, string) error,
+) error {
+	if versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor &&
+		versionPair.DownstreamVersionMinor == versionPair.UpstreamVersionMinor {
+		return nil
+	}
+	if versionPair.DownstreamVersionMajor > versionPair.UpstreamVersionMajor ||
+		(versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor &&
+			versionPair.DownstreamVersionMinor > versionPair.UpstreamVersionMinor) {
+		return upgradeStatsTableSchema(ctx, renamedTables,
+			versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
+			versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
+			execution,
+		)
+	}
+	return downgradeStatsTableSchema(ctx, renamedTables,
+		versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
+		versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
+		execution,
+	)
+}
+
+func notifyUpdateAllUsersPrivilege(renamedTables map[string]map[string]struct{}, notifier func() error) error {
+	for dbName, renamedTable := range renamedTables {
+		if dbName != mysql.SystemDB {
+			continue
+		}
+		for tableName := range renamedTable {
+			if _, exists := sysPrivilegeTableMap[tableName]; exists {
+				if err := notifier(); err != nil {
+					log.Warn("failed to flush privileges, please manually execute `FLUSH PRIVILEGES`")
+					return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to flush privileges")
+				}
+				return nil
+			}
+		}
+	}
+	return nil
 }
 
 func isUnrecoverableTable(schemaName string, tableName string) bool {
@@ -87,6 +249,61 @@ func isUnrecoverableTable(schemaName string, tableName string) bool {
 	return ok
 }
 
+func IsStatsTemporaryTable(tempSchemaName, tableName string) bool {
+	_, ok := GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName)
+	return ok
+}
+
+func GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName string) (string, bool) {
+	if dbName, ok := utils.StripTempDBPrefix(tempSchemaName); ok && isStatsTable(dbName, tableName) {
+		return dbName, true
+	}
+	return "", false
+}
+
+func IsRenameableSysTemporaryTable(tempSchemaName, tableName string) bool {
+	_, ok := GetDBNameIfRenameableSysTemporaryTable(tempSchemaName, tableName)
+	return ok
+}
+
+func GetDBNameIfRenameableSysTemporaryTable(tempSchemaName, tableName string) (string, bool) {
+	if dbName, ok := utils.StripTempDBPrefix(tempSchemaName); ok && isRenameableSysTable(dbName, tableName) {
+		return dbName, true
+	}
+	return "", false
+}
+
+type TemporaryTableChecker struct {
+	loadStatsPhysical    bool
+	loadSysTablePhysical bool
+}
+
+func (c *TemporaryTableChecker) CheckTemporaryTables(tempSchemaName, tableName string) (string, bool) {
+	if c.loadStatsPhysical {
+		if dbName, ok := GetDBNameIfStatsTemporaryTable(tempSchemaName, tableName); ok {
+			return dbName, true
+		}
+	}
+	if c.loadSysTablePhysical {
+		if dbName, ok := GetDBNameIfRenameableSysTemporaryTable(tempSchemaName, tableName); ok {
+			return dbName, true
+		}
+	}
+	return "", false
+}
+
+func GenerateMoveRenamedTableSQLPair(restoreTS uint64, statisticTables map[string]map[string]struct{}) string {
+	renameBuffer := make([]string, 0, 32)
+	for dbName, tableNames := range statisticTables {
+		for tableName := range tableNames {
+			renameToTemp := fmt.Sprintf("%s.%s TO %s.%s_deleted_%d", dbName, tableName, utils.TemporaryDBName(dbName), tableName, restoreTS)
+			renameFromTemp := fmt.Sprintf("%s.%s TO %s.%s", utils.TemporaryDBName(dbName), tableName, dbName, tableName)
+			renameBuffer = append(renameBuffer, renameToTemp, renameFromTemp)
+		}
+	}
+	return fmt.Sprintf("RENAME TABLE %s", strings.Join(renameBuffer, ","))
+}
+
 func isStatsTable(schemaName string, tableName string) bool {
 	tableMap, ok := statsTables[schemaName]
 	if !ok {
@@ -96,12 +313,34 @@ func isStatsTable(schemaName string, tableName string) bool {
 	return ok
 }
 
+func isRenameableSysTable(schemaName string, tableName string) bool {
+	tableMap, ok := renameableSysTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
+	return ok
+}
+
+func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(context.Context, string) error) error {
+	sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
+		utils.EncloseDBAndTable(dbName, sysUserTableName))
+	if err := execSQL(ctx, sql); err != nil {
+		// FIXME: find a better way to check the error or we should check the version here instead.
+		if !strings.Contains(err.Error(), "Unknown column 'User_attributes' in 'field list'") {
+			return err
+		}
+		log.Warn("remove resource group meta failed, please ensure target cluster is newer than v6.6.0", logutil.ShortError(err))
+	}
+	return nil
+}
+
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (rerr error) {
+func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter, loadSysTablePhysical bool) (rerr error) {
 	sysDBs := []string{mysql.SystemDB, mysql.SysDB}
 	for _, sysDB := range sysDBs {
-		err := rc.restoreSystemSchema(ctx, f, sysDB)
+		err := rc.restoreSystemSchema(ctx, f, sysDB, loadSysTablePhysical)
 		if err != nil {
 			return err
 		}
@@ -111,7 +350,7 @@ func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter)
 
 // restoreSystemSchema restores a system schema(i.e. the `mysql` or `sys` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, sysDB string) (rerr error) {
+func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, sysDB string, loadSysTablePhysical bool) (rerr error) {
 	temporaryDB := utils.TemporaryDBName(sysDB)
 	defer func() {
 		// Don't clean the temporary database for next restore with checkpoint.
@@ -143,6 +382,9 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 	for _, table := range originDatabase.Tables {
 		tableName := table.Info.Name
 		if f.MatchTable(sysDB, tableName.O) {
+			if loadSysTablePhysical && isRenameableSysTable(sysDB, tableName.O) {
+				continue
+			}
 			if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db); err != nil {
 				log.Warn("error during merging temporary tables into system tables",
 					logutil.ShortError(err),
@@ -223,7 +465,7 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
 	dbName := db.Name.L
 	tableName := ti.Name.L
-	execSQL := func(sql string) error {
+	execSQL := func(ctx context.Context, sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.Session().Execute(ctx, sql); err != nil {
 			log.Warn("failed to execute SQL restore system database",
@@ -263,14 +505,8 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	// TODO: this function should be removed when we support backup and restore
 	// resource group.
 	if dbName == mysql.SystemDB && tableName == sysUserTableName {
-		sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
-			utils.EncloseDBAndTable(db.TemporaryName.L, sysUserTableName))
-		if err := execSQL(sql); err != nil {
-			// FIXME: find a better way to check the error or we should check the version here instead.
-			if !strings.Contains(err.Error(), "Unknown column 'User_attributes' in 'field list'") {
-				return err
-			}
-			log.Warn("remove resource group meta failed, please ensure target cluster is newer than v6.6.0", logutil.ShortError(err))
+		if err := removeUserResourceGroup(ctx, db.TemporaryName.L, execSQL); err != nil {
+			return err
 		}
 	}
 
@@ -288,14 +524,14 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 			utils.EncloseDBAndTable(db.Name.L, tableName),
 			colListStr, colListStr,
 			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
-		return execSQL(replaceIntoSQL)
+		return execSQL(ctx, replaceIntoSQL)
 	}
 
 	renameSQL := fmt.Sprintf("RENAME TABLE %s TO %s;",
 		utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
 		utils.EncloseDBAndTable(db.Name.L, tableName),
 	)
-	return execSQL(renameSQL)
+	return execSQL(ctx, renameSQL)
 }
 
 func (rc *SnapClient) cleanTemporaryDatabase(ctx context.Context, originDB string) {
