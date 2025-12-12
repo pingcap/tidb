@@ -1123,7 +1123,7 @@ Sort_5	10.00	21321.97	root		planner__core__casetest__integration.t.f
   └─TableRowIDScan_10(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
-Note	1105	[t,g,f_g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
+Note	1105	[t,f_g,g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
 explain format = 'verbose' select * from t where d = 3 order by c, e;
 id	estRows	estCost	task	access object	operator info
 IndexLookUp_17	10.00	215519.24	root		
