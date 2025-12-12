@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -38,7 +37,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
+	tk.MustExec("set @@tidb_enable_clustered_index='INT_ONLY'")
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
@@ -86,8 +85,8 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 
 	// test semi join
-	tk.Session().GetSessionVars().InitChunkSize = 2
-	tk.Session().GetSessionVars().MaxChunkSize = 2
+	tk.MustExec("set @@tidb_init_chunk_size=2")
+	tk.MustExec("set @@tidb_max_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
 	tk.MustQuery("desc format = 'brief' select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
 		"Sort 7.20 root  test.t.l_orderkey, test.t.l_linenumber",
@@ -432,7 +431,7 @@ func TestIssue31129(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
+	tk.MustExec("set @@tidb_enable_clustered_index='INT_ONLY'")
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
