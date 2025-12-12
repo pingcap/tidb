@@ -108,7 +108,7 @@ Projection	root		Column#6->Column#11, Column#7->Column#12, Column#8->Column#13, 
     └─Expand	root		level-projection:[executor__expand.t1.profit, <nil>->Column#6, <nil>->Column#7, <nil>->Column#8, 0->gid],[executor__expand.t1.profit, Column#6, <nil>->Column#7, <nil>->Column#8, 1->gid],[executor__expand.t1.profit, Column#6, Column#7, <nil>->Column#8, 3->gid],[executor__expand.t1.profit, Column#6, Column#7, Column#8, 7->gid]; schema: [executor__expand.t1.profit,Column#6,Column#7,Column#8,gid]
       └─Projection	root		executor__expand.t1.profit, executor__expand.t1.product->Column#6, executor__expand.t1.country_id->Column#7, executor__expand.t1.year->Column#8
         └─TableReader	root		data:TableFullScan
-          └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+          └─TableFullScan	cop[tikv]	table:t1	keep order:false
 
 SELECT product, country_id , SUM(profit) FROM t1
 GROUP BY product, country_id WITH ROLLUP
