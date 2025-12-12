@@ -109,9 +109,15 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20251202113147-065a1251aea9
 	github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20251204034052-9dd1b8e41dbf
+	github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500
+	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
+>>>>>>> a1f423ace5d (client-go: support fall back to leader handle when using ScanRegions/BatchScanRegions (#64934))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
