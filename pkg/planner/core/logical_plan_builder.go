@@ -5844,78 +5844,8 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base.Plan, error) {
-	b.pushSelectOffset(0)
-	b.pushTableHints(ds.TableHints, 0)
-	defer func() {
-		b.popSelectOffset()
-		// table hints are only visible in the current DELETE statement.
-		b.popTableHints()
-	}()
-
-	b.inDeleteStmt = true
-	b.isForUpdateRead = true
-
-	if ds.With != nil {
-		l := len(b.outerCTEs)
-		defer func() {
-			b.outerCTEs = b.outerCTEs[:l]
-		}()
-		_, err := b.buildWith(ctx, ds.With)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs, false)
-	if err != nil {
-		return nil, err
-	}
-	oldLen := p.Schema().Len()
-
-	// For explicit column usage, should use the all-public columns.
-	if ds.Where != nil {
-		p, err = b.buildSelection(ctx, p, ds.Where, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		if !ds.IsMultiTable {
-			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
-				LockType: ast.SelectLockForUpdate,
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	if ds.Order != nil {
-		p, err = b.buildSort(ctx, p, ds.Order.Items, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if ds.Limit != nil {
-		p, err = b.buildLimit(p, ds.Limit)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// If the delete is non-qualified it does not require Select Priv
-	if ds.Where == nil && ds.Order == nil {
-		b.popVisitInfo()
-	}
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
-
-	del := physicalop.Delete{
-		IsMultiTable: ds.IsMultiTable,
-		IgnoreErr:    ds.IgnoreErr,
-	}.Init(b.ctx)
-
 	localResolveCtx := resolve.NewContext()
 	// Collect visitInfo.
 	if ds.Tables != nil {
@@ -5990,6 +5920,77 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
 	}
+
+	b.pushSelectOffset(0)
+	b.pushTableHints(ds.TableHints, 0)
+	defer func() {
+		b.popSelectOffset()
+		// table hints are only visible in the current DELETE statement.
+		b.popTableHints()
+	}()
+
+	b.inDeleteStmt = true
+	b.isForUpdateRead = true
+
+	if ds.With != nil {
+		l := len(b.outerCTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:l]
+		}()
+		_, err := b.buildWith(ctx, ds.With)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs, false)
+	if err != nil {
+		return nil, err
+	}
+	oldLen := p.Schema().Len()
+
+	// For explicit column usage, should use the all-public columns.
+	if ds.Where != nil {
+		p, err = b.buildSelection(ctx, p, ds.Where, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		if !ds.IsMultiTable {
+			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
+				LockType: ast.SelectLockForUpdate,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if ds.Order != nil {
+		p, err = b.buildSort(ctx, p, ds.Order.Items, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if ds.Limit != nil {
+		p, err = b.buildLimit(p, ds.Limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// If the delete is non-qualified it does not require Select Priv
+	if ds.Where == nil && ds.Order == nil {
+		b.popVisitInfo()
+	}
+
+	del := physicalop.Delete{
+		IsMultiTable: ds.IsMultiTable,
+		IgnoreErr:    ds.IgnoreErr,
+	}.Init(b.ctx)
+
 	handleColsMap := b.handleHelper.tailMap()
 	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, p.Schema())
 	if err != nil {
