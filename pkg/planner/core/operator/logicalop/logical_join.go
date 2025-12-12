@@ -273,12 +273,11 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 	switch p.JoinType {
 	case base.LeftOuterJoin:
 		inner := p.children[0]
-		var outerSch []*expression.Column
-		fullJoinOutPutColumns := slices.Clone(p.Schema().Columns)
 		innerSch := inner.Schema()
-		outerSch = slices.DeleteFunc(fullJoinOutPutColumns, func(c *expression.Column) bool {
+		outerSch := intset.NewFastIntSet()
+		expression.ExtractColumnsSetFromExpressions(&outerSch, func(c *expression.Column) bool {
 			return innerSch.Contains(c)
-		})
+		}, expression.Column2Exprs(p.Schema().Columns)...)
 		var sf *expression.ScalarFunction
 		var ok bool
 		if sf, ok = ret[0].(*expression.ScalarFunction); !ok {
@@ -292,13 +291,14 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 			// It is a Not expression. then we check whether it has a IsNull expression.
 			if isNullcol, ok := args[0].(*expression.Column); ok {
 				// column in IsNull expression is from the outer side columns.
-				selConditionColInOuter := slices.ContainsFunc(outerSch, func(c *expression.Column) bool {
-					return c.UniqueID == isNullcol.UniqueID
-				})
+				selConditionColInOuter := outerSch.Has(int(isNullcol.UniqueID))
 				// selection's schema doesn't contain the outer side columns.
-				selOutColNotInOuter := !slices.ContainsFunc(outerSch, func(c *expression.Column) bool {
-					return selectSch.Contains(c)
-				})
+				selOutColNotInOuter := true
+				for _, c := range selectSch.Columns {
+					if outerSch.Has(int(c.UniqueID)) {
+						selOutColNotInOuter = false
+					}
+				}
 				if selConditionColInOuter && selOutColNotInOuter {
 					canConvert = true
 				}
