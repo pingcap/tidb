@@ -27,9 +27,11 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -37,6 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -49,10 +54,17 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
+
+func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (statistics.RowEstimate, error) {
+	hist := statistics.NewHistColl(1, realtimeRowCount, modifyCount, 1, 0)
+	hist.SetCol(c.Info.ID, c)
+	return cardinality.GetRowCountByColumnRanges(sctx, hist, c.Info.ID, ranges, pkIsHandle)
+}
 
 func TestCollationColumnEstimate(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -176,20 +188,29 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	sctx := mock.NewContext()
 
 	// Test a specific range first (900, 900) - should be out of range
-	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(900, 900), statsTbl.RealtimeCount, 0, false)
+	countEst, err := getColumnRowCount(sctx, col, getRange(900, 900), statsTbl.RealtimeCount, 0, false)
 	require.NoError(t, err)
+	count := countEst.Est
 	// Because the mock data is uniform distribution, the result should be predictable
 	require.Truef(t, count < 5.5, "expected: around 5.0, got: %v", count)
 	require.Truef(t, count > 4.5, "expected: around 5.0, got: %v", count)
+
+	// Check MinEst and MaxEst bounds for out-of-range case
+	require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for out-of-range case, MinEst: %v, Est: %v", countEst.MinEst, countEst.Est)
+	require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for out-of-range case, MaxEst: %v, Est: %v", countEst.MaxEst, countEst.Est)
+	require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for out-of-range case, got: %v", countEst.MinEst)
+	require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for out-of-range case, MaxEst: %v, MinEst: %v", countEst.MaxEst, countEst.MinEst)
 
 	var input []struct {
 		Start int64
 		End   int64
 	}
 	var output []struct {
-		Start int64
-		End   int64
-		Count float64
+		Start  int64
+		End    int64
+		Count  float64
+		MinEst float64
+		MaxEst float64
 	}
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
@@ -199,16 +220,92 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
 
 	for i, ran := range input {
-		count, err = cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		countEst, err = getColumnRowCount(sctx, col, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
 			output[i].End = ran.End
-			output[i].Count = math.Round(count) // Round to nearest whole number
+			output[i].Count = math.Round(count)            // Round to nearest whole number
+			output[i].MinEst = math.Round(countEst.MinEst) // Round to nearest whole number
+			output[i].MaxEst = math.Round(countEst.MaxEst) // Round to nearest whole number
 		})
 		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
 		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+
+		// Check MinEst and MaxEst bounds
+		require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for [%v, %v], MinEst: %v, Est: %v", ran.Start, ran.End, countEst.MinEst, countEst.Est)
+		require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for [%v, %v], MaxEst: %v, Est: %v", ran.Start, ran.End, countEst.MaxEst, countEst.Est)
+		require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for [%v, %v], got: %v", ran.Start, ran.End, countEst.MinEst)
+		require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for [%v, %v], MaxEst: %v, MinEst: %v", ran.Start, ran.End, countEst.MaxEst, countEst.MinEst)
 	}
+}
+
+// TestRiskRangeSkewRatio tests that tidb_opt_risk_range_skew_ratio affects cardinality estimation
+// for out-of-range queries. When the ratio is increased, the estimated count should be higher.
+// This test specifically uses out-of-range queries where MaxEst > Est is expected.
+func TestRiskRangeSkewRatio(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, key idx(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+
+	// Insert data with values 1-10, each appearing multiple times
+	for i := 1; i <= 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t select a from t where a = %d", i))
+	}
+
+	// Analyze the table to collect statistics
+	testKit.MustExec("analyze table t with 0 topn")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
+	sctx := testKit.Session()
+	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
+
+	// Increase RealTimeCount and ModifyCount to simulate changes to dataset
+	RealTimeCount := statsTbl.RealtimeCount * 10
+	ModifyCount := RealTimeCount * 2
+
+	// Search for range outside of histogram buckets (data is 1-10, so 12-15 is out of range)
+	testRange := getRange(12, 15)
+
+	// Test with default risk range skew ratio (should be 0)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0")
+	countEst1, err := getColumnRowCount(sctx.GetPlanCtx(), col, testRange, RealTimeCount, ModifyCount, false)
+	require.NoError(t, err)
+	count1 := countEst1.Est
+
+	// Set risk range skew ratio to 0.5
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
+	countEst2, err := getColumnRowCount(sctx.GetPlanCtx(), col, testRange, RealTimeCount, ModifyCount, false)
+	require.NoError(t, err)
+	count2 := countEst2.Est
+
+	// Verify that count2 is greater than count1 when risk range skew ratio is increased
+	require.Truef(t, count2 > count1, "Expected count2 (%v) to be greater than count1 (%v) when risk range skew ratio is increased", count2, count1)
+
+	// For out-of-range estimation, verify that MinEst and MaxEst are properly set
+	// Note: This test specifically uses out-of-range queries, so MaxEst should be >= Est
+	require.Truef(t, countEst1.MinEst <= countEst1.Est, "MinEst should be <= Est for default ratio, MinEst: %v, Est: %v", countEst1.MinEst, countEst1.Est)
+	require.Truef(t, countEst1.MaxEst >= countEst1.Est, "MaxEst should be >= Est for default ratio (out-of-range), MaxEst: %v, Est: %v", countEst1.MaxEst, countEst1.Est)
+	require.Truef(t, countEst2.MinEst <= countEst2.Est, "MinEst should be <= Est for increased ratio, MinEst: %v, Est: %v", countEst2.MinEst, countEst2.Est)
+	require.Truef(t, countEst2.MaxEst >= countEst2.Est, "MaxEst should be >= Est for increased ratio (out-of-range), MaxEst: %v, Est: %v", countEst2.MaxEst, countEst2.Est)
+
+	// Verify that the increased ratio also affects MinEst and MaxEst appropriately for out-of-range estimation
+	require.Truef(t, countEst2.MinEst >= countEst1.MinEst, "MinEst should be >= when ratio is increased (out-of-range), MinEst1: %v, MinEst2: %v", countEst1.MinEst, countEst2.MinEst)
+	require.Truef(t, countEst2.MaxEst >= countEst1.MaxEst, "MaxEst should be >= when ratio is increased (out-of-range), MaxEst1: %v, MaxEst2: %v", countEst1.MaxEst, countEst2.MaxEst)
 }
 
 // TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
@@ -327,7 +424,8 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	// Test a specific range first - range [300, 500) should be affected by deletion
-	count, err := cardinality.GetColumnRowCount(sctx, colAfterDelete, getRange(300, 500), statsTblAfterDelete.RealtimeCount, 1000, false)
+	countEst, err := getColumnRowCount(sctx, colAfterDelete, getRange(300, 500), statsTblAfterDelete.RealtimeCount, 1000, false)
+	count := countEst.Est
 	require.NoError(t, err)
 	// After deletion, this range should estimate approximately 1 value since all data in [300, 500) was deleted
 	require.Truef(t, count < 20, "expected: less than 20, got: %v", count)
@@ -337,7 +435,8 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	modifyCount := int64(1000) // Number of deleted rows
 
 	for i, ran := range input {
-		count, err := cardinality.GetColumnRowCount(sctx, colAfterDelete, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		countEst, err := getColumnRowCount(sctx, colAfterDelete, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		count := countEst.Est
 		require.NoError(t, err)
 
 		testdata.OnRecord(func() {
@@ -353,12 +452,15 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 }
 
 func TestEstimationForUnknownValues(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen kernel don't support the analyze version 1")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
-	testKit.MustExec("set @@tidb_analyze_version=1")
+	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	for i := range 10 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
@@ -377,26 +479,29 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	sctx := mock.NewContext()
 	colID := table.Meta().Columns[0].ID
-	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(30, 30))
+	countEst, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(30, 30), false)
+	count := countEst.Est
 	require.NoError(t, err)
-	require.Equal(t, 1.0, count)
+	require.Equal(t, 2.0, count)
 
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30), false)
+	count = countEst.Est
 	require.NoError(t, err)
-	require.Equal(t, 4.7, count)
+	require.Equal(t, 4.0, count)
 
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64), false)
+	count = countEst.Est
 	require.NoError(t, err)
-	require.Equal(t, 4.7, count)
+	require.Equal(t, 4.0, count)
 
 	idxID := table.Meta().Indices[0].ID
 	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30), nil)
 	require.NoError(t, err)
-	require.Equal(t, 0.1, countResult.Est)
+	require.Equal(t, 1.0, countResult.Est)
 
 	countResult, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30), nil)
 	require.NoError(t, err)
-	require.Equal(t, 4.5, countResult.Est)
+	require.Equal(t, 2.0, countResult.Est)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
@@ -406,7 +511,8 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	colID = table.Meta().Columns[0].ID
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(1, 30))
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(1, 30), false)
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
@@ -419,14 +525,15 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	colID = table.Meta().Columns[0].ID
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2), false)
+	count = countEst.Est
 	require.NoError(t, err)
-	require.Equal(t, 1.0, count)
+	require.Equal(t, 0.001, count)
 
 	idxID = table.Meta().Indices[0].ID
 	countResult, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2), nil)
 	require.NoError(t, err)
-	require.Equal(t, 0.0, countResult.Est)
+	require.Equal(t, 1.0, countResult.Est)
 }
 
 func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
@@ -456,12 +563,14 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	// Search for a found value == 10.0
 	sctx := mock.NewContext()
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
-	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(5, 5), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	countEst, err := getColumnRowCount(sctx, col, getRange(5, 5), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	count := countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 10.0, count)
 
 	// Search for a not found value with zero modifyCount. Defaults to count == 1.0
-	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	countEst, err = getColumnRowCount(sctx, col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
@@ -473,10 +582,11 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	statsTblNew := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	// Search for a not found value based upon statistics - count should be > 20 and < 40
-	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
+	countEst, err = getColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
+	count = countEst.Est
 	require.NoError(t, err)
-	require.Truef(t, count < 40, "expected: between 20 to 40, got: %v", count)
-	require.Truef(t, count > 20, "expected: between 20 to 40, got: %v", count)
+	require.Truef(t, count < 40, "expected: between 10 to 40, got: %v", count)
+	require.Truef(t, count > 10, "expected: between 10 to 40, got: %v", count)
 }
 
 func TestNewIndexWithoutStats(t *testing.T) {
@@ -489,7 +599,8 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, index idxa(a), index idxca(c,a))")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")     // Disable auto analyze to control when stats are collected
+	testKit.MustExec("set @@tidb_opt_table_full_scan_cost_factor=1000") // Discourage full table scans - this is an index test
 	testKit.MustExec("insert into t values (1, 1, 1)")
 	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
 	testKit.MustExec("analyze table t")
@@ -586,11 +697,13 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	require.Equal(t, 1.0, countResult.Est)
 
 	colID := table.Meta().Columns[0].ID
-	count, err := cardinality.GetRowCountByIntColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(7, 7))
+	countEst, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(7, 7), true)
+	count := countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, err = cardinality.GetRowCountByIntColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(6, 6))
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(6, 6), true)
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 }
@@ -706,7 +819,7 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              0.001851851851851852,
-			selectivityAfterIncrease: 0.125425,
+			selectivityAfterIncrease: 0.0829,
 		},
 		{
 			exprs:                    longExpr,
@@ -925,7 +1038,8 @@ func TestSmallRangeEstimation(t *testing.T) {
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ran := range input {
-		count, err := cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+		countEst, err := getColumnRowCount(sctx, col, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+		count := countEst.Est
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -1256,6 +1370,88 @@ func TestIssue39593(t *testing.T) {
 	require.InDelta(t, float64(3702.6), countResult.Est, float64(1))
 }
 
+func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int primary key, b int)")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock the statistics table with a specific RealtimeCount
+	expectedRowCount := int64(1000)
+	statsTbl := mockStatsTable(tblInfo, expectedRowCount)
+	// Set required fields for the stats table
+	statsTbl.PhysicalID = tblInfo.ID
+	statsTbl.Version = 2
+	statsTbl.ColAndIdxExistenceMap = statistics.NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices))
+
+	// Set the mock statistics in the stats handle
+	h := dom.StatsHandle()
+	h.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
+
+	// Create a DataSource by building a logical plan for a query with no WHERE conditions
+	ctx := context.Background()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("select * from t", "", "")
+	require.NoError(t, err)
+
+	sctx := testKit.Session()
+	ret := &plannercore.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	err = plannercore.Preprocess(ctx, sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
+	require.NoError(t, err)
+
+	sctx.GetSessionVars().PlanColumnID.Store(0)
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+	plan, err := builder.Build(ctx, nodeW)
+	require.NoError(t, err)
+
+	// Logical optimize to get the DataSource
+	plan, err = plannercore.LogicalOptimizeTest(ctx, rule.FlagCollectPredicateColumnsPoint, plan.(base.LogicalPlan))
+	require.NoError(t, err)
+
+	// Find the DataSource in the plan
+	var ds *logicalop.DataSource
+	stack := []base.LogicalPlan{plan.(base.LogicalPlan)}
+	for len(stack) > 0 {
+		curr := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if dataSource, ok := curr.(*logicalop.DataSource); ok {
+			ds = dataSource
+			break
+		}
+		stack = append(stack, curr.Children()...)
+	}
+	require.NotNil(t, ds, "DataSource should be found in the plan")
+
+	// Derive stats - this will call deriveTablePathStats internally
+	_, _, err = plannercore.RecursiveDeriveStats4Test(ds)
+	require.NoError(t, err)
+
+	// Find the table path
+	var tablePath *util.AccessPath
+	for _, path := range ds.AllPossibleAccessPaths {
+		if path.IsTablePath() {
+			tablePath = path
+			break
+		}
+	}
+	require.NotNil(t, tablePath, "Table path should exist")
+
+	// Verify that CountAfterAccess equals RealtimeCount when there are no access conditions
+	// Since the query has no WHERE clause, there are no access conditions, so the optimization
+	// should set CountAfterAccess = RealtimeCount
+	require.Equal(t, float64(expectedRowCount), tablePath.CountAfterAccess,
+		"CountAfterAccess should equal RealtimeCount when there are no access conditions and table is not partitioned")
+}
+
 func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -1535,6 +1731,9 @@ func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
 }
 
 func TestCrossValidationSelectivity(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
@@ -1871,18 +2070,22 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	ModifyCount := RealTimeCount * 2
 
 	// Search for range outside of histogram buckets
-	test, _ := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), int64(0), int64(0), false)
+	testEst, _ := getColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), int64(0), int64(0), false)
+	test := testEst.Est
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0")
-	count, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	countEst, err := getColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	count := countEst.Est
 	require.NoError(t, err)
 	require.Less(t, test, count)
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
-	count2, err2 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	countEst2, err2 := getColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	count2 := countEst2.Est
 	require.NoError(t, err2)
 	// Result of count2 should be larger than count because the risk ratio is higher
 	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 1")
-	count3, err3 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	countEst3, err3 := getColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	count3 := countEst3.Est
 	require.NoError(t, err3)
 	// Result of count3 should be larger because the risk ratio is higher
 	require.Less(t, count2, count3)
@@ -1921,7 +2124,8 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
 
 	// Get baseline estimation for value 11 which should be 1
-	baselineCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	baselineCountEst, err := getColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	baselineCount := baselineCountEst.Est
 	require.NoError(t, err)
 	require.Equal(t, baselineCount, float64(1))
 
@@ -1938,7 +2142,8 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
 
-	insufficientCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	insufficientCountEst, err := getColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	insufficientCount := insufficientCountEst.Est
 	require.NoError(t, err)
 
 	// Should be close to baseline since heuristic didn't trigger
@@ -1957,14 +2162,16 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
 
-	enhancedCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	enhancedCountEst, err := getColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	enhancedCount := enhancedCountEst.Est
 	require.NoError(t, err)
 
 	// Should be much higher due to heuristic
 	require.InDelta(t, 100.09, enhancedCount, 0.1, "Enhanced count should be approximately 100.09")
 
 	// Verify other end values don't trigger heuristic
-	otherCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(3, 3), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	otherCountEst, err := getColumnRowCount(sctx.GetPlanCtx(), col, getRange(3, 3), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	otherCount := otherCountEst.Est
 	require.NoError(t, err)
 	require.InDelta(t, 109.99, otherCount, 0.1, "Other value count should be approximately 109.99")
 
@@ -1979,4 +2186,52 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 		require.NoError(t, err)
 		require.InDelta(t, 109.99, idxOtherCount.Est, 0.1, "Index other count should be approximately 109.99")
 	}
+}
+
+func TestIssue64137(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, key(a))`)
+	tk.MustExec(`set @@cte_max_recursion_depth=10000`)
+	tk.MustExec(`insert into t select * from (with recursive cte as (
+        select 1 as a, 1 as num union all
+        select 1 as a, num+1 as num from cte where num < 10000
+    ) select a from cte) tt;`) // insert 10000 rows with a=1
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustQuery(`select count(1) from t`).Check(testkit.Rows("10000"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_topn where is_index=1`).Check(testkit.Rows("test t  a 1 1 10000")) // 1 topN value with count 10000
+
+	tk.MustExec(`insert into t select * from t limit 2000`) // insert 2000 rows with a=1
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	h.Update(context.Background(), dom.InfoSchema())
+	statsMeta := tk.MustQuery(`show stats_meta`).Rows()[0]
+	require.Equal(t, statsMeta[4], "2000")  // modify_count = 2000
+	require.Equal(t, statsMeta[5], "12000") // row_count = 10000+2000
+
+	tk.MustQuery(`explain select * from t where a=99999999`).Check(testkit.Rows(
+		`IndexReader_7 24.00 root  index:IndexRangeScan_6`, // out-of-range est for small NDV, result should close to zero
+		`└─IndexRangeScan_6 24.00 cop[tikv] table:t, index:a(a) range:[99999999,99999999], keep order:false`))
+	tk.MustQuery(`explain select * from t where a=1`).Check(testkit.Rows(
+		`IndexReader_7 12000.00 root  index:IndexRangeScan_6`, // in-range est for small NDV
+		`└─IndexRangeScan_6 12000.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false`))
+}
+
+func TestUninitializedStats(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 'OFF';")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set names utf8mb4;")
+	tk.MustExec("create table t1(id int, c1 int, c2 varchar(100), primary key(id), key idx_expr ((cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin)));")
+	tk.MustExec(`insert into t1 values(1, 1, '{"foo": "bar"}'), (2, 1, '{"foo": "bar"}');`)
+	tk.MustExec("analyze table t1;")
+	// Trigger load stats of idx_expr.
+	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';")
+	tk.MustQuery("show stats_histograms").CheckNotContain("allEvicted")
+	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
 }

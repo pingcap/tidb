@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -43,6 +44,7 @@ import (
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -127,6 +129,7 @@ func TestAnalyzeReplicaReadFollower(t *testing.T) {
 	ctx.GetSessionVars().SetReplicaRead(kv.ReplicaReadFollower)
 	tk.MustExec("analyze table t")
 }
+
 func TestAnalyzeRestrict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -141,6 +144,9 @@ func TestAnalyzeRestrict(t *testing.T) {
 }
 
 func TestAnalyzeParameters(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -222,6 +228,9 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 }
 
 func TestFailedAnalyzeRequest(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -341,6 +350,9 @@ func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
 }
 
 func TestDefaultValForAnalyze(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version=1")
@@ -527,6 +539,9 @@ func TestAdjustSampleRateNote(t *testing.T) {
 }
 
 func TestAnalyzeIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -556,26 +571,6 @@ func TestIssue20874(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))")
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
-	tk.MustExec("set @@tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 0 1 1 \x02\xd2 \x02\xd2 0",
-		"test t  a 0 1 2 1 \x0e\x0f \x0e\x0f 0",
-		"test t  a 0 2 3 1 \x0e3 \x0e3 0",
-		"test t  b 0 0 1 1 \x00A \x00A 0",
-		"test t  b 0 1 3 2 \x00C \x00C 0",
-		"test t  idxa 1 0 1 1 \x02\xd2 \x02\xd2 0",
-		"test t  idxa 1 1 2 1 \x0e\x0f \x0e\x0f 0",
-		"test t  idxa 1 2 3 1 \x0e3 \x0e3 0",
-		"test t  idxb 1 0 1 1 \x00A \x00A 0",
-		"test t  idxb 1 1 3 2 \x00C \x00C 0",
-	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 3 0 9 1 1",
-		"0 2 2 0 9 1 -0.5",
-		"1 1 3 0 0 1 0",
-		"1 2 2 0 0 1 0",
-	))
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
@@ -599,8 +594,10 @@ func TestIssue20874(t *testing.T) {
 }
 
 func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -646,8 +643,7 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 }
 
 func TestSmallTableAnalyzeV2(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -726,7 +722,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	}()
 	tk.MustExec("analyze table t with 1 topn, 2 buckets")
 	is := dom.InfoSchema()
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -763,7 +759,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	lastVersion = tbl.Version
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 3, len(col0.Buckets))
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	col1 = tbl.GetCol(tableInfo.Columns[1].ID)
 	require.Equal(t, 1, len(col1.TopN.TopN))
@@ -945,7 +941,10 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
-
+	if kerneltype.IsNextGen() {
+		t.Log("analyze V1 cannot support in the next gen")
+		return
+	}
 	// set analyze version back to 1, will not use persisted
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t partition p2")
@@ -1829,6 +1828,9 @@ func TestAnalyzeSampleRateReason(t *testing.T) {
 }
 
 func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1983,6 +1985,9 @@ func TestKillAutoAnalyze(t *testing.T) {
 }
 
 func TestKillAutoAnalyzeIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
@@ -2211,7 +2216,7 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
-PARTITION BY RANGE ( a ) (
+		PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (20)
 )`
@@ -2233,7 +2238,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table only sets table options and gen globalStats
 	tk.MustExec("analyze table t columns a,c with 1 topn, 3 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
@@ -2253,7 +2258,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table with persisted table-level options
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2273,7 +2278,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table with merged table-level options
 	tk.MustExec("analyze table t with 2 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2305,7 +2310,7 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
-PARTITION BY RANGE ( a ) (
+		PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (20)
 )`
@@ -2327,7 +2332,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition under static mode with options
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
@@ -2352,7 +2357,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table in dynamic mode will ignore partition-level options and use default
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2376,7 +2381,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode with specified options with old partition-level options
 	tk.MustExec("analyze table t columns b,d with 2 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2396,7 +2401,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode without options with old table-level & partition-level options
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2406,7 +2411,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode with specified options with old table-level & partition-level options
 	tk.MustExec("analyze table t with 1 topn")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2482,8 +2487,7 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
@@ -2567,6 +2571,9 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestAnalyzePartitionUnderV1Dynamic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
@@ -2620,6 +2627,9 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestIssue35056(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

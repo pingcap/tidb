@@ -33,6 +33,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/expression"
 	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -55,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -203,8 +206,12 @@ type IndexReaderExecutor struct {
 	index           *model.IndexInfo
 	physicalTableID int64
 	ranges          []*ranger.Range
-	partitions      []table.PhysicalTable
-	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
+	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
+	// In brief, it splits IndexReaderExecutor.ranges into groups. When it's set, we need to access them respectively
+	// and use a merge sort to combine them.
+	groupedRanges [][]*ranger.Range
+	partitions    []table.PhysicalTable
+	partRangeMap  map[int64][]*ranger.Range // each partition may have different ranges
 
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
@@ -281,51 +288,63 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	return e.result.Next(ctx, req)
 }
 
-// TODO: cleanup this method.
-func (e *IndexReaderExecutor) buildKeyRanges(dctx *distsqlctx.DistSQLContext, ranges []*ranger.Range, physicalID int64) ([]kv.KeyRange, error) {
-	var (
-		rRanges *kv.KeyRanges
-		err     error
-	)
-	if e.index.ID == -1 {
-		rRanges, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, ranges)
-	} else {
-		rRanges, err = distsql.IndexRangesToKVRanges(dctx, physicalID, e.index.ID, ranges)
-	}
-	return rRanges.FirstPartitionRange(), err
-}
-
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, e.plans[0].(*physicalop.PhysicalIndexScan), e.idxCols, e.colLens)
+		is := e.plans[0].(*physicalop.PhysicalIndexScan)
+		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, is, e.idxCols, e.colLens)
 		if err != nil {
 			return err
 		}
-	}
-
-	var kvRanges []kv.KeyRange
-	if len(e.partitions) > 0 {
-		for _, p := range e.partitions {
-			partRange := e.ranges
-			if pRange, ok := e.partRangeMap[p.GetPhysicalID()]; ok {
-				partRange = pRange
-			}
-			kvRange, err := e.buildKeyRanges(e.dctx, partRange, p.GetPhysicalID())
+		// Rebuild groupedRanges if it was originally set
+		if len(is.GroupByColIdxs) != 0 {
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 			if err != nil {
 				return err
 			}
-			kvRanges = append(kvRanges, kvRange...)
 		}
-	} else {
-		kvRanges, err = e.buildKeyRanges(e.dctx, e.ranges, e.physicalTableID)
 	}
+
+	// partRangeMap comes from the index join code path, while groupedRanges will not be set in that case.
+	// They are two different sources of ranges, and should not appear together.
+	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
+
+	// Build kvRanges considering both partitions and groupedRanges
+	kvRanges, err := e.buildKVRangesForIndexReader()
 	if err != nil {
 		return err
 	}
 
 	return e.open(ctx, kvRanges)
+}
+
+// buildKVRangesForIndexReader builds kvRanges for IndexReaderExecutor considering both partitions and groupedRanges.
+func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, error) {
+	tableIDs := make([]int64, 0, len(e.partitions))
+	for _, p := range e.partitions {
+		tableIDs = append(tableIDs, p.GetPhysicalID())
+	}
+	if len(e.partitions) == 0 {
+		tableIDs = append(tableIDs, e.physicalTableID)
+	}
+
+	groupedRanges := e.groupedRanges
+	if len(groupedRanges) == 0 {
+		groupedRanges = [][]*ranger.Range{e.ranges}
+	}
+
+	results := make([]kv.KeyRange, 0, len(groupedRanges))
+	for _, ranges := range groupedRanges {
+		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, kvRange := range kvRanges {
+			results = append(results, kvRange...)
+		}
+	}
+	return results, nil
 }
 
 func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
@@ -377,8 +396,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
-	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
-	if e.byItems == nil || len(e.partitions) <= 1 {
+	if !needMergeSort(e.byItems, len(kvRanges)) {
 		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {
 			return err
@@ -388,6 +406,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			return err
 		}
 	} else {
+		// Use sortedSelectResults for merge sort
 		kvReqs := make([]*kv.Request, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			kvReq, err := e.buildKVReq([]kv.KeyRange{kvRange})
@@ -441,11 +460,15 @@ type IndexLookUpExecutor struct {
 	exec.BaseExecutorV2
 	indexUsageReporter *exec.IndexUsageReporter
 
-	table   table.Table
-	index   *model.IndexInfo
-	ranges  []*ranger.Range
-	dagPB   *tipb.DAGRequest
-	startTS uint64
+	table  table.Table
+	index  *model.IndexInfo
+	ranges []*ranger.Range
+	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
+	// In brief, it splits IndexLookUpExecutor.ranges into groups. When it's set, we need to access them respectively
+	// and use a merge sort to combine them.
+	groupedRanges [][]*ranger.Range
+	dagPB         *tipb.DAGRequest
+	startTS       uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx       []int
 	handleCols      []*expression.Column
@@ -465,7 +488,6 @@ type IndexLookUpExecutor struct {
 	partitionTableMode bool                  // if this executor is accessing a local index with partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionRangeMap  map[int64][]*ranger.Range
-	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
 
 	// All fields above are immutable.
 
@@ -482,7 +504,12 @@ type IndexLookUpExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
-	kvRanges      []kv.KeyRange
+	// groupedKVRanges is built from ranger.Range and needed to access tikv. It's a unified form that considers both
+	// ranges and groupedRanges, and also considers the partitioned table.
+	// The extra PhysicalTableID is needed by the memIndexLookUpReader because it can't get it from PartitionHandle like
+	// the IndexLookUpExecutor here.
+	groupedKVRanges []*kvRangesWithPhysicalTblID
+
 	workerStarted bool
 
 	byItems   []*plannerutil.ByItems
@@ -511,6 +538,14 @@ type IndexLookUpExecutor struct {
 	// If dummy flag is set, this is not a real IndexLookUpReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	// Whether to push down the index lookup to TiKV
+	indexLookUpPushDown bool
+}
+
+type kvRangesWithPhysicalTblID struct {
+	PhysicalTableID int64
+	KeyRanges       []kv.KeyRange
 }
 
 type getHandleType int8
@@ -539,9 +574,17 @@ func (e *IndexLookUpExecutor) setDummy() {
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, e.idxPlans[0].(*physicalop.PhysicalIndexScan), e.idxCols, e.colLens)
+		is := e.idxPlans[0].(*physicalop.PhysicalIndexScan)
+		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, is, e.idxCols, e.colLens)
 		if err != nil {
 			return err
+		}
+		// Rebuild groupedRanges if it was originally set
+		if len(is.GroupByColIdxs) != 0 {
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -551,6 +594,11 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
 	e.memTracker.AttachTo(e.stmtMemTracker)
+
+	// partitionRangeMap comes from the index join code path, while groupedRanges will not be set in that case.
+	// They are two different sources of ranges, and should not appear together.
+	intest.Assert(!(len(e.partitionRangeMap) > 0 && len(e.groupedRanges) > 0),
+		"partitionRangeMap and groupedRanges should not appear together")
 
 	err = e.buildTableKeyRanges()
 	if err != nil {
@@ -565,41 +613,75 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	return e.open(ctx)
 }
 
-func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
-	dctx := e.dctx
-	if e.partitionTableMode {
-		e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.prunedPartitions))
-		for _, p := range e.prunedPartitions {
-			// TODO: prune and adjust e.ranges for each partition again, since not all e.ranges are suitable for all e.prunedPartitions.
-			// For example, a table partitioned by range(a), and p0=(1, 10), p1=(11, 20), for the condition "(a>1 and a<10) or (a>11 and a<20)",
-			// the first range is only suitable to p0 and the second is to p1, but now we'll also build kvRange for range0+p1 and range1+p0.
-			physicalID := p.GetPhysicalID()
-			ranges := e.ranges
-			if e.partitionRangeMap != nil && e.partitionRangeMap[physicalID] != nil {
-				ranges = e.partitionRangeMap[physicalID]
-			}
-			var kvRange *kv.KeyRanges
-			if e.index.ID == -1 {
-				kvRange, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, ranges)
-			} else {
-				kvRange, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, ranges, e.memTracker, nil)
-			}
+func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
+	ranges []*ranger.Range,
+	rangeOverrideForPartitionID map[int64][]*ranger.Range,
+	physicalIDs []int64,
+	indexID int64,
+	memTracker *memory.Tracker,
+) ([][]kv.KeyRange, error) {
+	results := make([][]kv.KeyRange, 0, len(physicalIDs))
+	for _, physicalID := range physicalIDs {
+		if pRange, ok := rangeOverrideForPartitionID[physicalID]; ok {
+			ranges = pRange
+		}
+		if indexID == -1 {
+			rRanges, err := distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, ranges)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			e.partitionKVRanges = append(e.partitionKVRanges, kvRange.FirstPartitionRange())
+			results = append(results, rRanges.FirstPartitionRange())
+		} else {
+			singleRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, indexID, ranges, memTracker, nil)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, singleRanges.FirstPartitionRange())
+		}
+	}
+	return results, nil
+}
+
+func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
+	tableIDs := make([]int64, 0, len(e.prunedPartitions))
+	if e.partitionTableMode {
+		for _, p := range e.prunedPartitions {
+			tableIDs = append(tableIDs, p.GetPhysicalID())
 		}
 	} else {
-		physicalID := getPhysicalTableID(e.table)
-		var kvRanges *kv.KeyRanges
-		if e.index.ID == -1 {
-			kvRanges, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, e.ranges)
-		} else {
-			kvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, e.ranges, e.memTracker, nil)
-		}
-		e.kvRanges = kvRanges.FirstPartitionRange()
+		tableIDs = append(tableIDs, getPhysicalTableID(e.table))
 	}
-	return err
+
+	groupedRanges := e.groupedRanges
+	if len(groupedRanges) == 0 {
+		groupedRanges = [][]*ranger.Range{e.ranges}
+	}
+
+	kvRanges := make([][]kv.KeyRange, 0, len(groupedRanges))
+	physicalTblIDsForPartitionKVRanges := make([]int64, 0, len(tableIDs)*len(groupedRanges))
+	for _, ranges := range groupedRanges {
+		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, e.memTracker)
+		if err != nil {
+			return err
+		}
+		kvRanges = append(kvRanges, kvRange...)
+		physicalTblIDsForPartitionKVRanges = append(physicalTblIDsForPartitionKVRanges, tableIDs...)
+	}
+
+	if len(kvRanges) > 1 {
+		// If there are more than one kv ranges, it must come from the partitioned table, or groupedRanges, or both.
+		intest.Assert(e.partitionTableMode || len(e.groupedRanges) > 0)
+	}
+	e.groupedKVRanges = make([]*kvRangesWithPhysicalTblID, 0, len(kvRanges))
+	for i, kvRange := range kvRanges {
+		partitionKVRange := &kvRangesWithPhysicalTblID{
+			PhysicalTableID: physicalTblIDsForPartitionKVRanges[i],
+			KeyRanges:       kvRange,
+		}
+		e.groupedKVRanges = append(e.groupedKVRanges, partitionKVRange)
+	}
+
+	return nil
 }
 
 func (e *IndexLookUpExecutor) open(_ context.Context) error {
@@ -655,6 +737,13 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 }
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
+	if e.indexLookUpPushDown {
+		// For index lookup push down, needPartitionHandle should always return false because
+		// global index or keep order for partition table is not supported now.
+		intest.Assert(!e.index.Global && !e.keepOrder)
+		return false, nil
+	}
+
 	var col *expression.Column
 	var needPartitionHandle bool
 	if tp == getHandleFromIndex {
@@ -718,17 +807,36 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 
-	kvRanges := [][]kv.KeyRange{e.kvRanges}
-	if e.partitionTableMode {
-		kvRanges = e.partitionKVRanges
+	kvRanges := make([][]kv.KeyRange, 0, len(e.groupedKVRanges))
+	for _, ranges := range e.groupedKVRanges {
+		kvRanges = append(kvRanges, ranges.KeyRanges)
 	}
+
 	// When len(kvrange) = 1, no sorting is required,
 	// so remove byItems and non-necessary output columns
 	if len(kvRanges) == 1 {
 		e.dagPB.OutputOffsets = e.dagPB.OutputOffsets[len(e.byItems):]
 		e.byItems = nil
 	}
-	tps := e.getRetTpsForIndexReader()
+	var tps []*types.FieldType
+	tblScanIdxForRewritePartitionID := -1
+	if e.indexLookUpPushDown {
+		tps = e.RetFieldTypes()
+		if e.partitionTableMode {
+			for idx, executor := range e.dagPB.Executors {
+				if executor.Tp == tipb.ExecType_TypeTableScan {
+					tblScanIdxForRewritePartitionID = idx
+					break
+				}
+			}
+			if tblScanIdxForRewritePartitionID < 0 {
+				intest.Assert(false)
+				return errors.New("cannot find table scan executor in for partition index lookup push down")
+			}
+		}
+	} else {
+		tps = e.getRetTpsForIndexReader()
+	}
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
 	e.pool.submit(func() {
@@ -747,7 +855,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		for _, kvRange := range kvRanges {
+		for idx, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
 			select {
@@ -758,6 +866,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			if finished {
 				break
 			}
+
+			if tblScanIdxForRewritePartitionID >= 0 {
+				// We should set the TblScan's TableID to the partition physical ID to make sure
+				// the push-down index lookup can encode the table handle key correctly.
+				e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[idx].GetPhysicalID()
+			}
+
 			var builder distsql.RequestBuilder
 			builder.SetDAGRequest(e.dagPB).
 				SetStartTS(e.startTS).
@@ -771,6 +886,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 				SetMemTracker(tracker).
 				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+
+			if e.indexLookUpPushDown {
+				// Paging and Cop-cache is not supported in index lookup push down.
+				builder.Request.Paging.Enable = false
+				builder.Request.Cacheable = false
+			}
 
 			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
 				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
@@ -798,20 +919,28 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			results = append(results, result)
 		}
-		if len(results) > 1 && len(e.byItems) != 0 {
+		if needMergeSort(e.byItems, len(results)) {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		// this error is synced in fetchHandles(), don't sync it again
-		_ = worker.fetchHandles(ctx1, results)
-		cancel()
-		for _, result := range results {
-			if err := result.Close(); err != nil {
-				logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
+		var selResultList selectResultList
+		indexTypes := e.getRetTpsForIndexReader()
+		if e.indexLookUpPushDown {
+			var err error
+			if selResultList, err = newSelectResultRowIterList(results, [][]*types.FieldType{indexTypes}); err != nil {
+				cancel()
+				worker.syncErr(err)
+				return
 			}
+		} else {
+			selResultList = newSelectResultList(results)
 		}
+		_ = worker.fetchHandles(ctx1, selResultList, indexTypes)
+		cancel()
+		selResultList.Close()
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
 	})
@@ -881,15 +1010,35 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
 	if e.stats != nil {
-		defer e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+			var indexScanCopTasks int32
+			if copStats := e.stmtRuntimeStatsColl.GetCopStats(e.getIndexPlanRootID()); copStats != nil {
+				indexScanCopTasks = copStats.GetTasks()
+			}
+			if e.indexLookUpPushDown {
+				metrics.IndexLookUpExecutorWithPushDownEnabledRowNumber.Observe(float64(e.stats.indexScanBasicStats.GetActRows()))
+				metrics.IndexLookUpIndexScanCopTasksWithPushDownEnabled.Add(float64(indexScanCopTasks))
+			} else {
+				metrics.IndexLookUpIndexScanCopTasksNormal.Add(float64(indexScanCopTasks))
+			}
+		}()
 	}
+
+	if stats := e.RuntimeStats(); stats != nil {
+		if e.indexLookUpPushDown {
+			defer func() {
+				metrics.IndexLookUpExecutorWithPushDownEnabledDuration.Observe(time.Duration(stats.GetTime()).Seconds())
+			}()
+		}
+	}
+
 	if e.indexUsageReporter != nil {
 		e.indexUsageReporter.ReportCopIndexUsageForTable(
 			e.table,
 			e.index.ID,
 			e.idxPlans[0].ID())
 	}
-	e.kvRanges = e.kvRanges[:0]
 	if e.dummy {
 		return nil
 	}
@@ -1036,13 +1185,55 @@ func (w *indexWorker) syncErr(err error) {
 	}
 }
 
+type selectResultList []struct {
+	Result  distsql.SelectResult
+	RowIter distsql.SelectResultIter
+}
+
+func newSelectResultList(results []distsql.SelectResult) selectResultList {
+	l := make(selectResultList, len(results))
+	for i, r := range results {
+		l[i].Result = r
+	}
+	return l
+}
+
+func newSelectResultRowIterList(results []distsql.SelectResult, intermediateResultTypes [][]*types.FieldType) (selectResultList, error) {
+	ret := newSelectResultList(results)
+	for i, r := range ret {
+		rowIter, err := r.Result.IntoIter(intermediateResultTypes)
+		if err != nil {
+			ret.Close()
+			return nil, err
+		}
+		ret[i].RowIter = rowIter
+		ret[i].Result = nil
+	}
+	return ret, nil
+}
+
+func (l selectResultList) Close() {
+	for _, r := range l {
+		var err error
+		if r.RowIter != nil {
+			err = r.RowIter.Close()
+		} else if r.Result != nil {
+			err = r.Result.Close()
+		}
+
+		if err != nil {
+			logutil.BgLogger().Error("close Select result failed", zap.Error(err))
+		}
+	}
+}
+
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are submitted to the pool and processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.SelectResult) (err error) {
+func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList, indexTps []*types.FieldType) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := util.GetRecoverError(r)
 			w.syncErr(err4Panic)
 			if err != nil {
@@ -1050,7 +1241,16 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			}
 		}
 	}()
-	chk := w.idxLookup.AllocPool.Alloc(w.idxLookup.getRetTpsForIndexReader(), w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
+	var chk *chunk.Chunk
+	if !w.idxLookup.indexLookUpPushDown {
+		// chk is only used by non-indexLookUpPushDown mode for mem-reuse
+		chk = w.idxLookup.AllocPool.Alloc(indexTps, w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
+	}
+	handleOffsets, err := w.getHandleOffsets(len(indexTps))
+	if err != nil {
+		w.syncErr(err)
+		return err
+	}
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.stmtRuntimeStatsColl != nil {
 		if idxID != w.idxLookup.ID() && w.idxLookup.stats != nil {
@@ -1059,47 +1259,85 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 	}
 	taskID := 0
 	for i := 0; i < len(results); {
-		result := results[i]
+		curResultIdx := i
+		result := results[curResultIdx]
 		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
 			break
 		}
 		startTime := time.Now()
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
+		var completedRows []chunk.Row
+		var handles []kv.Handle
+		var retChunk *chunk.Chunk
+		var curResultExhausted bool
+		if w.idxLookup.indexLookUpPushDown {
+			completedRows, handles, curResultExhausted, err = w.extractLookUpPushDownRowsOrHandles(ctx, result.RowIter, handleOffsets)
+		} else {
+			handles, retChunk, err = w.extractTaskHandles(ctx, chk, result.Result, handleOffsets)
+			curResultExhausted = len(handles) == 0
+		}
 		finishFetch := time.Now()
 		if err != nil {
 			w.syncErr(err)
 			return err
 		}
-		if len(handles) == 0 {
+
+		if curResultExhausted {
 			i++
+		}
+
+		if len(handles) == 0 && len(completedRows) == 0 {
 			continue
 		}
-		task := w.buildTableTask(handles, retChunk)
-		task.id = taskID
-		taskID++
-		finishBuild := time.Now()
-		if w.idxLookup.partitionTableMode {
-			task.partitionTable = w.idxLookup.prunedPartitions[i]
+
+		var completedTask *lookupTableTask
+		if rowCnt := len(completedRows); rowCnt > 0 {
+			metrics.IndexLookUpPushDownRowsCounterHit.Add(float64(rowCnt))
+			// Currently, completedRows is only produced by index lookup push down which does not support keep order.
+			// for non-keep-order request, the completed rows can be sent to resultCh directly.
+			completedTask = w.buildCompletedTask(taskID, completedRows)
+			taskID++
 		}
+
+		var tableLookUpTask *lookupTableTask
+		if rowCnt := len(handles); rowCnt > 0 {
+			if w.idxLookup.indexLookUpPushDown {
+				metrics.IndexLookUpPushDownRowsCounterMiss.Add(float64(rowCnt))
+			} else {
+				metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
+			}
+			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
+			if w.idxLookup.partitionTableMode {
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
+			}
+			taskID++
+		}
+
+		finishBuild := time.Now()
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-w.finished:
 			return nil
 		default:
-			e := w.idxLookup
-			e.tblWorkerWg.Add(1)
-			e.pool.submit(func() {
-				defer e.tblWorkerWg.Done()
-				select {
-				case <-e.finished:
-					return
-				default:
-					growWorkerStack16K()
-					execTableTask(e, task)
-				}
-			})
-			w.resultCh <- task
+			if completedTask != nil {
+				w.resultCh <- completedTask
+			}
+
+			if tableLookUpTask != nil {
+				e := w.idxLookup
+				e.tblWorkerWg.Add(1)
+				e.pool.submit(func() {
+					defer e.tblWorkerWg.Done()
+					select {
+					case <-e.finished:
+						return
+					default:
+						growWorkerStack16K()
+						execTableTask(e, tableLookUpTask)
+					}
+				})
+				w.resultCh <- tableLookUpTask
+			}
 		}
 		if w.idxLookup.stats != nil {
 			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
@@ -1110,12 +1348,11 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 	return nil
 }
 
-func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
-	handles []kv.Handle, retChk *chunk.Chunk, err error) {
-	numColsWithoutPid := chk.NumCols()
+func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
+	numColsWithoutPid := indexTpsLen
 	ok, err := w.idxLookup.needPartitionHandle(getHandleFromIndex)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if ok {
 		numColsWithoutPid = numColsWithoutPid - 1
@@ -1127,6 +1364,69 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	if len(handleOffset) == 0 {
 		handleOffset = []int{numColsWithoutPid - 1}
 	}
+	return handleOffset, nil
+}
+
+func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, iter distsql.SelectResultIter, handleOffset []int) (rows []chunk.Row, handles []kv.Handle, exhausted bool, err error) {
+	intest.Assert(w.checkIndexValue == nil, "CheckIndex or CheckTable should not use index lookup push down")
+	const channelIdxIndex = 0
+	const channelIdxRow = 1
+
+	startTime := time.Now()
+	startScanKeys := w.scannedKeys
+	defer func() {
+		if cnt := w.scannedKeys - startScanKeys; w.idxLookup.stats != nil {
+			w.idxLookup.stats.indexScanBasicStats.Record(time.Since(startTime), int(cnt))
+		}
+	}()
+
+	checkLimit := w.PushedLimit != nil
+	for len(handles)+len(rows) < w.batchSize {
+		var row distsql.SelectResultRow
+		row, err = iter.Next(ctx)
+		if err != nil {
+			return nil, nil, false, errors.Trace(err)
+		}
+
+		if row.IsEmpty() {
+			exhausted = true
+			return
+		}
+
+		w.scannedKeys++
+		if checkLimit {
+			if w.scannedKeys <= w.PushedLimit.Offset {
+				continue
+			}
+			if w.scannedKeys > (w.PushedLimit.Offset + w.PushedLimit.Count) {
+				// Skip the handles after Offset+Count.
+				return
+			}
+		}
+
+		switch row.ChannelIndex {
+		case channelIdxRow:
+			rows = append(rows, row.Row)
+		case channelIdxIndex:
+			h, err := w.idxLookup.getHandle(row.Row, handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
+			if err != nil {
+				return nil, nil, false, errors.Trace(err)
+			}
+			handles = append(handles, h)
+		default:
+			return nil, nil, false, errors.Errorf("unexpected channel index %d", row.ChannelIndex)
+		}
+	}
+
+	w.batchSize *= 2
+	if w.batchSize > w.maxBatchSize {
+		w.batchSize = w.maxBatchSize
+	}
+	return
+}
+
+func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleOffset []int) (
+	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
 	for len(handles) < w.batchSize {
@@ -1186,7 +1486,17 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	return handles, retChk, nil
 }
 
-func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
+func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTableTask {
+	task := &lookupTableTask{
+		id:     taskID,
+		rows:   rows,
+		doneCh: make(chan error, 1),
+	}
+	task.doneCh <- nil
+	return task
+}
+
+func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder *kv.HandleMap
 	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
@@ -1211,6 +1521,7 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *
 	}
 
 	task := &lookupTableTask{
+		id:                   taskID,
 		handles:              handles,
 		indexOrder:           indexOrder,
 		duplicatedIndexOrder: duplicatedIndexOrder,
@@ -1231,7 +1542,7 @@ func execTableTask(e *IndexLookUpExecutor, task *lookupTableTask) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("TableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("TableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err := util.GetRecoverError(r)
 			task.doneCh <- err
 		}
@@ -1568,7 +1879,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
 			if ctx.Err() != context.Canceled {
-				logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+				logutil.Logger(ctx).Warn("table reader fetch next chunk failed", zap.Error(err))
 			}
 			return err
 		}
@@ -1673,4 +1984,8 @@ func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
 		planIDs = append(planIDs, p.ID())
 	}
 	return planIDs
+}
+
+func needMergeSort(byItems []*plannerutil.ByItems, kvRangesCount int) bool {
+	return len(byItems) > 0 && kvRangesCount > 1
 }

@@ -15,13 +15,10 @@
 package executor
 
 import (
-	"archive/zip"
 	"context"
 	"fmt"
 	"math"
 	"math/rand"
-	"os"
-	"path/filepath"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -34,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -66,15 +64,12 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -83,151 +78,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 )
-
-func checkFileName(s string) bool {
-	files := []string{
-		"config.toml",
-		"debug_trace/debug_trace0.json",
-		"meta.txt",
-		"stats/test.t_dump_single.json",
-		"schema/test.t_dump_single.schema.txt",
-		"schema/schema_meta.txt",
-		"table_tiflash_replica.txt",
-		"variables.toml",
-		"session_bindings.sql",
-		"global_bindings.sql",
-		"sql/sql0.sql",
-		"explain.txt",
-		"statsMem/test.t_dump_single.txt",
-		"sql_meta.toml",
-	}
-	for _, f := range files {
-		if strings.Compare(f, s) == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func TestPlanReplayer(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
-	}()
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx_a(a))")
-	tk.MustExec("alter table t set tiflash replica 1")
-	tk.MustQuery("plan replayer dump explain select * from t where a=10")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
-	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
-
-	tk.MustExec("create table t1 (a int)")
-	tk.MustExec("create table t2 (a int)")
-	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select * from t1")
-	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as select * from v1")
-	tk.MustQuery("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
-	tk.MustQuery("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
-	tk.MustQuery("plan replayer dump explain select * from v1")
-	tk.MustQuery("plan replayer dump explain select * from v2")
-	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
-
-	// clear the status table and assert
-	tk.MustExec("delete from mysql.plan_replayer_status")
-	tk.MustQuery("plan replayer dump explain select * from v2")
-	token := tk.Session().GetSessionVars().LastPlanReplayerToken
-	rows := tk.MustQuery(fmt.Sprintf("select * from mysql.plan_replayer_status where token = '%v'", token)).Rows()
-	require.Len(t, rows, 1)
-}
-
-func TestPlanReplayerCaptureSEM(t *testing.T) {
-	originSEM := config.GetGlobalConfig().Security.EnableSEM
-	defer func() {
-		config.GetGlobalConfig().Security.EnableSEM = originSEM
-	}()
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("plan replayer capture '123' '123';")
-	tk.MustExec("create table t(id int)")
-	tk.MustQuery("plan replayer dump explain select * from t")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
-	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
-}
-
-func TestPlanReplayerCapture(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("plan replayer capture '123' '123';")
-	tk.MustQuery("select sql_digest, plan_digest from mysql.plan_replayer_task;").Check(testkit.Rows("123 123"))
-	tk.MustGetErrMsg("plan replayer capture '123' '123';", "plan replayer capture task already exists")
-	tk.MustExec("plan replayer capture remove '123' '123'")
-	tk.MustQuery("select count(*) from mysql.plan_replayer_task;").Check(testkit.Rows("0"))
-	tk.MustExec("create table t(id int)")
-	tk.MustExec("prepare stmt from 'update t set id = ?  where id = ? + 1';")
-	tk.MustExec("SET @number = 5;")
-	tk.MustExec("execute stmt using @number,@number")
-	_, sqlDigest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
-	_, planDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
-	tk.MustExec("SET @@tidb_enable_plan_replayer_capture = ON;")
-	tk.MustExec("SET @@global.tidb_enable_historical_stats_for_capture='ON'")
-	tk.MustExec(fmt.Sprintf("plan replayer capture '%v' '%v'", sqlDigest.String(), planDigest.String()))
-	err := dom.GetPlanReplayerHandle().CollectPlanReplayerTask()
-	require.NoError(t, err)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/shouldDumpStats", "return(true)"))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/shouldDumpStats"))
-	tk.MustExec("execute stmt using @number,@number")
-	task := dom.GetPlanReplayerHandle().DrainTask()
-	require.NotNil(t, task)
-}
-
-func TestPlanReplayerContinuesCapture(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("set @@global.tidb_enable_historical_stats='OFF'")
-	_, err := tk.Exec("set @@global.tidb_enable_plan_replayer_continuous_capture='ON'")
-	require.Error(t, err)
-	require.Equal(t, err.Error(), "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture")
-
-	tk.MustExec("set @@global.tidb_enable_historical_stats='ON'")
-	tk.MustExec("set @@global.tidb_enable_plan_replayer_continuous_capture='ON'")
-
-	prHandle := dom.GetPlanReplayerHandle()
-	tk.MustExec("delete from mysql.plan_replayer_status;")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int);")
-	tk.MustExec("set @@tidb_enable_plan_replayer_continuous_capture = 'ON'")
-	tk.MustQuery("select * from t;")
-	task := prHandle.DrainTask()
-	require.NotNil(t, task)
-	worker := prHandle.GetWorker()
-	success := worker.HandleTask(task)
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
-	require.True(t, success)
-	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
-}
-
-func TestPlanReplayerDumpSingle(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_dump_single")
-	tk.MustExec("create table t_dump_single(a int)")
-	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
-	path := testdata.ConvertRowsToStrings(res.Rows())
-
-	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))
-	require.NoError(t, err)
-	defer func() { require.NoError(t, reader.Close()) }()
-	for _, file := range reader.File {
-		require.True(t, checkFileName(file.Name), file.Name)
-	}
-}
 
 func TestTimezonePushDown(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -752,32 +602,6 @@ func TestIssue19148(t *testing.T) {
 	require.Zero(t, tblInfo.Meta().Columns[0].GetFlag())
 }
 
-func TestOOMActionPriority(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("drop table if exists t3")
-	tk.MustExec("drop table if exists t4")
-	tk.MustExec("create table t0(a int)")
-	tk.MustExec("insert into t0 values(1)")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("insert into t1 values(1)")
-	tk.MustExec("create table t2(a int)")
-	tk.MustExec("insert into t2 values(1)")
-	tk.MustExec("create table t3(a int)")
-	tk.MustExec("insert into t3 values(1)")
-	tk.MustExec("create table t4(a int)")
-	tk.MustExec("insert into t4 values(1)")
-	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
-	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(true)
-	// All actions are finished and removed.
-	require.Equal(t, action.GetPriority(), int64(memory.DefLogPriority))
-}
-
 // Test invoke Close without invoking Open before for each operators.
 func TestUnreasonablyClose(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -962,422 +786,6 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 	}
 }
 
-func TestPointGetPreparedPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists ps_text")
-	defer tk.MustExec("drop database if exists ps_text")
-	tk.MustExec("create database ps_text")
-	tk.MustExec("use ps_text")
-
-	tk.MustExec(`create table t (a int, b int, c int,
-			primary key k_a(a),
-			unique key k_b(b))`)
-	tk.MustExec("insert into t values (1, 1, 1)")
-	tk.MustExec("insert into t values (2, 2, 2)")
-	tk.MustExec("insert into t values (3, 3, 3)")
-
-	pspk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where a = ?")
-	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
-	pspk2Id, _, _, err := tk.Session().PrepareStmt("select * from t where ? = a ")
-	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
-
-	ctx := context.Background()
-	// first time plan generated
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
-
-	// using the generated plan but with different params
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(0))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3"))
-
-	// unique index
-	psuk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where b = ? ")
-	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
-
-	// test schema changed, cached plan should be invalidated
-	tk.MustExec("alter table t add column col4 int default 10 after c")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
-
-	tk.MustExec("alter table t drop index k_b")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
-
-	tk.MustExec(`insert into t values(4, 3, 3, 11)`)
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10", "4 3 3 11"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
-
-	tk.MustExec("delete from t where a = 4")
-	tk.MustExec("alter table t add index k_b(b)")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(3))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(0))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
-
-	// use pk again
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk2Id, expression.Args2Expressions4Test(3))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(3))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("3 3 3 10"))
-}
-
-func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("drop database if exists ps_text")
-	defer tk1.MustExec("drop database if exists ps_text")
-	tk1.MustExec("create database ps_text")
-	tk1.MustExec("use ps_text")
-
-	tk1.MustExec(`create table t (a int, b int, c int,
-			primary key k_a(a),
-			unique key k_b(b))`)
-	tk1.MustExec("insert into t values (1, 1, 1)")
-	tk1.MustExec("insert into t values (2, 2, 2)")
-	tk1.MustExec("insert into t values (3, 3, 3)")
-
-	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
-	require.NoError(t, err)
-	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
-
-	ctx := context.Background()
-	// first time plan generated
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(0))
-	require.NoError(t, err)
-	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(nil)
-
-	// using the generated plan but with different params
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
-
-	// next start a non autocommit txn
-	tk1.MustExec("set autocommit = 0")
-	tk1.MustExec("begin")
-	// try to exec using point get plan(this plan should not go short path)
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
-
-	// update rows
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use ps_text")
-	tk2.MustExec("update t set c = c + 10 where c = 1")
-
-	// try to point get again
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 1"))
-
-	// try to update in session 1
-	tk1.MustExec("update t set c = c + 10 where c = 1")
-	err = tk1.ExecToErr("commit")
-	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
-
-	// verify
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1 11"))
-
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("2 2 2"))
-
-	tk2.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 11"))
-}
-
-func TestPointUpdatePreparedPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists pu_test")
-	defer tk.MustExec("drop database if exists pu_test")
-	tk.MustExec("create database pu_test")
-	tk.MustExec("use pu_test")
-
-	tk.MustExec(`create table t (a int, b int, c int,
-			primary key k_a(a),
-			unique key k_b(b))`)
-	tk.MustExec("insert into t values (1, 1, 1)")
-	tk.MustExec("insert into t values (2, 2, 2)")
-	tk.MustExec("insert into t values (3, 3, 3)")
-
-	updateID1, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
-	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).StmtCacheable = false
-	require.Equal(t, 1, pc)
-	updateID2, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 2 where ? = a`)
-	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID2].(*plannercore.PlanCacheStmt).StmtCacheable = false
-	require.Equal(t, 1, pc)
-
-	ctx := context.Background()
-	// first time plan generated
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
-
-	// using the generated plan but with different params
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
-
-	// updateID2
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 8"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID2, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 10"))
-
-	// unique index
-	updUkID1, _, _, err := tk.Session().PrepareStmt(`update t set c = c + 10 where b = ?`)
-	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.PlanCacheStmt).StmtCacheable = false
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 20"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 30"))
-
-	// test schema changed, cached plan should be invalidated
-	tk.MustExec("alter table t add column col4 int default 10 after c")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 31 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 32 10"))
-
-	tk.MustExec("alter table t drop index k_b")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 42 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 52 10"))
-
-	tk.MustExec("alter table t add unique index k_b(b)")
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 62 10"))
-
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 72 10"))
-
-	tk.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 1 10"))
-	tk.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2 2 10"))
-}
-
-func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("drop database if exists pu_test2")
-	defer tk1.MustExec("drop database if exists pu_test2")
-	tk1.MustExec("create database pu_test2")
-	tk1.MustExec("use pu_test2")
-
-	tk1.MustExec(`create table t (a int, b int, c int,
-			primary key k_a(a),
-			unique key k_b(b))`)
-	tk1.MustExec("insert into t values (1, 1, 1)")
-	tk1.MustExec("insert into t values (2, 2, 2)")
-	tk1.MustExec("insert into t values (3, 3, 3)")
-
-	ctx := context.Background()
-	updateID1, _, _, err := tk1.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
-	tk1.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).StmtCacheable = false
-	require.NoError(t, err)
-
-	// first time plan generated
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 4"))
-
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
-
-	// next start a non autocommit txn
-	tk1.MustExec("set autocommit = 0")
-	tk1.MustExec("begin")
-	// try to exec using point get plan(this plan should not go short path)
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
-
-	// update rows
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use pu_test2")
-	tk2.MustExec(`prepare pu2 from "update t set c = c + 2 where ? = a "`)
-	tk2.MustExec("set @p3 = 3")
-	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 5"))
-	tk2.MustExec("execute pu2 using @p3")
-	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 7"))
-	tk2.MustExec("execute pu2 using @p3")
-	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 9"))
-
-	// try to update in session 1
-	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
-	err = tk1.ExecToErr("commit")
-	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
-
-	// verify
-	tk2.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 1"))
-	tk1.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2 2"))
-	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 9"))
-	tk1.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2 2"))
-	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 9"))
-
-	// again next start a non autocommit txn
-	tk1.MustExec("set autocommit = 0")
-	tk1.MustExec("begin")
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 10"))
-
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, updateID1, expression.Args2Expressions4Test(3))
-	require.Nil(t, rs)
-	require.NoError(t, err)
-	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 11"))
-	tk1.MustExec("commit")
-
-	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 11"))
-}
-
 func TestApplyCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1424,6 +832,10 @@ func TestApplyCache(t *testing.T) {
 }
 
 func TestCollectDMLRuntimeStats(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	})
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2004,9 +1416,10 @@ func TestLowResolutionTSORead(t *testing.T) {
 	defer func() {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
 	}()
-	err = tk.ExecToErr("select * from low_resolution_tso where a = 1 for update")
-	require.Error(t, err)
-	err = tk.ExecToErr("select * from low_resolution_tso for update")
+	tk.MustQuery("select * from low_resolution_tso where a = 1 for update")
+	tk.MustQuery("select * from low_resolution_tso for update")
+
+	err = tk.ExecToErr("update low_resolution_tso set a = 3")
 	require.Error(t, err)
 }
 
@@ -2537,8 +1950,40 @@ func TestAdmin(t *testing.T) {
 	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
 	result := tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
 	result.Check(testkit.Rows())
-	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
-	result.Check(testkit.Rows())
+	if kerneltype.IsNextGen() {
+		result := tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+		job2Expected := `CREATE OR REPLACE SQL SECURITY INVOKER VIEW mysql.tidb_mdl_view as (
+		SELECT tidb_mdl_info.job_id,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.query")) as query,
+			session_id,
+			cluster_tidb_trx.start_time,
+			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
+		FROM mysql.tidb_ddl_job,
+			mysql.tidb_mdl_info,
+			information_schema.cluster_tidb_trx
+		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), '),') != 0
+	);`
+		job4Expected := `CREATE OR REPLACE VIEW sys.schema_unused_indexes AS
+		SELECT
+			table_schema as object_schema,
+			table_name as object_name,
+			index_name
+		FROM information_schema.cluster_tidb_index_usage
+		WHERE
+			table_schema not in ('sys', 'mysql', 'INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA') and
+			index_name != 'PRIMARY'
+		GROUP BY table_schema, table_name, index_name
+		HAVING
+			sum(last_access_time) is null;`
+		result.Check(testkit.Rows(job2Expected, job4Expected))
+	} else {
+		result := tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+		result.Check(testkit.Rows())
+	}
+
 	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
@@ -2696,6 +2141,10 @@ func TestAdmin(t *testing.T) {
 	m := meta.NewMutator(txn)
 	startKey := meta.DDLJobHistoryKey(m, 0)
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
+	if kerneltype.IsNextGen() {
+		startKey = store.GetCodec().EncodeKey(startKey)
+		endKey = store.GetCodec().EncodeKey(endKey)
+	}
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
 	historyJobs2, err := ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), 20)
@@ -2926,6 +2375,9 @@ func TestIssue50043(t *testing.T) {
 }
 
 func TestIssue50043WithPipelinedDML(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("pipelined dml is not supported in next-gen kv mode")
+	}
 	testIssue50043WithInitSQL(t, "set @@tidb_dml_type=bulk")
 }
 
@@ -3074,8 +2526,7 @@ func TestIssue48756(t *testing.T) {
 				(2, _binary '12012-05-19 09:06:07', 120120519090607),
 				(2, _binary '12012-05-19 09:06:07', 120120519090607)`)
 
-			tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id").
-				Sort().
+			tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id ORDER BY id").
 				Check(testkit.Rows(
 					"2012-05-18 08:05:05.999998",
 					"<nil>",
@@ -3166,4 +2617,50 @@ func TestQueryWithKill(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+func TestIssue63329(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, c int);")
+	tk.MustExec("create table t2(x int, y int, z int);")
+	tk.MustExec("insert into t1 values(1, 1, 1),(2, 2, 2);")
+	tk.MustExec("insert into t2 values(1, 1, 1),(2, 2, 2);")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, exists)
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tblInfo := range tblInfos {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("alter table t1 cache;")
+	tk.MustExec("alter table t2 cache;")
+
+	for range 10 {
+		tk.MustQuery("select /*+ READ_FROM_STORAGE(tiflash[t1], tiflash[t2]) */ * from t1 join t2 on t1.a=t2.x;").Check(testkit.Rows("1 1 1 1 1 1", "2 2 2 2 2 2"))
+	}
+}
+
+func TestIssue52984(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(p int, o int, v int);")
+	tk.MustExec("insert into t values (0, 0, 0), (0, 786, 155), (1, 487, 577), (2, 787, 801), (3, 611, 179), (4, 298, 320), (0, 901, 802), (1, 69, 860), (2, 461, 279), (3, 885, 902), (4, 216, 997), (0, 291, 504), (1, 251, 289), (2, 194, 588), (3, 525, 491), (4, 371, 941), (0, 791, 663), (1, 333, 775), (2, 266, 924), (3, 157, 531), (4, 339, 933), (0, 972, 212), (1, 216, 585), (2, 844, 392), (3, 520, 788), (4, 716, 254), (0, 492, 370), (1, 597, 653), (2, 260, 241), (3, 708, 109), (4, 736, 943), (0, 434, 615), (1, 487, 777), (2, 378, 904), (3, 109, 0), (4, 466, 631), (0, 206, 406), (1, 768, 170), (2, 398, 448), (3, 722, 111), (4, 117, 812), (0, 386, 65), (1, 156, 540), (2, 536, 651), (3, 91, 836), (4, 53, 567), (0, 119, 897), (1, 457, 759), (2, 863, 236), (3, 932, 931), (4, 120, 249), (0, 520, 853), (1, 458, 446), (2, 311, 158), (3, 62, 408), (4, 423, 752), (0, 869, 941), (1, 999, 436), (2, 591, 662), (3, 686, 127), (4, 143, 82), (0, 36, 938), (1, 568, 443), (2, 485, 741), (3, 728, 116), (4, 462, 417), (0, 802, 733), (1, 834, 181), (2, 262, 481), (3, 637, 729), (4, 453, 18), (0, 232, 346), (1, 9, 327), (2, 249, 827), (3, 959, 679), (4, 333, 76), (0, 428, 216), (1, 449, 811), (2, 336, 338), (3, 951, 446), (4, 435, 860), (0, 406, 548), (1, 249, 114), (2, 785, 956), (3, 648, 978), (4, 141, 230), (0, 28, 209), (1, 577, 718), (2, 161, 386), (3, 439, 644), (4, 844, 401), (0, 746, 606), (1, 613, 441), (2, 907, 986), (3, 667, 323), (4, 715, 876), (0, 909, 152), (1, 294, 211), (2, 867, 516), (3, 372, 706), (4, 26, 907), (0, 870, 928);")
+	tk.MustExec("set tidb_max_chunk_size=32;")
+
+	for range 10 {
+		tk.MustQuery("select p, o, v, sum(v) over w as 'sum' from t window w as (partition by p order by o rows between 0 preceding and 0 following) limit 10;")
+	}
 }

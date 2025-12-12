@@ -15,7 +15,6 @@
 package rule
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"fmt"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -68,9 +66,9 @@ const FullRange = -1
 type PartitionProcessor struct{}
 
 // Optimize implements the LogicalOptRule.<0th> interface.
-func (s *PartitionProcessor) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (s *PartitionProcessor) Optimize(_ context.Context, lp base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	p, err := s.rewriteDataSource(lp, opt)
+	p, err := s.rewriteDataSource(lp)
 	return p, planChanged, err
 }
 
@@ -79,14 +77,14 @@ func (*PartitionProcessor) Name() string {
 	return "partition_processor"
 }
 
-func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan) (base.LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
 	switch p := lp.(type) {
 	case *logicalop.DataSource:
-		return s.prune(p, opt)
+		return s.prune(p)
 	case *logicalop.LogicalUnionScan:
 		ds := p.Children()[0]
-		ds, err := s.prune(ds.(*logicalop.DataSource), opt)
+		ds, err := s.prune(ds.(*logicalop.DataSource))
 		if err != nil {
 			return nil, err
 		}
@@ -114,7 +112,7 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 	default:
 		children := lp.Children()
 		for i, child := range children {
-			newChild, err := s.rewriteDataSource(child, opt)
+			newChild, err := s.rewriteDataSource(child)
 			if err != nil {
 				return nil, err
 			}
@@ -502,7 +500,7 @@ func (*PartitionProcessor) reconstructTableColNames(ds *logicalop.DataSource) ([
 	return names, nil
 }
 
-func (s *PartitionProcessor) processHashOrKeyPartition(ds *logicalop.DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *PartitionProcessor) processHashOrKeyPartition(ds *logicalop.DataSource, pi *model.PartitionInfo) (base.LogicalPlan, error) {
 	names, err := s.reconstructTableColNames(ds)
 	if err != nil {
 		return nil, err
@@ -513,12 +511,11 @@ func (s *PartitionProcessor) processHashOrKeyPartition(ds *logicalop.DataSource,
 		return nil, err
 	}
 	if used != nil {
-		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
+		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
 	}
 	tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	tableDual.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TableDual/Static partition pruning mode")
 	tableDual.SetSchema(ds.Schema())
-	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
 }
 
@@ -866,7 +863,7 @@ func (s *PartitionProcessor) PruneListPartition(ctx base.PlanContext, tbl table.
 	return used, nil
 }
 
-func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *PartitionProcessor) prune(ds *logicalop.DataSource) (base.LogicalPlan, error) {
 	pi := ds.TableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ds, nil
@@ -881,7 +878,6 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	// Return table dual when filter is constant false or null.
 	dual := logicalop.Conds2TableDual(ds, ds.AllConds)
 	if dual != nil {
-		appendNoPartitionChildTraceStep(ds, dual, opt)
 		return dual, nil
 	}
 	// Try to locate partition directly for hash partition.
@@ -891,14 +887,14 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	// since a cannot be 2 in p1 and a cannot be 1 in p2
 	switch pi.Type {
 	case ast.PartitionTypeRange:
-		return s.processRangePartition(ds, pi, opt)
+		return s.processRangePartition(ds, pi)
 	case ast.PartitionTypeHash, ast.PartitionTypeKey:
-		return s.processHashOrKeyPartition(ds, pi, opt)
+		return s.processHashOrKeyPartition(ds, pi)
 	case ast.PartitionTypeList:
-		return s.processListPartition(ds, pi, opt)
+		return s.processListPartition(ds, pi)
 	}
 
-	return s.makeUnionAllChildren(ds, pi, GetFullRange(len(pi.Definitions)), opt)
+	return s.makeUnionAllChildren(ds, pi, GetFullRange(len(pi.Definitions)))
 }
 
 // FindByName checks whether object name exists in list.
@@ -1080,20 +1076,20 @@ func (s *PartitionProcessor) PruneRangePartition(ctx base.PlanContext, pi *model
 	return result, nil
 }
 
-func (s *PartitionProcessor) processRangePartition(ds *logicalop.DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *PartitionProcessor) processRangePartition(ds *logicalop.DataSource, pi *model.PartitionInfo) (base.LogicalPlan, error) {
 	used, err := s.PruneRangePartition(ds.SCtx(), pi, ds.Table.(table.PartitionedTable), ds.AllConds, ds.TblCols, ds.OutputNames())
 	if err != nil {
 		return nil, err
 	}
-	return s.makeUnionAllChildren(ds, pi, used, opt)
+	return s.makeUnionAllChildren(ds, pi, used)
 }
 
-func (s *PartitionProcessor) processListPartition(ds *logicalop.DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *PartitionProcessor) processListPartition(ds *logicalop.DataSource, pi *model.PartitionInfo) (base.LogicalPlan, error) {
 	used, err := s.PruneListPartition(ds.SCtx(), ds.Table, ds.PartitionNames, ds.AllConds, ds.TblCols)
 	if err != nil {
 		return nil, err
 	}
-	return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
+	return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
 }
 
 // MakePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
@@ -1879,7 +1875,7 @@ func (*PartitionProcessor) checkHintsApplicable(ds *logicalop.DataSource, partit
 	appendWarnForUnknownPartitions(ds.SCtx(), h.HintReadFromStorage, unknownPartitions)
 }
 
-func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *model.PartitionInfo, or PartitionRangeOR, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *model.PartitionInfo, or PartitionRangeOR) (base.LogicalPlan, error) {
 	children := make([]base.LogicalPlan, 0, len(pi.Definitions))
 	partitionNameSet := make(set.StringSet)
 	usedDefinition := make(map[int64]model.PartitionDefinition)
@@ -1928,18 +1924,15 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		// No result after table pruning.
 		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		tableDual.SetSchema(ds.Schema())
-		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
 	}
 	if len(children) == 1 {
 		// No need for the union all.
-		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
 	}
 	unionAll := logicalop.LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.Schema().Clone())
-	appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, unionAll, children, opt)
 	return unionAll, nil
 }
 
@@ -2126,72 +2119,6 @@ func (p *RangeColumnsPruner) pruneUseBinarySearch(sctx base.PlanContext, op stri
 		end = length
 	}
 	return start, end
-}
-
-func appendMakeUnionAllChildrenTranceStep(origin *logicalop.DataSource, usedMap map[int64]model.PartitionDefinition, plan base.LogicalPlan, children []base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	if opt.TracerIsNil() {
-		return
-	}
-	if len(children) == 0 {
-		appendNoPartitionChildTraceStep(origin, plan, opt)
-		return
-	}
-	var action, reason func() string
-	used := make([]model.PartitionDefinition, 0, len(usedMap))
-	for _, def := range usedMap {
-		used = append(used, def)
-	}
-	slices.SortFunc(used, func(i, j model.PartitionDefinition) int {
-		return cmp.Compare(i.ID, j.ID)
-	})
-	if len(children) == 1 {
-		newDS := plan.(*logicalop.DataSource)
-		newDS.SetID(origin.SCtx().GetSessionVars().AllocNewPlanID())
-		action = func() string {
-			return fmt.Sprintf("%v_%v becomes %s_%v", origin.TP(), origin.ID(), newDS.TP(), newDS.ID())
-		}
-		reason = func() string {
-			return fmt.Sprintf("%v_%v has one needed partition[%s] after pruning", origin.TP(), origin.ID(), used[0].Name)
-		}
-	} else {
-		action = func() string {
-			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v becomes %s_%v with children[",
-				origin.TP(), origin.ID(), plan.TP(), plan.ID()))
-			for i, child := range children {
-				if i > 0 {
-					buffer.WriteString(",")
-				}
-				newDS := child.(*logicalop.DataSource)
-				newDS.SetID(origin.SCtx().GetSessionVars().AllocNewPlanID())
-				fmt.Fprintf(buffer, "%s_%v", child.TP(), newDS.ID())
-			}
-			buffer.WriteString("]")
-			return buffer.String()
-		}
-		reason = func() string {
-			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v has multiple needed partitions[",
-				origin.TP(), origin.ID()))
-			for i, u := range used {
-				if i > 0 {
-					buffer.WriteString(",")
-				}
-				buffer.WriteString(u.Name.String())
-			}
-			buffer.WriteString("] after pruning")
-			return buffer.String()
-		}
-	}
-	opt.AppendStepToCurrent(origin.ID(), origin.TP(), reason, action)
-}
-
-func appendNoPartitionChildTraceStep(ds *logicalop.DataSource, dual base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		return fmt.Sprintf("%v_%v becomes %v_%v", ds.TP(), ds.ID(), dual.TP(), dual.ID())
-	}
-	reason := func() string {
-		return fmt.Sprintf("%v_%v doesn't have needed partition table after pruning", ds.TP(), ds.ID())
-	}
-	opt.AppendStepToCurrent(dual.ID(), dual.TP(), reason, action)
 }
 
 // PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like

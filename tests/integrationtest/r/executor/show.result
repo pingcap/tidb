@@ -1145,3 +1145,26 @@ t	CREATE TABLE `t` (
   `b` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! PRE_SPLIT_REGIONS=2 */
+set names utf8mb4 collate utf8mb4_bin;
+drop table if exists t;
+create table t (id int primary key, col int, key(col) where col > 100);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int NOT NULL,
+  `col` int DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `col` (`col`) WHERE `col` > 100
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t (id int primary key, col varchar(255), key(col) where col > "100");
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int NOT NULL,
+  `col` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `col` (`col`) WHERE `col` > _utf8mb4'100'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+set names utf8mb4 collate utf8mb4_general_ci;

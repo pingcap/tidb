@@ -12,33 +12,33 @@ partition p8bb values less than ("bb"),
 partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba");
 analyze table t all columns;
-explain format='brief' select * from t where a = "AA" collate utf8mb4_general_ci;
-id	estRows	task	access object	operator info
-TableReader	16.00	root	partition:all	data:Selection
-└─Selection	16.00	cop[tikv]		eq(ddl__db_partition.t.a, "AA")
-  └─TableFullScan	20.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a = "AA" collate utf8mb4_general_ci;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "AA")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a = "AA" collate utf8mb4_general_ci;
 a
 AA
 Aa
 aA
 aa
-explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
-id	estRows	task	access object	operator info
-TableReader	16.00	root	partition:all	data:Selection
-└─Selection	16.00	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
-  └─TableFullScan	20.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a = "aa" collate utf8mb4_general_ci;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a = "aa" collate utf8mb4_general_ci;
 a
 AA
 Aa
 aA
 aa
-explain format='brief' select * from t where a >= "aa" collate utf8mb4_general_ci;
-id	estRows	task	access object	operator info
-TableReader	16.00	root	partition:all	data:Selection
-└─Selection	16.00	cop[tikv]		ge(ddl__db_partition.t.a, "aa")
-  └─TableFullScan	20.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a >= "aa" collate utf8mb4_general_ci;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ge(ddl__db_partition.t.a, "aa")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a >= "aa" collate utf8mb4_general_ci;
 a
 AA
@@ -59,11 +59,11 @@ bA
 bB
 ba
 bb
-explain format='brief' select * from t where a > "aa" collate utf8mb4_general_ci;
-id	estRows	task	access object	operator info
-TableReader	16.00	root	partition:all	data:Selection
-└─Selection	16.00	cop[tikv]		gt(ddl__db_partition.t.a, "aa")
-  └─TableFullScan	20.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a > "aa" collate utf8mb4_general_ci;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(ddl__db_partition.t.a, "aa")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a > "aa" collate utf8mb4_general_ci;
 a
 AB
@@ -80,11 +80,11 @@ bA
 bB
 ba
 bb
-explain format='brief' select * from t where a <= "aa" collate utf8mb4_general_ci;
-id	estRows	task	access object	operator info
-TableReader	16.00	root	partition:all	data:Selection
-└─Selection	16.00	cop[tikv]		le(ddl__db_partition.t.a, "aa")
-  └─TableFullScan	20.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a <= "aa" collate utf8mb4_general_ci;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		le(ddl__db_partition.t.a, "aa")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a <= "aa" collate utf8mb4_general_ci;
 a
 A
@@ -93,11 +93,11 @@ Aa
 a
 aA
 aa
-explain format='brief' select * from t where a < "aa" collate utf8mb4_general_ci;
-id	estRows	task	access object	operator info
-TableReader	16.00	root	partition:all	data:Selection
-└─Selection	16.00	cop[tikv]		lt(ddl__db_partition.t.a, "aa")
-  └─TableFullScan	20.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a < "aa" collate utf8mb4_general_ci;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		lt(ddl__db_partition.t.a, "aa")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a < "aa" collate utf8mb4_general_ci;
 a
 A
@@ -113,46 +113,46 @@ partition p5 values less than ("bb"),
 partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ");
 analyze table t all columns;
-explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p2	data:Selection
-└─Selection	4.00	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a = "aa" collate utf8mb4_general_ci;
+id	task	access object	operator info
+TableReader	root	partition:p2	data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a = "aa" collate utf8mb4_general_ci;
 a
 AA
 Aa
 aA
 aa
-explain format='brief' select * from t where a = "aa" collate utf8mb4_bin;
-id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:p2	data:Selection
-└─Selection	17.60	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a = "aa" collate utf8mb4_bin;
+id	task	access object	operator info
+TableReader	root	partition:p2	data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a = "aa" collate utf8mb4_bin;
 a
 aa
-explain format='brief' select * from t where a = "ä" collate utf8mb4_bin;
-id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:p1	data:Selection
-└─Selection	17.60	cop[tikv]		eq(ddl__db_partition.t.a, "ä")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a = "ä" collate utf8mb4_bin;
+id	task	access object	operator info
+TableReader	root	partition:p1	data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "ä")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a = "ä" collate utf8mb4_bin;
 a
 ä
-explain format='brief' select * from t where a = "b" collate utf8mb4_bin;
-id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:p5	data:Selection
-└─Selection	17.60	cop[tikv]		eq(ddl__db_partition.t.a, "b")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a = "b" collate utf8mb4_bin;
+id	task	access object	operator info
+TableReader	root	partition:p5	data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "b")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a = "b" collate utf8mb4_bin;
 a
 b
-explain format='brief' select * from t where a <= "b" collate utf8mb4_bin;
-id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:all	data:Selection
-└─Selection	17.60	cop[tikv]		le(ddl__db_partition.t.a, "b")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a <= "b" collate utf8mb4_bin;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		le(ddl__db_partition.t.a, "b")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a <= "b" collate utf8mb4_bin;
 a
 A
@@ -171,11 +171,11 @@ aB
 aa
 ab
 b
-explain format='brief' select * from t where a < "b" collate utf8mb4_bin;
-id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:all	data:Selection
-└─Selection	17.60	cop[tikv]		lt(ddl__db_partition.t.a, "b")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a < "b" collate utf8mb4_bin;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		lt(ddl__db_partition.t.a, "b")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a < "b" collate utf8mb4_bin;
 a
 A
@@ -193,11 +193,11 @@ aA
 aB
 aa
 ab
-explain format='brief' select * from t where a >= "b" collate utf8mb4_bin;
-id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:all	data:Selection
-└─Selection	17.60	cop[tikv]		ge(ddl__db_partition.t.a, "b")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a >= "b" collate utf8mb4_bin;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ge(ddl__db_partition.t.a, "b")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a >= "b" collate utf8mb4_bin;
 a
 b
@@ -207,11 +207,11 @@ ba
 bb
 ÄÄÄ
 ä
-explain format='brief' select * from t where a > "b" collate utf8mb4_bin;
-id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:all	data:Selection
-└─Selection	17.60	cop[tikv]		gt(ddl__db_partition.t.a, "b")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+explain format='plan_tree' select * from t where a > "b" collate utf8mb4_bin;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(ddl__db_partition.t.a, "b")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a > "b" collate utf8mb4_bin;
 a
 bA
@@ -471,17 +471,17 @@ NULL	null
 select * from t where a = 3;
 a	b
 3	3
-explain format = 'brief' select * from t where a = 4;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, partition:p0, index:a(a)	
-explain format = 'brief' select * from t where a is null;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1	data:Selection
-└─Selection	1.00	cop[tikv]		isnull(ddl__db_partition.t.a)
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
-explain format = 'brief' select * from t where a = 3;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, partition:p1, index:a(a)	
+explain format = 'plan_tree' select * from t where a = 4;
+id	task	access object	operator info
+Point_Get	root	table:t, partition:p0, index:a(a)	
+explain format = 'plan_tree' select * from t where a is null;
+id	task	access object	operator info
+TableReader	root	partition:p1	data:Selection
+└─Selection	cop[tikv]		isnull(ddl__db_partition.t.a)
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
+explain format = 'plan_tree' select * from t where a = 3;
+id	task	access object	operator info
+Point_Get	root	table:t, partition:p1, index:a(a)	
 set @@tidb_partition_prune_mode = 'static';
 select * from t where a = 4;
 a	b
@@ -492,17 +492,17 @@ NULL	null
 select * from t where a = 3;
 a	b
 3	3
-explain format = 'brief' select * from t where a = 4;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, partition:p0, index:a(a)	
-explain format = 'brief' select * from t where a is null;
-id	estRows	task	access object	operator info
-TableReader	1.00	root		data:Selection
-└─Selection	1.00	cop[tikv]		isnull(ddl__db_partition.t.a)
-  └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
-explain format = 'brief' select * from t where a = 3;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, partition:p1, index:a(a)	
+explain format = 'plan_tree' select * from t where a = 4;
+id	task	access object	operator info
+Point_Get	root	table:t, partition:p0, index:a(a)	
+explain format = 'plan_tree' select * from t where a is null;
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		isnull(ddl__db_partition.t.a)
+  └─TableFullScan	cop[tikv]	table:t, partition:p1	keep order:false
+explain format = 'plan_tree' select * from t where a = 3;
+id	task	access object	operator info
+Point_Get	root	table:t, partition:p1, index:a(a)	
 alter table t reorganize partition p0 into (partition p0 values in (0));
 Error 1526 (HY000): Table has no partition for value 4
 drop table t;
@@ -537,60 +537,60 @@ p0	LIST COLUMNS	`a`	'0','4'	1
 p1	LIST COLUMNS	`a`	'1',NULL,DEFAULT	4
 p2	LIST COLUMNS	`a`	'2','7','10'	1
 set @@tidb_partition_prune_mode = 'dynamic';
-explain format = 'brief' select * from t where a is null;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1	data:Selection
-└─Selection	1.00	cop[tikv]		isnull(ddl__db_partition.t.a)
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+explain format = 'plan_tree' select * from t where a is null;
+id	task	access object	operator info
+TableReader	root	partition:p1	data:Selection
+└─Selection	cop[tikv]		isnull(ddl__db_partition.t.a)
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a is null;
 b	a
 NULL	NULL
 select * from t where a = 4;
 b	a
 4	4
-explain format = 'brief' select * from t where a = 4;
-id	estRows	task	access object	operator info
-TableReader	4.80	root	partition:all	data:Selection
-└─Selection	4.80	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 4)
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+explain format = 'plan_tree' select * from t where a = 4;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 4)
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a = 3;
 b	a
 3	3
-explain format = 'brief' select * from t where a = 3;
-id	estRows	task	access object	operator info
-TableReader	4.80	root	partition:all	data:Selection
-└─Selection	4.80	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 3)
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
-explain format = 'brief' select * from t where a = "3";
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1	data:Selection
-└─Selection	1.00	cop[tikv]		eq(ddl__db_partition.t.a, "3")
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+explain format = 'plan_tree' select * from t where a = 3;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		eq(cast(ddl__db_partition.t.a, double BINARY), 3)
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
+explain format = 'plan_tree' select * from t where a = "3";
+id	task	access object	operator info
+TableReader	root	partition:p1	data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "3")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a = "3";
 b	a
 3	3
 select * from t where a = "4";
 b	a
 4	4
-explain format = 'brief' select * from t where a = "4";
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p0	data:Selection
-└─Selection	1.00	cop[tikv]		eq(ddl__db_partition.t.a, "4")
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
-explain format = 'brief' select * from t where a between "3" and "4";
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0,p1	data:Selection
-└─Selection	2.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+explain format = 'plan_tree' select * from t where a = "4";
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "4")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
+explain format = 'plan_tree' select * from t where a between "3" and "4";
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a between "3" and "4";
 b	a
 3	3
 4	4
-explain format = 'brief' select * from t where a >= "3" and a <= "4";
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0,p1	data:Selection
-└─Selection	2.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+explain format = 'plan_tree' select * from t where a >= "3" and a <= "4";
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false
 select * from t where a >= "3" and a <= "4";
 b	a
 3	3
@@ -599,55 +599,55 @@ set @@tidb_partition_prune_mode = 'static';
 select * from t where a is null;
 b	a
 NULL	NULL
-explain format = 'brief' select * from t where a is null;
-id	estRows	task	access object	operator info
-TableReader	1.00	root		data:Selection
-└─Selection	1.00	cop[tikv]		isnull(ddl__db_partition.t.a)
-  └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
+explain format = 'plan_tree' select * from t where a is null;
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		isnull(ddl__db_partition.t.a)
+  └─TableFullScan	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a = 4;
 b	a
 4	4
 select * from t where a = "4";
 b	a
 4	4
-explain format = 'brief' select * from t where a = "4";
-id	estRows	task	access object	operator info
-TableReader	1.00	root		data:Selection
-└─Selection	1.00	cop[tikv]		eq(ddl__db_partition.t.a, "4")
-  └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
+explain format = 'plan_tree' select * from t where a = "4";
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "4")
+  └─TableFullScan	cop[tikv]	table:t, partition:p0	keep order:false
 select * from t where a = 3;
 b	a
 3	3
 select * from t where a = "3";
 b	a
 3	3
-explain format = 'brief' select * from t where a = "3";
-id	estRows	task	access object	operator info
-TableReader	1.00	root		data:Selection
-└─Selection	1.00	cop[tikv]		eq(ddl__db_partition.t.a, "3")
-  └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
-explain format = 'brief' select * from t where a between "3" and "4";
-id	estRows	task	access object	operator info
-PartitionUnion	2.00	root		
-├─TableReader	1.00	root		data:Selection
-│ └─Selection	1.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
-│   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	1.00	root		data:Selection
-  └─Selection	1.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
-    └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
+explain format = 'plan_tree' select * from t where a = "3";
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(ddl__db_partition.t.a, "3")
+  └─TableFullScan	cop[tikv]	table:t, partition:p1	keep order:false
+explain format = 'plan_tree' select * from t where a between "3" and "4";
+id	task	access object	operator info
+PartitionUnion	root		
+├─TableReader	root		data:Selection
+│ └─Selection	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
+│   └─TableFullScan	cop[tikv]	table:t, partition:p0	keep order:false
+└─TableReader	root		data:Selection
+  └─Selection	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
+    └─TableFullScan	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a between "3" and "4";
 b	a
 3	3
 4	4
-explain format = 'brief' select * from t where a >= "3" and a <= "4";
-id	estRows	task	access object	operator info
-PartitionUnion	2.00	root		
-├─TableReader	1.00	root		data:Selection
-│ └─Selection	1.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
-│   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	1.00	root		data:Selection
-  └─Selection	1.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
-    └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
+explain format = 'plan_tree' select * from t where a >= "3" and a <= "4";
+id	task	access object	operator info
+PartitionUnion	root		
+├─TableReader	root		data:Selection
+│ └─Selection	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
+│   └─TableFullScan	cop[tikv]	table:t, partition:p0	keep order:false
+└─TableReader	root		data:Selection
+  └─Selection	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
+    └─TableFullScan	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a >= "3" and a <= "4";
 b	a
 3	3

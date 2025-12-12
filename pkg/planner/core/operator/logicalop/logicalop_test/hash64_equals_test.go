@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	plannerbase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -692,7 +693,7 @@ func TestLogicalApplyHash64Equals(t *testing.T) {
 	eq, err := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col1, col2)
 	require.Nil(t, err)
 	join := &logicalop.LogicalJoin{
-		JoinType:        logicalop.InnerJoin,
+		JoinType:        plannerbase.InnerJoin,
 		EqualConditions: []*expression.ScalarFunction{eq.(*expression.ScalarFunction)},
 	}
 	la1 := &logicalop.LogicalApply{
@@ -745,11 +746,11 @@ func TestLogicalJoinHash64Equals(t *testing.T) {
 	eq, err := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col1, col2)
 	require.Nil(t, err)
 	la1 := &logicalop.LogicalJoin{
-		JoinType:        logicalop.InnerJoin,
+		JoinType:        plannerbase.InnerJoin,
 		EqualConditions: []*expression.ScalarFunction{eq.(*expression.ScalarFunction)},
 	}
 	la2 := &logicalop.LogicalJoin{
-		JoinType:        logicalop.InnerJoin,
+		JoinType:        plannerbase.InnerJoin,
 		EqualConditions: []*expression.ScalarFunction{eq.(*expression.ScalarFunction)},
 	}
 	hasher1 := base.NewHashEqualer()
@@ -759,13 +760,13 @@ func TestLogicalJoinHash64Equals(t *testing.T) {
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, la1.Equals(la2))
 
-	la2.JoinType = logicalop.AntiSemiJoin
+	la2.JoinType = plannerbase.AntiSemiJoin
 	hasher2.Reset()
 	la2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, la1.Equals(la2))
 
-	la2.JoinType = logicalop.InnerJoin
+	la2.JoinType = plannerbase.InnerJoin
 	eq2, err2 := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col2, col1)
 	require.Nil(t, err2)
 	la2.EqualConditions = []*expression.ScalarFunction{eq2.(*expression.ScalarFunction)}

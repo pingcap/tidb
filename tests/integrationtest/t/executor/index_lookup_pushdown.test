@@ -1,0 +1,170 @@
+drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
+create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
+create table t2(a varchar(32), b int, c int, d int, e int, primary key(a, b) CLUSTERED, index i(c), unique index u(e)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+create table t3 (
+    id int primary key,
+    a int,
+    b int,
+    index a(a)
+);
+create table t4(id int primary key, a int, b int, index a(a));
+alter table t4 cache;
+create temporary table tmp1(id int primary key, a int, b int, index a(a));
+create global temporary table tmp2(id int primary key, a int, b int, index a(a)) on commit delete rows;
+--enable_warnings
+
+# Test the index lookup plan with push down hint
+insert into t1 values
+    (1, '9a', 10, 100),
+    (2, '8b', 20, 200),
+    (3, '7c', 30, 300),
+    (4, '6d', 40, 400),
+    (5, '5e', 50, 500),
+    (6, '4f', 60, 600),
+    (7, '3g', 70, 700),
+    (8, '2h', 80, 800),
+    (9, '1i', 90, 900),
+    (10, '0j', 100, 1000);
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '0j' limit 3;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '0j' limit 3;
+explain select /*+ index_lookup_pushdown(t1, i) */ id, a, b + 1, c + 2 from t1 where a < '8' and b < 90 and c != 500 limit 4;
+select /*+ index_lookup_pushdown(t1, i) */ id, a, b + 1, c + 2 from t1 where a < '8' and b < 90 and c != 500 limit 4;
+explain select * from (select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '1i' LIMIT 1, 6) tx where tx.c != 500 LIMIT 4;
+select * from (select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '1i' LIMIT 1, 6) tx where tx.c != 500 LIMIT 4;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 2, 4;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 2, 4;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 5, 4;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 5, 4;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 3, 0;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 3, 0;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
+select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
+
+--disable_warnings
+# test for plan cache, close show warnings to avoid affecting plan cache output
+prepare stmt from 'select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > ? and c > ?';
+set @x1 = '1j';
+set @x2 = '5e';
+set @y1 = 100;
+set @y2 = 200;
+execute stmt using @x1, @y1;
+select @@last_plan_from_cache;
+execute stmt using @x2, @y2;
+select @@last_plan_from_cache;
+--enable_warnings
+
+# test for agg push-down
+explain select /*+ index_lookup_pushdown(t1, i) agg_to_cop() */ count(1) from t1 where a > '1i' and c > 300;
+select /*+ index_lookup_pushdown(t1, i) agg_to_cop() */ count(1) from t1 where a > '1i' and c > 300;
+
+# test for extra handle
+create table t5(a int unique, b int);
+insert into t5 values (501, 10), (402, 20), (303, 30), (204, 40), (105, 50);
+explain select /*+ index_lookup_pushdown(t5, a) */ * from t5;
+select /*+ index_lookup_pushdown(t5, a) */ _tidb_rowid, a, b from t5;
+
+# test for non-cluster primary key
+create table t6(a int primary key nonclustered, b int);
+insert into t6 values (511, 10), (412, 20), (313, 30), (214, 40), (115, 50);
+explain select /*+ index_lookup_pushdown(t6, primary) */ * from t6;
+select /*+ index_lookup_pushdown(t6, primary) */ * from t6;
+
+## test for common handle
+insert into t2 values
+    ('a', 1, 9010, 100, 90),
+    ('A', 2, 8020, 200, 80),
+    ('a', 3, 7030, 300, 70),
+    ('b', 1, 6040, 400, 60),
+    ('B', 2, 5050, 500, 50),
+    ('b', 3, 4060, 600, 40),
+    ('c', 1, 3070, 700, 30),
+    ('C', 2, 2080, 800, 20),
+    ('c', 3, 1090, 900, 10);
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2;
+explain select /*+ index_lookup_pushdown(t2, u) */ * from t2;
+select /*+ index_lookup_pushdown(t2, u) */ * from t2;
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b < 3 and a < 'c' limit 3;
+explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
+select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
+
+## test common handle with primary key prefix column
+create table t22(a varchar(32), b int, c int, d int, e int, primary key(a(2), b) CLUSTERED, index i(c)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert into t22 values
+    ('abc', 1, 9010, 100, 90),
+    ('Abc', 2, 8020, 200, 80),
+    ('abc', 3, 7030, 300, 70),
+    ('bcd', 1, 6040, 400, 60),
+    ('Bcd', 2, 5050, 500, 50),
+    ('bcd', 3, 4060, 600, 40),
+    ('cde', 1, 3070, 700, 30),
+    ('Cde', 2, 2080, 800, 20),
+    ('cde', 3, 1090, 900, 10);
+explain select /*+ index_lookup_pushdown(t22, i) */ * from t22 where c > 2000 limit 5;
+select /*+ index_lookup_pushdown(t22, i) */ * from t22 where c > 2000 limit 5;
+
+# Test index lookup push down restrictions
+## Keep order not supported
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > 'a' order by a asc;
+## cached table not supported
+explain select /*+ index_lookup_pushdown(t4, a) */ * from t4 where a < 100;
+## temporary tables are not supported
+explain select /*+ index_lookup_pushdown(tmp1, a) */ * from tmp1 where a < 100;
+explain select /*+ index_lookup_pushdown(tmp2, a) */ * from tmp2 where a < 100;
+## empty index list not supported
+explain select /*+ index_lookup_pushdown(t1) */ * from t1;
+## only repeatable-read is supported
+set @@tx_isolation='READ-COMMITTED';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+begin pessimistic;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+rollback;
+set @@tx_isolation='REPEATABLE-READ';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+## only leader-read is supported
+set @@tidb_replica_read='follower';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+set @@tidb_replica_read='prefer-leader';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+set @@tidb_replica_read='leader-and-follower';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+set @@tidb_replica_read='closest-replicas';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+set @@tidb_replica_read='closest-adaptive';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+set @@tidb_replica_read='learner';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+set @@tidb_replica_read='leader';
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+## stale read is not supported
+do sleep(0.1);
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1 as of timestamp NOW(6) - interval 0.05 second;
+start transaction read only as of timestamp now(6) - interval 0.05 second;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+rollback;
+set transaction read only as of timestamp now(6) - interval 0.05 second;
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+## historical read is not supported
+--disable_warnings
+insert ignore into mysql.tidb VALUES ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800', 'mock for index lookup push down test');
+--enable_warnings
+set @@tidb_snapshot=(now(6) - interval 0.05 second);
+explain select /*+ index_lookup_pushdown(t1, i) */ * from t1;
+set @@tidb_snapshot='';
+delete from mysql.tidb where VARIABLE_NAME='tikv_gc_safe_point' and COMMENT='mock for index lookup push down test';
+## multi-value index not supported
+create table t7 (j json, index idx((cast(j->'$.path' as signed array))));
+explain select /*+ index_lookup_pushdown(t7, idx) */ * from t7 where (1 member of (j->'$.path'));
+
+--disable_warnings
+
+## issue #64519, the index_lookup_pushdown hint should not affect other hints in a same index.
+set @@tidb_replica_read='learner';
+insert into t3 values(1, 2, 3);
+--enable_warnings
+explain select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
+select /*+ index_lookup_pushdown(t3, a) */ * from t3 use index(a);
+--disable_warnings

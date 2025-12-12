@@ -127,6 +127,7 @@ type lookUpJoinTask struct {
 	encodedLookUpKeys []*chunk.Chunk
 	lookupMap         *mvmap.MVMap
 	matchedInners     []chunk.Row
+	innerExec         exec.Executor
 
 	doneCh   chan error
 	cursor   chunk.RowPtr
@@ -156,15 +157,15 @@ type outerWorker struct {
 type innerWorker struct {
 	InnerCtx
 
-	taskCh      <-chan *lookUpJoinTask
-	outerCtx    OuterCtx
-	ctx         sessionctx.Context
-	executorChk *chunk.Chunk
-	lookup      *IndexLookUpJoin
+	taskCh   <-chan *lookUpJoinTask
+	outerCtx OuterCtx
+	ctx      sessionctx.Context
+	lookup   *IndexLookUpJoin
 
 	indexRanges           []*ranger.Range
 	nextColCompareFilters *physicalop.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
+	maxFetchSize          int
 	stats                 *innerWorkerRuntimeStats
 	memTracker            *memory.Tracker
 }
@@ -238,7 +239,6 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.OuterCtx,
 		taskCh:        taskCh,
 		ctx:           e.Ctx(),
-		executorChk:   e.AllocPool.Alloc(e.InnerCtx.RowTypes, e.InitCap(), e.MaxChunkSize()),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.KeyOff2IdxOff,
 		stats:         innerStats,
@@ -380,7 +380,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			ow.lookup.Finished.Store(true)
-			logutil.Logger(ctx).Error("outerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("outerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			err := util.GetRecoverError(r)
 			task.doneCh <- err
@@ -509,7 +509,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			iw.lookup.Finished.Store(true)
-			logutil.Logger(ctx).Error("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err := util.GetRecoverError(r)
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- err
@@ -717,35 +717,57 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			atomic.AddInt64(&iw.stats.fetch, int64(time.Since(start)))
 		}()
 	}
-	innerExec, err := iw.ReaderBuilder.BuildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true, iw.memTracker, iw.lookup.Finished)
-	if innerExec != nil {
-		defer func() { terror.Log(exec.Close(innerExec)) }()
-	}
-	if err != nil {
-		return err
-	}
 
-	innerResult := chunk.NewList(exec.RetTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
-	innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
-	innerResult.GetMemTracker().AttachTo(task.memTracker)
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		err := exec.Next(ctx, innerExec, iw.executorChk)
-		failpoint.Inject("ConsumeRandomPanic", nil)
+	// Fetch for the task first time, need to build the innerExec.
+	if task.innerExec == nil {
+		innerExec, err := iw.ReaderBuilder.BuildExecutorForIndexJoin(ctx, lookUpContent,
+			iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters,
+			true, iw.memTracker, iw.lookup.Finished)
 		if err != nil {
 			return err
 		}
-		if iw.executorChk.NumRows() == 0 {
+		task.innerExec = innerExec
+		task.innerResult = chunk.NewList(exec.RetTypes(task.innerExec), iw.ctx.GetSessionVars().InitChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+		task.innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
+		task.innerResult.GetMemTracker().AttachTo(task.memTracker)
+	} else if task.innerResult != nil {
+		task.innerResult.Reset()
+	}
+
+	// If don't need to use innerExec any more, close it.
+	var needClose bool
+	defer func() {
+		if needClose && task.innerExec != nil {
+			terror.Log(exec.Close(task.innerExec))
+			task.innerExec = nil
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			needClose = true
+			return ctx.Err()
+		default:
+		}
+
+		executorChk := task.innerResult.AllocChunk()
+		err := exec.Next(ctx, task.innerExec, executorChk)
+		failpoint.Inject("ConsumeRandomPanic", nil)
+		if err != nil {
+			needClose = true
+			return err
+		}
+		if executorChk.NumRows() == 0 {
+			needClose = true
 			break
 		}
-		innerResult.Add(iw.executorChk)
-		iw.executorChk = exec.TryNewCacheChunk(innerExec)
+		task.innerResult.Add(executorChk)
+		// If maxFetchSize is set, we need to break the loop when the fetched rows reach the max.
+		if iw.maxFetchSize > 0 && task.innerResult.Len() >= iw.maxFetchSize {
+			break
+		}
 	}
-	task.innerResult = innerResult
 	return nil
 }
 

@@ -381,7 +381,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			util.StatsMetaHistorySourceAnalyze,
 		)
 		if err != nil {
-			statslogutil.StatsLogger().Error("save global-level stats to storage failed",
+			statslogutil.StatsLogger().Warn("save global-level stats to storage failed",
 				zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", gid))
 		}
 	}

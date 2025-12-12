@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -197,6 +198,11 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	// IsActiveActive means the table is active-active table.
+	IsActiveActive bool `json:"is_active_active,omitempty"`
+	// SoftdeleteInfo is softdelete TTL. It is required if IsActiveActive == true.
+	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
 
 	// Revision is per table schema's version, it will be increased when the schema changed.
 	Revision uint64 `json:"revision"`
@@ -396,6 +402,8 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	if from == to {
 		return
 	}
+
+	// Update column offsets.
 	updatedOffsets := make(map[int]int)
 	src := t.Columns[from]
 	if from < to {
@@ -413,12 +421,31 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	}
 	t.Columns[to] = src
 	t.Columns[to].Offset = to
+
+	// Update index column offsets.
 	updatedOffsets[from] = to
 	for _, idx := range t.Indices {
 		for _, idxCol := range idx.Columns {
 			newOffset, ok := updatedOffsets[idxCol.Offset]
 			if ok {
 				idxCol.Offset = newOffset
+			}
+		}
+
+		for _, affectedCol := range idx.AffectColumn {
+			newOffset, ok := updatedOffsets[affectedCol.Offset]
+			if ok {
+				affectedCol.Offset = newOffset
+			}
+		}
+	}
+
+	// Reconstruct the dependency column offsets.
+	for _, col := range t.Columns {
+		if col.ChangeStateInfo != nil {
+			newOffset, ok := updatedOffsets[col.ChangeStateInfo.DependencyColumnOffset]
+			if ok {
+				col.ChangeStateInfo.DependencyColumnOffset = newOffset
 			}
 		}
 	}
@@ -565,6 +592,22 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 		}
 	}
 	return nil
+}
+
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
+}
+
+// ColumnNeedRestoredData checks whether a single index column needs restored data.
+func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
+	col := colInfos[idxCol.Offset]
+	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
 }
 
 // TableNameInfo provides meta data describing a table name info.
@@ -1397,4 +1440,18 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 	}
 
 	return duration.ParseDuration(t.JobInterval)
+}
+
+// SoftdeleteInfo records the Softdelete config.
+type SoftdeleteInfo struct {
+	Retention string `json:"retention,omitempty"`
+	// JobEnable is used to control the cleanup JobEnable
+	JobEnable   bool   `json:"job_enable,omitempty"`
+	JobInterval string `json:"job_interval,omitempty"`
+}
+
+// Clone clones TTLInfo
+func (t *SoftdeleteInfo) Clone() *SoftdeleteInfo {
+	cloned := *t
+	return &cloned
 }

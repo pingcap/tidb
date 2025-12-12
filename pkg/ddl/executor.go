@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -69,8 +70,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -80,7 +83,7 @@ import (
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
-	removingObjPrefix     = "_Tomestone$_"
+	removingObjPrefix     = "_Tombstone$_"
 	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
@@ -183,6 +186,16 @@ type ExecutorForTest interface {
 type executor struct {
 	sessPool    *sess.Pool
 	statsHandle *handle.Handle
+
+	// startMode stores the start mode of the ddl executor, it's used to indicate
+	// whether the executor is responsible for auto ID rebase.
+	// Since https://github.com/pingcap/tidb/pull/64356, we move rebase logic from
+	// executor into DDL job worker. So typically, the job worker is responsible for
+	// rebase. But sometimes we use higher version of BR to restore db to lower version
+	// of TiDB cluster, which may cause rebase is not executed on both executor(BR) and
+	// worker(downstream TiDB) side. So we use this mode to check if this is runned by BR.
+	// If so, the executor should handle auto ID rebase.
+	startMode StartMode
 
 	ctx        context.Context
 	uuid       string
@@ -1189,6 +1202,11 @@ func (e *executor) CreateTableWithInfo(
 		}
 
 		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+		if e.startMode == BR {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return errors.Trace(err)
 }
@@ -1285,6 +1303,11 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 	for _, tblArgs := range args.Tables {
 		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
+		if e.startMode == BR {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	return nil
@@ -1975,16 +1998,20 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
+		SessionVars:         make(map[string]string, 2),
 	}
 	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
+	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
+	setNeedAnalyze(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -2147,7 +2174,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) {
+	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
 		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
@@ -3175,6 +3202,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, dbterror.ErrCantDropColWithAutoInc
 	}
+	// Check the partial index condition
+	err = checkColumnReferencedByPartialCondition(t.Meta(), col.ColumnInfo.Name)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	return true, nil
 }
 
@@ -3288,6 +3320,8 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
+	jobW.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -3388,6 +3422,8 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
+	jobW.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -4135,13 +4171,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				logutil.DDLLogger().Warn("admin check table before drop",
-					zap.String("database", fullti.Schema.O),
-					zap.String("table", fullti.Name.O),
-				)
-				exec := ctx.GetRestrictedSQLExecutor()
-				internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-				_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+				err := adminCheckTableBeforeDrop(ctx, fullti)
 				if err != nil {
 					return err
 				}
@@ -4209,6 +4239,40 @@ func (e *executor) dropTableObject(
 		for _, table := range notExistTables {
 			sessVars.StmtCtx.AppendNote(dropExistErr.FastGenByArgs(table))
 		}
+	}
+	return nil
+}
+
+// adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
+// Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
+// using it in other places by mistake, it's named like this.
+func adminCheckTableBeforeDrop(ctx sessionctx.Context, fullti ast.Ident) error {
+	logutil.DDLLogger().Warn("admin check table before drop",
+		zap.String("database", fullti.Schema.O),
+		zap.String("table", fullti.Name.O),
+	)
+	exec := ctx.GetRestrictedSQLExecutor()
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	// `tidb_enable_fast_table_check` is already the default value, and some feature (e.g. partial index)
+	// doesn't support admin check with `tidb_enable_fast_table_check = OFF`, so we just set it to `ON` here.
+	// TODO: set the value of `tidb_enable_fast_table_check` to 'ON' for all internal sessions if it's OK.
+	originalFastTableCheck := ctx.GetSessionVars().FastCheckTable
+	_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'ON';")
+	if err != nil {
+		return err
+	}
+	if !originalFastTableCheck {
+		defer func() {
+			_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'OFF';")
+			if err != nil {
+				logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(err))
+			}
+		}()
+	}
+	_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -4802,15 +4866,16 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		BinlogInfo: &model.HistoryInfo{},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
-		Charset:    charset,
-		Collate:    collate,
-		SQLMode:    ctx.GetSessionVars().SQLMode,
+		SchemaID:    schema.ID,
+		TableID:     t.Meta().ID,
+		SchemaName:  schema.Name.L,
+		TableName:   t.Meta().Name.L,
+		BinlogInfo:  &model.HistoryInfo{},
+		Priority:    ctx.GetSessionVars().DDLReorgPriority,
+		Charset:     charset,
+		Collate:     collate,
+		SQLMode:     ctx.GetSessionVars().SQLMode,
+		SessionVars: make(map[string]string),
 	}
 	return job
 }
@@ -4921,12 +4986,24 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
+	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
+	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 
 	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	var conditionString string
+	if indexOption != nil {
+		conditionString, err = CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(conditionString) > 0 && !job.ReorgMeta.IsFastReorg {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
+		}
+	}
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Unique:                  unique,
@@ -4936,6 +5013,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			HiddenCols:              hiddenCols,
 			Global:                  global,
 			SplitOpt:                splitOpt,
+			ConditionString:         conditionString,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -6615,19 +6693,33 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
+		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
+		defer r.End()
+	}
+
 	job := jobW.Job
 	job.TraceInfo = &tracing.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
 		SessionAlias: ctx.GetSessionVars().SessionAlias,
+		TraceID:      traceevent.TraceIDFromContext(ctx.GetTraceCtx()),
 	}
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
-	e.checkInvolvingSchemaInfoInTest(job)
+	if err := job.CheckInvolvingSchemaInfo(); err != nil {
+		return err
+	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
+
+	if traceevent.IsEnabled(tracing.DDLJob) && ctx.GetTraceCtx() != nil {
+		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",
+			zap.Uint64("ConnID", job.TraceInfo.ConnectionID),
+			zap.String("SessionAlias", job.TraceInfo.SessionAlias))
+	}
 	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
@@ -6949,12 +7041,37 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 }
 
 func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
-	var scatterScope string
-	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion)
-	if !ok {
-		logutil.DDLLogger().Info("won't scatter region since system variable didn't set")
-	} else {
-		scatterScope = val
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBScatterRegion); ok {
+		return val
 	}
-	return scatterScope
+	logutil.DDLLogger().Info("system variable tidb_scatter_region not found, use default value")
+	return vardef.DefTiDBScatterRegion
+}
+
+func getEnableDDLAnalyze(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBEnableDDLAnalyze); ok {
+		return val
+	}
+	logutil.DDLLogger().Info("system variable tidb_stats_update_during_ddl not found, use default value")
+	return variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
+}
+
+func getAnalyzeVersion(sctx sessionctx.Context) string {
+	if val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBAnalyzeVersion); ok {
+		return val
+	}
+	logutil.DDLLogger().Info("system variable tidb_analyze_version not found, use default value")
+	return strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
+}
+
+// checkColumnReferencedByPartialCondition checks whether alter column is referenced by a partial index condition
+func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIStr) error {
+	for _, idx := range t.Indices {
+		_, ic := model.FindIndexColumnByName(idx.AffectColumn, colName.L)
+		if ic != nil {
+			return dbterror.ErrModifyColumnReferencedByPartialCondition.GenWithStackByArgs(colName.O, idx.Name.O)
+		}
+	}
+
+	return nil
 }

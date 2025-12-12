@@ -16,10 +16,12 @@ package physicalop
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -87,4 +89,46 @@ func (p *PhysicalSequence) Schema() *expression.Schema {
 // Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalSequence) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalSequence(p, tasks...)
+}
+
+// ExhaustPhysicalPlans4LogicalSequence generates PhysicalSequence plans from LogicalSequence.
+func ExhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	g, ls := base.GetGEAndLogicalOp[*logicalop.LogicalSequence](super)
+	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
+	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true,
+		CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+	if prop.TaskTp == property.MppTaskType {
+		if prop.CTEProducerStatus == property.SomeCTEFailedMpp {
+			return nil, true, nil
+		}
+		anyType.CTEProducerStatus = property.AllCTECanMpp
+		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType, prop.CloneEssentialFields()})
+	} else {
+		copied := prop.CloneEssentialFields()
+		copied.CTEProducerStatus = property.SomeCTEFailedMpp
+		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: property.SomeCTEFailedMpp}, copied})
+	}
+
+	if prop.TaskTp != property.MppTaskType && prop.CTEProducerStatus != property.SomeCTEFailedMpp &&
+		ls.SCtx().GetSessionVars().IsMPPAllowed() && prop.IsSortItemEmpty() {
+		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType, anyType.CloneEssentialFields()})
+	}
+	var seqSchema *expression.Schema
+	if g != nil {
+		seqSchema = g.GetInputSchema(g.InputsLen() - 1)
+	} else {
+		seqSchema = ls.Children()[ls.ChildLen()-1].Schema()
+	}
+	seqs := make([]base.PhysicalPlan, 0, len(possibleChildrenProps))
+	for _, propChoice := range possibleChildrenProps {
+		childReqs := make([]*property.PhysicalProperty, 0, ls.ChildLen())
+		for range ls.ChildLen() - 1 {
+			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
+		}
+		childReqs = append(childReqs, propChoice[1])
+		seq := PhysicalSequence{}.Init(ls.SCtx(), ls.StatsInfo(), ls.QueryBlockOffset(), childReqs...)
+		seq.SetSchema(seqSchema)
+		seqs = append(seqs, seq)
+	}
+	return seqs, true, nil
 }

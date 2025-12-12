@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -97,6 +98,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -108,6 +110,7 @@ import (
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -491,7 +494,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 	if cc.getCtx() != nil {
 		cc.pkt.SetMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
 	}
-	return cc.pkt.ReadPacket()
+	data, err := cc.pkt.ReadPacket()
+	if err == nil && cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().InPacketBytes.Add(uint64(len(data)))
+	}
+	return data, err
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
@@ -500,6 +507,9 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
+	if cc.getCtx() != nil {
+		cc.ctx.GetSessionVars().OutPacketBytes.Add(uint64(len(data)))
+	}
 	return cc.pkt.WritePacket(data)
 }
 
@@ -1056,21 +1066,29 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if cc.getStatus() != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
-		}
+		util.WithRecovery(
+			func() {
+				if cc.getStatus() != connStatusShutdown {
+					err := cc.Close()
+					terror.Log(err)
+				}
+			}, nil)
 
 		close(cc.quit)
 	}()
 
-	parentCtx := ctx
+	cc.addConnMetrics()
+
 	var traceInfo *tracing.TraceInfo
+	trace := traceevent.NewTrace()
+	ctx = tracing.WithFlightRecorder(ctx, trace)
+
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
+	parentCtx := ctx
 	for {
 		sessVars := cc.ctx.GetSessionVars()
 		if alias := sessVars.SessionAlias; traceInfo == nil || traceInfo.SessionAlias != alias {
@@ -1158,10 +1176,12 @@ func (cc *clientConn) Run(ctx context.Context) {
 		err = cc.dispatch(ctx, data)
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
+		trace.DiscardOrFlush(ctx)
+
 		if err != nil {
-			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
+			cc.audit(context.Background(), plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
-				cc.addMetrics(data[0], startTime, nil)
+				cc.addQueryMetrics(data[0], startTime, nil)
 				server_metrics.DisconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
@@ -1205,7 +1225,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
 		}
-		cc.addMetrics(data[0], startTime, err)
+		cc.addQueryMetrics(data[0], startTime, err)
 		cc.pkt.SetSequence(0)
 		cc.pkt.SetCompressedSequence(0)
 	}
@@ -1229,7 +1249,21 @@ func errStrForLog(err error, redactMode string) string {
 	return ret
 }
 
-func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
+// Per connection metrics
+func (cc *clientConn) addConnMetrics() {
+	if cc.tlsConn != nil {
+		connState := cc.tlsConn.ConnectionState()
+		metrics.TLSVersion.WithLabelValues(
+			tlsutil.VersionName(connState.Version),
+		).Inc()
+		metrics.TLSCipher.WithLabelValues(
+			tlsutil.CipherSuiteName(connState.CipherSuite),
+		).Inc()
+	}
+}
+
+// Per query metrics
+func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) {
 	if cmd == mysql.ComQuery && cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
 		// Don't take DDL execute time into account.
 		// It's already recorded by other metrics in ddl package.
@@ -1285,6 +1319,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
+		cc.ctx.GetSessionVars().InPacketBytes.Store(0)
+		cc.ctx.GetSessionVars().OutPacketBytes.Store(0)
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
@@ -1700,12 +1736,12 @@ func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.Pl
 	return e.DumpSQLsFromFile(ctx, data)
 }
 
-func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
+func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&cc.ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
+			ctx := context.WithValue(ctx, plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
 			audit.OnGeneralEvent(ctx, cc.ctx.GetSessionVars(), eventType, cmd)
 		}
 		return nil
@@ -1874,7 +1910,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	handlePlan := func(sctx sessionctx.Context, p base.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
-		case *plannercore.PointGetPlan:
+		case *physicalop.PointGetPlan:
 			isTableDual, err0 := v.PrunePartitions(sctx)
 			if err0 != nil || isTableDual {
 				return err0
@@ -1882,7 +1918,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			tableID = executor.GetPhysID(v.TblInfo, v.PartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
-				idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
+				idxKey, err1 := physicalop.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
 				if err1 != nil {
 					return err1
 				}
@@ -1891,7 +1927,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			} else {
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
-		case *plannercore.BatchPointGetPlan:
+		case *physicalop.BatchPointGetPlan:
 			_, isTableDual, err1 := v.PrunePartitionsAndValues(sctx)
 			if err1 != nil {
 				return err1
@@ -1909,7 +1945,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
 				for i, idxVals := range v.IndexValues {
-					idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
+					idxKey, err1 := physicalop.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
 					if err1 != nil {
 						return err1
 					}
@@ -1947,7 +1983,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		// Only support Update and Delete for now.
 		// TODO: support other point plans.
 		switch x := p.(type) {
-		case *plannercore.Update:
+		case *physicalop.Update:
 			//nolint:forcetypeassert
 			updateStmt, ok := stmt.(*ast.UpdateStmt)
 			if !ok {
@@ -1961,7 +1997,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			if err != nil {
 				return nil, err
 			}
-		case *plannercore.Delete:
+		case *physicalop.Delete:
 			deleteStmt, ok := stmt.(*ast.DeleteStmt)
 			if !ok {
 				logutil.BgLogger().Warn("unexpected statement type for Delete plan",
@@ -2029,7 +2065,7 @@ func (cc *clientConn) handleStmt(
 ) (bool, error) {
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
-	cc.audit(plugin.Starting)
+	cc.audit(context.Background(), plugin.Starting)
 
 	// if stmt is load data stmt, store the channel that reads from the conn
 	// into the ctx for executor to use

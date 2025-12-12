@@ -24,6 +24,8 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/pkg/autoid_service" // Init MockForTest
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -796,6 +798,9 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 }
 
 func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Setting tidb_ddl_reorg_max_write_speed is not supported in the next generation of TiDB")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.Equal(t, int64(vardef.DefTiDBDDLReorgMaxWriteSpeed), vardef.DDLReorgMaxWriteSpeed.Load())
@@ -821,6 +826,9 @@ func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
 }
 
 func TestLoadDDLDistributeVars(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -887,10 +895,28 @@ func TestRenameTableWithReload(t *testing.T) {
 	tk.MustExec("drop database if exists rename1")
 	tk.MustExec("drop database if exists rename2")
 	tk.MustExec("drop database if exists rename3")
-
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
+
+	// Issue #64561
+	tk.MustExec("create table rename1.t(id int primary key auto_increment) AUTO_ID_CACHE=1")
+	tk.MustExec("insert into rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	forceFullReload(t, store, dom)
+	tk.MustExec("insert into rename2.t values ()")
+	tk.MustQuery("select * from rename2.t").Check(testkit.Rows("1", "2"))
+	tk.MustExec("drop table rename2.t")
+
+	tk.MustExec("create table rename1.t(id int primary key auto_increment) AUTO_ID_CACHE=1")
+	tk.MustExec("insert into rename1.t values (), ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	tk.MustExec("insert into rename2.t values (100)")
+	forceFullReload(t, store, dom)
+	tk.MustExec("insert into rename2.t values ()")
+	tk.MustQuery("select * from rename2.t").Check(testkit.Rows("1", "2", "100", "101"))
+	tk.MustExec("drop table rename2.t")
+
 	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
 	tk.MustExec("insert rename1.t values ()")
 	tk.MustExec("rename table rename1.t to rename2.t")

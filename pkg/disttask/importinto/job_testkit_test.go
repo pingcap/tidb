@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -40,8 +41,12 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/atomic"
 )
 
@@ -59,6 +64,27 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		t.Skip("This test is only for nextgen")
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 10})
+	defer cluster.Terminate(t)
+	keyspaceIDs := map[string]uint32{
+		keyspace.System: 1,
+		"ks":            2,
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
+		func(cliP **clientv3.Client, ks string) {
+			id, ok := keyspaceIDs[ks]
+			require.True(t, ok)
+			// one client per ks
+			*cliP = cluster.Client(int(id - 1))
+			// we will close the client.
+			cluster.TakeClient(int(id - 1))
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: id, Name: ks})
+			require.NoError(t, err)
+			etcd.SetEtcdCliByNamespace(*cliP, keyspace.MakeKeyspaceEtcdNamespace(codec))
+		},
+	)
 	require.NoError(t, kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
 	sysKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
 	sysKSTK := testkit.NewTestKit(t, sysKSStore)
@@ -151,8 +177,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	ctx := context.WithValue(context.Background(), "etcd", true)
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
 	manager := storage.NewTaskManager(pool)
 	storage.SetTaskManager(manager)
@@ -161,20 +186,17 @@ func TestGetTaskImportedRows(t *testing.T) {
 	// local sort
 	taskMeta := importinto.TaskMeta{
 		Plan: importer.Plan{},
-	}
-	taskSummary := &importer.Summary{
-		EncodeSummary: importer.StepSummary{
-			Bytes:  10000,
-			RowCnt: 1000,
+		Summary: importer.Summary{
+			EncodeSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
+			IngestSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
 		},
-		IngestSummary: importer.StepSummary{
-			Bytes:  10000,
-			RowCnt: 1000,
-		},
 	}
-	var err error
-	taskMeta.TaskResult, err = json.Marshal(taskSummary)
-	require.NoError(t, err)
 
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
@@ -209,16 +231,13 @@ func TestGetTaskImportedRows(t *testing.T) {
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
-	}
-
-	taskSummary = &importer.Summary{
-		IngestSummary: importer.StepSummary{
-			Bytes:  10000,
-			RowCnt: 1000,
+		Summary: importer.Summary{
+			IngestSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
 		},
 	}
-	taskMeta.TaskResult, err = json.Marshal(taskSummary)
-	require.NoError(t, err)
 
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
@@ -257,8 +276,7 @@ func TestShowImportProgress(t *testing.T) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	ctx := context.WithValue(context.Background(), "etcd", true)
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
 	manager := storage.NewTaskManager(pool)
 	storage.SetTaskManager(manager)
@@ -269,18 +287,14 @@ func TestShowImportProgress(t *testing.T) {
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
+		Summary: importer.Summary{
+			EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
+			IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			ImportedRows:  100,
+		},
 	}
 
-	taskSummary := &importer.Summary{
-		EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-		MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
-		IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-		ImportedRows:  100,
-	}
-
-	var err error
-	taskMeta.TaskResult, err = json.Marshal(taskSummary)
-	require.NoError(t, err)
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
 
@@ -396,8 +410,7 @@ func TestShowImportGroup(t *testing.T) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	ctx := context.WithValue(context.Background(), "etcd", true)
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
 	manager := storage.NewTaskManager(pool)
 	storage.SetTaskManager(manager)
@@ -437,6 +450,10 @@ func TestShowImportGroup(t *testing.T) {
 	}
 
 	rs = tk.MustQuery("show import groups").Sort().Rows()
+	for _, r := range rs {
+		// create time should never be null
+		require.NotEqual(t, "<nil>", r[7])
+	}
 	require.Len(t, rs, 2)
 	require.Equal(t, "group1", rs[0][0])
 	require.Equal(t, "2", rs[0][1])
@@ -450,6 +467,7 @@ func TestShowImportGroup(t *testing.T) {
 	require.Len(t, rs, 1)
 	require.Equal(t, "group2", rs[0][0])
 	require.Equal(t, "1", rs[0][1])
+	require.NotEqual(t, "<nil>", rs[0][7])
 }
 
 func TestFormatTime(t *testing.T) {

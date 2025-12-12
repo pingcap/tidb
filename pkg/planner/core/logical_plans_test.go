@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -1835,7 +1836,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	p, _, err = physicalOptimize(p.(base.LogicalPlan))
 	return p.(base.PhysicalPlan), stmt, err
 }
 
@@ -1870,6 +1871,51 @@ func pathsName(paths []*candidatePath) string {
 	return strings.Join(names, ",")
 }
 
+// TestSkylinePruning tests the skyline pruning optimization for index selection.
+//
+// Use the following DDL if trying to reproduce the test environment locally:
+//
+//  1. Table 't' (MockSignedTable):
+/*     CREATE TABLE t (
+       a BIGINT NOT NULL PRIMARY KEY,
+       b BIGINT NOT NULL,
+       c BIGINT NOT NULL,
+       d BIGINT NOT NULL,
+       e BIGINT,
+       c_str VARCHAR(255),
+       d_str VARCHAR(255),
+       e_str VARCHAR(255),
+       f BIGINT NOT NULL,
+       g BIGINT NOT NULL,
+       h BIGINT,
+       i_date DATE,
+       UNIQUE KEY c_d_e (c, d, e),
+       UNIQUE KEY x (e),  -- write-only state
+       UNIQUE KEY f (f),
+       KEY g (g),
+       UNIQUE KEY f_g (f, g),
+       KEY c_d_e_str (c_str, d_str, e_str),
+       KEY e_d_c_str_prefix (e_str, d_str, c_str(10))
+       );
+/*
+//  2. Table 'pt2_global_index' (MockGlobalIndexHashPartitionTable):
+/*     CREATE TABLE pt2_global_index (
+       a BIGINT NOT NULL,
+       b BIGINT NOT NULL,
+       c BIGINT NOT NULL,
+       d BIGINT NOT NULL,
+       e BIGINT,
+       f BIGINT NOT NULL,
+       g BIGINT NOT NULL,
+       h BIGINT,
+       ptn BIGINT,
+       PRIMARY KEY (a, ptn),
+       KEY b (b),
+       UNIQUE KEY b_global (b) GLOBAL,
+       KEY b_c (b, c),
+     UNIQUE KEY b_c_global (b, c) GLOBAL
+     ) PARTITION BY HASH(ptn) PARTITIONS 2;
+*/
 func TestSkylinePruning(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`))
 	defer func() {
@@ -1913,6 +1959,26 @@ func TestSkylinePruning(t *testing.T) {
 			result: "f_g",
 		},
 		{
+			sql:    "select * from t where f = 1 and c = 1 and d = 1",
+			result: "f", // Keep f only, since f is unique
+		},
+		{
+			sql:    "select * from t where f = 1 and g = 1",
+			result: "f_g", // Keep f_g only, since (f, g) is unique and has more columns than f alone
+		},
+		{
+			sql:    "select * from t where e_str = 'a' and d_str = 'b' and c_str = 'c'",
+			result: "c_d_e_str,e_d_c_str_prefix", // TODO: Refine skyline pruning for string prefix indexes
+		},
+		{
+			sql:    "select * from t where e_str = 'a' and d_str = 'b' and c_str = '1234567890a'",
+			result: "c_d_e_str,e_d_c_str_prefix", // TODO: Refine skyline pruning for string prefix indexes
+		},
+		{
+			sql:    "select * from t where (f = 1 and g = 1) or (f = 2 and g = 2)",
+			result: "f_g",
+		},
+		{
 			sql:    "select count(1) from t",
 			result: "PRIMARY_KEY,c_d_e,f,g,f_g,c_d_e_str,e_d_c_str_prefix",
 		},
@@ -1946,7 +2012,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "b_c_global",
+			result: "PRIMARY_KEY,c_d_e,b_c_global",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
@@ -1955,6 +2021,10 @@ func TestSkylinePruning(t *testing.T) {
 		{
 			sql:    "select * from pt2_global_index where c > 1 and d > 1 and e > 1",
 			result: "c_d_e", // will prune `b_c` and `b_c_global`
+		},
+		{
+			sql:    "select * from pt2_global_index where (b = 1 and c = 1) or (b = 2 and c = 2)",
+			result: "b_c_global",
 		},
 	}
 	s := coretestsdk.CreatePlannerSuiteElems()
@@ -2145,7 +2215,7 @@ func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
 	require.True(t, ok)
 	// previous wrong JoinType is InnerJoin
-	require.Equal(t, logicalop.RightOuterJoin, join.JoinType)
+	require.Equal(t, base.RightOuterJoin, join.JoinType)
 }
 
 func TestResolvingCorrelatedAggregate(t *testing.T) {
@@ -2242,28 +2312,6 @@ func TestFastPathInvalidBatchPointGet(t *testing.T) {
 	}
 }
 
-func TestTraceFastPlan(t *testing.T) {
-	s := coretestsdk.CreatePlannerSuiteElems()
-	defer s.Close()
-	s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	defer func() {
-		s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = false
-	}()
-	s.GetCtx().GetSessionVars().SnapshotInfoschema = s.GetIS()
-	sql := "select * from t where a=1"
-	comment := fmt.Sprintf("sql:%s", sql)
-	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
-	require.NoError(t, err, comment)
-	nodeW := resolve.NewNodeW(stmt)
-	err = Preprocess(context.Background(), s.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()}))
-	require.NoError(t, err, comment)
-	plan := TryFastPlan(s.GetCtx(), nodeW)
-	require.NotNil(t, plan)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.FinalPlan)
-	require.True(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.IsFastPlan)
-}
-
 func TestWindowLogicalPlanAmbiguous(t *testing.T) {
 	sql := "select a, max(a) over(), sum(a) over() from t"
 	var planString string
@@ -2323,6 +2371,34 @@ func TestRemoveOrderbyInSubquery(t *testing.T) {
 	}
 }
 
+func TestAddLimitForCorrelatedExistsSubquery(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{ // First query should add LIMIT because it's an EXISTS subquery with NO_DECORRELATE
+			sql:  "select * from t t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Limit}->Projection",
+		},
+		{ // Second query should NOT add LIMIT because it is NOT an EXISTS subquery
+			sql:  "select * from t t1 where b in (select /*+ NO_DECORRELATE() */ b from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection",
+		},
+	}
+
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.GetParser().ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+		require.NoError(t, err, comment)
+		require.Equal(t, tt.best, ToString(p), comment)
+	}
+}
 func TestRollupExpand(t *testing.T) {
 	ctx := context.Background()
 	sql := "select count(a) from t group by a, b with rollup"
@@ -2434,7 +2510,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		require.NoError(t, err)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err)
-		deletePlan, ok := p.(*Delete)
+		deletePlan, ok := p.(*physicalop.Delete)
 		require.True(t, ok, comment)
 		var sb strings.Builder
 

@@ -2275,6 +2275,9 @@ func Test1PCWithSchemaChange(t *testing.T) {
 }
 
 func TestPlanCacheSchemaChange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("fast reorg is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tmp := testkit.NewTestKit(t, store)
 	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
@@ -2497,7 +2500,7 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 	require.Regexp(t, ".*SelectLock.*", explain)
 	rows = tk.MustQuery("explain update t set i = -i where i = -1").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
-	require.Regexp(t, ".*handle:-1, lock.*", explain)
+	require.Regexpf(t, ".*handle:-1, lock.*", explain, "rows: %v", rows)
 	rows = tk.MustQuery("explain update t set i = -i where i in (-1, 1)").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
 	require.Regexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
@@ -2757,7 +2760,11 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk2.MustExec("insert into t3 values (1, 2)")
 	err = tk.ExecToErr("commit")
 	require.ErrorContains(t, err, "[kv:9007]Write conflict")
-	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
+	if kerneltype.IsClassic() {
+		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
+	} else {
+		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
+	}
 
 	// case: DML returns error => abort txn
 	tk.MustExec("create table t4 (id int primary key, v int, key i1(v))")
@@ -3080,7 +3087,11 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	tk2.MustExec("insert into t2 values (2, 1)")
 	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
 	err = tk.ExecToErr("commit")
-	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
+	if kerneltype.IsClassic() {
+		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
+	} else {
+		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
+	}
 }
 
 func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
@@ -3760,4 +3771,55 @@ func TestForShareWithPromotionPlanCache(t *testing.T) {
 	tk.MustExec(`execute st using @pk`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`rollback`)
+}
+
+func TestMaxExecutionTimeWithSelectForUpdate(t *testing.T) {
+	// for issue https://github.com/pingcap/tidb/issues/62960
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_lock")
+	tk.MustExec("create table test_lock (id int primary key, value int)")
+	tk.MustExec("insert into test_lock values (1, 100)")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set innodb_lock_wait_timeout = 30")
+
+	// Transaction 1: Hold the lock
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select * from test_lock where id = 1 for update").Check(testkit.Rows("1 100"))
+
+	checkSelectForUpdate := func(sql string) {
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("set max_execution_time = 1000")
+		err := tk2.ExecToErr(sql)
+
+		// The query should timeout due to max_execution_time (~1s), not lock_wait_timeout (30s)
+		require.Error(t, err)
+
+		// Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
+		require.True(t, strings.Contains(err.Error(), "maximum statement execution time exceeded"),
+			"Expected max_execution_time error, but got: %v", err)
+
+		tk2.MustExec("rollback")
+	}
+
+	// Transaction 2: Try to acquire lock with max_execution_time in different SELECT forms
+	checkSelectForUpdate("select * from test_lock where id = 1 for update")
+	checkSelectForUpdate("(select * from test_lock where id = 1 for update)")
+
+	// DML should keep using the lock wait timeout instead of max_execution_time
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustExec("set max_execution_time = 300")
+	err := tk2.ExecToErr("update test_lock set value = value + 1 where id = 1")
+	require.Error(t, err)
+	require.True(t, storeerr.ErrLockWaitTimeout.Equal(err), "expected lock wait timeout, got: %v", err)
+	tk2.MustExec("rollback")
+
+	tk1.MustExec("rollback")
 }

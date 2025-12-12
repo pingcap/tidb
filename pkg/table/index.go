@@ -87,18 +87,26 @@ type Index interface {
 	Meta() *model.IndexInfo
 	// TableMeta returns TableInfo
 	TableMeta() *model.TableInfo
+	// MeetPartialCondition returns true if the row meets the partial index condition of the index.
+	MeetPartialCondition(row []types.Datum) (bool, error)
 	// Create supports insert into statement.
+	// The `Create` inserts the index without considering the partial index condition. The caller should call `MeetPartialCondition` to check whether the
+	// row meets the partial index condition before calling `Create` to avoid unnecessary index creation.
 	Create(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOption) (kv.Handle, error)
 	// Delete supports delete from statement.
+	// The `Delete` deletes the index without considering the partial index condition. The caller should call `MeetPartialCondition` to check whether the
+	// row meets the partial index condition before calling `Delete` to avoid unnecessary index deletion.
 	Delete(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
 	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
+	// `GenIndexKVIter` doesn't consider the partial index condition, the caller should call `MeetPartialCondition` to check. If the row doesn't meet
+	// the condition, it's suggested to use an empty kv generator instead.
 	GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexKVGenerator
 	// Exist supports check index exists or not.
 	Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
 	// GenIndexKey generates an index key. If the index is a multi-valued index, use GenIndexKVIter instead.
 	GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
 	// GenIndexValue generates an index value.
-	GenIndexValue(ec errctx.Context, loc *time.Location, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error)
+	GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error)
 	// FetchValues fetched index column values in a row.
 	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
 	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.
@@ -176,7 +184,7 @@ func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool,
 	if err != nil {
 		return nil, nil, false, err
 	}
-	idxVal, err := iter.index.GenIndexValue(iter.ec, iter.loc, distinct, val, iter.handle, iter.handleRestoreData, valBuf)
+	idxVal, err := iter.index.GenIndexValue(iter.ec, iter.loc, distinct, false, val, iter.handle, iter.handleRestoreData, valBuf)
 	if err != nil {
 		return nil, nil, false, err
 	}

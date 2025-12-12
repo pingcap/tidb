@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -156,6 +158,12 @@ func TestBootstrap(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
 	se.Close()
+	r = MustExecToRecodeSet(t, se, fmt.Sprintf("select * from mysql.bind_info where original_sql = '%s'", bindinfo.BuiltinPseudoSQL4BindLock))
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	se.Close()
 }
 
 func globalVarsCount() int64 {
@@ -179,6 +187,10 @@ func TestBootstrapWithError(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
+	// system tables are not created in `doDDLWorks` for next-gen.
+	if kerneltype.IsNextGen() {
+		require.NoError(t, bootstrapSchemas(store))
+	}
 	// bootstrap
 	{
 		se := &session{
@@ -336,6 +348,10 @@ func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 
 // TestUpgrade tests upgrading
 func TestUpgrade(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -431,6 +447,10 @@ func TestUpgrade(t *testing.T) {
 }
 
 func TestIssue17979_1(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -466,6 +486,10 @@ func TestIssue17979_1(t *testing.T) {
 }
 
 func TestIssue17979_2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -508,6 +532,10 @@ func TestIssue17979_2(t *testing.T) {
 // but from 4.0 -> 5.0, the new default is picked up.
 
 func TestIssue20900_2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -611,6 +639,10 @@ func TestStmtSummary(t *testing.T) {
 }
 
 func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
@@ -655,7 +687,11 @@ func TestForIssue23387(t *testing.T) {
 	currentBootstrapVersion = version57
 
 	// Bootstrap to an old version, create a user.
-	store := teststore.NewMockStoreWithoutBootstrap(t)
+	store, err := teststore.NewMockStoreWithoutBootstrap()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 
@@ -698,6 +734,10 @@ func TestReferencesPrivilegeOnColumn(t *testing.T) {
 }
 
 func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -773,6 +813,10 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 }
 
 func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -824,10 +868,17 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 // We set tidb_enable_index_merge as on.
 // And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
 func TestIndexMergeUpgradeFrom400To540Enable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	testIndexMergeUpgradeFrom400To540(t, true)
 }
 
 func TestIndexMergeUpgradeFrom400To540Disable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	testIndexMergeUpgradeFrom400To540(t, false)
 }
 
@@ -924,6 +975,10 @@ func TestTiDBEnablePagingVariable(t *testing.T) {
 }
 
 func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -982,6 +1037,10 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 }
 
 func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1092,6 +1151,10 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1142,6 +1205,10 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	for i := range 2 {
 		func() {
 			ctx := context.Background()
@@ -1212,6 +1279,10 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 }
 
 func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1266,6 +1337,10 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 }
 
 func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1320,6 +1395,10 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 }
 
 func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1374,6 +1453,10 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 }
 
 func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1438,6 +1521,10 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 }
 
 func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	for i := range 2 {
 		func() {
 			ctx := context.Background()
@@ -1508,6 +1595,10 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer136(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1547,6 +1638,10 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer140(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1593,6 +1688,10 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 }
 
 func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1653,6 +1752,10 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 }
 
 func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1707,6 +1810,10 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 }
 
 func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1758,6 +1865,10 @@ func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer143(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1789,6 +1900,10 @@ func TestTiDBUpgradeToVer143(t *testing.T) {
 }
 
 func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1843,6 +1958,10 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 }
 
 func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -1891,6 +2010,10 @@ func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T
 }
 
 func TestTiDBUpgradeToVer145(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1922,6 +2045,10 @@ func TestTiDBUpgradeToVer145(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer170(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1952,6 +2079,10 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer176(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1978,11 +2109,18 @@ func TestTiDBUpgradeToVer176(t *testing.T) {
 	ver, err = getBootstrapVersion(seV175)
 	require.NoError(t, err)
 	require.Less(t, int64(ver175), ver)
-	MustExec(t, seV175, "SELECT * from mysql.tidb_global_task_history")
+	// Avoid reusing the old session when checking the new table.
+	// Otherwise it may access the previous domain, which has already been closed.
+	newSession := CreateSessionAndSetID(t, store)
+	MustExec(t, newSession, "SELECT * from mysql.tidb_global_task_history")
 	dom.Close()
 }
 
 func TestTiDBUpgradeToVer177(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -2009,7 +2147,10 @@ func TestTiDBUpgradeToVer177(t *testing.T) {
 	ver, err = getBootstrapVersion(seV176)
 	require.NoError(t, err)
 	require.Less(t, int64(ver176), ver)
-	MustExec(t, seV176, "SELECT * from mysql.dist_framework_meta")
+	// Avoid reusing the old session when checking the new table.
+	// Otherwise it may access the previous domain, which has already been closed.
+	newSession := CreateSessionAndSetID(t, store)
+	MustExec(t, newSession, "SELECT * from mysql.dist_framework_meta")
 	dom.Close()
 }
 
@@ -2037,6 +2178,10 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 }
 
 func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2083,6 +2228,10 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer179(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
@@ -2171,6 +2320,10 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 }
 
 func TestTiDBUpgradeToVer209(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2251,6 +2404,10 @@ func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer211(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
@@ -2324,6 +2481,10 @@ func TestTiDBHistoryTableConsistent(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer212(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
@@ -2368,6 +2529,9 @@ func TestIssue61890(t *testing.T) {
 }
 
 func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2427,6 +2591,9 @@ func TestKeyspaceEtcdNamespace(t *testing.T) {
 }
 
 func TestNullKeyspaceEtcdNamespace(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen kernel doesn't have the NULL keyspace concept")
+	}
 	makeStore(t, nil, false)
 }
 
@@ -2436,7 +2603,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	var err error
 	if keyspaceMeta != nil {
 		store, err = mockstore.NewMockStore(
-			mockstore.WithKeyspaceMeta(keyspaceMeta),
+			mockstore.WithCurrentKeyspaceMeta(keyspaceMeta),
 			mockstore.WithStoreType(mockstore.EmbedUnistore),
 		)
 	} else {
@@ -2480,7 +2647,7 @@ func checkETCDNameSpace(t *testing.T, dom *domain.Domain, isHasPrefix bool) {
 	}
 
 	// Put key value into etcd.
-	_, err := dom.EtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
+	_, err := dom.GetEtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
 	require.NoError(t, err)
 
 	// Use expectTestKey to get the key from etcd.
@@ -2509,6 +2676,9 @@ func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
 
 func TestTiDBUpgradeToVer240(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2553,7 +2723,74 @@ func TestTiDBUpgradeToVer240(t *testing.T) {
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
 }
 
+func TestTiDBUpgradeToVer252(t *testing.T) {
+	// NOTE: this case needed to be passed in both classic and next-gen kernel.
+	// in the first release of next-gen kernel, the version is 250.
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver250 := version250
+	seV250 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver250))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV250, ver250)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	getBindInfoSQLFn := func(se sessionapi.Session) string {
+		res := MustExecToRecodeSet(t, se, "show create table mysql.bind_info")
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+	createTblSQL := getBindInfoSQLFn(seV250)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(6)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
+	// revert it back to timestamp(3) for testing. we must set below fields to
+	// simulate the real session in upgrade process.
+	seV250.SetValue(sessionctx.Initing, true)
+	seV250.GetSessionVars().SQLMode = mysql.ModeNone
+	res := MustExecToRecodeSet(t, seV250, "select create_time,update_time from mysql.bind_info")
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	for i := range chk.NumRows() {
+		getTime := chk.GetRow(i).GetTime(0)
+		getTime = chk.GetRow(i).GetTime(1)
+		_ = getTime
+	}
+	mustExecute(seV250, "alter table mysql.bind_info modify create_time timestamp(3)")
+	mustExecute(seV250, "alter table mysql.bind_info modify update_time timestamp(3)")
+	createTblSQL = getBindInfoSQLFn(seV250)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(3)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(3)")
+
+	// do upgrade to latest version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	// check if the columns have been changed to timestamp(6)
+	createTblSQL = getBindInfoSQLFn(seCurVer)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(6)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
+}
+
 func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2610,6 +2847,10 @@ func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
 }
 
 func TestBindInfoUniqueIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2634,7 +2875,7 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 	for _, sqlDigest := range []string{"null", "'x'", "'y'"} {
 		for _, planDigest := range []string{"null", "'x'", "'y'"} {
 			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
-             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s)`,
+             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s, null)`,
 				sqlDigest, planDigest)
 			MustExec(t, seV245, insertStmt)
 			MustExec(t, seV245, insertStmt)

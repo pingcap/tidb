@@ -67,6 +67,18 @@ var (
 
 	// NetworkTransmissionStats records the network transmission for queries
 	NetworkTransmissionStats *prometheus.CounterVec
+
+	// IndexLookUpExecutorDuration records the duration of index look up executor
+	IndexLookUpExecutorDuration *prometheus.HistogramVec
+
+	// IndexLookRowsCounter records the number of rows in index look up executor
+	IndexLookRowsCounter *prometheus.CounterVec
+
+	// IndexLookUpExecutorRowNumber records the number of rows scanned in one index look up executor
+	IndexLookUpExecutorRowNumber *prometheus.HistogramVec
+
+	// IndexLookUpCopTaskCount records the number of cop tasks in index look up executor
+	IndexLookUpCopTaskCount *prometheus.CounterVec
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -153,5 +165,39 @@ func InitExecutorMetrics() {
 			Subsystem: "executor",
 			Name:      "network_transmission",
 			Help:      "Counter of network transmission bytes.",
+		}, []string{LblType})
+
+	IndexLookUpExecutorDuration = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "index_lookup_execute_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) in running index-lookup executor.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 30), // 100us ~ 15h
+		}, []string{LblType})
+
+	IndexLookRowsCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "index_lookup_rows",
+			Help:      "Counter of index lookup push-down rows.",
+		}, []string{LblType})
+
+	IndexLookUpExecutorRowNumber = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "index_lookup_row_number",
+			Help:      "Row number for each index lookup executor",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 10),
+		}, []string{LblType})
+
+	IndexLookUpCopTaskCount = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "index_lookup_cop_task_count",
+			Help:      "Counter for index lookup cop tasks",
 		}, []string{LblType})
 }

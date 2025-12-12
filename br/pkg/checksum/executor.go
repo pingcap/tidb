@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -35,8 +36,8 @@ type ExecutorBuilder struct {
 	oldKeyspace []byte
 	newKeyspace []byte
 
-	resourceGroupName         string
-	explicitRequestSourceType string
+	resourceGroupName string
+	requestSource     util.RequestSource
 }
 
 // NewExecutorBuilder returns a new executor builder.
@@ -82,8 +83,13 @@ func (builder *ExecutorBuilder) SetResourceGroupName(name string) *ExecutorBuild
 	return builder
 }
 
+func (builder *ExecutorBuilder) SetRequestSource(reqSource util.RequestSource) *ExecutorBuilder {
+	builder.requestSource = reqSource
+	return builder
+}
+
 func (builder *ExecutorBuilder) SetExplicitRequestSourceType(name string) *ExecutorBuilder {
-	builder.explicitRequestSourceType = name
+	builder.requestSource.ExplicitRequestSourceType = name
 	return builder
 }
 
@@ -97,7 +103,7 @@ func (builder *ExecutorBuilder) Build() (*Executor, error) {
 		builder.oldKeyspace,
 		builder.newKeyspace,
 		builder.resourceGroupName,
-		builder.explicitRequestSourceType,
+		builder.requestSource,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -112,7 +118,8 @@ func buildChecksumRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, explicitRequestSourceType string,
+	resourceGroupName string,
+	requestSource util.RequestSource,
 ) ([]*kv.Request, error) {
 	var partDefs []model.PartitionDefinition
 	if part := newTable.Partition; part != nil {
@@ -125,7 +132,7 @@ func buildChecksumRequest(
 		oldTableID = oldTable.Info.ID
 	}
 	rs, err := buildRequest(newTable, newTable.ID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+		oldKeyspace, newKeyspace, resourceGroupName, requestSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -140,7 +147,7 @@ func buildChecksumRequest(
 			}
 		}
 		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+			oldKeyspace, newKeyspace, resourceGroupName, requestSource)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -159,11 +166,12 @@ func buildRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, explicitRequestSourceType string,
+	resourceGroupName string,
+	requestSource util.RequestSource,
 ) ([]*kv.Request, error) {
 	reqs := make([]*kv.Request, 0)
 	req, err := buildTableRequest(tableInfo, tableID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+		oldKeyspace, newKeyspace, resourceGroupName, requestSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -193,7 +201,7 @@ func buildRequest(
 		}
 		req, err = buildIndexRequest(
 			tableID, indexInfo, oldTableID, oldIndexInfo, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+			oldKeyspace, newKeyspace, resourceGroupName, requestSource)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -212,7 +220,8 @@ func buildTableRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, explicitRequestSourceType string,
+	resourceGroupName string,
+	requestSource util.RequestSource,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldTable != nil {
@@ -243,7 +252,7 @@ func buildTableRequest(
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		SetResourceGroupName(resourceGroupName).
-		SetExplicitRequestSourceType(explicitRequestSourceType).
+		SetRequestSource(requestSource).
 		Build()
 }
 
@@ -256,7 +265,8 @@ func buildIndexRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, ExplicitRequestSourceType string,
+	resourceGroupName string,
+	requestSource util.RequestSource,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
@@ -281,7 +291,7 @@ func buildIndexRequest(
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		SetResourceGroupName(resourceGroupName).
-		SetExplicitRequestSourceType(ExplicitRequestSourceType).
+		SetRequestSource(requestSource).
 		Build()
 }
 

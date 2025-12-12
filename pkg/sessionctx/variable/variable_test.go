@@ -443,7 +443,7 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	for _, sv := range GetSysVars() {
-		if sv.HasSessionScope() && !sv.ReadOnly {
+		if sv.HasSessionScope() && !sv.ReadOnly && !sv.InternalSessionVariable {
 			val, err := sv.Validate(vars, sv.Value, vardef.ScopeSession)
 			require.NoError(t, err)
 			require.Equal(t, val, sv.Value)
@@ -581,6 +581,15 @@ func TestValidateWithRelaxedValidation(t *testing.T) {
 	require.Equal(t, "RandomText - should be valid SQL", val)
 }
 
+func TestValidateInternalSessionVariable(t *testing.T) {
+	vars := NewSessionVars(nil)
+	for _, n := range []string{vardef.TiDBRedactLog, vardef.TiDBInstancePlanCacheMaxMemSize} {
+		sv := GetSysVar(n)
+		_, err := sv.Validate(vars, "1", vardef.ScopeSession)
+		require.NotNil(t, err)
+	}
+}
+
 func TestInstanceConfigHasMatchingSysvar(t *testing.T) {
 	// This tests that each item in [instance] has a sysvar of the same name.
 	// The whole point of moving items to [instance] is to unify the name between
@@ -609,8 +618,9 @@ func TestInstanceScope(t *testing.T) {
 	// be INSTANCE scoped or GLOBAL scoped, never *both* at the same time (at least for now).
 	// Otherwise the semantics are confusing to users for how precedence applies.
 
+	// Now Instance scope is a valid scope, and it can be used with GLOBAL scope at the same time.
 	for _, sv := range GetSysVars() {
-		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
+		// But instance scope should not have Set/GetSession
 		if sv.HasInstanceScope() {
 			require.Nil(t, sv.GetSession)
 			require.Nil(t, sv.SetSession)

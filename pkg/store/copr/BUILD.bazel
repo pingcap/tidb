@@ -35,9 +35,11 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/paging",
+        "//pkg/util/redact",
         "//pkg/util/size",
         "//pkg/util/tiflash",
         "//pkg/util/tiflashcompute",
+        "//pkg/util/traceevent",
         "//pkg/util/tracing",
         "//pkg/util/trxevents",
         "@com_github_dgraph_io_ristretto//:ristretto",
@@ -70,6 +72,7 @@ go_library(
         "@org_golang_google_grpc//status",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 
@@ -83,11 +86,12 @@ go_test(
         "key_ranges_test.go",
         "main_test.go",
         "mpp_probe_test.go",
+        "region_cache_test.go",
     ],
     embed = [":copr"],
     flaky = True,
     race = "on",
-    shard_count = 33,
+    shard_count = 37,
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",

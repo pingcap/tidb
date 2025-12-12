@@ -52,10 +52,10 @@ col1	col1
 1.7257738639648862e308	1.7257738639648862e308
 1.7262297095455299e308	1.7262297095455299e308
 1.7905151735809062e308	1.7905151735809062e308
-explain format='brief' select t1. col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0;
-id	estRows	task	access object	operator info
-MergeJoin	50.16	root		inner join, left key:statistics__overflow_calc.lrr_test.col1, right key:statistics__overflow_calc.lrr_test.col1
-├─TableReader(Build)	51.00	root		data:TableRangeScan
-│ └─TableRangeScan	51.00	cop[tikv]	table:t2	range:[0,+inf], keep order:true
-└─TableReader(Probe)	51.00	root		data:TableRangeScan
-  └─TableRangeScan	51.00	cop[tikv]	table:t1	range:[0,+inf], keep order:true
+explain format='plan_tree' select t1. col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0;
+id	task	access object	operator info
+MergeJoin	root		inner join, left key:statistics__overflow_calc.lrr_test.col1, right key:statistics__overflow_calc.lrr_test.col1
+├─TableReader(Build)	root		data:TableRangeScan
+│ └─TableRangeScan	cop[tikv]	table:t2	range:[0,+inf], keep order:true
+└─TableReader(Probe)	root		data:TableRangeScan
+  └─TableRangeScan	cop[tikv]	table:t1	range:[0,+inf], keep order:true

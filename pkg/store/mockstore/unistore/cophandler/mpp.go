@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -63,10 +64,23 @@ type mppExecBuilder struct {
 	ndvs       []int64
 	paging     *coprocessor.KeyRange
 	pagingSize uint64
+
+	// is building the index lookup
+	inBuildIndexLookUp bool
 }
 
 func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, error) {
-	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.dagCtx.keyRanges, pb.Desc)
+	e, err := b.buildMPPTableScanWithReader(pb, b.dbReader, b.dagCtx.keyRanges)
+	if err != nil {
+		return nil, err
+	}
+	e.counts = b.counts
+	e.ndvs = b.ndvs
+	return e, nil
+}
+
+func (b *mppExecBuilder) buildMPPTableScanWithReader(pb *tipb.TableScan, reader *dbreader.DBReader, readRanges []*coprocessor.KeyRange) (*tableScanExec, error) {
+	ranges, err := extractKVRanges(reader.StartKey, reader.EndKey, readRanges, pb.Desc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -74,7 +88,7 @@ func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 		baseMPPExec: baseMPPExec{sctx: b.sctx, mppCtx: b.mppCtx},
 		startTS:     b.dagCtx.startTS,
 		kvRanges:    ranges,
-		dbReader:    b.dbReader,
+		dbReader:    reader,
 		counts:      b.counts,
 		ndvs:        b.ndvs,
 		desc:        pb.Desc,
@@ -163,28 +177,101 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		})
 	}
 
+	var commonHandleKeyIdx *int
+	if b.inBuildIndexLookUp && len(pb.PrimaryColumnIds) > 0 {
+		// For index scan in index lookup, if the table has common handle, we need to
+		// return the common handle key to indexLookUpExec
+		idx := len(fieldTypes)
+		commonHandleKeyIdx = &idx
+		fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
+	}
+
 	var prevVals [][]byte
 	if b.dagReq.GetCollectRangeCounts() {
 		prevVals = make([][]byte, numIdxCols)
 	}
 	idxScan := &indexScanExec{
-		baseMPPExec:     baseMPPExec{sctx: b.sctx, fieldTypes: fieldTypes},
-		startTS:         b.dagCtx.startTS,
-		kvRanges:        ranges,
-		dbReader:        b.dbReader,
-		lockStore:       b.dagCtx.lockStore,
-		resolvedLocks:   b.dagCtx.resolvedLocks,
-		counts:          b.counts,
-		ndvs:            b.ndvs,
-		prevVals:        prevVals,
-		colInfos:        colInfos,
-		numIdxCols:      numIdxCols,
-		hdlStatus:       hdlStatus,
-		desc:            pb.Desc,
-		physTblIDColIdx: physTblIDColIdx,
-		paging:          b.paging,
+		baseMPPExec:        baseMPPExec{sctx: b.sctx, fieldTypes: fieldTypes},
+		startTS:            b.dagCtx.startTS,
+		kvRanges:           ranges,
+		dbReader:           b.dbReader,
+		lockStore:          b.dagCtx.lockStore,
+		resolvedLocks:      b.dagCtx.resolvedLocks,
+		counts:             b.counts,
+		ndvs:               b.ndvs,
+		prevVals:           prevVals,
+		colInfos:           colInfos,
+		numIdxCols:         numIdxCols,
+		hdlStatus:          hdlStatus,
+		desc:               pb.Desc,
+		physTblIDColIdx:    physTblIDColIdx,
+		commonHandleKeyIdx: commonHandleKeyIdx,
+		paging:             b.paging,
 	}
 	return idxScan, nil
+}
+
+func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExec, error) {
+	b.inBuildIndexLookUp = true
+	defer func() {
+		b.inBuildIndexLookUp = false
+	}()
+	if len(pb.Children) != 2 {
+		return nil, errors.New("IndexLookUp should have two children")
+	}
+
+	if pb.Children[1].Tp != tipb.ExecType_TypeTableScan {
+		return nil, errors.New("The second child of IndexLookUp should be TableScan")
+	}
+
+	if b.pagingSize > 0 {
+		return nil, errors.New("paging not supported in index lookup push down")
+	}
+
+	tblScanPB := pb.Children[1].TblScan
+	indexScanChild, err := b.buildMPPExecutor(pb.Children[0])
+	if err != nil {
+		return nil, err
+	}
+
+	fieldTypes := make([]*types.FieldType, 0, len(tblScanPB.Columns))
+	for _, col := range tblScanPB.Columns {
+		fieldTypes = append(fieldTypes, fieldTypeFromPBColumn(col))
+	}
+
+	indexLookUp := &indexLookUpExec{
+		baseMPPExec: baseMPPExec{
+			sctx:       b.sctx,
+			mppCtx:     b.mppCtx,
+			fieldTypes: fieldTypes,
+			children: []mppExec{
+				indexScanChild,
+				// a mock child that only used to provide base and metrics info
+				&baseMPPExec{
+					sctx:       b.sctx,
+					mppCtx:     b.mppCtx,
+					fieldTypes: fieldTypes,
+				},
+			},
+		},
+		keyspaceID:          b.dagCtx.keyspaceID,
+		indexHandleOffsets:  pb.IndexHandleOffsets,
+		tblScanPB:           tblScanPB,
+		isCommonHandle:      len(tblScanPB.PrimaryColumnIds) > 0,
+		extraReaderProvider: b.dbReader.ExtraDbReaderProvider,
+		buildTableScan: func(reader *dbreader.DBReader, ranges []kv.KeyRange) (*tableScanExec, error) {
+			copRanges := make([]*coprocessor.KeyRange, len(ranges))
+			for i, r := range ranges {
+				copRanges[i] = &coprocessor.KeyRange{
+					Start: r.StartKey,
+					End:   r.EndKey,
+				}
+			}
+			return b.buildMPPTableScanWithReader(tblScanPB, reader, copRanges)
+		},
+	}
+
+	return indexLookUp, nil
 }
 
 func (b *mppExecBuilder) buildLimit(pb *tipb.Limit) (*limitExec, error) {
@@ -553,6 +640,8 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 		return b.buildMPPSel(exec.Selection)
 	case tipb.ExecType_TypeIndexScan:
 		return b.buildIdxScan(exec.IdxScan)
+	case tipb.ExecType_TypeIndexLookUp:
+		return b.buildIndexLookUp(exec.IndexLookup)
 	case tipb.ExecType_TypeLimit:
 		return b.buildLimit(exec.Limit)
 	case tipb.ExecType_TypeTopN:
@@ -579,6 +668,9 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 		dbReader:  dbReader,
 		startTS:   req.StartTs,
 		keyRanges: req.Ranges,
+	}
+	if reqCtx := req.Context; reqCtx != nil {
+		dagCtx.keyspaceID = reqCtx.KeyspaceId
 	}
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	builder := mppExecBuilder{

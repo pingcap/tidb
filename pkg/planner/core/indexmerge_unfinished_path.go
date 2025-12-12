@@ -183,7 +183,7 @@ func initUnfinishedPathsFromExpr(
 		if path.IsTablePath() {
 			continue
 		}
-		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblCols, false)
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblColsByID, false)
 		if !ok {
 			continue
 		}
@@ -359,7 +359,7 @@ func buildIntoAccessPath(
 				idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 					ds.Table.Meta(),
 					unfinishedPath.index,
-					ds.TblCols,
+					ds.TblColsByID,
 					true,
 				)
 				if !ok {

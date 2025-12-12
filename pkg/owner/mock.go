@@ -42,7 +42,6 @@ type mockManager struct {
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
 	listener     Listener
-	retireHook   func()
 	campaignDone chan struct{}
 	resignDone   chan struct{}
 }

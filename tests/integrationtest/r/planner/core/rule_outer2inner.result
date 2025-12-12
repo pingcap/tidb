@@ -1,0 +1,152 @@
+DROP TABLE IF EXISTS `t0`;
+CREATE TABLE `t0` (
+`c0` int
+);
+INSERT INTO `t0` VALUES (61);
+DROP TABLE IF EXISTS `t1`;
+CREATE TABLE `t1` (
+`c1` int,
+`c2` double
+);
+INSERT INTO `t1` VALUES (NULL,0);
+DROP TABLE IF EXISTS `t2`;
+CREATE TABLE `t2` (
+`c3` varchar(100),
+`c4` varchar(100)
+) ;
+INSERT INTO `t2` VALUES (NULL,NULL);
+select
+subq_0.c_0 as c_0,
+subq_0.c_1 as c_1,
+subq_0.c_2 as c_2
+from
+(select
+ref_1.c0 as c_0,
+ref_0.c2 as c_1,
+ref_0.c2 as c_2
+from
+(t1 as ref_0
+right join (t0 as ref_1
+)
+on (ref_0.c1 = ref_1.c0 ))
+) as subq_0
+where ((('' = (
+select
+(' n1`')  as c_0
+from
+(t2 as ref_3
+left join t2 as ref_4
+on (ref_3.c4 = ref_4.c3 ))
+where ((subq_0.c_1) <> (subq_0.c_2))
+or (true)
+order by c_0 desc
+limit 1)) is null));
+c_0	c_1	c_2
+explain format='plan_tree' select
+subq_0.c_0 as c_0,
+subq_0.c_1 as c_1,
+subq_0.c_2 as c_2
+from
+(select
+ref_1.c0 as c_0,
+ref_0.c2 as c_1,
+ref_0.c2 as c_2
+from
+(t1 as ref_0
+right join (t0 as ref_1
+)
+on (ref_0.c1 = ref_1.c0 ))
+) as subq_0
+where ((('' = (
+select
+(' n1`')  as c_0
+from
+(t2 as ref_3
+left join t2 as ref_4
+on (ref_3.c4 = ref_4.c3 ))
+where ((subq_0.c_1) <> (subq_0.c_2))
+or (true)
+order by c_0 desc
+limit 1)) is null));
+id	task	access object	operator info
+Projection	root		planner__core__rule_outer2inner.t0.c0, planner__core__rule_outer2inner.t1.c2, planner__core__rule_outer2inner.t1.c2
+└─Selection	root		isnull(eq("", Column#12))
+  └─Apply	root		CARTESIAN left outer join, left side:HashJoin
+    ├─HashJoin(Build)	root		right outer join, left side:TableReader, equal:[eq(planner__core__rule_outer2inner.t1.c1, planner__core__rule_outer2inner.t0.c0)]
+    │ ├─TableReader(Build)	root		data:TableFullScan
+    │ │ └─TableFullScan	cop[tikv]	table:ref_1	keep order:false, stats:pseudo
+    │ └─TableReader(Probe)	root		data:Selection
+    │   └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t1.c1))
+    │     └─TableFullScan	cop[tikv]	table:ref_0	keep order:false, stats:pseudo
+    └─Projection(Probe)	root		 n1`->Column#12
+      └─Limit	root		offset:0, count:1
+        └─HashJoin	root		left outer join, left side:Limit, equal:[eq(planner__core__rule_outer2inner.t2.c4, planner__core__rule_outer2inner.t2.c3)]
+          ├─Limit(Build)	root		offset:0, count:1
+          │ └─TableReader	root		data:Limit
+          │   └─Limit	cop[tikv]		offset:0, count:1
+          │     └─TableFullScan	cop[tikv]	table:ref_3	keep order:false, stats:pseudo
+          └─TableReader(Probe)	root		data:Selection
+            └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t2.c3))
+              └─TableFullScan	cop[tikv]	table:ref_4	keep order:false, stats:pseudo
+DROP TABLE IF EXISTS `t0`;
+CREATE TABLE `t0` (
+`c0` int
+);
+INSERT INTO `t0` VALUES (1),(2),(3),(4),(5),(6),(7),(8);
+DROP TABLE IF EXISTS `t1`;
+CREATE TABLE `t1` (
+`c1` double
+);
+INSERT INTO `t1` VALUES (1),(2),(3),(4),(5),(6),(7),(8);
+DROP TABLE IF EXISTS `t2`;
+DROP VIEW IF EXISTS `t2`;
+CREATE VIEW `t2` (`c_0`,  `c_1`,  `c_2`)
+AS SELECT DISTINCT `ref_0`.`c0` AS `c_0`,
+RIGHT( ((_UTF8MB4'1>yQ') ),
+CASE WHEN (((`ref_0`.`c0`)>(SELECT DISTINCT `ref_0`.`c0` AS `c_0` FROM `t0`
+WHERE  ((SELECT `c1` AS `c1` FROM `t1` ORDER BY `t1`.`c1` LIMIT 2,1)) <
+((SELECT `c1` AS `c1` FROM `t1` ORDER BY `t1`.`c1` LIMIT 1,1)) ORDER BY `c_0` LIMIT 1)))
+THEN (1) ELSE (2) END) AS `c_1`,
+(SELECT SUM(`t1`.`c1`) AS `sum(t1.c1)` FROM `t1`) AS `c_2`
+FROM `t0` AS `ref_0`
+ORDER BY`c_0`, `c_1`, `c_2`;
+select distinct
+subq_0.c_0 as c_0
+from
+(select
+(select c_2 from t2 order by t2.c_2 limit 1 offset 6)
+as c_0
+from
+t2 as ref_0
+where (ref_0.c_2) is not null
+order by c_0 desc
+) as subq_0;
+c_0
+36
+select distinct
+subq_0.c_0 as c_0
+from
+(select
+(select c_2 from t2 order by t2.c_2 limit 1 offset 6)
+as c_0
+from
+t2 as ref_0
+where (ref_0.c_2) is not null
+order by c_0 desc
+) as subq_0
+where
+((subq_0.c_0) is null);
+c_0
+drop table if exists t0;
+drop table if exists t1;
+CREATE TABLE t0(c0 INT);
+INSERT INTO t0 VALUES (1);
+CREATE TABLE t1(c0 INT);
+INSERT INTO t1(c0) VALUES (0);
+SELECT
+t0.c0 AS ref0,
+t1.c0 AS ref1
+FROM t0
+RIGHT OUTER JOIN t1 ON t0.c0 = t1.c0
+WHERE (t1.c0 AND (t0.c0 != NULL)) IS FALSE;
+ref0	ref1

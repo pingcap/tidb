@@ -1,6 +1,11 @@
 # See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners_aliases
 # The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
 aliases:
+  sig-approvers-stats:
+    - mjonss
+    - 0xPoe
+    - time-and-fate
+    - terry1purcell
   sig-critical-approvers-tidb-server:
     - yudongusa
     - BenMeadowcroft
@@ -43,14 +48,13 @@ aliases:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
+    - OliverS929
   sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-ddl:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
@@ -58,49 +62,42 @@ aliases:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-dumpling:
     - Benjamin2037
     - gmhdbjd
-    - tangenta
+    - D3Hunter
   sig-approvers-infoschema:
     - wjhuang2016
-    - tangenta
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
   sig-approvers-meta:
     - Benjamin2037
     - gmhdbjd
-    - tangenta
     - wjhuang2016
     - D3Hunter
   sig-approvers-owner:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
     - D3Hunter
   sig-approvers-parser:
     - bb7133
+    - Benjamin2037
     - BornChanger
     - D3Hunter
-    - tangenta
   sig-approvers-resourcemanager:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-table:
     - Benjamin2037
     - cfzjywxk
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-lock:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
   sig-approvers-tidb-binlog:
     - Benjamin2037
@@ -127,7 +124,6 @@ aliases:
   sig-community-reviewers:
     - CabinfeverB
     - ChenPeng2013
-    - King-Dylan
     - LittleFall
     - MoCuishle28
     - RidRisR
@@ -145,8 +141,8 @@ aliases:
     - fzzf678
     - gengliqi
     - ghazalfamilyusa
+    - henrybw
     - iamxy
-    - joechenrh
     - js00070
     - lamxTyler
     - longfangsong
@@ -159,6 +155,7 @@ aliases:
     - spongedu
     - tangwz
     - tsthght
+    - wddevries
     - xzhangxian1008
     - yibin87
     - zhangjinpeng1987
@@ -182,9 +179,11 @@ aliases:
     - GMHDBJD
     - IANTHEREAL
     - JmPotato
+    - King-Dylan
     - Leavrth
     - Little-Wallace
     - MyonKeminta
+    - OliverS929
     - Reminiscent
     - SunRunAway
     - Tammyxia
@@ -230,6 +229,7 @@ aliases:
     - jackysp
     - jiyfhust
     - joccau
+    - joechenrh
     - july2993
     - kennytm
     - lance6716

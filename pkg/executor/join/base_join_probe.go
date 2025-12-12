@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	plannerbase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -192,12 +192,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	physicalRows := chk.Column(0).Rows()
 	j.usedRows = chk.Sel()
 	if j.usedRows == nil {
-		if cap(j.selRows) >= logicalRows {
-			j.selRows = j.selRows[:logicalRows]
+		if logicalRows <= fakeSelLength {
+			j.selRows = fakeSel[:logicalRows]
 		} else {
-			j.selRows = make([]int, 0, logicalRows)
+			j.selRows = make([]int, logicalRows)
 			for i := range logicalRows {
-				j.selRows = append(j.selRows, i)
+				j.selRows[i] = i
 			}
 		}
 		j.usedRows = j.selRows
@@ -725,7 +725,7 @@ func commonInitForScanRowTable(base *baseJoinProbe) *rowIter {
 }
 
 // NewJoinProbe create a join probe used for hash join v2
-func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType plannerbase.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
@@ -772,23 +772,23 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		base.rowIndexInfos = make([]matchedRowInfo, 0, chunk.InitialCapacity)
 	}
 	switch joinType {
-	case logicalop.InnerJoin:
+	case plannerbase.InnerJoin:
 		return &innerJoinProbe{base}
-	case logicalop.LeftOuterJoin:
+	case plannerbase.LeftOuterJoin:
 		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
-	case logicalop.RightOuterJoin:
+	case plannerbase.RightOuterJoin:
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
-	case logicalop.SemiJoin:
+	case plannerbase.SemiJoin:
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for semi join")
 		}
 		return newSemiJoinProbe(base, !rightAsBuildSide)
-	case logicalop.AntiSemiJoin:
+	case plannerbase.AntiSemiJoin:
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for anti semi join")
 		}
 		return newAntiSemiJoinProbe(base, !rightAsBuildSide)
-	case logicalop.LeftOuterSemiJoin:
+	case plannerbase.LeftOuterSemiJoin:
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for left outer semi join")
 		}
@@ -796,7 +796,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 			return newLeftOuterSemiJoinProbe(base, false)
 		}
 		panic("unsupported join type")
-	case logicalop.AntiLeftOuterSemiJoin:
+	case plannerbase.AntiLeftOuterSemiJoin:
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for left outer anti semi join")
 		}

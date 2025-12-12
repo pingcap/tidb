@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -298,7 +299,41 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
 
+func TestInitCompressedFiles(t *testing.T) {
+	username, err := user.Current()
+	require.NoError(t, err)
+	if username.Name == "root" {
+		t.Skip("it cannot run as root")
+	}
+	tempDir := t.TempDir()
+	ctx := context.Background()
+
+	for i := range 2048 {
+		fileName := filepath.Join(tempDir, fmt.Sprintf("test_%d.csv.gz", i))
+		require.NoError(t, os.WriteFile(fileName, []byte{}, 0o644))
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return(250)`)
+	c := LoadDataController{
+		Plan: &Plan{
+			Format:         DataFormatCSV,
+			InImportInto:   true,
+			Charset:        &defaultCharacterSet,
+			LineFieldsInfo: newDefaultLineFieldsInfo(),
+			FieldNullDef:   defaultFieldNullDef,
+			Parameters:     &ImportParameters{},
+		},
+		logger: zap.NewExample(),
+	}
+
+	c.Path = filepath.Join(tempDir, "*.gz")
+	require.NoError(t, c.InitDataFiles(ctx))
+}
+
 func TestSupportedSuffixForServerDisk(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("nextgen doesn't support import from server disk")
+	}
 	username, err := user.Current()
 	require.NoError(t, err)
 	if username.Name == "root" {
@@ -430,6 +465,8 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy"},
 		},
 	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
 	for _, testcase := range testcases {
 		for _, fileName := range testcase.fileNames {
 			c.Format = DataFormatAuto

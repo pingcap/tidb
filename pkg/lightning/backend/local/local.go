@@ -43,10 +43,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
@@ -55,12 +56,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -259,13 +262,13 @@ func NewEncodingBuilder(ctx context.Context) encode.EncodingBuilder {
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
 func (b *encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return kv.NewTableKVEncoder(config, b.metrics)
+	return backendkv.NewTableKVEncoder(config, b.metrics)
 }
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
 func (*encodingBuilder) MakeEmptyRows() encode.Rows {
-	return kv.MakeRowsFromKvPairs(nil)
+	return backendkv.MakeRowsFromKvPairs(nil)
 }
 
 type targetInfoGetter struct {
@@ -430,8 +433,11 @@ type BackendConfig struct {
 	MaxConnPerStore int
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
-	// concurrency of generateJobForRange and import(write & ingest) workers
-	WorkerConcurrency int
+	// concurrency is used in these places:
+	// 1. generateJobForRange parallelism, only for local engine.
+	// 2. data size loaded from LoadIngestData, only for external engine.
+	// 3. region job worker pool size
+	WorkerConcurrency atomic.Int32
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
@@ -482,7 +488,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		WorkerConcurrency:           *atomic.NewInt32(int32(cfg.TikvImporter.RangeConcurrency) * 2),
 		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
@@ -507,6 +513,16 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 
 func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
+}
+
+// GetWorkerConcurrency gets the current concurrency of the backend
+func (c *BackendConfig) GetWorkerConcurrency() int {
+	return int(c.WorkerConcurrency.Load())
+}
+
+// SetWorkerConcurrency sets the current concurrency of the backend
+func (c *BackendConfig) SetWorkerConcurrency(concurrency int) {
+	c.WorkerConcurrency.Store(int32(concurrency))
 }
 
 // Backend is a local backend.
@@ -836,6 +852,109 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
+// forceTableSplitRange turns on force_partition_range for importing.
+// See https://github.com/tikv/tikv/pull/18866 for detail.
+// It returns a resetter to turn off.
+func (local *Backend) forceTableSplitRange(ctx context.Context,
+	startKey, endKey kv.Key, stores []*metapb.Store) (resetter func()) {
+	subctx, cancel := context.WithCancel(ctx)
+	var wg util.WaitGroupWrapper
+	clients := make([]sst.ImportSSTClient, 0, len(stores))
+	storeAddrs := make([]string, 0, len(stores))
+	const ttlSecond = uint64(3600) // default 1 hour
+	addReq := &sst.AddPartitionRangeRequest{
+		Range: &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+		TtlSeconds: ttlSecond,
+	}
+	removeReq := &sst.RemovePartitionRangeRequest{
+		Range: &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+	}
+
+	for _, store := range stores {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) {
+			continue
+		}
+		importCli, err := local.importClientFactory.create(subctx, store.Id)
+		if err != nil {
+			tidblogutil.Logger(subctx).Warn("create import client failed", zap.Error(err), zap.String("store", store.StatusAddress))
+			continue
+		}
+		clients = append(clients, importCli)
+		storeAddrs = append(storeAddrs, store.StatusAddress)
+	}
+
+	addTableSplitRange := func() {
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
+		for i, c := range clients {
+			_, err := c.AddForcePartitionRange(subctx, addReq)
+			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
+				failpoint.InjectCall("AddPartitionRangeForTable")
+			} else {
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
+	}
+
+	addTableSplitRange()
+	wg.Run(func() {
+		timeout := time.Duration(ttlSecond) * time.Second / 5 // 12min
+		ticker := time.NewTicker(timeout)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-subctx.Done():
+				return
+			case <-ticker.C:
+				addTableSplitRange()
+			}
+		}
+	})
+
+	resetter = func() {
+		cancel()
+		wg.Wait()
+
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
+		for i, c := range clients {
+			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
+			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
+				failpoint.InjectCall("RemovePartitionRangeRequest")
+			} else {
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
+	}
+	return resetter
+}
+
 func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {
 	ranges := make([]engineapi.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
 	curSize := uint64(0)
@@ -982,7 +1101,7 @@ func (local *Backend) generateAndSendJob(
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan engineapi.DataAndRanges)
-	conn := local.WorkerConcurrency
+	conn := int(local.WorkerConcurrency.Load())
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
@@ -1142,6 +1261,21 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	return nil
 }
 
+// GetExternalEngine returns the external engine by uuid.
+// If the engine is not found or not an external engine, it returns nil.
+// It's used to dynamically update the resource used by the external engine
+func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
+	e, ok := local.engineMgr.getExternalEngine(engineUUID)
+	if !ok {
+		return nil
+	}
+	ext, ok := e.(*external.Engine)
+	if !ok {
+		return nil
+	}
+	return ext
+}
+
 // ImportEngine imports an engine to TiKV.
 func (local *Backend) ImportEngine(
 	ctx context.Context,
@@ -1186,8 +1320,22 @@ func (local *Backend) ImportEngine(
 	if err != nil {
 		return err
 	}
+	intest.Assert(len(splitKeys) > 0)
+	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	if len(splitKeys) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
+		tidblogutil.Logger(ctx).Info("force table split range",
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
+		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
+		if err != nil {
+			return err
+		}
+		removeTableSplitRange := local.forceTableSplitRange(ctx, startKey, endKey, stores)
+		defer removeTableSplitRange()
+	}
+
+	if local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
 		tidblogutil.Logger(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -1209,10 +1357,10 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
-	if len(splitKeys) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+	if local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		tidblogutil.Logger(ctx).Info("switch import mode of ranges",
-			zap.String("startKey", hex.EncodeToString(splitKeys[0])),
-			zap.String("endKey", hex.EncodeToString(splitKeys[len(splitKeys)-1])))
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
@@ -1266,12 +1414,16 @@ func (local *Backend) doImport(
 	regionSplitSize, regionSplitKeyCnt int64,
 ) error {
 	/*
-	 [prepareAndSendJob]---jobToWorkerCh->[storeBalancer(optional)]->[workers]
-	                     ^                                             |
-	                     |                                     jobFromWorkerCh
-	                     |                                             |
-	                     |                                             v
-	               [regionJobRetryer]<-------------[dispatchJobGoroutine]-->done
+	 ┌─────────────────┐                   ┌─────────────┐   ┌────────────┐
+	 │prepareAndSendJob├───jobToWorkerCh──→│storeBalancer├──→│ workerpool │
+	 └─────────────────┘         ↑         └─────────────┘   └─────┬──────┘
+	                             │            (optional)           ↓
+	                             │                          jobFromWorkerCh
+	                             │                                 │
+	                             │                                 ↓
+	                    ┌────────┴─────────┐                ┌──────┴────────┐
+	                    │ regionJobRetryer │←───────────────┤  dispatcher   │──→done
+	                    └──────────────────┘                └───────────────┘
 	*/
 
 	// Above is the happy path workflow of region jobs. A job is generated by
@@ -1281,34 +1433,46 @@ func (local *Backend) doImport(
 	// use jobWg to wait for all jobs to be finished.
 	//
 	// To handle the error case, we still maintain the invariant, but the workflow
-	// becomes a bit more complex. When an error occurs, the owner components of a
-	// job need to convert the job to "done" state, or send all its owned jobs to
-	// next components. The exit order is important because if the next component is
+	// becomes a bit more complex. When an error occurs, the corresponding component
+	// need to convert the job to "done" state, or send all its owned jobs to next
+	// components. The exit order is important because if the next component is
 	// exited before the owner component, deadlock will happen.
 	//
-	// All components are spawned by workGroup so the main goroutine can wait all
-	// components to exit. Component exit order in happy path is:
+	// All components (except worker pool) are spawned by workGroup so the main goroutine
+	// can wait all components to exit. Worker pool uses the subcontext of workerCtx, so it
+	// can perceive the error from other components. Besides, it will also spawn a goroutine
+	// in the workGroup to notify the error from itself.
+	//
+	// The exit order in happy path is:
 	//
 	// 1. prepareAndSendJob is finished, its goroutine will wait all jobs are
-	// finished by jobWg.Wait(). Then it will exit and close the output channel of
-	// workers.
+	// finished by jobWg.Wait(). Then the worker pool will be closed, and close
+	// the output channel of this pool while quit the internal goroutine.
 	//
-	// 2. one-by-one, when every component see its input channel is closed, it knows
-	// the workflow is finished. It will exit and (except for workers) close the
-	// output channel which is the input channel of the next component.
+	// 2. one-by-one, when each component see its input channel is closed, it knows
+	// the workflow is finished. It will exit and close the output channel which is the
+	// input channel of the next component.
 	//
 	// 3. Now all components are exited, the main goroutine can exit after
 	// workGroup.Wait().
 	//
 	// Component exit order in error case is:
 	//
-	// 1. The error component exits and causes workGroup's context to be canceled.
+	// 1. Error occurs in worker pool
+	//      1.1 The subcontext will be canceled and cause its goroutine to exit.
+	//      1.2 The error is then broadcasted to the workGroup.
+	//      1.3 All other components exit due to canceled context. No need to close channels.
 	//
-	// 2. All other components will exit because of the canceled context. No need to
-	// close channels.
-	//
-	// 3. the main goroutine can see the error and exit after workGroup.Wait().
+	// 2. Error occurs in other components (e.g. retryer, dispatcher)
+	//      2.1 The error component exits and causes workGroup's context to be canceled.
+	//      2.2 All other components will exit because of the canceled context. No need to
+	//          close channels.
+	//      2.3 The worker pool will exit due to the canceled context too, we also need to
+	//          wait these workers to exit in the main goroutine.
+	//      2.4 The main goroutine can see the error and exit after workGroup.Wait().
+
 	var (
+		// workGroup is used to run all components in the workflow.
 		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
@@ -1338,84 +1502,38 @@ func (local *Backend) doImport(
 		return nil
 	})
 
-	// dispatchJobGoroutine
+	// dispatcher sends done jobs to retryer or marks them done.
+	dispatcher := newDispatcher(workerCtx, jobFromWorkerCh, &jobWg, retryer)
 	workGroup.Go(func() error {
-		var (
-			job *regionJob
-			ok  bool
-		)
-		for {
-			select {
-			case <-workerCtx.Done():
-				return nil
-			case job, ok = <-jobFromWorkerCh:
-			}
-			if !ok {
-				retryer.close()
-				return nil
-			}
-			switch job.stage {
-			case regionScanned, wrote:
-				job.retryCount++
-				if job.retryCount > MaxWriteAndIngestRetryTimes {
-					job.done(&jobWg)
-					lastErr := job.lastRetryableErr
-					intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
-					if lastErr == nil {
-						lastErr = errors.New("retry limit exceeded")
-						tidblogutil.Logger(ctx).Error(
-							"lastRetryableErr should not be nil",
-							logutil.Key("startKey", job.keyRange.Start),
-							logutil.Key("endKey", job.keyRange.End),
-							zap.Stringer("stage", job.stage),
-							zap.Error(lastErr))
-					}
-					return lastErr
-				}
-				// max retry backoff time: 2+4+8+16+30*26=810s
-				sleepSecond := min(math.Pow(2, float64(job.retryCount)), float64(maxRetryBackoffSecond))
-				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
-				tidblogutil.Logger(ctx).Info("put job back to jobCh to retry later",
-					logutil.Key("startKey", job.keyRange.Start),
-					logutil.Key("endKey", job.keyRange.End),
-					zap.Stringer("stage", job.stage),
-					zap.Int("retryCount", job.retryCount),
-					zap.Time("waitUntil", job.waitUntil))
-				if !retryer.push(job) {
-					// retryer is closed by worker error
-					job.done(&jobWg)
-				}
-			case ingested:
-				job.done(&jobWg)
-			case needRescan:
-				panic("should not reach here")
-			}
-		}
+		return dispatcher.run()
 	})
 
-	var (
-		toCh            = jobToWorkerCh
-		afterExecuteJob func([]*metapb.Peer)
-		clusterID       uint64
-	)
+	var clusterID uint64
 	if local.pdCli != nil {
 		clusterID = local.pdCli.GetClusterID(ctx)
+	}
+
+	pool := getRegionJobWorkerPool(
+		workerCtx, &jobWg,
+		local, balancer,
+		jobToWorkerCh, jobFromWorkerCh,
+		clusterID,
+	)
+	wctx := workerpool.NewContext(workerCtx)
+
+	if e, ok := engine.(*external.Engine); ok {
+		e.SetWorkerPool(pool)
 	}
 
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
 
-	if balancer != nil {
-		toCh = balancer.innerJobToWorkerCh
-		afterExecuteJob = balancer.releaseStoreLoad
-	}
-	for range local.WorkerConcurrency {
-		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
-		workGroup.Go(func() error {
-			return worker.run(workerCtx)
-		})
-	}
+	workGroup.Go(func() error {
+		pool.Start(wctx)
+		<-wctx.Done()
+		return wctx.OperatorErr()
+	})
 
 	failpoint.Label("afterStartWorker")
 
@@ -1447,7 +1565,10 @@ func (local *Backend) doImport(
 				return allZero
 			})
 		}
-		close(jobFromWorkerCh)
+
+		// Close the pool, as well as the channel.
+		wctx.Cancel()
+		pool.Release()
 		return nil
 	})
 
@@ -1459,12 +1580,14 @@ func (local *Backend) doImport(
 }
 
 func (local *Backend) newRegionJobWorker(
+	ctx context.Context,
 	clusterID uint64,
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 	afterExecuteJob func([]*metapb.Peer),
 ) regionJobWorker {
 	base := &regionJobBaseWorker{
+		ctx:              ctx,
 		jobInCh:          toCh,
 		jobOutCh:         jobFromWorkerCh,
 		jobWg:            jobWg,
@@ -1481,6 +1604,7 @@ func (local *Backend) newRegionJobWorker(
 			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, isHTTPS, local.nextgenHTTPCli, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
+			collector:      local.collector,
 		}
 		base.writeFn = cloudW.write
 		base.ingestFn = cloudW.ingest
@@ -1509,6 +1633,11 @@ func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
 func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	totalKVSize int64, totalKVCount int64) {
 	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
+}
+
+// GetExternalEngineConflictInfo returns conflict info of some engine.
+func (local *Backend) GetExternalEngineConflictInfo(engineUUID uuid.UUID) engineapi.ConflictInfo {
+	return local.engineMgr.getExternalEngineConflictInfo(engineUUID)
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is

@@ -128,14 +128,14 @@ drop table if exists t;
 CREATE TABLE t (a bigint unsigned PRIMARY KEY);
 INSERT INTO t VALUES (0),(1),(2),(3),(18446744073709551600),(18446744073709551605),(18446744073709551610),(18446744073709551615);
 ANALYZE TABLE t;
-EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a >= 0x1 AND a <= 0x2;
-id	estRows	task	access object	operator info
-TableReader	2.00	root		data:TableRangeScan
-└─TableRangeScan	2.00	cop[tikv]	table:t	range:[1,2], keep order:false
-EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a BETWEEN 0x1 AND 0x2;
-id	estRows	task	access object	operator info
-TableReader	2.00	root		data:TableRangeScan
-└─TableRangeScan	2.00	cop[tikv]	table:t	range:[1,2], keep order:false
+EXPLAIN FORMAT = 'plan_tree' SELECT a FROM t WHERE a >= 0x1 AND a <= 0x2;
+id	task	access object	operator info
+TableReader	root		data:TableRangeScan
+└─TableRangeScan	cop[tikv]	table:t	range:[1,2], keep order:false
+EXPLAIN FORMAT = 'plan_tree' SELECT a FROM t WHERE a BETWEEN 0x1 AND 0x2;
+id	task	access object	operator info
+TableReader	root		data:TableRangeScan
+└─TableRangeScan	cop[tikv]	table:t	range:[1,2], keep order:false
 SELECT a FROM t WHERE a BETWEEN 0xFFFFFFFFFFFFFFF5 AND X'FFFFFFFFFFFFFFFA';
 a
 18446744073709551605
@@ -762,19 +762,19 @@ c_int	c_str	c_decimal
 7	wizardly heisenberg	6.589000
 8	optimistic swirles	9.633000
 9	hungry haslett	2.659000
-explain format = 'brief' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
-id	estRows	task	access object	operator info
-SelectLock	3.20	root		for update 0
-└─HashJoin	3.20	root		CARTESIAN inner join, other cond:or(gt(Column#8, 1), or(ne(executor__issues.t1.c_str, Column#7), if(ne(Column#9, 0), NULL, 0)))
-  ├─Selection(Build)	0.80	root		ne(Column#10, 0)
-  │ └─StreamAgg	1.00	root		funcs:max(Column#27)->Column#7, funcs:count(distinct Column#28)->Column#8, funcs:sum(Column#29)->Column#9, funcs:count(1)->Column#10
-  │   └─Projection	3.00	root		executor__issues.t2.c_str->Column#27, executor__issues.t2.c_str->Column#28, cast(isnull(executor__issues.t2.c_str), decimal(20,0) BINARY)->Column#29
-  │     └─TableReader	3.00	root	partition:all	data:Selection
-  │       └─Selection	3.00	cop[tikv]		lt(executor__issues.t2.c_decimal, 5)
-  │         └─TableFullScan	5.00	cop[tikv]	table:t2	keep order:false
-  └─TableReader(Probe)	4.00	root	partition:all	data:Selection
-    └─Selection	4.00	cop[tikv]		if(isnull(executor__issues.t1.c_str), NULL, 1)
-      └─TableFullScan	5.00	cop[tikv]	table:t1	keep order:false
+explain format = 'plan_tree' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
+id	task	access object	operator info
+SelectLock	root		for update 0
+└─HashJoin	root		CARTESIAN inner join, other cond:or(gt(Column#8, 1), or(ne(executor__issues.t1.c_str, Column#7), if(ne(Column#9, 0), NULL, 0)))
+  ├─Selection(Build)	root		ne(Column#10, 0)
+  │ └─StreamAgg	root		funcs:max(Column#27)->Column#7, funcs:count(distinct Column#28)->Column#8, funcs:sum(Column#29)->Column#9, funcs:count(1)->Column#10
+  │   └─Projection	root		executor__issues.t2.c_str->Column#27, executor__issues.t2.c_str->Column#28, cast(isnull(executor__issues.t2.c_str), decimal(20,0) BINARY)->Column#29
+  │     └─TableReader	root	partition:all	data:Selection
+  │       └─Selection	cop[tikv]		lt(executor__issues.t2.c_decimal, 5)
+  │         └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	root	partition:all	data:Selection
+    └─Selection	cop[tikv]		if(isnull(executor__issues.t1.c_str), NULL, 1)
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false
 commit;
 set tidb_cost_model_version=default;
 drop table if exists trade, trade_history, status_type;

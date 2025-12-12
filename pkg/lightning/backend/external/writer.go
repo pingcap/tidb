@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -182,21 +181,23 @@ type WriterSummary struct {
 	// will be empty if no key is written.
 	Min tidbkv.Key
 	Max tidbkv.Key
-	// TotalSize is the total size of the data written by this writer.
+	// TotalSize is the total size of the KV written by this writer.
 	// depends on onDup setting, duplicates might not be included.
 	TotalSize uint64
 	// TotalCnt is the total count of the KV written by this writer.
 	// depends on onDup setting, duplicates might not be included.
-	TotalCnt           uint64
+	TotalCnt uint64
+	// KVFileCount is the total count of the KV files written by this writer.
+	KVFileCount        int
 	MultipleFilesStats []MultipleFilesStat
 	ConflictInfo       engineapi.ConflictInfo
 }
 
-// OnCloseFunc is the callback function when a writer is closed.
-type OnCloseFunc func(summary *WriterSummary)
+// OnWriterCloseFunc is the callback function when a writer is closed.
+type OnWriterCloseFunc func(summary *WriterSummary)
 
-// dummyOnCloseFunc is a dummy OnCloseFunc.
-func dummyOnCloseFunc(*WriterSummary) {}
+// dummyOnWriterCloseFunc is a dummy OnWriterCloseFunc.
+func dummyOnWriterCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
@@ -205,7 +206,7 @@ type WriterBuilder struct {
 	blockSize    int
 	propSizeDist uint64
 	propKeysDist uint64
-	onClose      OnCloseFunc
+	onClose      OnWriterCloseFunc
 	tikvCodec    tikv.Codec
 	onDup        engineapi.OnDuplicateKey
 }
@@ -217,7 +218,7 @@ func NewWriterBuilder() *WriterBuilder {
 		blockSize:    DefaultBlockSize,
 		propSizeDist: defaultPropSizeDist,
 		propKeysDist: defaultPropKeysDist,
-		onClose:      dummyOnCloseFunc,
+		onClose:      dummyOnWriterCloseFunc,
 	}
 }
 
@@ -243,9 +244,9 @@ func (b *WriterBuilder) SetPropKeysDistance(dist uint64) *WriterBuilder {
 }
 
 // SetOnCloseFunc sets the callback function when a writer is closed.
-func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
+func (b *WriterBuilder) SetOnCloseFunc(onClose OnWriterCloseFunc) *WriterBuilder {
 	if onClose == nil {
-		onClose = dummyOnCloseFunc
+		onClose = dummyOnWriterCloseFunc
 	}
 	b.onClose = onClose
 	return b
@@ -298,7 +299,6 @@ func (b *WriterBuilder) Build(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		memSizeLimit:   b.memSizeLimit,
 		store:          store,
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
@@ -433,13 +433,11 @@ type Writer struct {
 
 	rc *rangePropertiesCollector
 
-	memSizeLimit uint64
-
 	kvBuffer    *membuf.Buffer
 	kvLocations []membuf.SliceLocation
 	kvSize      int64
 
-	onClose OnCloseFunc
+	onClose OnWriterCloseFunc
 	onDup   engineapi.OnDuplicateKey
 	closed  bool
 
@@ -456,6 +454,8 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+	// since we have 1 stat file per kv file, so no need to count it separately.
+	kvFileCount int
 
 	tikvCodec tikv.Codec
 	// duplicate key's statistics.
@@ -500,6 +500,11 @@ func (w *Writer) LockForWrite() func() {
 	return func() {}
 }
 
+// WrittenBytes returns the number of bytes written by this writer.
+func (w *Writer) WrittenBytes() int64 {
+	return int64(w.totalSize)
+}
+
 // Close closes the writer.
 func (w *Writer) Close(ctx context.Context) error {
 	if w.closed {
@@ -516,7 +521,12 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
-		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
+		zap.String("maxKey", hex.EncodeToString(w.maxKey)),
+		zap.Int("kv-file-count", w.kvFileCount),
+		zap.Int("dup-file-count", len(w.conflictInfo.Files)),
+		zap.String("total-size", units.BytesSize(float64(w.totalSize))),
+		zap.Uint64("total-kv-cnt", w.totalCnt),
+	)
 
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{
@@ -527,20 +537,20 @@ func (w *Writer) Close(ctx context.Context) error {
 		Max:                w.maxKey,
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
+		KVFileCount:        w.kvFileCount,
 		MultipleFilesStats: w.multiFileStats,
 		ConflictInfo:       w.conflictInfo,
 	})
 	return nil
 }
 
-func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
+func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key) {
 	if len(w.minKey) == 0 || newMin.Cmp(w.minKey) < 0 {
 		w.minKey = newMin.Clone()
 	}
 	if len(w.maxKey) == 0 || newMax.Cmp(w.maxKey) > 0 {
 		w.maxKey = newMax.Clone()
 	}
-	w.totalSize += size
 }
 
 const flushKVsRetryTimes = 3
@@ -632,9 +642,11 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	// maintain 500-batch statistics
 	if len(w.kvLocations) > 0 {
 		w.totalCnt += uint64(len(w.kvLocations))
+		w.totalSize += uint64(w.kvSize)
+		w.kvFileCount++
 
 		minKey, maxKey := w.getKeyByLoc(&w.kvLocations[0]), w.getKeyByLoc(&w.kvLocations[len(w.kvLocations)-1])
-		w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
+		w.recordMinMax(minKey, maxKey)
 
 		w.addNewKVFile2MultiFileStats(dataFile, statFile, minKey, maxKey)
 	}
@@ -826,8 +838,7 @@ func (w *Writer) createDupWriter(ctx context.Context) (string, storage.ExternalF
 	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
 	writer, err := w.store.Create(ctx, path, &storage.WriterOption{
 		Concurrency: 20,
-		PartSize:    MinUploadPartSize,
-	})
+		PartSize:    MinUploadPartSize})
 	return path, writer, err
 }
 
@@ -896,6 +907,6 @@ func (e *EngineWriter) IsSynced() bool {
 }
 
 // Close implements backend.EngineWriter interface.
-func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (e *EngineWriter) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	return nil, e.w.Close(ctx)
 }

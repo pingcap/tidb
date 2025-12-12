@@ -139,8 +139,8 @@ func TestEnableSEM(t *testing.T) {
 
 	// Test restricted tables
 	require.True(t, IsInvisibleTable("mysql", "user"))
-	require.True(t, sem.isInvisibleTable("mysql", "db"))
-	require.False(t, sem.isInvisibleTable("test1", "tbl2"))
+	require.True(t, globalSem.Load().isInvisibleTable("mysql", "db"))
+	require.False(t, globalSem.Load().isInvisibleTable("test1", "tbl2"))
 
 	// Test restricted variables
 	require.True(t, IsInvisibleSysVar(vardef.SuperReadOnly))

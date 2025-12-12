@@ -73,6 +73,7 @@ func (smqh *Handle) Run() {
 	for {
 		select {
 		case <-ticker.C:
+			memory.HandleGlobalMemArbitratorRuntime(memory.ReadMemStats())
 			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryLimit.Load(), sm)
 		case <-smqh.exitCh:
 			return
@@ -102,7 +103,7 @@ func (s *sessionToBeKilled) reset() {
 func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm sessmgr.Manager) {
 	if s.isKilling {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
-			if info.Time == s.sqlStartTime {
+			if info.Time.Equal(s.sqlStartTime) {
 				if time.Since(s.lastLogTime) > 5*time.Second {
 					logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds",
 						time.Since(s.killStartTime)/time.Second),
@@ -136,6 +137,11 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm sessmgr.Manager) {
 	if bt == 0 {
 		return
 	}
+
+	if memory.UsingGlobalMemArbitration() {
+		return
+	}
+
 	failpoint.Inject("issue42662_2", func(val failpoint.Value) {
 		if val.(bool) {
 			bt = 1
@@ -239,7 +245,7 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 			types.NewDatum(info.memoryCurrent), // MEMORY_CURRENT
 			info.processInfoDatum[0],           // PROCESSID
 			info.processInfoDatum[9],           // MEM
-			info.processInfoDatum[10],          // DISK
+			info.processInfoDatum[13],          // DISK
 			info.processInfoDatum[2],           // CLIENT
 			info.processInfoDatum[3],           // DB
 			info.processInfoDatum[1],           // USER

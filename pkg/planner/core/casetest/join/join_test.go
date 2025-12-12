@@ -161,3 +161,88 @@ func TestJoinSimplifyCondition(t *testing.T) {
 				"  └─TableRowIDScan(Probe) 12.49 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 	})
 }
+
+func TestKeepingJoinKeys(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table t1 (a int, b int, c int)`)
+		tk.MustExec(`create table t2 (a int, b int, c int)`)
+		tk.MustExec(`set @@tidb_opt_always_keep_join_key=true`)
+
+		// join keys are kept
+		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t1.a=1`).Check(testkit.Rows(
+			`Projection root  1->Column#9`,
+			`└─HashJoin root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]`,
+			`  ├─TableReader(Build) root  data:Selection`,
+			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
+			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`  └─TableReader(Probe) root  data:Selection`,
+			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
+			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
+		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t2.a=1`).Check(testkit.Rows(
+			`Projection root  1->Column#9`,
+			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
+			`  ├─TableReader(Build) root  data:Selection`,
+			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
+			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`  └─TableReader(Probe) root  data:Selection`,
+			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
+			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
+		tk.MustQuery(`explain format='plan_tree' select 1 from t1, t2 where t1.a=1 and t1.a=t2.a`).Check(testkit.Rows(
+			`Projection root  1->Column#9`,
+			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
+			`  ├─TableReader(Build) root  data:Selection`,
+			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
+			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`  └─TableReader(Probe) root  data:Selection`,
+			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
+			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
+	})
+}
+
+func TestIssue60076And63314(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table t1 (a int, b int, c int)`)
+		tk.MustExec(`create table t2 (a int, b int, c int)`)
+		tk.MustExec(`create table t3 (a int, b int, c int)`)
+		tk.MustExec(`create table t4 (a int, b int, c int)`)
+		tk.MustExec(`set @@tidb_opt_always_keep_join_key=true`)
+
+		tk.MustQuery(`explain format='plan_tree' select /*+ leading(t1, t4) */ * from t1 join t2 on
+             t1.a=t2.a join t3 on t1.a=t3.a join t4 on t1.a=t4.a`).Check(testkit.Rows(
+			`Projection root  test.t1.a, test.t1.b, test.t1.c, test.t2.a, test.t2.b, test.t2.c, test.t3.a, test.t3.b, test.t3.c, test.t4.a, test.t4.b, test.t4.c`,
+			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t3.a)]`,
+			`  ├─TableReader(Build) root  data:Selection`,
+			`  │ └─Selection cop[tikv]  not(isnull(test.t3.a))`,
+			`  │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`,
+			`  └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
+			`    ├─TableReader(Build) root  data:Selection`,
+			`    │ └─Selection cop[tikv]  not(isnull(test.t2.a))`,
+			`    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`    └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.a, test.t4.a)]`,
+			`      ├─TableReader(Build) root  data:Selection`,
+			`      │ └─Selection cop[tikv]  not(isnull(test.t4.a))`,
+			`      │   └─TableFullScan cop[tikv] table:t4 keep order:false, stats:pseudo`,
+			`      └─TableReader(Probe) root  data:Selection`,
+			`        └─Selection cop[tikv]  not(isnull(test.t1.a))`,
+			`          └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
+		tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warnings
+
+		tk.MustQuery(`explain format='plan_tree' select /*+ leading(t1, t3) */ 1 from
+			t1 left join t2 on t1.a=t2.a join t3 on t1.b=t3.b where t1.a=1`).Check(testkit.Rows(
+			`Projection root  1->Column#13`,
+			`└─HashJoin root  left outer join, left side:HashJoin, equal:[eq(test.t1.a, test.t2.a)]`,
+			`  ├─TableReader(Build) root  data:Selection`,
+			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
+			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`  └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.b, test.t3.b)]`,
+			`    ├─TableReader(Build) root  data:Selection`,
+			`    │ └─Selection cop[tikv]  eq(test.t1.a, 1), not(isnull(test.t1.b))`,
+			`    │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`,
+			`    └─TableReader(Probe) root  data:Selection`,
+			`      └─Selection cop[tikv]  not(isnull(test.t3.b))`,
+			`        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`))
+		tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	})
+}

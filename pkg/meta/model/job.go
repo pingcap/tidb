@@ -525,6 +525,13 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 	return rawArgs, errors.Trace(err)
 }
 
+// UpdateJobArgsForTest updates job.args with the given update function.
+func UpdateJobArgsForTest(job *Job, update func(args []any) []any) {
+	if intest.InTest {
+		job.args = update(job.args)
+	}
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
@@ -594,6 +601,10 @@ func (job *Job) String() string {
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
+		if job.Type == ActionModifyColumn {
+			ret += fmt.Sprintf(", analyze_state:%d", job.ReorgMeta.AnalyzeState)
+			ret += fmt.Sprintf(", stage:%d", job.ReorgMeta.Stage)
+		}
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
 	}
@@ -704,7 +715,9 @@ func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
 }
 
-// AddSystemVars add a system variable in DDL job.
+// AddSystemVars adds a system variable to the DDL job.
+// These variables are passed from the front-end DDL session to the back-end worker that executes the job.
+// Retrieve them using job.GetSystemVars(xxx).
 func (job *Job) AddSystemVars(name string, value string) {
 	job.SessionVars[name] = value
 }
@@ -805,6 +818,36 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	}
 }
 
+// CheckInvolvingSchemaInfo check the job should set valid InvolvingSchemaInfo,
+// job scheduler uses this info to calculate job dependency, invalid
+// InvolvingSchemaInfo may cause job scheduler stuck or execute DDLs in wrong order.
+func (job *Job) CheckInvolvingSchemaInfo() error {
+	involvedSI := job.GetInvolvingSchemaInfo()
+	for _, info := range involvedSI {
+		var involvedObjTypes int
+		if info.Policy != InvolvingNone {
+			involvedObjTypes++
+		}
+		if info.ResourceGroup != InvolvingNone {
+			involvedObjTypes++
+		}
+		if info.Database != InvolvingNone || info.Table != InvolvingNone {
+			involvedObjTypes++
+		}
+		if involvedObjTypes != 1 {
+			return errors.New("InvolvingSchemaInfo must involve only one type of object among database/table, placement policy, resource group")
+		}
+		if info.Policy == InvolvingNone && info.ResourceGroup == InvolvingNone {
+			if info.Database == InvolvingNone || info.Table == InvolvingNone {
+				return errors.New("DDL job operating on schema or table, must have non-empty name set in InvolvingSchemaInfo")
+			} else if info.Database == InvolvingAll && info.Table != InvolvingAll {
+				return errors.New("DDL job operating on all databases, must not set table name in InvolvingSchemaInfo")
+			}
+		}
+	}
+	return nil
+}
+
 // ClearDecodedArgs clears the decoded args.
 func (job *Job) ClearDecodedArgs() {
 	job.args = nil
@@ -813,20 +856,23 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType `json:"type"`
-	JobArgs     JobArgs    `json:"-"`
-	args        []any
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
-	SnapshotVer uint64          `json:"snapshot_ver"`
-	RealStartTS uint64          `json:"real_start_ts"`
-	Revertible  bool            `json:"revertible"`
-	State       JobState        `json:"state"`
-	RowCount    int64           `json:"row_count"`
-	Warning     *terror.Error   `json:"warning"`
-	CtxVars     []any           `json:"-"`
-	SchemaVer   int64           `json:"schema_version"`
-	ReorgTp     ReorgType       `json:"reorg_tp"`
+	Type         ActionType `json:"type"`
+	JobArgs      JobArgs    `json:"-"`
+	args         []any
+	RawArgs      json.RawMessage `json:"raw_args"`
+	SchemaState  SchemaState     `json:"schema_state"`
+	SnapshotVer  uint64          `json:"snapshot_ver"`
+	RealStartTS  uint64          `json:"real_start_ts"`
+	Revertible   bool            `json:"revertible"`
+	State        JobState        `json:"state"`
+	RowCount     int64           `json:"row_count"`
+	Warning      *terror.Error   `json:"warning"`
+	CtxVars      []any           `json:"-"`
+	SchemaVer    int64           `json:"schema_version"`
+	ReorgTp      ReorgType       `json:"reorg_tp"`
+	ReorgStage   ReorgStage      `json:"reorg_stage"`
+	NeedAnalyze  bool            `json:"need_analyze"`
+	AnalyzeState int8            `json:"analyze_state"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -847,8 +893,29 @@ func (sub *SubJob) IsFinished() bool {
 		sub.State == JobStateCancelled
 }
 
+// CanEmbeddedAnalyze indicates that this sub-job can do embedded analyze right after the schema change.
+func (sub *SubJob) CanEmbeddedAnalyze() bool {
+	switch sub.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		if len(sub.CtxVars) > 0 {
+			needReorg, ok := sub.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
+	reorgMeta := parentJob.ReorgMeta
+	if reorgMeta != nil {
+		reorgMeta.Stage = sub.ReorgStage
+		reorgMeta.AnalyzeState = sub.AnalyzeState
+	}
 	return Job{
 		Version:         parentJob.Version,
 		ID:              parentJob.ID,
@@ -872,14 +939,16 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		ReorgMeta:       parentJob.ReorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
+		ReorgMeta:       reorgMeta,
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq), NeedAnalyze: sub.NeedAnalyze},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
 		Charset:         parentJob.Charset,
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
+		SQLMode:         parentJob.SQLMode,
+		SessionVars:     parentJob.SessionVars,
 	}
 }
 
@@ -896,6 +965,8 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaVer = ver
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+		sub.ReorgStage = proxyJob.ReorgMeta.Stage
+		sub.AnalyzeState = proxyJob.ReorgMeta.AnalyzeState
 	}
 }
 
@@ -925,6 +996,8 @@ type MultiSchemaInfo struct {
 
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
+	// NeedAnalyze is used to indicate whether we need to analyze the table after the sub-job is done.
+	NeedAnalyze bool `json:"-"`
 
 	AddColumns    []ast.CIStr `json:"-"`
 	DropColumns   []ast.CIStr `json:"-"`

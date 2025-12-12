@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -547,9 +548,10 @@ func TestDMLWithAddForeignKey(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_1pc='OFF';")
-	if !kerneltype.IsNextGen() {
-		tk.MustExec("set global tidb_enable_metadata_lock='OFF';")
+	if kerneltype.IsNextGen() {
+		t.Skip("The test requires disabling MDL. Skip it until it is rewritten")
 	}
+	tk.MustExec("set global tidb_enable_metadata_lock='OFF';")
 	tk.MustExec("set global tidb_enable_async_commit='ON'")
 
 	tkDML := testkit.NewTestKit(t, store)
@@ -662,4 +664,115 @@ func TestSelectForUpdateWriteConflict(t *testing.T) {
 	require.Error(t, t2err)
 	require.Contains(t, t2err.Error(), "Write conflict")
 	tk1.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 100"))
+}
+
+func TestIssue62775(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	testForSetup := func(createTable string, prepare string, query string, expectedData [][]any) {
+		tk.MustExec(createTable)
+		defer tk.MustExec("drop table if exists t")
+		tk.MustExec(prepare)
+
+		s, err := session.CreateSession4Test(store)
+		// Simulate session initializations of GC worker
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
+		s.GetSessionVars().CommonGlobalLoaded = true
+		s.GetSessionVars().InRestrictedSQL = true
+		require.NoError(t, err)
+		// The problem occurs in internal session.
+		s.SetConnectionID(0)
+		_, err = s.ExecuteInternal(ctx, "use test")
+		require.NoError(t, err)
+
+		require.Equal(t, uint64(0), s.GetSessionVars().LastCommitTS)
+
+		recordSet, err := s.ExecuteInternal(ctx, query)
+		require.NoError(t, err)
+		require.NotNil(t, recordSet)
+		rs := tk.ResultSetToResultWithCtx(ctx, recordSet, "failed to drain record set after query")
+		rs.Check(expectedData)
+
+		// Check the transaction is readonly, which can be inferred by commitTS == 0.
+		require.Equal(t, uint64(0), s.GetSessionVars().LastCommitTS)
+
+		// Verify that the LastCommitTS works for internal transaction, preventing the possibility that LastCommitTS
+		// is not set and thus causes the previous check false-negative.
+		_, err = s.ExecuteInternal(ctx, `update t set v = v + 1`)
+		require.NoError(t, err)
+		require.NotEqual(t, uint64(0), s.GetSessionVars().LastCommitTS)
+	}
+
+	// The following sub-cases covers the combination of:
+	// * Where clause:
+	//   * int PK (PKIsHandle == true)
+	//   * varchar PK, clustered (PKIsHandle == false; IsCommonHandle == ture)
+	//   * varchar PK, non-clustered
+	//   * Scan
+	// * Query:
+	//   * Columns without parentheses
+	//   * Columns with parentheses (affects the expression type)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10)`,
+		`select v from t where id = 1 for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key clustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select v from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key nonclustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select v from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10), (2, 20)`,
+		`select v from t for update`,
+		testkit.Rows("10", "20"),
+	)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10)`,
+		`select (v) from t where id = 1 for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key clustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select (v) from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key nonclustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select (v) from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10), (2, 20)`,
+		`select (v) from t for update`,
+		testkit.Rows("10", "20"),
+	)
 }

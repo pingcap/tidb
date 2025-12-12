@@ -1608,14 +1608,14 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
 			col := tblInfo.Columns[idxCol.Offset]
-			// If  the column is the primary key's column,
+			// If the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
-			if types.NeedRestoredData(&col.FieldType) {
+			if model.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
 				colIds = append(colIds, col.ID)
-				if collate.IsBinCollation(col.GetCollate()) {
+				if collate.IsBinCollation(model.GetIdxChangingFieldType(idxCol, col).GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
 					allRestoredData = append(allRestoredData, indexedValues[i])

@@ -15,8 +15,8 @@
 
 go install github.com/google/go-jsonnet/cmd/jsonnet@latest
 
-# ref https://github.com/grafana/grafonnet-lib/issues/338, use the forked 
-# repo which implements the addOverride and addTransformation funtion for 
+# ref https://github.com/grafana/grafonnet-lib/issues/338, use the forked
+# repo which implements the addOverride and addTransformation funtion for
 # new table.
 # TODO: update to https://github.com/grafana/grafonnet
 git clone https://github.com/nolouch/grafonnet-lib.git
@@ -24,5 +24,9 @@ git clone https://github.com/nolouch/grafonnet-lib.git
 export JSONNET_PATH=grafonnet-lib
 jsonnet tidb_summary_with_keyspace_name.jsonnet > tidb_summary_with_keyspace_name.json
 jsonnet tidb_resource_control_with_keyspace_name.jsonnet > tidb_resource_control_with_keyspace_name.json
+sed 's/TiDB-KeyspaceName/TiDB-Worker/g' ./tidb_with_keyspace_name.json | \
+  sed 's/job=\\"tidb\\"/job=\\"worker-tidb\\"/g' | \
+  sed 's/job=~\\"tidb/job=~\\"worker-tidb/g' | \
+  sed 's/keyspace_name=~\\"$keyspace_name\\", //g' |\
+  sed 's/keyspace_name=~\\"$keyspace_name\\"//g' > ./tidb_worker.json
 rm -rf $JSONNET_PATH
-

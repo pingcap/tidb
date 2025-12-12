@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -36,6 +37,23 @@ type PhysicalLock struct {
 
 	TblID2Handle       map[int64][]util.HandleCols
 	TblID2PhysTblIDCol map[int64]*expression.Column
+}
+
+// ExhaustPhysicalPlans4LogicalLock exhausts PhysicalLock plans from LogicalLock.
+func ExhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalLock)
+	if prop.IsFlashProp() {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+			"MPP mode may be blocked because operator `Lock` is not supported now.")
+		return nil, true, nil
+	}
+	childProp := prop.CloneEssentialFields()
+	lock := PhysicalLock{
+		Lock:               p.Lock,
+		TblID2Handle:       p.TblID2Handle,
+		TblID2PhysTblIDCol: p.TblID2PhysTblIDCol,
+	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), childProp)
+	return []base.PhysicalPlan{lock}, true, nil
 }
 
 // Init initializes PhysicalLock.

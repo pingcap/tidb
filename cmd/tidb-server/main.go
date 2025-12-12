@@ -867,6 +867,29 @@ func setGlobalVars() {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
 
+	// set instance variables
+	setInstanceVar := func(name string, value string) {
+		if value == "" || value == "0" {
+			return
+		}
+		old := variable.GetSysVar(name)
+		tmp := *old
+		tmp.Value = value
+		tmp.IsInitedFromConfig = true
+		variable.RegisterSysVar(&tmp)
+	}
+	{
+		setInstanceVar(vardef.TiDBStmtSummaryMaxStmtCount, strconv.FormatUint(cfg.Instance.StmtSummaryMaxStmtCount, 10))
+		setInstanceVar(vardef.TiDBServerMemoryLimit, cfg.Instance.ServerMemoryLimit)
+		setInstanceVar(vardef.TiDBMemArbitratorMode, cfg.Instance.MemArbitratorMode)
+		setInstanceVar(vardef.TiDBMemArbitratorSoftLimit, cfg.Instance.MemArbitratorSoftLimit)
+		setInstanceVar(vardef.TiDBServerMemoryLimitGCTrigger, cfg.Instance.ServerMemoryLimitGCTrigger)
+		setInstanceVar(vardef.TiDBInstancePlanCacheMaxMemSize, cfg.Instance.InstancePlanCacheMaxMemSize)
+		setInstanceVar(vardef.TiDBStatsCacheMemQuota, strconv.FormatUint(cfg.Instance.StatsCacheMemQuota, 10))
+		setInstanceVar(vardef.TiDBMemQuotaBindingCache, strconv.FormatUint(cfg.Instance.MemQuotaBindingCache, 10))
+		setInstanceVar(vardef.TiDBSchemaCacheSize, cfg.Instance.SchemaCacheSize)
+	}
+
 	variable.SetSysVar(vardef.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(vardef.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(vardef.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))

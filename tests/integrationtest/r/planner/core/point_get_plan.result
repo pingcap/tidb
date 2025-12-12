@@ -24,8 +24,7 @@ StreamAgg	root		funcs:count(planner__core__point_get_plan.t._tidb_rowid)->Column
 explain format='plan_tree' select *, date_format(b, "") from t where a =1 for update;
 id	task	access object	operator info
 Projection	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, date_format(cast(planner__core__point_get_plan.t.b, datetime BINARY), )->Column#4
-└─SelectLock	root		for update 0
-  └─Point_Get	root	table:t, index:idx(a)	
+└─Point_Get	root	table:t, index:idx(a)	
 create table t1 (pk int, a int, b int, primary key(pk), unique key(a));
 explain format='plan_tree' select t1.*, _tidb_rowid from t1 where a = 1;
 Error 1054 (42S22): Unknown column '_tidb_rowid' in 'field list'

@@ -2606,15 +2606,15 @@ create table t3(a int, b decimal(30,10));
 insert into t1 values (1,1),(1,1),(2,2),(3,3),(null,null);
 insert into t2 values (1,'1'),(2,'2'),(null,null),(null,'3');
 insert into t3 values (2,2.1),(3,3);
-explain format = 'brief' select * from t3 union select * from t1;
-id	estRows	task	access object	operator info
-HashAgg	16000.00	root		group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#7, funcs:firstrow(Column#8)->Column#8
-└─Union	20000.00	root		
-  ├─TableReader	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─Projection	10000.00	root		executor__executor.t1.a->Column#7, cast(executor__executor.t1.b, decimal(30,10) BINARY)->Column#8
-    └─TableReader	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t3 union select * from t1;
+id	task	access object	operator info
+HashAgg	root		group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#7, funcs:firstrow(Column#8)->Column#8
+└─Union	root		
+  ├─TableReader	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─Projection	root		executor__executor.t1.a->Column#7, cast(executor__executor.t1.b, decimal(30,10) BINARY)->Column#8
+    └─TableReader	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t3 union select * from t1;
 a	b
 NULL	NULL
@@ -2622,14 +2622,14 @@ NULL	NULL
 2	2.0000000000
 2	2.1000000000
 3	3.0000000000
-explain format = 'brief' select * from t2 union all select * from t1;
-id	estRows	task	access object	operator info
-Union	20000.00	root		
-├─TableReader	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─Projection	10000.00	root		executor__executor.t1.a->Column#7, cast(executor__executor.t1.b, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t2 union all select * from t1;
+id	task	access object	operator info
+Union	root		
+├─TableReader	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection	root		executor__executor.t1.a->Column#7, cast(executor__executor.t1.b, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8
+  └─TableReader	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 union all select * from t1;
 a	b
 NULL	NULL
@@ -2641,46 +2641,46 @@ NULL	3
 2	2
 2	2
 3	3
-explain format = 'brief' select * from t1 except select * from t3;
-id	estRows	task	access object	operator info
-HashJoin	6400.00	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t3.a)], other cond:nulleq(cast(executor__executor.t1.b, decimal(10,0) BINARY), executor__executor.t3.b)
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, executor__executor.t1.b, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a, funcs:firstrow(executor__executor.t1.b)->executor__executor.t1.b
-  └─TableReader	8000.00	root		data:HashAgg
-    └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, executor__executor.t1.b, 
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 except select * from t3;
+id	task	access object	operator info
+HashJoin	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t3.a)], other cond:nulleq(cast(executor__executor.t1.b, decimal(10,0) BINARY), executor__executor.t3.b)
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:executor__executor.t1.a, executor__executor.t1.b, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a, funcs:firstrow(executor__executor.t1.b)->executor__executor.t1.b
+  └─TableReader	root		data:HashAgg
+    └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, executor__executor.t1.b, 
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 except select * from t3;
 a	b
 NULL	NULL
 1	1
 2	2
-explain format = 'brief' select * from t1 intersect select * from t2;
-id	estRows	task	access object	operator info
-HashJoin	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)], other cond:nulleq(cast(executor__executor.t1.b, double BINARY), cast(executor__executor.t2.b, double BINARY))
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, executor__executor.t1.b, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a, funcs:firstrow(executor__executor.t1.b)->executor__executor.t1.b
-  └─TableReader	8000.00	root		data:HashAgg
-    └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, executor__executor.t1.b, 
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 intersect select * from t2;
+id	task	access object	operator info
+HashJoin	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)], other cond:nulleq(cast(executor__executor.t1.b, double BINARY), cast(executor__executor.t2.b, double BINARY))
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:executor__executor.t1.a, executor__executor.t1.b, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a, funcs:firstrow(executor__executor.t1.b)->executor__executor.t1.b
+  └─TableReader	root		data:HashAgg
+    └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, executor__executor.t1.b, 
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 intersect select * from t2;
 a	b
 NULL	NULL
 1	1
 2	2
-explain format = 'brief' select * from t1 union all select * from t2 union all select * from t3;
-id	estRows	task	access object	operator info
-Union	30000.00	root		
-├─Projection	10000.00	root		executor__executor.t1.a->Column#10, cast(executor__executor.t1.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
-│ └─TableReader	10000.00	root		data:TableFullScan
-│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-├─Projection	10000.00	root		executor__executor.t2.a->Column#10, cast(executor__executor.t2.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
-│ └─TableReader	10000.00	root		data:TableFullScan
-│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─Projection	10000.00	root		executor__executor.t3.a->Column#10, cast(executor__executor.t3.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 union all select * from t2 union all select * from t3;
+id	task	access object	operator info
+Union	root		
+├─Projection	root		executor__executor.t1.a->Column#10, cast(executor__executor.t1.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+│ └─TableReader	root		data:TableFullScan
+│   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+├─Projection	root		executor__executor.t2.a->Column#10, cast(executor__executor.t2.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+│ └─TableReader	root		data:TableFullScan
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection	root		executor__executor.t3.a->Column#10, cast(executor__executor.t3.b, varchar(30) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+  └─TableReader	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select * from t1 union all select * from t2 union all select * from t3;
 a	b
 NULL	NULL
@@ -2694,54 +2694,54 @@ NULL	3
 2	2.1000000000
 3	3
 3	3.0000000000
-explain format = 'brief' select * from t1 union all select * from t2 except select * from t3;
-id	estRows	task	access object	operator info
-HashJoin	12800.00	root		anti semi join, left side:HashAgg, equal:[nulleq(Column#10, executor__executor.t3.a)], other cond:nulleq(cast(Column#11, double BINARY), cast(executor__executor.t3.b, double BINARY))
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashAgg(Probe)	16000.00	root		group by:Column#10, Column#11, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11
-  └─Union	20000.00	root		
-    ├─Projection	10000.00	root		executor__executor.t1.a->Column#10, cast(executor__executor.t1.b, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
-    │ └─TableReader	10000.00	root		data:TableFullScan
-    │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 union all select * from t2 except select * from t3;
+id	task	access object	operator info
+HashJoin	root		anti semi join, left side:HashAgg, equal:[nulleq(Column#10, executor__executor.t3.a)], other cond:nulleq(cast(Column#11, double BINARY), cast(executor__executor.t3.b, double BINARY))
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:Column#10, Column#11, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11
+  └─Union	root		
+    ├─Projection	root		executor__executor.t1.a->Column#10, cast(executor__executor.t1.b, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+    │ └─TableReader	root		data:TableFullScan
+    │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 union all select * from t2 except select * from t3;
 a	b
 NULL	NULL
 NULL	3
 1	1
 2	2
-explain format = 'brief' select * from t1 intersect select * from t2 intersect select * from t1;
-id	estRows	task	access object	operator info
-HashJoin	5120.00	root		semi join, left side:HashJoin, equal:[nulleq(executor__executor.t1.a, executor__executor.t1.a) nulleq(executor__executor.t1.b, executor__executor.t1.b)]
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─HashJoin(Probe)	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)], other cond:nulleq(cast(executor__executor.t1.b, double BINARY), cast(executor__executor.t2.b, double BINARY))
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, executor__executor.t1.b, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a, funcs:firstrow(executor__executor.t1.b)->executor__executor.t1.b
-    └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, executor__executor.t1.b, 
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 intersect select * from t2 intersect select * from t1;
+id	task	access object	operator info
+HashJoin	root		semi join, left side:HashJoin, equal:[nulleq(executor__executor.t1.a, executor__executor.t1.a) nulleq(executor__executor.t1.b, executor__executor.t1.b)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)], other cond:nulleq(cast(executor__executor.t1.b, double BINARY), cast(executor__executor.t2.b, double BINARY))
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	root		group by:executor__executor.t1.a, executor__executor.t1.b, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a, funcs:firstrow(executor__executor.t1.b)->executor__executor.t1.b
+    └─TableReader	root		data:HashAgg
+      └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, executor__executor.t1.b, 
+        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 intersect select * from t2 intersect select * from t1;
 a	b
 NULL	NULL
 1	1
 2	2
-explain format = 'brief' select * from t1 union all select * from t2 intersect select * from t3;
-id	estRows	task	access object	operator info
-Union	16400.00	root		
-├─Projection	10000.00	root		executor__executor.t1.a->Column#10, cast(executor__executor.t1.b, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
-│ └─TableReader	10000.00	root		data:TableFullScan
-│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─HashJoin	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)], other cond:nulleq(cast(executor__executor.t2.b, double BINARY), cast(executor__executor.t3.b, double BINARY))
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	8000.00	root		group by:executor__executor.t2.a, executor__executor.t2.b, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a, funcs:firstrow(executor__executor.t2.b)->executor__executor.t2.b
-    └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t2.a, executor__executor.t2.b, 
-        └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 union all select * from t2 intersect select * from t3;
+id	task	access object	operator info
+Union	root		
+├─Projection	root		executor__executor.t1.a->Column#10, cast(executor__executor.t1.b, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#11
+│ └─TableReader	root		data:TableFullScan
+│   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashJoin	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)], other cond:nulleq(cast(executor__executor.t2.b, double BINARY), cast(executor__executor.t3.b, double BINARY))
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	root		group by:executor__executor.t2.a, executor__executor.t2.b, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a, funcs:firstrow(executor__executor.t2.b)->executor__executor.t2.b
+    └─TableReader	root		data:HashAgg
+      └─HashAgg	cop[tikv]		group by:executor__executor.t2.a, executor__executor.t2.b, 
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 union all select * from t2 intersect select * from t3;
 a	b
 NULL	NULL
@@ -2749,20 +2749,20 @@ NULL	NULL
 1	1
 2	2
 3	3
-explain format = 'brief' select * from t1 except select * from t2 intersect select * from t3;
-id	estRows	task	access object	operator info
-HashJoin	6400.00	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)], other cond:nulleq(cast(executor__executor.t1.b, double BINARY), cast(executor__executor.t2.b, double BINARY))
-├─HashJoin(Build)	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)], other cond:nulleq(cast(executor__executor.t2.b, double BINARY), cast(executor__executor.t3.b, double BINARY))
-│ ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│ └─HashAgg(Probe)	8000.00	root		group by:executor__executor.t2.a, executor__executor.t2.b, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a, funcs:firstrow(executor__executor.t2.b)->executor__executor.t2.b
-│   └─TableReader	8000.00	root		data:HashAgg
-│     └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t2.a, executor__executor.t2.b, 
-│       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, executor__executor.t1.b, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a, funcs:firstrow(executor__executor.t1.b)->executor__executor.t1.b
-  └─TableReader	8000.00	root		data:HashAgg
-    └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, executor__executor.t1.b, 
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 except select * from t2 intersect select * from t3;
+id	task	access object	operator info
+HashJoin	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)], other cond:nulleq(cast(executor__executor.t1.b, double BINARY), cast(executor__executor.t2.b, double BINARY))
+├─HashJoin(Build)	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)], other cond:nulleq(cast(executor__executor.t2.b, double BINARY), cast(executor__executor.t3.b, double BINARY))
+│ ├─TableReader(Build)	root		data:TableFullScan
+│ │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+│ └─HashAgg(Probe)	root		group by:executor__executor.t2.a, executor__executor.t2.b, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a, funcs:firstrow(executor__executor.t2.b)->executor__executor.t2.b
+│   └─TableReader	root		data:HashAgg
+│     └─HashAgg	cop[tikv]		group by:executor__executor.t2.a, executor__executor.t2.b, 
+│       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:executor__executor.t1.a, executor__executor.t1.b, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a, funcs:firstrow(executor__executor.t1.b)->executor__executor.t1.b
+  └─TableReader	root		data:HashAgg
+    └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, executor__executor.t1.b, 
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 except select * from t2 intersect select * from t3;
 a	b
 NULL	NULL
@@ -2773,49 +2773,49 @@ set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (c1 year(4), c2 int, key(c1));
 insert into t values(2001, 1);
-explain format = 'brief' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format = 'plan_tree' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+id	task	access object	operator info
+TableDual	root		rows:0
 select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c1
-explain format = 'brief' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format = 'plan_tree' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+id	task	access object	operator info
+TableDual	root		rows:0
 select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
-explain format = 'brief' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#7
-└─TableDual	0.00	root		rows:0
+explain format = 'plan_tree' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+id	task	access object	operator info
+StreamAgg	root		funcs:count(1)->Column#7
+└─TableDual	root		rows:0
 select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 count(*)
 0
-explain format = 'brief' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format = 'plan_tree' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+id	task	access object	operator info
+TableDual	root		rows:0
 select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c1
-explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format = 'plan_tree' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+id	task	access object	operator info
+TableDual	root		rows:0
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 c1	c2	c1	c2
-explain format = 'brief' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#7
-└─TableDual	0.00	root		rows:0
+explain format = 'plan_tree' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+id	task	access object	operator info
+StreamAgg	root		funcs:count(1)->Column#7
+└─TableDual	root		rows:0
 select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 count(*)
 0
-explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
-id	estRows	task	access object	operator info
-HashJoin	12487.50	root		left outer join, left side:TableReader, equal:[eq(executor__executor.t.c1, executor__executor.t.c1)]
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(executor__executor.t.c1))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	9990.00	root		data:Selection
-  └─Selection	9990.00	cop[tikv]		not(isnull(executor__executor.t.c1))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(executor__executor.t.c1, executor__executor.t.c1)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(executor__executor.t.c1))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(executor__executor.t.c1))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
 c1	c2	c1	c2
 2001	1	2001	1
@@ -2827,27 +2827,27 @@ create table t3 like t1;
 insert into t1 values (1),(1),(2),(3),(null);
 insert into t2 values (1),(2),(null),(null);
 insert into t3 values (2),(3);
-explain format='brief' select * from t3 union select * from t1;
-id	estRows	task	access object	operator info
-HashAgg	16000.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
-└─Union	20000.00	root		
-  ├─TableReader	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t3 union select * from t1;
+id	task	access object	operator info
+HashAgg	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
+└─Union	root		
+  ├─TableReader	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─TableReader	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t3 union select * from t1;
 a
 NULL
 1
 2
 3
-explain format='brief' select * from t2 union all select * from t1;
-id	estRows	task	access object	operator info
-Union	20000.00	root		
-├─TableReader	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t2 union all select * from t1;
+id	task	access object	operator info
+Union	root		
+├─TableReader	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 union all select * from t1;
 a
 NULL
@@ -2859,42 +2859,42 @@ NULL
 2
 2
 3
-explain format='brief' select * from t1 except select * from t3;
-id	estRows	task	access object	operator info
-HashJoin	6400.00	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t3.a)]
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
-  └─TableReader	8000.00	root		data:HashAgg
-    └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, 
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 except select * from t3;
+id	task	access object	operator info
+HashJoin	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t3.a)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
+  └─TableReader	root		data:HashAgg
+    └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, 
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 except select * from t3;
 a
 NULL
 1
-explain format='brief' select * from t1 intersect select * from t2;
-id	estRows	task	access object	operator info
-HashJoin	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)]
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
-  └─TableReader	8000.00	root		data:HashAgg
-    └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, 
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 intersect select * from t2;
+id	task	access object	operator info
+HashJoin	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
+  └─TableReader	root		data:HashAgg
+    └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, 
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 intersect select * from t2;
 a
 NULL
 1
 2
-explain format='brief' select * from t1 union all select * from t2 union all select * from t3;
-id	estRows	task	access object	operator info
-Union	30000.00	root		
-├─TableReader	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-├─TableReader	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 union all select * from t2 union all select * from t3;
+id	task	access object	operator info
+Union	root		
+├─TableReader	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+├─TableReader	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select * from t1 union all select * from t2 union all select * from t3;
 a
 NULL
@@ -2908,50 +2908,50 @@ NULL
 2
 3
 3
-explain format='brief' select * from t1 union all select * from t2 except select * from t3;
-id	estRows	task	access object	operator info
-HashJoin	12800.00	root		anti semi join, left side:HashAgg, equal:[nulleq(Column#7, executor__executor.t3.a)]
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashAgg(Probe)	16000.00	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
-  └─Union	20000.00	root		
-    ├─TableReader	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 union all select * from t2 except select * from t3;
+id	task	access object	operator info
+HashJoin	root		anti semi join, left side:HashAgg, equal:[nulleq(Column#7, executor__executor.t3.a)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
+  └─Union	root		
+    ├─TableReader	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 union all select * from t2 except select * from t3;
 a
 NULL
 1
-explain format='brief' select * from t1 intersect select * from t2 intersect select * from t1;
-id	estRows	task	access object	operator info
-HashJoin	5120.00	root		semi join, left side:HashJoin, equal:[nulleq(executor__executor.t1.a, executor__executor.t1.a)]
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─HashJoin(Probe)	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)]
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
-    └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, 
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 intersect select * from t2 intersect select * from t1;
+id	task	access object	operator info
+HashJoin	root		semi join, left side:HashJoin, equal:[nulleq(executor__executor.t1.a, executor__executor.t1.a)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
+    └─TableReader	root		data:HashAgg
+      └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, 
+        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 intersect select * from t2 intersect select * from t1;
 a
 NULL
 1
 2
-explain format='brief' select * from t1 union all select * from t2 intersect select * from t3;
-id	estRows	task	access object	operator info
-Union	16400.00	root		
-├─TableReader	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─HashJoin	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)]
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	8000.00	root		group by:executor__executor.t2.a, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a
-    └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t2.a, 
-        └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 union all select * from t2 intersect select * from t3;
+id	task	access object	operator info
+Union	root		
+├─TableReader	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashJoin	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	root		group by:executor__executor.t2.a, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a
+    └─TableReader	root		data:HashAgg
+      └─HashAgg	cop[tikv]		group by:executor__executor.t2.a, 
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 union all select * from t2 intersect select * from t3;
 a
 NULL
@@ -2960,55 +2960,55 @@ NULL
 2
 2
 3
-explain format='brief' select * from t1 except select * from t2 intersect select * from t3;
-id	estRows	task	access object	operator info
-HashJoin	6400.00	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)]
-├─HashJoin(Build)	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)]
-│ ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│ └─HashAgg(Probe)	8000.00	root		group by:executor__executor.t2.a, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a
-│   └─TableReader	8000.00	root		data:HashAgg
-│     └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t2.a, 
-│       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
-  └─TableReader	8000.00	root		data:HashAgg
-    └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, 
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 except select * from t2 intersect select * from t3;
+id	task	access object	operator info
+HashJoin	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)]
+├─HashJoin(Build)	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)]
+│ ├─TableReader(Build)	root		data:TableFullScan
+│ │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+│ └─HashAgg(Probe)	root		group by:executor__executor.t2.a, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a
+│   └─TableReader	root		data:HashAgg
+│     └─HashAgg	cop[tikv]		group by:executor__executor.t2.a, 
+│       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
+  └─TableReader	root		data:HashAgg
+    └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, 
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 except select * from t2 intersect select * from t3;
 a
 NULL
 1
 3
-explain format='brief' select * from t1 intersect (select * from t2 except (select * from t3));
-id	estRows	task	access object	operator info
-HashJoin	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)]
-├─HashJoin(Build)	6400.00	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)]
-│ ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│ └─HashAgg(Probe)	8000.00	root		group by:executor__executor.t2.a, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a
-│   └─TableReader	8000.00	root		data:HashAgg
-│     └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t2.a, 
-│       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
-  └─TableReader	8000.00	root		data:HashAgg
-    └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, 
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 intersect (select * from t2 except (select * from t3));
+id	task	access object	operator info
+HashJoin	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t2.a)]
+├─HashJoin(Build)	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)]
+│ ├─TableReader(Build)	root		data:TableFullScan
+│ │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+│ └─HashAgg(Probe)	root		group by:executor__executor.t2.a, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a
+│   └─TableReader	root		data:HashAgg
+│     └─HashAgg	cop[tikv]		group by:executor__executor.t2.a, 
+│       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
+  └─TableReader	root		data:HashAgg
+    └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, 
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 intersect (select * from t2 except (select * from t3));
 a
 NULL
 1
-explain format='brief' select * from t1 union all (select * from t2 except select * from t3);
-id	estRows	task	access object	operator info
-Union	16400.00	root		
-├─TableReader	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─HashJoin	6400.00	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)]
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	8000.00	root		group by:executor__executor.t2.a, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a
-    └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t2.a, 
-        └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 union all (select * from t2 except select * from t3);
+id	task	access object	operator info
+Union	root		
+├─TableReader	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashJoin	root		anti semi join, left side:HashAgg, equal:[nulleq(executor__executor.t2.a, executor__executor.t3.a)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	root		group by:executor__executor.t2.a, funcs:firstrow(executor__executor.t2.a)->executor__executor.t2.a
+    └─TableReader	root		data:HashAgg
+      └─HashAgg	cop[tikv]		group by:executor__executor.t2.a, 
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 union all (select * from t2 except select * from t3);
 a
 NULL
@@ -3018,39 +3018,39 @@ NULL
 1
 2
 3
-explain format='brief' select * from t1 union (select * from t2 union all select * from t3);
-id	estRows	task	access object	operator info
-HashAgg	24000.00	root		group by:Column#8, funcs:firstrow(Column#8)->Column#8
-└─Union	30000.00	root		
-  ├─TableReader	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Union	20000.00	root		
-    ├─TableReader	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─TableReader	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 union (select * from t2 union all select * from t3);
+id	task	access object	operator info
+HashAgg	root		group by:Column#8, funcs:firstrow(Column#8)->Column#8
+└─Union	root		
+  ├─TableReader	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Union	root		
+    ├─TableReader	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select * from t1 union (select * from t2 union all select * from t3);
 a
 NULL
 1
 2
 3
-explain format='brief' (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
-id	estRows	task	access object	operator info
-HashJoin	5120.00	root		anti semi join, left side:HashJoin, equal:[nulleq(executor__executor.t1.a, Column#9)]
-├─HashAgg(Build)	16000.00	root		group by:Column#9, funcs:firstrow(Column#9)->Column#9
-│ └─Union	20000.00	root		
-│   ├─TableReader	10000.00	root		data:TableFullScan
-│   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-│   └─TableReader	10000.00	root		data:TableFullScan
-│     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	6400.00	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t1.a)]
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	8000.00	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
-    └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:executor__executor.t1.a, 
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
+id	task	access object	operator info
+HashJoin	root		anti semi join, left side:HashJoin, equal:[nulleq(executor__executor.t1.a, Column#9)]
+├─HashAgg(Build)	root		group by:Column#9, funcs:firstrow(Column#9)->Column#9
+│ └─Union	root		
+│   ├─TableReader	root		data:TableFullScan
+│   │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│   └─TableReader	root		data:TableFullScan
+│     └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		semi join, left side:HashAgg, equal:[nulleq(executor__executor.t1.a, executor__executor.t1.a)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	root		group by:executor__executor.t1.a, funcs:firstrow(executor__executor.t1.a)->executor__executor.t1.a
+    └─TableReader	root		data:HashAgg
+      └─HashAgg	cop[tikv]		group by:executor__executor.t1.a, 
+        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
 a
 drop table if exists issue40279;
@@ -3503,10 +3503,10 @@ admin check table b;
 set @@tidb_enable_clustered_index=On;
 drop table if exists t;
 create table t (a int, b int, c int, primary key(a,b));
-explain format = 'brief' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b;
-id	estRows	task	access object	operator info
-TableReader	10000.00	root		data:TableFullScan
-└─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b;
+id	task	access object	operator info
+TableReader	root		data:TableFullScan
+└─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@tidb_enable_clustered_index=default;
 drop table if exists t;
 create table t (c1 bit(2));

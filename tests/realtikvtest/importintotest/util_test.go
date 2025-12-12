@@ -22,6 +22,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -64,8 +65,20 @@ func (s *mockGCSSuite) SetupSuite() {
 	s.server, err = fakestorage.NewServerWithOptions(opt)
 	s.Require().NoError(err)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/domain/deltaUpdateDuration", `return`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	bak := vardef.GetStatsLease()
+	s.T().Cleanup(func() {
+		vardef.SetStatsLease(bak)
+	})
+	vardef.SetStatsLease(time.Second)
 	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
 	s.tk = testkit.NewTestKit(s.T(), s.store)
+	// when intest, auto analyze is disabled by default, we enable it here.
+	bakRunAutoAnalyze := vardef.RunAutoAnalyze.Load()
+	s.tk.MustExec("set global tidb_enable_auto_analyze=true")
+	s.T().Cleanup(func() {
+		s.tk.MustExec(fmt.Sprintf("set global tidb_enable_auto_analyze=%t", bakRunAutoAnalyze))
+	})
 }
 
 func (s *mockGCSSuite) BeforeTest(_, _ string) {

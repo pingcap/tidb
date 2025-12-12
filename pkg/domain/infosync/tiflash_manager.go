@@ -68,7 +68,7 @@ type TiFlashReplicaManager interface {
 	// GetStoresStat gets the TiKV store information by accessing PD's api.
 	GetStoresStat(ctx context.Context) (*pd.StoresInfo, error)
 	// CalculateTiFlashProgress calculates TiFlash replica progress
-	CalculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]pd.StoreInfo) (float64, error)
+	CalculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]pd.StoreInfo) (fullReplicaProgress float64, oneReplicaProgress float64, err error)
 	// UpdateTiFlashProgressCache updates tiflashProgressCache
 	UpdateTiFlashProgressCache(tableID int64, progress float64)
 	// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
@@ -101,63 +101,72 @@ func (m *TiFlashReplicaManagerCtx) GetPlacementRule(ctx context.Context, tableID
 // Close is called to close TiFlashReplicaManagerCtx.
 func (*TiFlashReplicaManagerCtx) Close(context.Context) {}
 
-func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspaceID tikv.KeyspaceID, tableID int64) (int, error) {
-	// storeIDs -> regionID, PD will not create two peer on the same store
-	var flashPeerCount int
+// getTiFlashPeerWithoutLagCount returns
+// - the number of tiflash peers without lag
+// - the number of regions that have at least 1 tiflash peer
+func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspaceID tikv.KeyspaceID, tableID int64) (flashPeerCount int, flashRegionCount int, errStoreAddr string, err error) {
+	// For each storeIDs -> regionID, PD will not create two peer on the same store
+	// The regionIDs that have at least 1 tiflash peer
+	allRegionReplica := make(map[int64]int)
 	for _, store := range tiFlashStores {
 		regionReplica := make(map[int64]int)
 		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, keyspaceID, tableID, &regionReplica)
 		failpoint.Inject("OneTiFlashStoreDown", func() {
 			if store.Store.StateName == "Down" {
-				err = errors.New("mock TiFlasah down")
+				err = errors.New("mock TiFlash down")
 			}
 		})
 		if err != nil {
-			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
-				zap.Int64("tableID", tableID))
-			// Just skip down or offline or tomestone stores, because PD will migrate regions from these stores.
+			// Just skip down or offline or tombstone stores, because PD will migrate regions from these stores.
 			if store.Store.StateName == "Up" || store.Store.StateName == "Disconnected" {
-				return 0, err
+				return 0, 0, store.Store.StatusAddress, err
 			}
 			continue
 		}
 		flashPeerCount += len(regionReplica)
+		for r := range regionReplica {
+			allRegionReplica[r] = 1
+		}
 	}
-	return flashPeerCount, nil
+	return flashPeerCount, len(allRegionReplica), "", nil
 }
 
 // calculateTiFlashProgress calculates progress based on the region status from PD and TiFlash.
-func calculateTiFlashProgress(keyspaceID tikv.KeyspaceID, tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (float64, error) {
+func calculateTiFlashProgress(keyspaceID tikv.KeyspaceID, tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (fullReplicaProgress float64, oneReplicaProgress float64, err error) {
 	var regionCount int
 	if err := GetTiFlashRegionCountFromPD(context.Background(), tableID, &regionCount); err != nil {
-		logutil.BgLogger().Error("Fail to get regionCount from PD.",
+		logutil.BgLogger().Warn("Fail to get regionCount from PD.",
 			zap.Int64("tableID", tableID))
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 
 	if regionCount == 0 {
 		logutil.BgLogger().Warn("region count getting from PD is 0.",
 			zap.Int64("tableID", tableID))
-		return 0, fmt.Errorf("region count getting from PD is 0")
+		return 0, 0, fmt.Errorf("region count getting from PD is 0")
 	}
 
-	tiflashPeerCount, err := getTiFlashPeerWithoutLagCount(tiFlashStores, keyspaceID, tableID)
+	tiflashPeerCount, tiflashRegionCount, errStoreAddr, err := getTiFlashPeerWithoutLagCount(tiFlashStores, keyspaceID, tableID)
 	if err != nil {
-		logutil.BgLogger().Error("Fail to get peer count from TiFlash.",
-			zap.Int64("tableID", tableID))
-		return 0, errors.Trace(err)
+		logutil.BgLogger().Warn("Fail to get peer count from TiFlash.",
+			zap.Int64("tableID", tableID), zap.String("storeAddr", errStoreAddr), zap.Error(err))
+		return 0, 0, errors.Trace(err)
 	}
-	progress := float64(tiflashPeerCount) / float64(regionCount*int(replicaCount))
-	if progress > 1 { // when pd do balance
+	// fullReplicaProgress range is [0, 1], 1 means all regions have tiflash peers with `replicaCount` replicas.
+	fullReplicaProgress = float64(tiflashPeerCount) / float64(regionCount*int(replicaCount))
+	// oneReplicaProgress range is [0, 1], 1 means all regions have tiflash peers with at least 1 replicas.
+	oneReplicaProgress = float64(tiflashRegionCount) / float64(regionCount)
+	if fullReplicaProgress > 1 {
+		// when pd do balance between TiFlash stores, it may create more than `replicaCount` tiflash peers for some regions.
 		logutil.BgLogger().Debug("TiFlash peer count > pd peer count, maybe doing balance.",
-			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
-		progress = 1
+			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("tiflashRegionCount", tiflashRegionCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
+		fullReplicaProgress = 1
 	}
-	if progress < 1 {
+	if fullReplicaProgress < 1 {
 		logutil.BgLogger().Debug("TiFlash replica progress < 1.",
-			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
+			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("tiflashRegionCount", tiflashRegionCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
 	}
-	return progress, nil
+	return fullReplicaProgress, oneReplicaProgress, nil
 }
 
 func encodeRule(c tikv.Codec, rule *pd.Rule) {
@@ -177,7 +186,7 @@ func encodeRuleID(c tikv.Codec, ruleID string) string {
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress.
-func (m *TiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (float64, error) {
+func (m *TiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (fullReplicaProgress float64, oneReplicaProgress float64, err error) {
 	return calculateTiFlashProgress(m.codec.GetKeyspaceID(), tableID, replicaCount, tiFlashStores)
 }
 
@@ -774,7 +783,7 @@ func (*mockTiFlashReplicaManagerCtx) SyncTiFlashTableSchema(_ int64, _ []pd.Stor
 }
 
 // CalculateTiFlashProgress return truncated string to avoid float64 comparison.
-func (*mockTiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (float64, error) {
+func (*mockTiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (fullReplicaProgress float64, oneReplicaProgress float64, err error) {
 	return calculateTiFlashProgress(tikv.NullspaceID, tableID, replicaCount, tiFlashStores)
 }
 

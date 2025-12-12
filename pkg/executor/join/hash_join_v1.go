@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -48,7 +48,7 @@ import (
 )
 
 // IsChildCloseCalledForTest is used for test
-var IsChildCloseCalledForTest = false
+var IsChildCloseCalledForTest atomic.Bool
 
 var (
 	_ exec.Executor = &HashJoinV1Exec{}
@@ -172,7 +172,7 @@ func (e *HashJoinV1Exec) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 
-	IsChildCloseCalledForTest = true
+	IsChildCloseCalledForTest.Store(true)
 	return e.BaseExecutor.Close()
 }
 
@@ -239,7 +239,7 @@ func (e *HashJoinV1Exec) fetchAndProbeHashTable(ctx context.Context) {
 				return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
 			},
 			func() bool { return false },
-			e.ProbeSideTupleFetcher.JoinType == logicalop.InnerJoin || e.ProbeSideTupleFetcher.JoinType == logicalop.SemiJoin,
+			e.ProbeSideTupleFetcher.JoinType == base.InnerJoin || e.ProbeSideTupleFetcher.JoinType == base.SemiJoin,
 			false,
 			e.ProbeSideTupleFetcher.IsOuterJoin,
 			&e.ProbeSideTupleFetcher.hashJoinCtxBase)
@@ -762,8 +762,8 @@ func (w *ProbeWorkerV1) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeK
 //	       For NA-AntiLeftOuterSemiJoin, we couldn't match null-bucket first, because once y set has a same key x and null
 //	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
 func (w *ProbeWorkerV1) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
-	naAntiSemiJoin := w.HashJoinCtx.JoinType == logicalop.AntiSemiJoin && w.HashJoinCtx.IsNullAware
-	naAntiLeftOuterSemiJoin := w.HashJoinCtx.JoinType == logicalop.AntiLeftOuterSemiJoin && w.HashJoinCtx.IsNullAware
+	naAntiSemiJoin := w.HashJoinCtx.JoinType == base.AntiSemiJoin && w.HashJoinCtx.IsNullAware
+	naAntiLeftOuterSemiJoin := w.HashJoinCtx.JoinType == base.AntiLeftOuterSemiJoin && w.HashJoinCtx.IsNullAware
 	if naAntiSemiJoin {
 		return w.joinNAASJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
 	}

@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "stats",
+    srcs = [
+        "debug_trace.go",
+        "stats.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/stats",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/metrics",
+        "//pkg/planner/util/debugtrace",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/statistics",
+        "//pkg/statistics/handle",
+        "//pkg/util/intest",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)

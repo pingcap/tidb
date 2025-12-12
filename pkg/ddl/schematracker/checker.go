@@ -40,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -571,6 +573,13 @@ func (d *Checker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
 func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) error {
 	de := d.realExecutor.(ddl.ExecutorForTest)
 	return de.DoDDLJobWrapper(ctx, jobW)
+}
+
+// InitFromIS initializes the schema tracker from an InfoSchema.
+func (d *Checker) InitFromIS(is infoschema.InfoSchema) {
+	if err := d.tracker.InitFromIS(is); err != nil {
+		logutil.BgLogger().Warn("failed to init schema tracker from info schema", zap.Error(err))
+	}
 }
 
 type storageAndMore interface {

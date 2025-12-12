@@ -1480,26 +1480,29 @@ func TestDBAStmt(t *testing.T) {
 
 func TestSetVariable(t *testing.T) {
 	table := []struct {
-		Input    string
-		Name     string
-		IsGlobal bool
-		IsSystem bool
+		Input      string
+		Name       string
+		IsGlobal   bool
+		IsInstance bool
+		IsSystem   bool
 	}{
 
 		// Set system variable xx.xx, although xx.xx isn't a system variable, the parser should accept it.
-		{"set xx.xx = 666", "xx.xx", false, true},
+		{"set xx.xx = 666", "xx.xx", false, false, true},
 		// Set session system variable xx.xx
-		{"set session xx.xx = 666", "xx.xx", false, true},
-		{"set local xx.xx = 666", "xx.xx", false, true},
-		{"set global xx.xx = 666", "xx.xx", true, true},
+		{"set session xx.xx = 666", "xx.xx", false, false, true},
+		{"set local xx.xx = 666", "xx.xx", false, false, true},
+		{"set global xx.xx = 666", "xx.xx", true, false, true},
+		{"set instance xx.xx = 666", "xx.xx", false, true, true},
 
-		{"set @@xx.xx = 666", "xx.xx", false, true},
-		{"set @@session.xx.xx = 666", "xx.xx", false, true},
-		{"set @@local.xx.xx = 666", "xx.xx", false, true},
-		{"set @@global.xx.xx = 666", "xx.xx", true, true},
+		{"set @@xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@session.xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@local.xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@global.xx.xx = 666", "xx.xx", true, false, true},
+		{"set @@instance.xx.xx = 666", "xx.xx", false, true, true},
 
 		// Set user defined variable xx.xx
-		{"set @xx.xx = 666", "xx.xx", false, false},
+		{"set @xx.xx = 666", "xx.xx", false, false, false},
 	}
 
 	p := parser.New()
@@ -1514,6 +1517,7 @@ func TestSetVariable(t *testing.T) {
 		v := setStmt.Variables[0]
 		require.Equal(t, tbl.Name, v.Name)
 		require.Equal(t, tbl.IsGlobal, v.IsGlobal)
+		require.Equal(t, tbl.IsInstance, v.IsInstance)
 		require.Equal(t, tbl.IsSystem, v.IsSystem)
 	}
 
@@ -2621,6 +2625,7 @@ func TestDDL(t *testing.T) {
 		{`create table t1 (c1 int) collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = BINARY"},
 		{`create table t1 (c1 int) collate=utf8mb4_0900_as_cs;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = UTF8MB4_0900_AS_CS"},
 		{`create table t1 (c1 int) default charset=binary collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT CHARACTER SET = BINARY DEFAULT COLLATE = BINARY"},
+		{`create table t1 (c1 int) autoextend_size=4M`, true, "CREATE TABLE `t1` (`c1` INT) AUTOEXTEND_SIZE = 4M"},
 
 		// for table option `UNION`
 		{"ALTER TABLE t_n UNION ( ), KEY_BLOCK_SIZE = 1", true, "ALTER TABLE `t_n` UNION = (), KEY_BLOCK_SIZE = 1"},
@@ -4425,6 +4430,25 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints[1].Indexes, 1)
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
+	// Test INDEX_LOOKUP_PUSHDOWN
+	stmt, _, err = p.Parse("select /*+ INDEX_LOOKUP_PUSHDOWN(T1,T2), index_lookup_pushdown(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_lookup_pushdown", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	require.Len(t, hints[0].Indexes, 1)
+	require.Equal(t, "t2", hints[0].Indexes[0].L)
+
+	require.Equal(t, "index_lookup_pushdown", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 1)
+	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
+	require.Len(t, hints[1].Indexes, 1)
+	require.Equal(t, "t4", hints[1].Indexes[0].L)
+
 	// Test TIDB_SMJ
 	stmt, _, err = p.Parse("select /*+ TIDB_SMJ(T1,t2), tidb_smj(T3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
@@ -4735,6 +4759,21 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "ignore_plan_cache", hints[0].HintName.L)
 	require.Equal(t, "ignore_plan_cache", hints[1].HintName.L)
 
+	// Test WRITE_SLOW_LOG
+	stmt, _, err = p.Parse("select /*+ WRITE_SLOW_LOG(), write_slow_log() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 0)
+
+	stmt, _, err = p.Parse("select /*+ WRITE_SLOW_LOG, write_slow_log*/ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "write_slow_log", hints[0].HintName.L)
+	require.Equal(t, "write_slow_log", hints[1].HintName.L)
+
 	// Test USE_CASCADES
 	stmt, _, err = p.Parse("select /*+ USE_CASCADES(true), use_cascades(false) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
@@ -4902,19 +4941,37 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 3)
 	require.Equal(t, "leading", hints[0].HintName.L)
-	require.Len(t, hints[0].Tables, 1)
-	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	leadingList1, ok := hints[0].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList1.Items, 1)
+	hintTable1, ok := leadingList1.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t1", hintTable1.TableName.L)
 
 	require.Equal(t, "leading", hints[1].HintName.L)
-	require.Len(t, hints[1].Tables, 2)
-	require.Equal(t, "t2", hints[1].Tables[0].TableName.L)
-	require.Equal(t, "t3", hints[1].Tables[1].TableName.L)
+	leadingList2, ok := hints[1].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList2.Items, 2)
+	hintTable2, ok := leadingList2.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t2", hintTable2.TableName.L)
+	hintTable3, ok := leadingList2.Items[1].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t3", hintTable3.TableName.L)
 
 	require.Equal(t, "leading", hints[2].HintName.L)
-	require.Len(t, hints[2].Tables, 3)
-	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
-	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
-	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
+	leadingList3, ok := hints[2].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList3.Items, 3)
+	hintTable4, ok := leadingList3.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t4", hintTable4.TableName.L)
+	hintTable5, ok := leadingList3.Items[1].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t5", hintTable5.TableName.L)
+	hintTable6, ok := leadingList3.Items[2].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t6", hintTable6.TableName.L)
 
 	// Test NO_HASH_JOIN
 	stmt, _, err = p.Parse("select /*+ NO_HASH_JOIN(t1, t2), NO_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
@@ -6767,7 +6824,7 @@ func TestQuotedSystemVariables(t *testing.T) {
 	p := parser.New()
 
 	st, err := p.ParseOneStmt(
-		"select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, @@session.'sql\\nmode', @@local.\"sql\\\"mode\";",
+		"select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, @@session.'sql\\nmode', @@local.\"sql\\\"mode\", @@instance.sql_mode;",
 		"",
 		"",
 	)
@@ -6810,6 +6867,13 @@ func TestQuotedSystemVariables(t *testing.T) {
 			IsSystem:      true,
 			ExplicitScope: true,
 		},
+		{
+			Name:          "sql_mode",
+			IsGlobal:      false,
+			IsSystem:      true,
+			IsInstance:    true,
+			ExplicitScope: true,
+		},
 	}
 
 	require.Len(t, ss.Fields.Fields, len(expected))
@@ -6818,6 +6882,7 @@ func TestQuotedSystemVariables(t *testing.T) {
 		comment := fmt.Sprintf("field %d, ve = %v", i, ve)
 		require.Equal(t, expected[i].Name, ve.Name, comment)
 		require.Equal(t, expected[i].IsGlobal, ve.IsGlobal, comment)
+		require.Equal(t, expected[i].IsInstance, ve.IsInstance, comment)
 		require.Equal(t, expected[i].IsSystem, ve.IsSystem, comment)
 		require.Equal(t, expected[i].ExplicitScope, ve.ExplicitScope, comment)
 	}
@@ -7894,6 +7959,19 @@ func TestExplainExplore(t *testing.T) {
 	RunTest(t, cases, false)
 }
 
+// TestCompatMariaDB is to test for MariaDB specific table options
+func TestCompatMariaDB(t *testing.T) {
+	cases := []testCase{
+		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_CHECKSUM=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_CHECKSUM = 1"},
+		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSED=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSED = 1"},
+		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSION_LEVEL = 1"},
+		{`CREATE TABLE t (id int PRIMARY KEY) TRANSACTIONAL=0`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) TRANSACTIONAL = 0"},
+		{`CREATE TABLE t (id int PRIMARY KEY) IETF_QUOTES=YES`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) IETF_QUOTES = YES"},
+		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
+	}
+	RunTest(t, cases, false)
+}
+
 func TestSecondaryEngineAttribute(t *testing.T) {
 	table := []testCase{
 		// Valid Partition-level SECONDARY_ENGINE_ATTRIBUTE
@@ -8039,4 +8117,13 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestPartialIndex(t *testing.T) {
+	cases := []testCase{
+		{"create table `t` (`id` int primary key,`col` int,index(`col`) where `col`>100)", true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`col` INT,INDEX(`col`) WHERE `col`>100)"},
+		{"create index `idx` on `t` (`col`) where `col`>100", true, "CREATE INDEX `idx` ON `t` (`col`) WHERE `col`>100"},
+		{"alter table `t` add index `idx`(`col`) where `col`>100", true, "ALTER TABLE `t` ADD INDEX `idx`(`col`) WHERE `col`>100"},
+	}
+	RunTest(t, cases, false)
 }

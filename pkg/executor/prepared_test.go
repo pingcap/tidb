@@ -95,7 +95,7 @@ func TestIssue29850(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
 		`Projection 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─HashJoin 1.00 root  CARTESIAN inner join`,
+		`└─MergeJoin 1.00 root  inner join, left key:test.customer.c_w_id, right key:test.warehouse.w_id`,
 		`  ├─Point_Get(Build) 1.00 root table:warehouse handle:1262`,
 		`  └─Point_Get(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
 	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
@@ -798,9 +798,11 @@ func TestIssue29101(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PK
 		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─HashJoin_21 1.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_24(Build) 1.00 root table:warehouse handle:936`,
-		`  └─Point_Get_23(Probe) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `))
+		`└─IndexJoin_11 1.00 root  inner join, inner:TableReader_30, outer key:test.customer.c_w_id, inner key:test.warehouse.w_id, equal cond:eq(test.customer.c_w_id, test.warehouse.w_id)`,
+		`  ├─Point_Get_27(Build) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `,
+		`  └─TableReader_30(Probe) 0.00 root  data:Selection_29`,
+		`    └─Selection_29 0.00 cop[tikv]  eq(test.warehouse.w_id, 936)`,
+		`      └─TableRangeScan_28 1.00 cop[tikv] table:warehouse range: decided by [test.customer.c_w_id], keep order:false, stats:pseudo`))
 	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 

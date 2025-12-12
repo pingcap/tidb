@@ -15,6 +15,7 @@
 package lfu
 
 import (
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
-	"golang.org/x/exp/rand"
 )
 
 // LFU is a LFU based on the ristretto.Cache
@@ -159,7 +159,7 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict,
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
-	table := item.Value.(*statistics.Table).Copy()
+	table := item.Value.(*statistics.Table).CopyAs(statistics.AllDataWritable)
 	table.DropEvicted()
 	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()

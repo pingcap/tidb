@@ -43,14 +43,12 @@ func TestKVEncoderForDupResolve(t *testing.T) {
 			Table:                table,
 			UseIdentityAutoRowID: useIdentityAutoRowID,
 		}
-		tableImporter := &importer.TableImporter{
-			LoadDataController: &importer.LoadDataController{
-				ASTArgs: &importer.ASTArgs{},
-				Plan:    &importer.Plan{},
-				Table:   table,
-			},
+		controller := &importer.LoadDataController{
+			ASTArgs: &importer.ASTArgs{},
+			Plan:    &importer.Plan{},
+			Table:   table,
 		}
-		encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, tableImporter)
+		encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
 		require.NoError(t, err)
 		for range 10 {
 			pairs, err := encoder.Encode([]types.Datum{types.NewDatum(1)}, 1)

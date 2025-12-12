@@ -51,7 +51,7 @@ precheck: fmt bazel_prepare
 
 .PHONY: check
 check: ## Run comprehensive code quality checks
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license bazel_check_abi
 
 .PHONY: fmt
 fmt: ## Format Go code using gofmt
@@ -89,6 +89,16 @@ lint:tools/bin/revive
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_resource_control.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_runtime.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/overview_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/performance_overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/performance_overview_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_resource_control_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_runtime_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_summary_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_worker.json
 
 .PHONY: license
 license:
@@ -395,12 +405,14 @@ bench-daily:
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpcds -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpch -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/table/tables -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/util/ranger -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/util/benchdaily -run TestBenchDaily -bench Ignore \
 		-date `git log -n1 --date=unix --pretty=format:%cd` \
@@ -415,8 +427,14 @@ lightning_web: ## Build Lightning web UI
 	@cd lightning/web && npm install && npm run build
 
 .PHONY: build_br
-build_br: ## Build BR (backup and restore) tool
-	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
+build_br: ## Build BR (backup and restore) tool 
+ifeq ($(shell echo $(GOOS) | tr A-Z a-z),darwin)
+	@echo "Detected macOS ($(ARCH)), enabling CGO"
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
+else
+	@echo "Detected non-macOS ($(ARCH)), disabling CGO"
+	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
+endif
 
 .PHONY: build_lightning_for_web
 build_lightning_for_web:
@@ -509,15 +527,13 @@ mock_s3iface: mockgen
 	tools/bin/mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
 
 # mock interface for lightning and IMPORT INTO
-.PHONY: mock_lightning
-mock_lightning: mockgen
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
+.PHONY: mock_import
+mock_import: mockgen
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/common ChunkFlushStatus > br/pkg/mock/common.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
 	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
-
-.PHONY: gen_mock
-gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor TaskTable,TaskExecutor,Extension > pkg/disttask/framework/mock/task_executor_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/disttask/framework/mock/scheduler_mock.go
 	tools/bin/mockgen -destination pkg/disttask/framework/scheduler/mock/scheduler_mock.go -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Extension
@@ -525,11 +541,14 @@ gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/importinto MiniTaskExecutor > pkg/disttask/importinto/mock/import_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/planner LogicalPlan,PipelineSpec > pkg/disttask/framework/mock/plan_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/storage Manager > pkg/disttask/framework/mock/storage_manager_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ingestor/ingestcli Client,WriteClient > pkg/ingestor/ingestcli/mock/client_mock.go
+
+.PHONY: gen_mock
+gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/util/sqlexec RestrictedSQLExecutor > pkg/util/sqlexec/mock/restricted_sql_executor_mock.go
 	tools/bin/mockgen -package mockstorage github.com/pingcap/tidb/br/pkg/storage ExternalStorage > br/pkg/mock/storage/storage.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl SchemaLoader > pkg/ddl/mock/schema_loader_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl/systable Manager > pkg/ddl/mock/systable_manager_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ingestor/ingestcli Client,WriteClient > pkg/ingestor/ingestcli/mock/client_mock.go
 
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
@@ -671,19 +690,28 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
+.PHONY: bazel_bin
+bazel_bin: ## Build importer/tidb binary files with Bazel build system
+	mkdir -p bin; \
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --norun_validations ;\
+ 	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
+ 	cp -f ${IMPORTER_PATH} ./bin/ ;
+
 .PHONY: bazel_build
 bazel_build: ## Build TiDB using Bazel build system
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG)
-	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server ./bin
-	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
-	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server-check_/tidb-server-check ./bin
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
+	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
+	cp -f ${IMPORTER_PATH} ./bin/ ; \
+	cp -f ${TIDB_SERVER_CHECK_PATH} ./bin/ ; \
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=$(BUILD_TAGS),enterprise
-	./bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server -V
+		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=$(BUILD_TAGS),enterprise; \
+	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
+	./bin/tidb-server -V
 
 .PHONY: bazel_fail_build
 bazel_fail_build:  failpoint-enable bazel_ci_prepare
@@ -709,95 +737,100 @@ bazel_golangcilinter:
 
 .PHONY: bazel_brietest
 bazel_brietest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/brietest/...
 
 .PHONY: bazel_pessimistictest
 bazel_pessimistictest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/pessimistictest/...
 
 .PHONY: bazel_sessiontest
 bazel_sessiontest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/sessiontest/...
 
 .PHONY: bazel_statisticstest
 bazel_statisticstest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/statisticstest/...
 
 .PHONY: bazel_txntest
 bazel_txntest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/txntest/...
+
+.PHONY: bazel_pushdowntest
+bazel_pushdowntest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
+		-- //tests/realtikvtest/pushdowntest/...
 
 .PHONY: bazel_addindextest
 bazel_addindextest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest/...
 
 .PHONY: bazel_addindextest1
 bazel_addindextest1: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest1/...
 
 .PHONY: bazel_addindextest2
 bazel_addindextest2: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest2/...
 
 .PHONY: bazel_addindextest3
 bazel_addindextest3: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest3/...
 
 .PHONY: bazel_addindextest4
 bazel_addindextest4: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/addindextest4/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest
 bazel_importintotest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/importintotest/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest2
 bazel_importintotest2: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/importintotest2/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest3
 bazel_importintotest3: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/importintotest3/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest4
 bazel_importintotest4: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/importintotest4/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_pipelineddmltest
 bazel_pipelineddmltest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/pipelineddmltest/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_flashbacktest
 bazel_flashbacktest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/flashbacktest/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_ddltest
 bazel_ddltest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/ddltest/...
 
 .PHONY: bazel_lint
@@ -826,3 +859,8 @@ bazel_sync:
 .PHONY: bazel_mirror_upload
 bazel_mirror_upload:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror -- --mirror --upload
+
+.PHONY: bazel_check_abi
+bazel_check_abi:
+	@echo "check ABI compatibility"
+	./tools/check/bazel-check-abi.sh

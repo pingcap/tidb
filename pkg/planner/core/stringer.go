@@ -142,19 +142,19 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		idxs = idxs[:last]
 		id := "MergeJoin"
 		switch x.JoinType {
-		case logicalop.SemiJoin:
+		case base.SemiJoin:
 			id = "MergeSemiJoin"
-		case logicalop.AntiSemiJoin:
+		case base.AntiSemiJoin:
 			id = "MergeAntiSemiJoin"
-		case logicalop.LeftOuterSemiJoin:
+		case base.LeftOuterSemiJoin:
 			id = "MergeLeftOuterSemiJoin"
-		case logicalop.AntiLeftOuterSemiJoin:
+		case base.AntiLeftOuterSemiJoin:
 			id = "MergeAntiLeftOuterSemiJoin"
-		case logicalop.LeftOuterJoin:
+		case base.LeftOuterJoin:
 			id = "MergeLeftOuterJoin"
-		case logicalop.RightOuterJoin:
+		case base.RightOuterJoin:
 			id = "MergeRightOuterJoin"
-		case logicalop.InnerJoin:
+		case base.InnerJoin:
 			id = "MergeInnerJoin"
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
@@ -330,11 +330,11 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}
 		str = str + strings.Join(children, ",") + "}"
-	case *Update:
+	case *physicalop.Update:
 		str = fmt.Sprintf("%s->Update", ToString(x.SelectPlan))
-	case *Delete:
+	case *physicalop.Delete:
 		str = fmt.Sprintf("%s->Delete", ToString(x.SelectPlan))
-	case *Insert:
+	case *physicalop.Insert:
 		str = "Insert"
 		if x.SelectPlan != nil {
 			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))
@@ -349,14 +349,14 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
 	case *physicalop.PhysicalShuffleReceiverStub:
 		str = fmt.Sprintf("PartitionReceiverStub(%s)", x.ExplainInfo())
-	case *PointGetPlan:
+	case *physicalop.PointGetPlan:
 		str = "PointGet("
 		if x.IndexInfo != nil {
 			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handle)
 		}
-	case *BatchPointGetPlan:
+	case *physicalop.BatchPointGetPlan:
 		str = "BatchPointGet("
 		if x.IndexInfo != nil {
 			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)

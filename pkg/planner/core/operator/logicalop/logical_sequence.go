@@ -18,8 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -59,17 +57,17 @@ func (p *LogicalSequence) Schema() *expression.Schema {
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 // Currently, we only maintain the main query tree.
-func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	lastIdx := p.ChildLen() - 1
-	remained, newLastChild, err := p.Children()[lastIdx].PredicatePushDown(predicates, op)
+	remained, newLastChild, err := p.Children()[lastIdx].PredicatePushDown(predicates)
 	p.SetChild(lastIdx, newLastChild)
 	return remained, p, err
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
-func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	var err error
-	p.Children()[p.ChildLen()-1], err = p.Children()[p.ChildLen()-1].PruneColumns(parentUsedCols, opt)
+	p.Children()[p.ChildLen()-1], err = p.Children()[p.ChildLen()-1].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -106,11 +104,6 @@ func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expre
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements the base.LogicalPlan.<14th> interface.
-func (p *LogicalSequence) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalSequence(p, prop)
-}
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
 

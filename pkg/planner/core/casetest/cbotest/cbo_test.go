@@ -532,37 +532,40 @@ func TestCorrelatedEstimation(t *testing.T) {
 	})
 }
 
-func TestInconsistentEstimation(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("create table t(a int, b int, c int, index ab(a,b), index ac(a,c))")
-		testKit.MustExec("insert into t values (1,1,1), (1000,1000,1000)")
-		for range 10 {
-			testKit.MustExec("insert into t values (5,5,5), (10,10,10)")
-		}
-		testKit.MustExec("set @@tidb_analyze_version=1")
-		testKit.MustExec("analyze table t with 2 buckets")
-		// Force using the histogram to estimate.
-		testKit.MustExec("update mysql.stats_histograms set stats_ver = 0")
-		dom.StatsHandle().Clear()
-		require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
-		var input []string
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-		analyzeSuiteData := GetAnalyzeSuiteData()
-		analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, sql := range input {
-			plan := testKit.MustQuery(sql)
-			testdata.OnRecord(func() {
-				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-			})
-			plan.Check(testkit.Rows(output[i].Plan...))
-		}
-	})
+func testInconsistentEstimation(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int, c int, index ab(a,b), index ac(a,c))")
+	testKit.MustExec("insert into t values (1,1,1), (1000,1000,1000)")
+	for range 10 {
+		testKit.MustExec("insert into t values (5,5,5), (10,10,10)")
+	}
+	testKit.MustExec("set @@tidb_analyze_version=1")
+	testKit.MustExec("analyze table t all columns with 2 buckets ")
+	// Force using the histogram to estimate.
+	testKit.MustExec("update mysql.stats_histograms set stats_ver = 0")
+	dom.StatsHandle().Clear()
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	analyzeSuiteData := GetAnalyzeSuiteData()
+	analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+	for i, sql := range input {
+		plan := testKit.MustQuery(sql)
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
+
+func TestInconsistentEstimation(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, testInconsistentEstimation)
+}
+
 func TestIssue9562(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")

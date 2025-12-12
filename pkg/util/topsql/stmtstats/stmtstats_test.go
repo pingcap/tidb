@@ -85,18 +85,24 @@ func TestKvStatementStatsItem_Merge(t *testing.T) {
 
 func TestStatementsStatsItem_Merge(t *testing.T) {
 	item1 := &StatementStatsItem{
-		ExecCount:     1,
-		SumDurationNs: 100,
-		KvStatsItem:   NewKvStatementStatsItem(),
+		ExecCount:       1,
+		SumDurationNs:   100,
+		KvStatsItem:     NewKvStatementStatsItem(),
+		NetworkInBytes:  10,
+		NetworkOutBytes: 20,
 	}
 	item2 := &StatementStatsItem{
-		ExecCount:     2,
-		SumDurationNs: 50,
-		KvStatsItem:   NewKvStatementStatsItem(),
+		ExecCount:       2,
+		SumDurationNs:   50,
+		KvStatsItem:     NewKvStatementStatsItem(),
+		NetworkInBytes:  50,
+		NetworkOutBytes: 60,
 	}
 	item1.Merge(item2)
 	assert.Equal(t, uint64(3), item1.ExecCount)
 	assert.Equal(t, uint64(150), item1.SumDurationNs)
+	assert.Equal(t, uint64(60), item1.NetworkInBytes)
+	assert.Equal(t, uint64(80), item1.NetworkOutBytes)
 }
 
 func TestStatementStatsMap_Merge(t *testing.T) {
@@ -180,17 +186,17 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	m := stats.Take()
 	assert.Len(t, m, 0)
 	for range 1 {
-		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
+		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""), 0)
 	}
 	for range 2 {
-		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""))
-		stats.OnExecutionFinished([]byte("SQL-2"), []byte(""), time.Second)
+		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""), 0)
+		stats.OnExecutionFinished([]byte("SQL-2"), []byte(""), time.Second, 0)
 	}
 	for range 3 {
-		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""))
-		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), time.Millisecond)
+		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""), 0)
+		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), time.Millisecond, 0)
 	}
-	stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), -time.Millisecond)
+	stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), -time.Millisecond, 0)
 	m = stats.Take()
 	assert.Len(t, m, 3)
 	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)

@@ -22,30 +22,48 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
 
 // ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
-func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
+func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) expression.Expression {
 	switch expr := origin.(type) {
 	case *expression.Column:
-		ResolveColumnAndReplace(expr, replace)
+		return ResolveColumnAndReplace(expr, replace)
 	case *expression.CorrelatedColumn:
-		ResolveColumnAndReplace(&expr.Column, replace)
-	case *expression.ScalarFunction:
-		for _, arg := range expr.GetArgs() {
-			ResolveExprAndReplace(arg, replace)
+		newCol, changed := resolveColumnAndReplace(&expr.Column, replace)
+		if !changed {
+			return expr
 		}
+		newExpr := expr.Clone().(*expression.CorrelatedColumn)
+		newExpr.Data = expr.Data
+		newExpr.Column = *newCol
+		return newExpr
+	case *expression.ScalarFunction:
+		for i, arg := range expr.GetArgs() {
+			expr.GetArgs()[i] = ResolveExprAndReplace(arg, replace)
+		}
+		return expr
 	}
+	return origin
 }
 
 // ResolveColumnAndReplace replaces columns fields of expressions by children logical plans.
-func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
+func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) *expression.Column {
+	newCol, _ := resolveColumnAndReplace(origin, replace)
+	return newCol
+}
+
+func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) (*expression.Column, bool) {
 	dst := replace[string(origin.HashCode())]
 	if dst != nil {
-		retType, inOperand := origin.RetType, origin.InOperand
-		*origin = *dst
-		origin.RetType, origin.InOperand = retType, inOperand
+		// To avoid origin column is shared by multiple operators,
+		// need to clone it before modification.
+		newCol := dst.Clone().(*expression.Column)
+		newCol.RetType, newCol.InOperand = origin.RetType, origin.InOperand
+		return newCol, true
 	}
+	return origin, false
 }
 
 // ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
@@ -156,9 +174,31 @@ func CheckIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.
 var SetPredicatePushDownFlag func(uint64) uint64
 
+// ApplyPredicateSimplificationForJoin is a hook for other packages to simplify the expression.
+var ApplyPredicateSimplificationForJoin func(sctx base.PlanContext, predicates []expression.Expression,
+	schema1, schema2 *expression.Schema,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
+
 // ApplyPredicateSimplification is a hook for other packages to simplify the expression.
 var ApplyPredicateSimplification func(sctx base.PlanContext, predicates []expression.Expression,
-	propagateConstant bool, filter func(expr expression.Expression) bool) []expression.Expression
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
 
-// BuildKeyInfoPortal is a hook for other packages to build key info for logical plan.
-var BuildKeyInfoPortal func(lp base.LogicalPlan)
+var childSchemaSlicePool = zeropool.New[[]*expression.Schema](func() []*expression.Schema {
+	return make([]*expression.Schema, 0, 4)
+})
+
+// BuildKeyInfoPortal recursively calls base.LogicalPlan's BuildKeyInfo method.
+func BuildKeyInfoPortal(lp base.LogicalPlan) {
+	for _, child := range lp.Children() {
+		BuildKeyInfoPortal(child)
+	}
+	childSchema := childSchemaSlicePool.Get()
+	childSchema = slices.Grow(childSchema, len(lp.Children()))
+	defer func() {
+		childSchemaSlicePool.Put(childSchema[:0])
+	}()
+	for _, child := range lp.Children() {
+		childSchema = append(childSchema, child.Schema())
+	}
+	lp.BuildKeyInfo(lp.Schema(), childSchema)
+}

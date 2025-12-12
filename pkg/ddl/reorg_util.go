@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -54,10 +53,12 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		setReorgParam = true
 		setDistTaskParam = true
+	case model.ActionModifyColumn:
+		setReorgParam = true
+		setDistTaskParam = modifyColumnNeedReorg(job.CtxVars)
 	case model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning,
-		model.ActionModifyColumn:
+		model.ActionAlterTablePartitioning:
 		setReorgParam = true
 	case model.ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -67,9 +68,11 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 				setDistTaskParam = true
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
-				model.ActionAlterTablePartitioning,
-				model.ActionModifyColumn:
+				model.ActionAlterTablePartitioning:
 				setReorgParam = true
+			case model.ActionModifyColumn:
+				setReorgParam = true
+				setDistTaskParam = modifyColumnNeedReorg(sub.CtxVars)
 			}
 		}
 	default:
@@ -77,7 +80,12 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 	var tableSizeInBytes int64
 	var cpuNum int
-	if (setReorgParam || setDistTaskParam) && kerneltype.IsNextGen() {
+	// we don't use DXF service for bootstrap/upgrade related DDL, so no need to
+	// calculate resources.
+	initing := sctx.Value(sessionctx.Initing) != nil
+	// some mock context may not have store, such as the schema tracker test.
+	shouldCalResource := kerneltype.IsNextGen() && !initing && sctx.GetStore() != nil
+	if (setReorgParam || setDistTaskParam) && shouldCalResource {
 		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), tbl)
 		var err error
 		cpuNum, err = scheduler.GetExecCPUNode(ctx)
@@ -86,9 +94,28 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	}
 
+	failpoint.Inject("MockTableSize", func(v failpoint.Value) {
+		if size, ok := v.(int); ok && size > 0 {
+			tableSizeInBytes = int64(size)
+		}
+	})
+
+	var (
+		autoConc, autoMaxNode int
+		factorField           = zap.Skip()
+	)
+	if shouldCalResource {
+		factors, err := dxfhandle.GetScheduleTuneFactors(ctx, sctx.GetStore().GetKeyspace())
+		if err != nil {
+			return err
+		}
+		calc := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, factors)
+		autoConc = calc.CalcConcurrency()
+		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
+		factorField = zap.Float64("amplifyFactor", factors.AmplifyFactor)
+	}
 	if setReorgParam {
-		if kerneltype.IsNextGen() {
-			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes, cpuNum)
+		if shouldCalResource && setDistTaskParam {
 			m.SetConcurrency(autoConc)
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
@@ -105,8 +132,8 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		m.IsDistReorg = vardef.EnableDistTask.Load()
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = dxfhandle.GetTargetScope()
-		if kerneltype.IsNextGen() {
-			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(tableSizeInBytes, cpuNum)
+		if shouldCalResource {
+			m.MaxNodeCount = autoMaxNode
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 				m.MaxNodeCount = variable.TidbOptInt(sv, 0)
@@ -131,8 +158,10 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			return dbterror.ErrUnsupportedDistTask
 		}
 	}
+	failpoint.InjectCall("beforeInitReorgMeta", m)
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
+		zap.Int64("jobID", job.ID),
 		zap.String("jobSchema", job.SchemaName),
 		zap.String("jobTable", job.TableName),
 		zap.Stringer("jobType", job.Type),
@@ -140,10 +169,21 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.Bool("enableFastReorg", m.IsFastReorg),
 		zap.String("targetScope", m.TargetScope),
 		zap.Int("maxNodeCount", m.MaxNodeCount),
+		zap.String("tableSizeInBytes", units.BytesSize(float64(tableSizeInBytes))),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
+		factorField,
 	)
 	return nil
+}
+
+func modifyColumnNeedReorg(jobCtxVars []any) bool {
+	if len(jobCtxVars) > 0 {
+		if v, ok := jobCtxVars[0].(bool); ok {
+			return v
+		}
+	}
+	return false
 }
 
 func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) int64 {
@@ -171,7 +211,7 @@ func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) in
 	}
 	var totalSize int64
 	for _, pid := range pids {
-		size, err := estimateTableSizeByID(ctx, pdCli, pid)
+		size, err := estimateTableSizeByID(ctx, pdCli, helperStore, pid)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to estimate table size for calculating concurrency",
 				zap.Int64("physicalID", pid),
@@ -192,28 +232,12 @@ func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) in
 	return totalSize
 }
 
-func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, pid int64) (int64, error) {
+func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, store helper.Storage, pid int64) (int64, error) {
 	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
-	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
-	if err != nil {
-		return 0, err
-	}
-	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
-	if err != nil {
-		return 0, err
-	}
-	sk, err = hex.DecodeString(sRegion.StartKey)
-	if err != nil {
-		return 0, err
-	}
-	ek, err = hex.DecodeString(eRegion.EndKey)
-	if err != nil {
-		return 0, err
-	}
-
+	start, end := store.GetCodec().EncodeRegionRange(sk, ek)
 	var totalSize int64
 	for {
-		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(sk, ek), 128)
+		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), 128)
 		if err != nil {
 			return 0, err
 		}
@@ -224,11 +248,11 @@ func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, pid int64) 
 			totalSize += r.ApproximateSize * units.MiB
 		}
 		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
-		sk, err = hex.DecodeString(lastKey)
+		start, err = hex.DecodeString(lastKey)
 		if err != nil {
 			return 0, err
 		}
-		if bytes.Compare(sk, ek) >= 0 {
+		if bytes.Compare(start, end) >= 0 {
 			break
 		}
 	}

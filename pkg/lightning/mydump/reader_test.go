@@ -203,3 +203,77 @@ func TestExportStatementCompressed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("CREATE DATABASE whatever;"), data)
 }
+
+func TestExportStatementMissingTrailingSemicolon(t *testing.T) {
+	cases := []struct {
+		name    string
+		content []byte
+		want    []byte
+		wantErr bool
+		errSub  string
+	}{
+		{
+			name:    "missing_semicolon",
+			content: []byte("CREATE DATABASE whatever"),
+			want:    nil,
+			wantErr: true,
+			errSub:  "last SQL statement missing trailing semicolon",
+		},
+		{
+			name:    "only_pure_block_comment",
+			content: []byte("/* only comment */\n"),
+			want:    []byte{},
+			wantErr: false,
+		},
+		{
+			name:    "trailing_pure_block_comment",
+			content: []byte("CREATE DATABASE whatever;\n/* trailing comment */\n"),
+			want:    []byte("CREATE DATABASE whatever;"),
+			wantErr: false,
+		},
+		{
+			name:    "trailing_line_comment_should_error",
+			content: []byte("CREATE DATABASE whatever;\n-- trailing comment without semicolon"),
+			want:    nil,
+			wantErr: true,
+			errSub:  "last SQL statement missing trailing semicolon",
+		},
+		{
+			name:    "with_bom",
+			content: append([]byte{0xEF, 0xBB, 0xBF}, []byte("CREATE DATABASE whatever;")...),
+			want:    []byte("CREATE DATABASE whatever;"),
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
+			require.NoError(t, err)
+			defer os.Remove(file.Name())
+
+			_, err = file.Write(tc.content)
+			require.NoError(t, err)
+			stat, err := file.Stat()
+			require.NoError(t, err)
+			require.NoError(t, file.Close())
+
+			store, err := storage.NewLocalStorage(dir)
+			require.NoError(t, err)
+			f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
+
+			data, err := ExportStatement(context.TODO(), store, f, "auto")
+			if tc.wantErr {
+				require.Error(t, err)
+				if tc.errSub != "" {
+					require.Contains(t, err.Error(), tc.errSub)
+				}
+				require.Len(t, data, 0)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, data)
+		})
+	}
+}

@@ -30,7 +30,8 @@ import (
 func New(
 	path string,
 	pdAddrs []string,
-	keyspaceMeta *keyspacepb.KeyspaceMeta,
+	currentKeyspaceID uint32,
+	clusterKeyspaces []*keyspacepb.KeyspaceMeta,
 ) (*RPCClient, pd.Client, *Cluster, error) {
 	persistent := true
 	if path == "" {
@@ -75,7 +76,7 @@ func New(
 		rawHandler: newRawHandler(),
 	}
 	srv.RPCClient = client
-	pdClient := newPDClient(pd, pdAddrs, keyspaceMeta)
+	pdClient := newPDClient(pd, pdAddrs, currentKeyspaceID, clusterKeyspaces)
 
 	return client, pdClient, cluster, nil
 }

@@ -10,6 +10,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/logutil",
         "//pkg/util/syncutil",
+        "@com_github_pingcap_errors//:errors",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -55,6 +56,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +79,7 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 	ddl.PollTiFlashInterval = 1000 * time.Millisecond
 	ddl.PullTiFlashPdTick.Store(60)
 	s.tiflash = infosync.NewMockTiFlash()
-	s.store, err = mockstore.NewMockStore(
+	s.store, err = teststore.NewMockStoreWithoutBootstrap(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
@@ -189,7 +191,7 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil, nil)
+	rpcClient, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
 	require.NoError(t, err)
 	defer func() {
 		rpcClient.Close()
@@ -329,9 +331,9 @@ func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 
 	lessThan := "40"
 	// Stop loop
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickeLoop", `return`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickerLoop", `return`))
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickeLoop")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickerLoop")
 	}()
 
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
@@ -586,7 +588,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil, nil)
+	rpcClient, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
 	defer func() {
 		rpcClient.Close()
 		pdClient.Close()

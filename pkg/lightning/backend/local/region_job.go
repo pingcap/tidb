@@ -129,6 +129,11 @@ type regionJob struct {
 	injected []injectedBehaviour
 }
 
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (*regionJob) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "regionJob", "regionJob", nil
+}
+
 type tikvWriteResult struct {
 	// means there is no data inside this job
 	emptyJob          bool
@@ -535,7 +540,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		}
 
 		if local.collector != nil {
-			local.collector.Add(size, int64(count))
+			local.collector.Processed(size, int64(count))
 		}
 
 		failpoint.Inject("afterFlushKVs", func() {
@@ -627,14 +632,15 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		leaderPeerMetas = nil
 	})
 
-	// if there is not leader currently, we don't forward the stage to wrote and let caller
+	// if there is no leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
 		tidblogutil.Logger(ctx).Warn("write to tikv no leader",
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return nil, common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
+		return nil, errors.Annotatef(errdef.ErrNoLeader.GenWithStackByArgs(region.Id),
+			"write to tikv with no leader returned, expected leader id %d", leaderID)
 	}
 
 	takeTime := time.Since(begin)
@@ -970,6 +976,85 @@ type regionJobRetryer struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type dispatcher struct {
+	workerCtx context.Context
+
+	jobFromWorkerCh chan *regionJob
+	jobWg           *sync.WaitGroup
+
+	retryer *regionJobRetryer
+}
+
+func newDispatcher(
+	workerCtx context.Context,
+	jobFromWorkerCh chan *regionJob,
+	jobWg *sync.WaitGroup,
+	retryer *regionJobRetryer,
+) *dispatcher {
+	return &dispatcher{
+		workerCtx:       workerCtx,
+		jobFromWorkerCh: jobFromWorkerCh,
+		jobWg:           jobWg,
+		retryer:         retryer,
+	}
+}
+
+func (d *dispatcher) run() error {
+	var (
+		job *regionJob
+		ok  bool
+	)
+	for {
+		select {
+		case <-d.workerCtx.Done():
+			return nil
+		case job, ok = <-d.jobFromWorkerCh:
+		}
+		if !ok {
+			d.retryer.close()
+			return nil
+		}
+		switch job.stage {
+		case regionScanned, wrote:
+			job.retryCount++
+			if job.retryCount > MaxWriteAndIngestRetryTimes {
+				job.done(d.jobWg)
+				lastErr := job.lastRetryableErr
+				intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
+				if lastErr == nil {
+					lastErr = errors.New("retry limit exceeded")
+					tidblogutil.Logger(d.workerCtx).Error(
+						"lastRetryableErr should not be nil",
+						logutil.Key("startKey", job.keyRange.Start),
+						logutil.Key("endKey", job.keyRange.End),
+						zap.Stringer("stage", job.stage),
+						zap.Error(lastErr))
+				}
+				return lastErr
+			}
+			// max retry backoff time: 2+4+8+16+30*26=810s
+			sleepSecond := min(math.Pow(2, float64(job.retryCount)), float64(maxRetryBackoffSecond))
+			job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
+			tidblogutil.Logger(d.workerCtx).Info("put job back to jobCh to retry later",
+				logutil.Key("startKey", job.keyRange.Start),
+				logutil.Key("endKey", job.keyRange.End),
+				zap.Stringer("stage", job.stage),
+				zap.Int("retryCount", job.retryCount),
+				zap.Time("waitUntil", job.waitUntil),
+				log.ShortError(job.lastRetryableErr),
+			)
+			if !d.retryer.push(job) {
+				// retryer is closed by worker error
+				job.done(d.jobWg)
+			}
+		case ingested:
+			job.done(d.jobWg)
+		case needRescan:
+			panic("should not reach here")
+		}
+	}
 }
 
 // newRegionJobRetryer creates a regionJobRetryer. regionJobRetryer.run is

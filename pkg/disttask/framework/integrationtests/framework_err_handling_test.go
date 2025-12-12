@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -32,6 +33,7 @@ import (
 
 func TestOnTaskError(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
+	scope := handle.GetTargetScope()
 
 	t.Run("retryable error on OnNextSubtasksBatch", func(t *testing.T) {
 		registerExampleTask(t, c.MockCtrl, testutil.GetPlanErrSchedulerExt(c.MockCtrl, c.TestContext), c.TestContext, nil)
@@ -40,10 +42,10 @@ func TestOnTaskError(t *testing.T) {
 
 	t.Run("non retryable error on OnNextSubtasksBatch", func(t *testing.T) {
 		registerExampleTask(t, c.MockCtrl, testutil.GetPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
-		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key2-1", "", 1)
+		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key2-1", scope, 1)
 		require.Equal(t, proto.TaskStateReverted, task.State)
 		registerExampleTask(t, c.MockCtrl, testutil.GetStepTwoPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
-		task = testutil.SubmitAndWaitTask(c.Ctx, t, "key2-2", "", 1)
+		task = testutil.SubmitAndWaitTask(c.Ctx, t, "key2-2", scope, 1)
 		require.Equal(t, proto.TaskStateReverted, task.State)
 	})
 
@@ -66,7 +68,7 @@ func TestOnTaskError(t *testing.T) {
 			executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
 		tm, err := storage.GetTaskManager()
 		require.NoError(t, err)
-		taskID, err := tm.CreateTask(c.Ctx, taskKey, proto.TaskTypeExample, "", 1, "", 2, proto.ExtraParams{ManualRecovery: true}, nil)
+		taskID, err := tm.CreateTask(c.Ctx, taskKey, proto.TaskTypeExample, "", 1, scope, 2, proto.ExtraParams{ManualRecovery: true}, nil)
 		require.NoError(t, err)
 		require.Eventually(t, func() bool {
 			task, err := tm.GetTaskByID(c.Ctx, taskID)

@@ -8,8 +8,9 @@ go_test(
         "point_get_plan_test.go",
     ],
     flaky = True,
-    shard_count = 6,
+    shard_count = 8,
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/metrics",
         "//pkg/planner",
         "//pkg/planner/core",

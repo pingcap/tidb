@@ -265,8 +265,8 @@
   {
     "name": "TestIssue61389",
     "cases": [
-      "EXPLAIN format=brief select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;",
-      "select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;"
+      "EXPLAIN format=brief select /*+ stream_agg(), hash_join(t19f3e4f1) */ * from `t19f3e4f1`  where  `colc864` in ( select /*+ use_index(t19f3e4f1, ee56e6aa) */ `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;",
+      "select /*+ stream_agg(), hash_join(t19f3e4f1) */ * from `t19f3e4f1`  where  `colc864` in ( select /*+ use_index(t19f3e4f1, ee56e6aa) */ `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;"
     ]
   },
   {

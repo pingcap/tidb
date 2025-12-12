@@ -20,6 +20,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
@@ -29,7 +30,8 @@ import (
 )
 
 func submitTaskAndCheckSuccessForHA(ctx context.Context, t *testing.T, taskKey string, testContext *testutil.TestContext) {
-	submitTaskAndCheckSuccess(ctx, t, taskKey, "", testContext, map[proto.Step]int{
+	scope := handle.GetTargetScope()
+	submitTaskAndCheckSuccess(ctx, t, taskKey, scope, testContext, map[proto.Step]int{
 		proto.StepOne: 10,
 		proto.StepTwo: 5,
 	})

@@ -16,11 +16,11 @@ package logicalop
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
@@ -29,8 +29,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -61,8 +59,8 @@ func (p *LogicalSelection) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Conditions {
-		ruleutil.ResolveExprAndReplace(expr, replace)
+	for i, expr := range p.Conditions {
+		p.Conditions[i] = ruleutil.ResolveExprAndReplace(expr, replace)
 	}
 }
 
@@ -95,7 +93,7 @@ func (p *LogicalSelection) HashCode() []byte {
 }
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	exprCtx := p.SCtx().GetExprCtx()
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
@@ -104,11 +102,9 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
-	var originConditions []expression.Expression
 	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
-	originConditions = canBePushDown
 	var err error
-	retConditions, child, err = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
+	retConditions, child, err = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -119,22 +115,20 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
-			AppendTableDualTraceStep(p, dual, p.Conditions, opt)
 			return nil, dual, nil
 		}
 		return nil, p, nil
 	}
 	p.Conditions = p.Conditions[:0]
-	appendSelectionPredicatePushDownTraceStep(p, originConditions, opt)
 	return nil, child, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	child := p.Children()[0]
 	parentUsedCols = append(parentUsedCols, expression.ExtractColumnsFromExpressions(p.Conditions, nil)...)
 	var err error
-	p.Children()[0], err = child.PruneColumns(parentUsedCols, opt)
+	p.Children()[0], err = child.PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -170,9 +164,9 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 // PushDownTopN inherits BaseLogicalPlan.<5th> implementation.
 
 // DeriveTopN implements the base.LogicalPlan.<6th> interface.
-func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalSelection) DeriveTopN() base.LogicalPlan {
 	s := p.Self().(*LogicalSelection)
-	windowIsTopN, limitValue := utilfuncp.WindowIsTopN(s)
+	windowIsTopN, limitValue := p.windowIsTopN()
 	if windowIsTopN {
 		child := s.Children()[0].(*LogicalWindow)
 		grandChild := child.Children()[0]
@@ -187,14 +181,13 @@ func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 		/* return select->datasource->topN->window */
 		child.SetChildren(derivedTopN)
 		s.SetChildren(child)
-		appendDerivedTopNTrace(s, opt)
 		return s
 	}
 	return s
 }
 
 // PredicateSimplification inherits BaseLogicalPlan.<7th> implementation.
-func (p *LogicalSelection) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalSelection) PredicateSimplification() base.LogicalPlan {
 	// it is only test
 	pp := p.Self().(*LogicalSelection)
 	intest.AssertFunc(func() bool {
@@ -210,7 +203,7 @@ func (p *LogicalSelection) PredicateSimplification(opt *optimizetrace.LogicalOpt
 		}
 		return slices.Equal(expected, actual)
 	})
-	return pp.BaseLogicalPlan.PredicateSimplification(opt)
+	return pp.BaseLogicalPlan.PredicateSimplification()
 }
 
 // ConstantPropagation inherits BaseLogicalPlan.<8th> implementation.
@@ -239,7 +232,7 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 	if !reload && p.StatsInfo() != nil {
 		return p.StatsInfo(), false, nil
 	}
-	p.SetStats(childStats[0].Scale(cost.SelectionFactor))
+	p.SetStats(childStats[0].Scale(p.SCtx().GetSessionVars(), cost.SelectionFactor))
 	p.StatsInfo().GroupNDVs = nil
 	return p.StatsInfo(), true, nil
 }
@@ -249,11 +242,6 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return childrenProperties[0]
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalSelection(p, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -345,57 +333,79 @@ func splitSetGetVarFunc(filters []expression.Expression) (canBePushDown, canNotB
 	return canBePushDown, canNotBePushDown
 }
 
-// AppendTableDualTraceStep appends a trace step for replacing a plan with a dual table.
-func AppendTableDualTraceStep(replaced base.LogicalPlan, dual base.LogicalPlan, conditions []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		return fmt.Sprintf("%v_%v is replaced by %v_%v", replaced.TP(), replaced.ID(), dual.TP(), dual.ID())
+/*
+		Check the following pattern of filter over row number window function:
+	  - Filter is simple condition of row_number < value or row_number <= value
+	  - The window function is a simple row number
+	  - With default frame: rows between current row and current row. Check is not necessary since
+	    current row is only frame applicable to row number
+	  - Child is a data source with no tiflash option.
+*/
+func (p *LogicalSelection) windowIsTopN() (bool, uint64) {
+	// Check if child is window function.
+	child, isLogicalWindow := p.Children()[0].(*LogicalWindow)
+	if !isLogicalWindow {
+		return false, 0
 	}
-	ectx := replaced.SCtx().GetExprCtx().GetEvalCtx()
-	reason := func() string {
-		buffer := bytes.NewBufferString("The conditions[")
-		for i, cond := range conditions {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(cond.StringWithCtx(ectx, errors.RedactLogDisable))
+
+	if len(p.Conditions) != 1 {
+		return false, 0
+	}
+
+	// Check if filter is column < constant or column <= constant. If it is in this form find column and constant.
+	column, limitValue := expression.FindUpperBound(p.Conditions[0])
+	if column == nil || limitValue <= 0 {
+		return false, 0
+	}
+
+	// Check if filter on window function
+	windowColumns := child.GetWindowResultColumns()
+	if len(windowColumns) != 1 || !(column.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), windowColumns[0])) {
+		return false, 0
+	}
+
+	grandChild := child.Children()[0]
+	dataSource, isDataSource := grandChild.(*DataSource)
+	if !isDataSource {
+		return false, 0
+	}
+
+	// Give up if TiFlash is one possible access path of all. Pushing down window aggregation is good enough in this case.
+	for _, path := range dataSource.AllPossibleAccessPaths {
+		if path.StoreType == kv.TiFlash {
+			return false, 0
 		}
-		buffer.WriteString("] are constant false or null")
-		return buffer.String()
 	}
-	opt.AppendStepToCurrent(dual.ID(), dual.TP(), reason, action)
+
+	if len(child.WindowFuncDescs) == 1 && child.WindowFuncDescs[0].Name == "row_number" &&
+		child.Frame.Type == ast.Rows && child.Frame.Start.Type == ast.CurrentRow && child.Frame.End.Type == ast.CurrentRow &&
+		checkPartitionBy(child, dataSource) {
+		return true, uint64(limitValue)
+	}
+	return false, 0
 }
 
-func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		return fmt.Sprintf("%v_%v is removed", p.TP(), p.ID())
+// checkPartitionBy mainly checks if partition by of window function is a prefix of
+// data order (clustered index) of the data source. TiFlash is allowed only for empty partition by.
+func checkPartitionBy(p *LogicalWindow, d *DataSource) bool {
+	// No window partition by. We are OK.
+	if len(p.PartitionBy) == 0 {
+		return true
 	}
-	reason := func() string {
-		return ""
+
+	// Table not clustered and window has partition by. Can not do the TopN push down.
+	if d.HandleCols == nil {
+		return false
 	}
-	if len(conditions) > 0 {
-		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-		reason = func() string {
-			buffer := bytes.NewBufferString("The conditions[")
-			for i, cond := range conditions {
-				if i > 0 {
-					buffer.WriteString(",")
-				}
-				buffer.WriteString(cond.StringWithCtx(evalCtx, errors.RedactLogDisable))
-			}
-			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
-			return buffer.String()
+
+	if len(p.PartitionBy) > d.HandleCols.NumCols() {
+		return false
+	}
+
+	for i, col := range p.PartitionBy {
+		if !(col.Col.EqualColumn(d.HandleCols.GetCol(i))) {
+			return false
 		}
 	}
-	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
-}
-
-func appendDerivedTopNTrace(topN base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	child := topN.Children()[0]
-	action := func() string {
-		return fmt.Sprintf("%v_%v top N added below  %v_%v ", topN.TP(), topN.ID(), child.TP(), child.ID())
-	}
-	reason := func() string {
-		return fmt.Sprintf("%v filter on row number", topN.TP())
-	}
-	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
+	return true
 }

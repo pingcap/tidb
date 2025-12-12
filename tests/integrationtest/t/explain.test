@@ -12,8 +12,8 @@ drop table if exists t;
 create table t(id int primary key, a int, b int);
 set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
-explain format = 'brief' select group_concat(a) from t group by id;
-explain format = 'brief' select group_concat(a, b) from t group by id;
+explain format = 'plan_tree' select group_concat(a) from t group by id;
+explain format = 'plan_tree' select group_concat(a, b) from t group by id;
 explain format = TRADITIONAL select group_concat(a, b) from t group by id;
 explain format = 'row' select group_concat(a, b) from t group by id;
 drop table t;
@@ -23,8 +23,8 @@ create view v as select cast(replace(substring_index(substring_index("",',',1),'
 desc v;
 
 # should use index lookup after adding user index, table scan is not expected
-explain format = 'brief' select * from mysql.user where user = 'xxx';
-explain format = 'brief' select * from mysql.user where user = 'xxx' or user = 'yyy';
-explain format = 'brief' select * from mysql.global_priv where user = 'xxx';
-explain format = 'brief' select * from mysql.global_grants where user = 'xxx' or user = 'yyy';
-explain format = 'brief' select * from mysql.db where user = 'xxx';
+explain format = 'plan_tree' select * from mysql.user where user = 'xxx';
+explain format = 'plan_tree' select * from mysql.user where user = 'xxx' or user = 'yyy';
+explain format = 'plan_tree' select * from mysql.global_priv where user = 'xxx';
+explain format = 'plan_tree' select * from mysql.global_grants where user = 'xxx' or user = 'yyy';
+explain format = 'plan_tree' select * from mysql.db where user = 'xxx';

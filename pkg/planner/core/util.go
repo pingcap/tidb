@@ -20,20 +20,32 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"go.uber.org/zap"
 )
+
+// IsReadOnly check whether the ast.Node is a read only statement.
+func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
+	return IsReadOnlyInternal(node, vars, true)
+}
+
+// IsReadOnlyInternal is that If checkGlobalVars is true, false will be returned when there are updates to global variables.
+func IsReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkGlobalVars bool) bool {
+	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		prepareStmt, err := GetPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt, checkGlobalVars)
+	}
+	return ast.IsReadOnly(node, checkGlobalVars)
+}
 
 // AggregateFuncExtractor visits Expr tree.
 // It collects AggregateFuncExpr from AST Node.
@@ -90,55 +102,6 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 		a.windowFuncs = append(a.windowFuncs, v)
 	}
 	return n, true
-}
-
-// BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan) *expression.Schema {
-	leftSchema := join.Children()[0].Schema()
-	switch joinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
-		return leftSchema.Clone()
-	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
-		newSchema := leftSchema.Clone()
-		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
-		return newSchema
-	}
-	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
-	if joinType == logicalop.LeftOuterJoin {
-		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
-	} else if joinType == logicalop.RightOuterJoin {
-		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
-	}
-	return newSchema
-}
-
-// GetStatsInfo gets the statistics info from a physical plan tree.
-func GetStatsInfo(i any) map[string]uint64 {
-	if i == nil {
-		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
-		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
-		return nil
-	}
-	p := i.(base.Plan)
-	var physicalPlan base.PhysicalPlan
-	switch x := p.(type) {
-	case *Insert:
-		physicalPlan = x.SelectPlan
-	case *Update:
-		physicalPlan = x.SelectPlan
-	case *Delete:
-		physicalPlan = x.SelectPlan
-	case base.PhysicalPlan:
-		physicalPlan = x
-	}
-
-	if physicalPlan == nil {
-		return nil
-	}
-
-	statsInfos := make(map[string]uint64)
-	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
-	return statsInfos
 }
 
 // extractStringFromStringSet helps extract string info from set.StringSet.
@@ -204,59 +167,10 @@ func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool
 	return false
 }
 
-// EncodeUniqueIndexKey encodes a unique index key.
-func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
-	encodedIdxVals, err := EncodeUniqueIndexValuesForKey(ctx, tblInfo, idxInfo, idxVals)
-	if err != nil {
-		return nil, err
+func getLowerDB(dbName ast.CIStr, vars *variable.SessionVars) string {
+	dbNameL := dbName.L
+	if dbNameL == "" {
+		dbNameL = strings.ToLower(vars.CurrentDB)
 	}
-	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
-}
-
-// EncodeUniqueIndexValuesForKey encodes unique index values for a key.
-func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
-	for i := range idxVals {
-		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
-		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
-		// So we don't use CastValue for string value for now.
-		// TODO: The first if branch should have been removed, because the functionality of set the collation of the datum
-		// have been moved to util/ranger (normal path) and getNameValuePairs/getPointGetValue (fast path). But this change
-		// will be cherry-picked to a hotfix, so we choose to be a bit conservative and keep this for now.
-		if colInfo.GetType() == mysql.TypeString || colInfo.GetType() == mysql.TypeVarString || colInfo.GetType() == mysql.TypeVarchar {
-			var str string
-			str, err = idxVals[i].ToString()
-			idxVals[i].SetString(str, idxVals[i].Collation())
-		} else if colInfo.GetType() == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
-			var str string
-			var e types.Enum
-			str, err = idxVals[i].ToString()
-			if err != nil {
-				return nil, kv.ErrNotExist
-			}
-			e, err = types.ParseEnumName(colInfo.FieldType.GetElems(), str, colInfo.FieldType.GetCollate())
-			if err != nil {
-				return nil, kv.ErrNotExist
-			}
-			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.GetCollate())
-		} else {
-			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
-			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
-			idxVals[i], err = table.CastValue(ctx, idxVals[i], colInfo, true, false)
-			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) ||
-				types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
-				return nil, kv.ErrNotExist
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	encodedIdxVals, err := codec.EncodeKey(sc.TimeZone(), nil, idxVals...)
-	err = sc.HandleError(err)
-	if err != nil {
-		return nil, err
-	}
-	return encodedIdxVals, nil
+	return dbNameL
 }

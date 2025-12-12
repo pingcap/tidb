@@ -449,28 +449,27 @@ func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 	return
 }
 
-// begin instantiations of mergeIter
-
-type kvPair struct {
-	key   []byte
-	value []byte
+// KVPair represents a key-value pair.
+type KVPair struct {
+	Key   []byte
+	Value []byte
 }
 
-func (p *kvPair) sortKey() []byte {
-	return p.key
+func (p *KVPair) sortKey() []byte {
+	return p.Key
 }
 
-func (p *kvPair) cloneInnerFields() {
-	p.key = slices.Clone(p.key)
-	p.value = slices.Clone(p.value)
+func (p *KVPair) cloneInnerFields() {
+	p.Key = slices.Clone(p.Key)
+	p.Value = slices.Clone(p.Value)
 }
 
-func (p *kvPair) len() int {
-	return len(p.key) + len(p.value)
+func (p *KVPair) len() int {
+	return len(p.Key) + len(p.Value)
 }
 
-func getPairKey(p *kvPair) []byte {
-	return p.key
+func getPairKey(p *KVPair) []byte {
+	return p.Key
 }
 
 type kvReaderProxy struct {
@@ -482,12 +481,12 @@ func (p kvReaderProxy) path() string {
 	return p.p
 }
 
-func (p kvReaderProxy) next() (*kvPair, error) {
-	k, v, err := p.r.nextKV()
+func (p kvReaderProxy) next() (*KVPair, error) {
+	k, v, err := p.r.NextKV()
 	if err != nil {
 		return nil, err
 	}
-	return &kvPair{key: k, value: v}, nil
+	return &KVPair{Key: k, Value: v}, nil
 }
 
 func (p kvReaderProxy) switchConcurrentMode(useConcurrent bool) error {
@@ -500,7 +499,7 @@ func (p kvReaderProxy) close() error {
 
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
 type MergeKVIter struct {
-	iter    *mergeIter[*kvPair, kvReaderProxy]
+	iter    *mergeIter[*KVPair, kvReaderProxy]
 	memPool *membuf.Pool
 }
 
@@ -516,7 +515,7 @@ func NewMergeKVIter(
 	checkHotspot bool,
 	outerConcurrency int,
 ) (*MergeKVIter, error) {
-	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
+	readerOpeners := make([]readerOpenerFn[*KVPair, kvReaderProxy], 0, len(paths))
 	if outerConcurrency <= 0 {
 		return nil, errors.New("outerConcurrency must be positive, caller must ensure that the correct value is passed in")
 	}
@@ -547,7 +546,7 @@ func NewMergeKVIter(
 		})
 	}
 
-	it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, readerOpeners, checkHotspot)
+	it, err := newMergeIter[*KVPair, kvReaderProxy](ctx, readerOpeners, checkHotspot)
 	return &MergeKVIter{iter: it, memPool: memPool}, err
 }
 
@@ -564,12 +563,12 @@ func (i *MergeKVIter) Next() bool {
 
 // Key returns the current key.
 func (i *MergeKVIter) Key() []byte {
-	return i.iter.curr.key
+	return i.iter.curr.Key
 }
 
 // Value returns the current value.
 func (i *MergeKVIter) Value() []byte {
-	return i.iter.curr.value
+	return i.iter.curr.Value
 }
 
 // Close closes the iterator.

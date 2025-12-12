@@ -17,7 +17,6 @@ package collate
 import (
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -26,33 +25,16 @@ type gbkChineseCICollator struct {
 
 // Compare implements Collator interface.
 func (*gbkChineseCICollator) Compare(a, b string) int {
-	a = truncateTailingSpace(a)
-	b = truncateTailingSpace(b)
-
-	r1, r2 := rune(0), rune(0)
-	ai, bi := 0, 0
-	r1Len, r2Len := 0, 0
-	for ai < len(a) && bi < len(b) {
-		r1, r1Len = utf8.DecodeRune(hack.Slice(a[ai:]))
-		r2, r2Len = utf8.DecodeRune(hack.Slice(b[bi:]))
-
-		if r1 == utf8.RuneError || r2 == utf8.RuneError {
-			return 0
-		}
-
-		ai = ai + r1Len
-		bi = bi + r2Len
-
-		cmp := int(gbkChineseCISortKey(r1)) - int(gbkChineseCISortKey(r2))
-		if cmp != 0 {
-			return sign(cmp)
-		}
-	}
-	return sign((len(a) - ai) - (len(b) - bi))
+	return compareCommon(a, b, gbkChineseCISortKey)
 }
 
 // Key implements Collator interface.
 func (g *gbkChineseCICollator) Key(str string) []byte {
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
+// ImmutableKey implement Collator interface.
+func (g *gbkChineseCICollator) ImmutableKey(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
@@ -62,9 +44,12 @@ func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	i, rLen := 0, 0
 	r := rune(0)
 	for i < len(str) {
-		r, rLen = utf8.DecodeRune(hack.Slice(str[i:]))
-
-		if r == utf8.RuneError {
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		r, rLen = utf8.DecodeRuneInString(str[i:])
+		invalid := r == utf8.RuneError && rLen == 1
+		if invalid {
 			return buf
 		}
 
@@ -105,10 +90,10 @@ func (p *gbkChineseCIPattern) DoMatch(str string) bool {
 	})
 }
 
-func gbkChineseCISortKey(r rune) uint16 {
+func gbkChineseCISortKey(r rune) uint32 {
 	if r > 0xFFFF {
 		return 0x3F
 	}
 
-	return gbkChineseCISortKeyTable[r]
+	return uint32(gbkChineseCISortKeyTable[r])
 }

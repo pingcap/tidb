@@ -614,7 +614,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		}
 		sv := variable.GetSysVar(sysVar.name)
 		require.NotNil(t, sv)
-		if sv.HasSessionScope() {
+		if sv.HasSessionScope() && !sv.InternalSessionVariable {
 			require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
 		} else if sv.HasGlobalScope() {
 			require.NoError(t, sv.SetGlobalFromHook(context.TODO(), sessionVars, sysVar.val, false))

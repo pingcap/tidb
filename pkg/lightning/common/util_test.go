@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbutil/dbutiltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -300,5 +302,50 @@ CREATE TABLE multi_indexes (
 		singleSQL, multiSQLs := common.BuildAddIndexSQL(tt.table, curTblInfo, desiredTblInfo)
 		require.Equal(t, tt.singleSQL, singleSQL)
 		require.Equal(t, tt.multiSQLs, multiSQLs)
+	}
+}
+
+func TestSkipReadRowCount(t *testing.T) {
+	type testCase struct {
+		sql      string
+		expected bool
+	}
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	testCases := []testCase{
+		{
+			sql:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY, k bigint NOT NULL, c char(16), pad char(16))",
+			expected: true,
+		},
+		{
+			sql:      "CREATE TABLE test.sbtest(id bigint NOT NULL, k bigint NOT NULL, c char(16), pad char(16))",
+			expected: false,
+		},
+		{
+			sql:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY AUTO_INCREMENT, k bigint NOT NULL, c char(16), pad char(16))",
+			expected: false,
+		},
+		{
+			sql:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY AUTO_RANDOM, k bigint NOT NULL, c char(16), pad char(16))",
+			expected: false,
+		},
+		{
+			sql:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY, k bigint AUTO_INCREMENT, c char(16), pad char(16))",
+			expected: true,
+		},
+		{
+			sql:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY NONCLUSTERED, k bigint, c char(16), pad char(16))",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		tk.MustExec("DROP TABLE IF EXISTS test.sbtest")
+		tk.MustExec(tc.sql)
+		table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("sbtest"))
+		require.NoError(t, err)
+		require.Equal(t, tc.expected, common.SkipReadRowCount(table.Meta()))
 	}
 }

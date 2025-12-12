@@ -41,7 +41,7 @@ func EnableFromPathForTest(configPath string) (func(), error) {
 	}
 
 	return func() {
-		sem = nil
+		Disable()
 
 		for name, value := range variableDefValue {
 			variable.SetSysVar(name, value)

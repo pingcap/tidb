@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -267,6 +268,23 @@ type Expression interface {
 	MemoryUsage() int64
 
 	StringerWithCtx
+}
+
+var expressionSlices = zeropool.New[[]Expression](
+	func() []Expression {
+		return make([]Expression, 0, 4)
+	})
+
+// GetExpressionSlices gets a slice of Expression from pool.
+func GetExpressionSlices(size int) []Expression {
+	result := expressionSlices.Get()
+	return slices.Grow(result, size)
+}
+
+// PutExpressionSlices puts a slice of Expression back to pool.
+func PutExpressionSlices(exprs []Expression) {
+	exprs = exprs[:0]
+	expressionSlices.Put(exprs)
 }
 
 // CNFExprs stands for a CNF expression.
@@ -884,6 +902,7 @@ type VarAssignment struct {
 	Expr        Expression
 	IsDefault   bool
 	IsGlobal    bool
+	IsInstance  bool
 	IsSystem    bool
 	ExtendValue *Constant
 }

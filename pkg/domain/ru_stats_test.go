@@ -16,6 +16,7 @@ package domain_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -30,15 +31,15 @@ import (
 )
 
 func TestWriteRUStatistics(t *testing.T) {
-	tz, _ := time.LoadLocation("Asia/Shanghai")
-	testWriteRUStatisticsTz(t, tz)
-
+	tzShanghai, _ := time.LoadLocation("Asia/Shanghai")
 	// test with DST timezone.
-	tz, _ = time.LoadLocation("Australia/Lord_Howe")
-	testWriteRUStatisticsTz(t, tz)
+	tzLord, _ := time.LoadLocation("Australia/Lord_Howe")
 
-	testWriteRUStatisticsTz(t, time.Local)
-	testWriteRUStatisticsTz(t, time.UTC)
+	for i, tz := range []*time.Location{tzShanghai, tzLord, time.Local, time.UTC} {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			testWriteRUStatisticsTz(t, tz)
+		})
+	}
 }
 
 func testWriteRUStatisticsTz(t *testing.T, tz *time.Location) {

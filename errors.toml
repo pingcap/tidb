@@ -201,9 +201,14 @@ error = '''
 pd not fully scattered
 '''
 
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
-failed to wait region splitted
+failed to wait region split
 '''
 
 ["BR:PD:ErrPDUpdateFailed"]
@@ -371,6 +376,11 @@ error = '''
 store disk full
 '''
 
+["KV:ErrNoLeader"]
+error = '''
+region has no leader, region '%d'
+'''
+
 ["Lighting:Restore:ErrChecksumMismatch"]
 error = '''
 checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)
@@ -484,11 +494,6 @@ check multi-ingest support error
 ["Lightning:KV:ErrCreateKVClient"]
 error = '''
 create kv client error
-'''
-
-["Lightning:KV:ErrNoLeader"]
-error = '''
-write to tikv with no leader returned, region '%d', leader: %d
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
@@ -1621,6 +1626,11 @@ error = '''
 Invalid storage class: %s
 '''
 
+["ddl:8272"]
+error = '''
+Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s
@@ -2009,6 +2019,11 @@ Delete can not find column %s for table %s
 ["executor:8179"]
 error = '''
 Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
+'''
+
+["executor:8180"]
+error = '''
+Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
 '''
 
 ["executor:8212"]

@@ -49,7 +49,7 @@ type rowWithPartition struct {
 func processPanicAndLog(errOutputChan chan<- rowWithError, r any) {
 	err := util.GetRecoverError(r)
 	errOutputChan <- rowWithError{err: err}
-	logutil.BgLogger().Error("executor panicked", zap.Error(err), zap.Stack("stack"))
+	logutil.BgLogger().Warn("executor panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 // chunkWithMemoryUsage contains chunk and memory usage.
@@ -86,6 +86,14 @@ func injectErrorForIssue59655(triggerFactor int32) (err error) {
 		}
 	})
 	return
+}
+
+func injectPanicForIssue63216() {
+	failpoint.Inject("Issue63216", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("issue 63216 panic")
+		}
+	})
 }
 
 // It's used only when spill is triggered

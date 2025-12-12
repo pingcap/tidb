@@ -1207,7 +1207,12 @@ func TestCheckBalanceSubtask(t *testing.T) {
 func TestInject(t *testing.T) {
 	e := &BaseStepExecutor{}
 	r := &proto.StepResource{CPU: proto.NewAllocatable(1)}
-	execute.SetFrameworkInfo(e, proto.StepOne, r)
+	ctrl := gomock.NewController(t)
+	t.Cleanup(func() {
+		ctrl.Finish()
+	})
+	taskTable := mock.NewMockTaskTable(ctrl)
+	execute.SetFrameworkInfo(e, &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne}}, r, taskTable.UpdateSubtaskCheckpoint, taskTable.GetSubtaskCheckpoint)
 	got := e.GetResource()
 	require.Equal(t, r, got)
 }

@@ -19,12 +19,26 @@ import (
 	"regexp"
 )
 
+const (
+	// mostly we use an uint64 as the keyspace name, the max value is 20 characters.
+	// And there are at most 16,777,215 keyspace ID in a single physical cluster,
+	// as keyspace ID is encoded into KV, it's very hard to extend its length, so
+	// current keyspace name limit is more than enough for current usage and later
+	// extension.
+	maxKeyspaceNameLength = 20
+)
+
 // Check if the name is valid.
 // Valid name must be 64 characters or fewer and consist only of letters (a-z, A-Z),
 // numbers (0-9), hyphens (-), and underscores (_).
 // currently, we enforce this rule to tidb_service_scope and keyspace_name
 func Check(name string) error {
 	return CheckWithMaxLen(name, 64)
+}
+
+// CheckKeyspaceName checks if the keyspace name is valid.
+func CheckKeyspaceName(name string) error {
+	return CheckWithMaxLen(name, maxKeyspaceNameLength)
 }
 
 // CheckWithMaxLen checks if the name is valid with the specified maximum length.

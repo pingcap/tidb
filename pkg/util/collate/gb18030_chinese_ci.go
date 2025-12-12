@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -41,33 +40,16 @@ func (*gb18030ChineseCICollator) Clone() Collator {
 
 // Compare implements Collator interface.
 func (*gb18030ChineseCICollator) Compare(a, b string) int {
-	a = truncateTailingSpace(a)
-	b = truncateTailingSpace(b)
-
-	r1, r2 := rune(0), rune(0)
-	ai, bi := 0, 0
-	r1Len, r2Len := 0, 0
-	for ai < len(a) && bi < len(b) {
-		r1, r1Len = utf8.DecodeRune(hack.Slice(a[ai:]))
-		r2, r2Len = utf8.DecodeRune(hack.Slice(b[bi:]))
-
-		if r1 == utf8.RuneError || r2 == utf8.RuneError {
-			return 0
-		}
-
-		ai = ai + r1Len
-		bi = bi + r2Len
-
-		cmp := int(gb18030ChineseCISortKey(r1)) - int(gb18030ChineseCISortKey(r2))
-		if cmp != 0 {
-			return sign(cmp)
-		}
-	}
-	return sign((len(a) - ai) - (len(b) - bi))
+	return compareCommon(a, b, gb18030ChineseCISortKey)
 }
 
 // Key implements Collator interface.
 func (g *gb18030ChineseCICollator) Key(str string) []byte {
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
+// ImmutableKey implement Collator interface.
+func (g *gb18030ChineseCICollator) ImmutableKey(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
@@ -77,9 +59,12 @@ func (*gb18030ChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	i, rLen := 0, 0
 	r := rune(0)
 	for i < len(str) {
-		r, rLen = utf8.DecodeRune(hack.Slice(str[i:]))
-
-		if r == utf8.RuneError {
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		r, rLen = utf8.DecodeRuneInString(str[i:])
+		invalid := r == utf8.RuneError && rLen == 1
+		if invalid {
 			return buf
 		}
 

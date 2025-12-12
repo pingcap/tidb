@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -49,7 +49,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
-func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {
+func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executor {
 	var err error
 	if err = b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
 		b.err = err
@@ -183,7 +183,7 @@ func matchPartitionNames(pid int64, partitionNames []ast.CIStr, pi *model.Partit
 }
 
 // Recreated based on Init, change baseExecutor fields also
-func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan, ctx sessionctx.Context) {
+func (e *PointGetExecutor) Recreated(p *physicalop.PointGetPlan, ctx sessionctx.Context) {
 	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
 	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
 	e.BaseExecutor = exec.NewBaseExecutor(ctx, p.Schema(), p.ID())
@@ -196,7 +196,7 @@ func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan, ctx sessionctx
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
 // Note: since this function is also used by Recreated function, thus we can't rely on member field's default value
 // for example: we need to explicitly set e.stats to nil when e.RuntimeStats() is nil
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
+func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	decoder := NewRowDecoder(e.Ctx(), p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
@@ -313,7 +313,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if e.idxInfo != nil {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
-			handleBytes, err := plannercore.EncodeUniqueIndexValuesForKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals)
+			handleBytes, err := physicalop.EncodeUniqueIndexValuesForKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
 				if kv.ErrNotExist.Equal(err) {
 					return nil
@@ -325,7 +325,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 		} else {
-			e.idxKey, err = plannercore.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
+			e.idxKey, err = physicalop.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
 			if err != nil && !kv.ErrNotExist.Equal(err) {
 				return err
 			}
@@ -600,7 +600,13 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 
 	if e.lock {
 		seVars := e.Ctx().GetSessionVars()
-		lockCtx, err := newLockCtx(e.Ctx(), e.lockWaitTime, 1)
+		lockWaitTime := e.lockWaitTime
+
+		if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
+			return nil, err
+		}
+
+		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1)
 		if err != nil {
 			return nil, err
 		}
@@ -690,9 +696,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
-	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+	maxExecutionTime := e.Ctx().GetSessionVars().GetMaxExecutionTime()
+	if maxExecutionTime > 0 {
 		// if the query has max execution time set, we need to set the context deadline for the get request
-		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(maxExecutionTime)*time.Millisecond)
 		defer cancel()
 		return e.snapshot.Get(ctxWithTimeout, key)
 	}

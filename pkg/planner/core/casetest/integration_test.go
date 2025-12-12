@@ -19,13 +19,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -251,8 +251,7 @@ func TestIssue32632(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableScan(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
@@ -521,5 +520,32 @@ func TestIssue56915(t *testing.T) {
 			"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false, stats:partial[j:unInitialized]",
 			"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 		))
+	})
+}
+
+func TestIssue63290(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t1 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t2 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t3 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec(`insert into t1 values (1, 1, 1)`)
+		tk.MustExec(`insert into t3 values (1, 1, 1)`)
+		tk.MustExec(`analyze table t1, t2, t3`)
+
+		// Cartesian Join t1 and t3 first, then join t2.
+		tk.MustQuery(`explain format='plan_tree' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
+			`Projection root  1->Column#13`,
+			`└─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t3.b, test.t2.b)`,
+			`  ├─HashJoin(Build) root  CARTESIAN inner join`,
+			`  │ ├─IndexReader(Build) root  index:IndexFullScan`,
+			`  │ │ └─IndexFullScan cop[tikv] table:t3, index:b(b) keep order:false`,
+			`  │ └─IndexReader(Probe) root  index:IndexFullScan`,
+			`  │   └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false`,
+			`  └─IndexLookUp(Probe) root  `,
+			`    ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))`,
+			`    │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo`,
+			`    └─Selection(Probe) cop[tikv]  not(isnull(test.t2.b))`,
+			`      └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
 	})
 }

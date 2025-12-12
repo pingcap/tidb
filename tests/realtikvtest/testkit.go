@@ -273,7 +273,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 		tk.MustExec("delete from mysql.tidb_global_task;")
 		tk.MustExec("delete from mysql.tidb_background_subtask;")
 		tk.MustExec("delete from mysql.tidb_ddl_job;")
-		rs := tk.MustQuery("show tables")
+		rs := tk.MustQuery("show full tables where table_type = 'BASE TABLE';")
 		tables := []string{}
 		for _, row := range rs.Rows() {
 			tables = append(tables, fmt.Sprintf("`%v`", row[0]))
@@ -283,6 +283,10 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 		}
 		if len(tables) > 0 {
 			tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
+		}
+		rs = tk.MustQuery("show full tables where table_type = 'VIEW';")
+		for _, row := range rs.Rows() {
+			tk.MustExec(fmt.Sprintf("drop view `%v`", row[0]))
 		}
 		t.Log("cleaned up ddl and tables")
 	}
@@ -308,6 +312,16 @@ func UpdateTiDBConfig() {
 			conf.TiKVWorkerURL = "localhost:19000"
 			conf.KeyspaceName = keyspace.System
 			conf.Instance.TiDBServiceScope = handle.NextGenTargetScope
+			conf.MeteringStorageURI = getNextGenObjStoreURIWithArgs("metering-data", "&region=local")
 		}
 	})
+}
+
+// GetNextGenObjStoreURI returns a next-gen object store URI for testing.
+func GetNextGenObjStoreURI(path string) string {
+	return getNextGenObjStoreURIWithArgs(path, "&provider=minio")
+}
+
+func getNextGenObjStoreURIWithArgs(path string, args string) string {
+	return fmt.Sprintf("s3://next-gen-test/%s?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%%3a%%2f%%2f0.0.0.0%%3a9000%s", path, args)
 }

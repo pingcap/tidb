@@ -8,6 +8,7 @@ go_test(
         "pessimistic_test.go",
     ],
     flaky = True,
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

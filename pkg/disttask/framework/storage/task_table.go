@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	clitutil "github.com/tikv/client-go/v2/util"
 )
 
@@ -317,14 +319,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
-	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
-		return nil, err
-	}
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+basicTaskColumns+` from mysql.tidb_global_task t
-		where state in (%?, %?, %?, %?, %?, %?, %?)
-		order by priority asc, create_time asc, id asc
-		limit %?`,
+	return mgr.getTopTasks(ctx,
 		proto.TaskStatePending,
 		proto.TaskStateRunning,
 		proto.TaskStateReverting,
@@ -332,8 +327,40 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 		proto.TaskStatePausing,
 		proto.TaskStateResuming,
 		proto.TaskStateModifying,
-		proto.MaxConcurrentTask*2,
 	)
+}
+
+// GetTopNoNeedResourceTasks implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) GetTopNoNeedResourceTasks(ctx context.Context) ([]*proto.TaskBase, error) {
+	return mgr.getTopTasks(ctx,
+		proto.TaskStateReverting,
+		proto.TaskStateCancelling,
+		proto.TaskStatePausing,
+		proto.TaskStateModifying,
+	)
+}
+
+func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskState) ([]*proto.TaskBase, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	var holders strings.Builder
+	for i := range states {
+		if i > 0 {
+			holders.WriteString(",")
+		}
+		holders.WriteString("%?")
+	}
+	sql := fmt.Sprintf(`select %s from mysql.tidb_global_task t
+		where state in (%s)
+		order by priority asc, create_time asc, id asc
+		limit %%?`, basicTaskColumns, holders.String())
+	args := make([]any, 0, len(states)+1)
+	for _, s := range states {
+		args = append(args, s)
+	}
+	args = append(args, proto.MaxConcurrentTask*2)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -347,6 +374,8 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
+	r := tracing.StartRegion(ctx, "TaskManager.GetTaskExecInfoByExecID")
+	defer r.End()
 	var res []*TaskExecInfo
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
@@ -694,7 +723,7 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 }
 
 // UpdateSubtaskSummary updates the subtask summary.
-func (mgr *TaskManager) UpdateSubtaskSummary(ctx context.Context, subtaskID int64, summary any) error {
+func (mgr *TaskManager) UpdateSubtaskSummary(ctx context.Context, subtaskID int64, summary *execute.SubtaskSummary) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
@@ -1056,4 +1085,40 @@ func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se se
 	sql := "update mysql.tidb_global_task set concurrency = %? where concurrency > %?;"
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, cpuCount, cpuCount)
 	return err
+}
+
+// UpdateSubtaskCheckpoint updates the checkpoint of a subtask.
+func (mgr *TaskManager) UpdateSubtaskCheckpoint(ctx context.Context, subtaskID int64, checkpoint any) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
+
+	data, err := json.Marshal(checkpoint)
+	if err != nil {
+		return err
+	}
+	checkpointJSON := string(data)
+
+	_, err = mgr.ExecuteSQLWithNewSession(ctx,
+		`UPDATE mysql.tidb_background_subtask SET checkpoint = %? WHERE id = %?`,
+		checkpointJSON, subtaskID)
+	return err
+}
+
+// GetSubtaskCheckpoint gets the checkpoint of a subtask.
+func (mgr *TaskManager) GetSubtaskCheckpoint(ctx context.Context, subtaskID int64) (string, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return "", err
+	}
+
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"SELECT checkpoint FROM mysql.tidb_background_subtask WHERE id = %?", subtaskID)
+	if err != nil {
+		return "", err
+	}
+	if len(rs) == 0 || rs[0].IsNull(0) {
+		return "", nil
+	}
+
+	return rs[0].GetString(0), nil
 }

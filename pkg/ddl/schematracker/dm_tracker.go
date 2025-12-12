@@ -724,7 +724,7 @@ func (d *SchemaTracker) handleModifyColumn(
 	tblInfo.Columns[oldCol.Offset] = newColInfo
 	indexesToChange := ddl.FindRelatedIndexesToChange(tblInfo, oldCol.Name)
 	for _, info := range indexesToChange {
-		ddl.SetIdxColNameOffset(info.IndexInfo.Columns[info.Offset], newColInfo)
+		ddl.UpdateIndexCol(info.IndexInfo.Columns[info.Offset], newColInfo)
 	}
 
 	destOffset, err := ddl.LocateOffsetToMove(newColInfo.Offset, spec.Position, tblInfo)

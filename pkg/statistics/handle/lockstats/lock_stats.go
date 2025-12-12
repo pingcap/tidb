@@ -20,11 +20,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -40,11 +40,11 @@ const (
 
 // statsLockImpl implements the util.StatsLock interface.
 type statsLockImpl struct {
-	pool pkgutil.DestroyableSessionPool
+	pool syssession.Pool
 }
 
 // NewStatsLock creates a new StatsLock.
-func NewStatsLock(pool pkgutil.DestroyableSessionPool) types.StatsLock {
+func NewStatsLock(pool syssession.Pool) types.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
 

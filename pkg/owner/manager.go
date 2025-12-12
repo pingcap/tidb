@@ -483,8 +483,6 @@ func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath strin
 		return "", nil, op, 0, 0, concurrency.ErrElectionNoLeader
 	}
 	ownerID, op = splitOwnerValues(resp.Kvs[0].Value)
-	logger.Info("get owner", zap.ByteString("owner key", resp.Kvs[0].Key),
-		zap.ByteString("ownerID", ownerID), zap.Stringer("op", op))
 	return string(resp.Kvs[0].Key), ownerID, op, resp.Header.Revision, resp.Kvs[0].ModRevision, nil
 }
 
@@ -498,6 +496,10 @@ func GetOwnerKeyInfo(
 	if err != nil {
 		return "", 0, errors.Trace(err)
 	}
+	logutil.BgLogger().Info("get owner",
+		zap.String("key", etcdKey),
+		zap.String("owner key", ownerKey),
+		zap.ByteString("ownerID", ownerID))
 	if string(ownerID) != id {
 		logutil.BgLogger().Warn("is not the owner", zap.String("key", etcdKey),
 			zap.String("id", id), zap.String("ownerID", string(ownerID)))
@@ -566,6 +568,9 @@ func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath st
 	}
 
 	_, _, op, _, _, err := getOwnerInfo(ctx, etcdCli, ownerPath)
+	logutil.BgLogger().Info("get owner op value",
+		zap.String("key", ownerPath),
+		zap.Stringer("owner op", op))
 	return op, errors.Trace(err)
 }
 

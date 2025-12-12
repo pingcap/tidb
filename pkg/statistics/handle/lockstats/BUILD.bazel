@@ -10,11 +10,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/lockstats",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
-        "//pkg/util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",

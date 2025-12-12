@@ -38,10 +38,13 @@ go_test(
     flaky = True,
     shard_count = 6,
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/infoschema/context",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "@com_github_gorilla_mux//:mux",

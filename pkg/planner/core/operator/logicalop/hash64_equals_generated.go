@@ -1063,3 +1063,36 @@ func (op *LogicalWindow) Equals(other any) bool {
 	}
 	return true
 }
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalLock) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeLock)
+	op.BaseLogicalPlan.Hash64(h)
+	if op.Lock == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.Lock.Hash64(h)
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalLock pointer.
+func (op *LogicalLock) Equals(other any) bool {
+	op2, ok := other.(*LogicalLock)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.BaseLogicalPlan.Equals(&op2.BaseLogicalPlan) {
+		return false
+	}
+	if !op.Lock.Equals(op2.Lock) {
+		return false
+	}
+	return true
+}

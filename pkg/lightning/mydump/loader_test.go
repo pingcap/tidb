@@ -22,10 +22,13 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -37,8 +40,7 @@ import (
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xitongsys/parquet-go/parquet"
-	"github.com/xitongsys/parquet-go/writer"
+	"go.uber.org/atomic"
 )
 
 type testMydumpLoaderSuite struct {
@@ -1133,59 +1135,67 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
-	type row struct {
-		ID    int64  `parquet:"name=id, type=INT64"`
-		Key   string `parquet:"name=key, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
-		Value string `parquet:"name=value, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	byteArray := make([]byte, 0, 40*1024)
-	bf := bytes.NewBuffer(byteArray)
-	pwriter, err := writer.NewParquetWriterFromWriter(bf, new(row), 4)
-	require.NoError(t, err)
-	pwriter.RowGroupSize = 128 * 1024 * 1024 //128M
-	pwriter.PageSize = 8 * 1024              //8K
-	pwriter.CompressionType = parquet.CompressionCodec_SNAPPY
+	fileName := "test_1.t1.parquet"
+
+	totalRowSize := int64(0)
 	seed := time.Now().Unix()
 	t.Logf("seed: %d. To reproduce the random behaviour, manually set `rand.New(rand.NewSource(seed))`", seed)
 	rnd := rand.New(rand.NewSource(seed))
-	totalRowSize := 0
-	for i := range count {
-		kl := rnd.Intn(20) + 1
-		key := make([]byte, kl)
-		kl, err = rnd.Read(key)
-		require.NoError(t, err)
-		vl := rnd.Intn(20) + 1
-		value := make([]byte, vl)
-		vl, err = rnd.Read(value)
-		require.NoError(t, err)
-
-		totalRowSize += kl + vl + 8
-		row := row{
-			ID:    int64(i),
-			Key:   string(key[:kl]),
-			Value: string(value[:vl]),
-		}
-		err = pwriter.Write(row)
-		require.NoError(t, err)
+	pc := []md.ParquetColumn{
+		{
+			Name:      "id",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.None,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					data[i] = int64(i)
+					defLevels[i] = 1
+				}
+				totalRowSize += int64(8 * numRows)
+				return data, defLevels
+			},
+		},
+		{
+			Name:      "key",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]parquet.ByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					s := strconv.Itoa(rnd.Intn(100) + 1)
+					data[i] = parquet.ByteArray(s)
+					defLevels[i] = 1
+					totalRowSize += int64(len(s))
+				}
+				return data, defLevels
+			},
+		},
+		{
+			Name:      "value",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]parquet.ByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					s := strconv.Itoa(rnd.Intn(100) + 1)
+					data[i] = parquet.ByteArray(s)
+					defLevels[i] = 1
+					totalRowSize += int64(len(s))
+				}
+				return data, defLevels
+			},
+		},
 	}
-	err = pwriter.WriteStop()
-	require.NoError(t, err)
+	md.WriteParquetFile(s.sourceDir, fileName, pc, count)
 
-	fileName := "test_1.t1.parquet"
-	err = store.WriteFile(ctx, fileName, bf.Bytes())
-	require.NoError(t, err)
-
-	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
-		Path: fileName,
-	}, store)
-	require.NoError(t, err)
-	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
-		Path: fileName,
-	})
+	rowCount, rowSize, err := md.SampleStatisticsFromParquet(ctx, fileName, store)
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)
@@ -1205,7 +1215,9 @@ func TestSetupOptions(t *testing.T) {
 }
 
 func TestParallelProcess(t *testing.T) {
+	var totalSize atomic.Int64
 	hdl := func(ctx context.Context, f md.RawFile) (string, error) {
+		totalSize.Add(f.Size)
 		return strings.ToLower(f.Path), nil
 	}
 
@@ -1220,16 +1232,20 @@ func TestParallelProcess(t *testing.T) {
 
 	oneTest := func(length int, concurrency int) {
 		original := make([]md.RawFile, length)
+		totalSize = *atomic.NewInt64(0)
 		for i := range length {
-			original[i] = md.RawFile{Path: randomString()}
+			original[i] = md.RawFile{Path: randomString(), Size: int64(rand.Intn(1000))}
 		}
 
 		res, err := md.ParallelProcess(context.Background(), original, concurrency, hdl)
 		require.NoError(t, err)
 
+		oneTotalSize := int64(0)
 		for i, s := range original {
 			require.Equal(t, strings.ToLower(s.Path), res[i])
+			oneTotalSize += s.Size
 		}
+		require.Equal(t, oneTotalSize, totalSize.Load())
 	}
 
 	oneTest(10, 0)

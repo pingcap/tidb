@@ -17,9 +17,7 @@ package logicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -37,8 +35,8 @@ func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *Logica
 // *************************** start implementation of LogicalPlan interface ***************************
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalPartitionUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	prunedPlan, err := p.LogicalUnionAll.PruneColumns(parentUsedCols, opt)
+func (p *LogicalPartitionUnionAll) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
+	prunedPlan, err := p.LogicalUnionAll.PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -55,23 +53,26 @@ func (p *LogicalPartitionUnionAll) PruneColumns(parentUsedCols []*expression.Col
 }
 
 // PushDownTopN implements LogicalPlan interface.
-func (p *LogicalPartitionUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	transformedUnionAll := p.LogicalUnionAll.PushDownTopN(topNLogicalPlan, opt)
-
-	unionAll, isUnionAll := transformedUnionAll.(*LogicalUnionAll)
-	if !isUnionAll {
-		// Return the transformed plan if it's no longer a LogicalUnionAll
-		return transformedUnionAll
+func (p *LogicalPartitionUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
+	var topN *LogicalTopN
+	if topNLogicalPlan != nil {
+		topN = topNLogicalPlan.(*LogicalTopN)
 	}
-
-	// Update the wrapped LogicalUnionAll with the transformed result
-	p.LogicalUnionAll = *unionAll
+	for i, child := range p.Children() {
+		var newTopN *LogicalTopN
+		if topN != nil {
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, PreferLimitToCop: topN.PreferLimitToCop}.Init(p.SCtx(), topN.QueryBlockOffset())
+			for _, by := range topN.ByItems {
+				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
+			}
+			// newTopN to push down Union's child
+		}
+		p.Children()[i] = child.PushDownTopN(newTopN)
+	}
+	if topN != nil {
+		return topN.AttachChild(p)
+	}
 	return p
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(p, prop)
 }
 
 // *************************** end implementation of LogicalPlan interface ***************************

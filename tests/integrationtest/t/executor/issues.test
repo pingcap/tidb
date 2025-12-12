@@ -98,8 +98,8 @@ drop table if exists t;
 CREATE TABLE t (a bigint unsigned PRIMARY KEY);
 INSERT INTO t VALUES (0),(1),(2),(3),(18446744073709551600),(18446744073709551605),(18446744073709551610),(18446744073709551615);
 ANALYZE TABLE t;
-EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a >= 0x1 AND a <= 0x2;
-EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a BETWEEN 0x1 AND 0x2;
+EXPLAIN FORMAT = 'plan_tree' SELECT a FROM t WHERE a >= 0x1 AND a <= 0x2;
+EXPLAIN FORMAT = 'plan_tree' SELECT a FROM t WHERE a BETWEEN 0x1 AND 0x2;
 SELECT a FROM t WHERE a BETWEEN 0xFFFFFFFFFFFFFFF5 AND X'FFFFFFFFFFFFFFFA';
 
 # TestIssue28935
@@ -569,7 +569,7 @@ analyze table t2;
 begin;
 --sorted_result
 select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
-explain format = 'brief' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
+explain format = 'plan_tree' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
 commit;
 set tidb_cost_model_version=default;
 

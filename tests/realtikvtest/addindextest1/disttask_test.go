@@ -144,9 +144,10 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectPanicForIndexIngest", "return()"))
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockIndexIngestWorkerFault", func() {
+		panic("mock panic")
+	})
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectPanicForIndexIngest"))
 
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 	checkTmpDDLDir(t)
@@ -164,7 +165,12 @@ func TestAddIndexDistCancelWithPartition(t *testing.T) {
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
-	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_enable_dist_task=1;`)
+		t.Cleanup(func() {
+			tk.MustExec(`set global tidb_enable_dist_task=0;`)
+		})
+	}
 
 	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 8;")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
@@ -187,8 +193,6 @@ func TestAddIndexDistCancelWithPartition(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustExec("alter table t add index idx2(a);")
 	tk.MustExec("admin check table t;")
-
-	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 
 func TestAddIndexDistCancel(t *testing.T) {
@@ -198,14 +202,15 @@ func TestAddIndexDistCancel(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use addindexlit;")
-	tk2.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	if kerneltype.IsClassic() {
+		tk2.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+		tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	}
 	tk2.MustExec("create table t2 (a int, b int);")
 	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
@@ -238,8 +243,13 @@ func TestAddIndexDistCancel(t *testing.T) {
 	wg.Wait()
 	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
 	require.Len(t, rows, 2)
-	require.True(t, strings.Contains(rows[0][12].(string) /* comments */, "ingest"))
-	require.True(t, strings.Contains(rows[1][12].(string) /* comments */, "ingest"))
+	if kerneltype.IsClassic() {
+		require.True(t, strings.Contains(rows[0][12].(string) /* comments */, "ingest"))
+		require.True(t, strings.Contains(rows[1][12].(string) /* comments */, "ingest"))
+	} else {
+		require.Equal(t, rows[0][12].(string) /* comments */, "")
+		require.Equal(t, rows[1][12].(string) /* comments */, "")
+	}
 	require.Equal(t, "3", rows[0][7].(string) /* row_count */)
 	require.Equal(t, "3", rows[1][7].(string) /* row_count */)
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone")
@@ -315,7 +325,12 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 		// make sure the task is paused.
 		syncChan <- struct{}{}
 	}))
-	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_enable_dist_task=1;`)
+		t.Cleanup(func() {
+			tk.MustExec(`set global tidb_enable_dist_task=0;`)
+		})
+	}
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
@@ -345,11 +360,12 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskFinished"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause"))
-
-	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 
 func TestAddIndexInvalidDistTaskVariableSetting(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF and fast reorg are always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -373,11 +389,10 @@ func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("set global tidb_enable_dist_task = on;")
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+		tk.MustExec("set global tidb_enable_dist_task = on;")
+	}
 
 	tk.MustExec("create table t (a timestamp default current_timestamp);")
 	tk.MustExec("insert into t values ();")
@@ -396,11 +411,10 @@ func TestAddUKErrorMessage(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("set global tidb_enable_dist_task = on;")
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+		tk.MustExec("set global tidb_enable_dist_task = on;")
+	}
 
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (5, 1), (10005, 1), (20005, 1), (30005, 1);")
@@ -413,10 +427,12 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_dist_task = on;")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_dist_task = on;")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_enable_dist_task = off;")
+		})
+	}
 	retryableErrs := []string{
 		"requested lease not found",
 		"mvcc: required revision has been compacted",
@@ -441,10 +457,12 @@ func TestAddIndexScheduleAway(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_dist_task = on;")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_dist_task = on;")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_enable_dist_task = off;")
+		})
+	}
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 1);")
 
@@ -504,7 +522,9 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
-	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	}
 	var wg sync.WaitGroup
 	for i := range 4 {
 		wg.Add(1)

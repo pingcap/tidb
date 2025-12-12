@@ -425,7 +425,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	// Outdated lock info is acceptable as we verify table lock status pre-analysis.
 	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
 	if err != nil {
-		statslogutil.StatsLogger().Error(
+		statslogutil.StatsLogger().Warn(
 			"check table lock failed",
 			zap.Error(err),
 		)

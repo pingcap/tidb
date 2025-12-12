@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -709,6 +710,10 @@ func TestRequestSource(t *testing.T) {
 				case *kvrpcpb.BatchGetRequest:
 					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
+				case *kvrpcpb.PessimisticLockRequest:
+					requestSource = r.GetContext().GetRequestSource()
+				default:
+					fmt.Printf("unexpected request type %T\n", r)
 				}
 				require.Equal(t, readType+source, requestSource)
 				return next(target, req)
@@ -1135,4 +1140,49 @@ func TestProcessInfoForStaleReadAutoCommit(t *testing.T) {
 			tsTime))
 		require.Contains(t, err.Error(), "Query execution was interrupted")
 	}, uint64(ts))
+}
+
+func TestGetDBNames(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Status.RecordDBLabel = true
+	config.StoreGlobalConfig(&newCfg)
+	defer config.StoreGlobalConfig(originCfg)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database DatabaseA;")
+	tk.MustExec("use DatabaseA;")
+	dbs := session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`create table t1(id bigint primary key, a int, b varchar(32), c text)`)
+	tk.MustExec(`create table t2(id bigint primary key, a int, b varchar(32), c text)`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`insert into t1 (id, b, c) values(1, 'ab', 'ab\\\\c');`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 <nil> ab ab\\\\c"))
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`insert into t1 (id, b, c) values(2, 'xy', 'ab\\c');`)
+	tk.MustExec(`update t1 set a = 123 where id = 2`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`delete from t1 where id = 1;`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("2 123 xy ab\\c"))
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),
+		plannererrors.ErrWrongValueCountOnRow)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustQuery("show tables")
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`drop table t1`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
 }

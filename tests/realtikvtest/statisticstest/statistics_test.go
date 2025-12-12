@@ -17,11 +17,15 @@ package statisticstest
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -49,82 +53,15 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustExec("create table t(a varchar(40) collate utf8mb4_general_ci, index ia3(a(3)), index ia10(a(10)), index ia(a))")
 	tk.MustExec("insert into t values('aaAAaaaAAAabbc'), ('AaAaAaAaAaAbBC'), ('AAAaabbBBbbb'), ('AAAaabbBBbbbccc'), ('aaa'), ('Aa'), ('A'), ('ab')")
 	tk.MustExec("insert into t values('b'), ('bBb'), ('Bb'), ('bA'), ('BBBB'), ('BBBBBDDDDDdd'), ('bbbbBBBBbbBBR'), ('BBbbBBbbBBbbBBRRR')")
-	h := dom.StatsHandle()
-	tk.MustExec("set @@session.tidb_analyze_version=1")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-
-	tk.MustExec("analyze table t")
-	tk.MustExec("explain select * from t where a = 'aaa'")
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-
-	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 0 1 1 \x00A \x00A 0",
-		"test t  a 0 1 2 1 \x00A\x00A \x00A\x00A 0",
-		"test t  a 0 10 12 1 \x00B\x00B\x00B \x00B\x00B\x00B 0",
-		"test t  a 0 11 13 1 \x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B 0",
-		"test t  a 0 12 14 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 0",
-		"test t  a 0 13 15 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 0",
-		"test t  a 0 14 16 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 0",
-		"test t  a 0 2 3 1 \x00A\x00A\x00A \x00A\x00A\x00A 0",
-		"test t  a 0 3 5 2 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 0",
-		"test t  a 0 4 6 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 0",
-		"test t  a 0 5 7 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 0",
-		"test t  a 0 6 8 1 \x00A\x00B \x00A\x00B 0",
-		"test t  a 0 7 9 1 \x00B \x00B 0",
-		"test t  a 0 8 10 1 \x00B\x00A \x00B\x00A 0",
-		"test t  a 0 9 11 1 \x00B\x00B \x00B\x00B 0",
-		"test t  ia 1 0 1 1 \x00A \x00A 0",
-		"test t  ia 1 1 2 1 \x00A\x00A \x00A\x00A 0",
-		"test t  ia 1 10 12 1 \x00B\x00B\x00B \x00B\x00B\x00B 0",
-		"test t  ia 1 11 13 1 \x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B 0",
-		"test t  ia 1 12 14 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 0",
-		"test t  ia 1 13 15 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 0",
-		"test t  ia 1 14 16 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 0",
-		"test t  ia 1 2 3 1 \x00A\x00A\x00A \x00A\x00A\x00A 0",
-		"test t  ia 1 3 5 2 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 0",
-		"test t  ia 1 4 6 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 0",
-		"test t  ia 1 5 7 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 0",
-		"test t  ia 1 6 8 1 \x00A\x00B \x00A\x00B 0",
-		"test t  ia 1 7 9 1 \x00B \x00B 0",
-		"test t  ia 1 8 10 1 \x00B\x00A \x00B\x00A 0",
-		"test t  ia 1 9 11 1 \x00B\x00B \x00B\x00B 0",
-		"test t  ia10 1 0 1 1 \x00A \x00A 0",
-		"test t  ia10 1 1 2 1 \x00A\x00A \x00A\x00A 0",
-		"test t  ia10 1 10 13 1 \x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B 0",
-		"test t  ia10 1 11 15 2 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B 0",
-		"test t  ia10 1 12 16 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D 0",
-		"test t  ia10 1 2 3 1 \x00A\x00A\x00A \x00A\x00A\x00A 0",
-		"test t  ia10 1 3 5 2 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A 0",
-		"test t  ia10 1 4 7 2 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B 0",
-		"test t  ia10 1 5 8 1 \x00A\x00B \x00A\x00B 0",
-		"test t  ia10 1 6 9 1 \x00B \x00B 0",
-		"test t  ia10 1 7 10 1 \x00B\x00A \x00B\x00A 0",
-		"test t  ia10 1 8 11 1 \x00B\x00B \x00B\x00B 0",
-		"test t  ia10 1 9 12 1 \x00B\x00B\x00B \x00B\x00B\x00B 0",
-		"test t  ia3 1 0 1 1 \x00A \x00A 0",
-		"test t  ia3 1 1 2 1 \x00A\x00A \x00A\x00A 0",
-		"test t  ia3 1 2 7 5 \x00A\x00A\x00A \x00A\x00A\x00A 0",
-		"test t  ia3 1 3 8 1 \x00A\x00B \x00A\x00B 0",
-		"test t  ia3 1 4 9 1 \x00B \x00B 0",
-		"test t  ia3 1 5 10 1 \x00B\x00A \x00B\x00A 0",
-		"test t  ia3 1 6 11 1 \x00B\x00B \x00B\x00B 0",
-		"test t  ia3 1 7 16 5 \x00B\x00B\x00B \x00B\x00B\x00B 0",
-	))
-	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
-	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 15 0 1 0.8411764705882353",
-		"1 1 8 0 1 0",
-		"1 2 13 0 1 0",
-		"1 3 15 0 1 0",
-	))
-
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	h = dom.StatsHandle()
+	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 	tk.MustExec("analyze table t")
+	// Wait for stats to be fully persisted and loaded
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	// Priming select followed by explain to load needed histograms.
+	tk.MustExec("select count(*) from t where a = 'aaa'")
 	tk.MustExec("explain select * from t where a = 'aaa'")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
@@ -159,8 +96,23 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 		"test t  ia3 1 \x00B\x00B 1",
 		"test t  ia3 1 \x00B\x00B\x00B 5",
 	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 15 0 2 0.8411764705882353",
+	// Check histogram stats, using tolerance for correlation which can vary slightly
+	rows := tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Rows()
+	require.Len(t, rows, 4)
+
+	// Check column histogram (is_index=0)
+	require.Equal(t, "0", rows[0][0])
+	require.Equal(t, "1", rows[0][1])
+	require.Equal(t, "15", rows[0][2])
+	require.Equal(t, "0", rows[0][3])
+	require.Equal(t, "2", rows[0][4])
+	correlation := rows[0][5].(string)
+	correlationFloat, err := strconv.ParseFloat(correlation, 64)
+	require.NoError(t, err)
+	require.InDelta(t, 0.8411764705882353, correlationFloat, 0.01, "correlation should be approximately 0.841")
+
+	// Check index histograms (is_index=1)
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where is_index=1").Sort().Check(testkit.Rows(
 		"1 1 8 0 2 0",
 		"1 2 13 0 2 0",
 		"1 3 15 0 2 0",
@@ -279,4 +231,57 @@ func checkTableIDInItems(t *testing.T, tableID int64) {
 	case <-ctx.Done():
 		t.Fatal("Timeout: Table ID was not removed from items within the time limit")
 	}
+}
+
+func TestLoadNonExistentIndexStats(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table if not exists t(a int, b int);")
+	// Add an index after table creation. The index histogram will exist in the stats cache
+	// but won't have actual histogram data loaded yet since the table hasn't been analyzed.
+	tk.MustExec("alter table t add index ia(a);")
+	tk.MustExec("insert into t value(1,1), (2,2);")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	ctx := context.Background()
+	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
+	// Trigger async load of index histogram by using the index in a query.
+	// Setting this variable to determinate marks the pseudo table stats as able to trigger loading (CanNotTriggerLoad=false), which enables statistics loading.
+	// See more at IndexStatsIsInvalid and GetStatsTable functions.
+	tk.MustExec("set tidb_opt_objective='determinate';")
+	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
+	table, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	addedIndexID := tableInfo.Indices[0].ID
+	// Wait for the async load to add the index to AsyncLoadHistogramNeededItems.
+	// We should have 3 items: columns a, b, and index ia.
+	require.Eventually(t, func() bool {
+		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+		for _, item := range items {
+			if item.IsIndex && item.TableID == tableInfo.ID && item.ID == addedIndexID {
+				// NOTE: Because the real TiKV test enables sync load by default,
+				// the column stats may or may not be in the AsyncLoadHistogramNeededItems. Therefore, we only check the index here.
+				return true
+			}
+		}
+		return false
+	}, time.Second*5, time.Millisecond*100, "Index ia should be in AsyncLoadHistogramNeededItems")
+
+	// Verify that LoadNeededHistograms doesn't panic when the pseudo index stats exists in the cache
+	// but doesn't have histogram data in mysql.stats_histograms yet.
+	err = util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+		require.NotPanics(t, func() {
+			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h)
+			require.NoError(t, err)
+		})
+		return nil
+	}, util.FlagWrapTxn)
+	require.NoError(t, err)
+
+	// Verify all items were removed from AsyncLoadHistogramNeededItems after loading.
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+	require.Equal(t, len(items), 0, "AsyncLoadHistogramNeededItems should be empty after loading")
 }

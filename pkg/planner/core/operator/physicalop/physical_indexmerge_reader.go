@@ -22,15 +22,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
@@ -75,16 +74,16 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 		for _, partPlan := range p.PartialPlansRaw {
 			totalRowCount += partPlan.StatsCount()
 		}
-		p.SetStats(p.PartialPlansRaw[0].StatsInfo().ScaleByExpectCnt(totalRowCount))
+		p.SetStats(p.PartialPlansRaw[0].StatsInfo().ScaleByExpectCnt(ctx.GetSessionVars(), totalRowCount))
 		p.StatsInfo().StatsVersion = p.PartialPlansRaw[0].StatsInfo().StatsVersion
 	}
 	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.PartialPlansRaw))
 	for _, partialPlan := range p.PartialPlansRaw {
-		tempPlans := FlattenPushDownPlan(partialPlan)
+		tempPlans := FlattenListPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
 	}
 	if p.TablePlan != nil {
-		p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+		p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 		p.SetSchema(p.TablePlan.Schema())
 		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
 	} else {
@@ -134,37 +133,14 @@ func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expressio
 	return corCols
 }
 
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.TablePlan != nil {
-		rp.Children = append(rp.Children, p.TablePlan.BuildPlanTrace())
-	}
-	for _, partialPlan := range p.PartialPlansRaw {
-		rp.Children = append(rp.Children, partialPlan.BuildPlanTrace())
-	}
-	return rp
-}
-
 // GetPlanCostVer1 implements PhysicalPlan cost v1 for IndexMergeReader.
-func (p *PhysicalIndexMergeReader) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalIndexMergeReader) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexMergeReader(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for IndexMergeReader.
-func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexMergeReader(p, taskType, option, args...)
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.TablePlan != nil {
-		AppendChildCandidate(p, p.TablePlan, op)
-	}
-	for _, partialPlan := range p.PartialPlansRaw {
-		AppendChildCandidate(p, partialPlan, op)
-	}
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexMergeReader
@@ -195,7 +171,7 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
-	utilfuncp.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
+	stats.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
 }
 
 // AccessObject implements PartitionAccesser interface.
@@ -231,41 +207,6 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 		str.WriteString(")")
 	}
 	return str.String()
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexMergeReader)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.PushedLimit = p.PushedLimit.Clone()
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	partialPlans, ok := ClonePhysicalPlansForPlanCache(newCtx, p.PartialPlansRaw)
-	if !ok {
-		return nil, false
-	}
-	cloned.PartialPlansRaw = partialPlans
-	if p.TablePlan != nil {
-		tablePlan, ok := p.TablePlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.TablePlan = tablePlan.(base.PhysicalPlan)
-	}
-	cloned.PartialPlans = make([][]base.PhysicalPlan, len(p.PartialPlans))
-	for i, plan := range cloned.PartialPlansRaw {
-		cloned.PartialPlans[i] = FlattenPushDownPlan(plan)
-	}
-	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	if p.HandleCols != nil {
-		cloned.HandleCols = p.HandleCols.Clone()
-	}
-	return cloned, true
 }
 
 // ResolveIndices implements Plan interface.

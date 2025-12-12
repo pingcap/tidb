@@ -862,7 +862,7 @@ func (*pushDownJoin) predicatePushDown(
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond []expression.Expression
 	switch join.JoinType {
-	case logicalop.SemiJoin, logicalop.InnerJoin:
+	case base.SemiJoin, base.InnerJoin:
 		tempCond := make([]expression.Expression, 0,
 			len(join.LeftConditions)+len(join.RightConditions)+len(join.EqualConditions)+len(join.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, join.LeftConditions...)
@@ -884,8 +884,8 @@ func (*pushDownJoin) predicatePushDown(
 		join.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
-	case logicalop.LeftOuterJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin,
-		logicalop.RightOuterJoin:
+	case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin,
+		base.RightOuterJoin:
 		lenJoinConds := len(join.EqualConditions) + len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions)
 		joinConds := make([]expression.Expression, 0, lenJoinConds)
 		for _, equalCond := range join.EqualConditions {
@@ -900,11 +900,13 @@ func (*pushDownJoin) predicatePushDown(
 		join.OtherConditions = nil
 		remainCond = make([]expression.Expression, len(predicates))
 		copy(remainCond, predicates)
-		nullSensitive := join.JoinType == logicalop.AntiLeftOuterSemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin
-		if join.JoinType == logicalop.RightOuterJoin {
-			joinConds, remainCond = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive, nil)
+		nullSensitive := join.JoinType == base.AntiLeftOuterSemiJoin || join.JoinType == base.LeftOuterSemiJoin
+		if join.JoinType == base.RightOuterJoin {
+			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema,
+				join.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, nil)
 		} else {
-			joinConds, remainCond = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive, nil)
+			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema,
+				join.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, nil)
 		}
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)
@@ -913,7 +915,7 @@ func (*pushDownJoin) predicatePushDown(
 		if dual != nil {
 			return leftCond, rightCond, remainCond, dual
 		}
-		if join.JoinType == logicalop.RightOuterJoin {
+		if join.JoinType == base.RightOuterJoin {
 			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx().GetExprCtx(), remainCond)
 			// Only derive right where condition, because left where condition cannot be pushed down
 			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftSchema, rightSchema, false, true)
@@ -1211,7 +1213,7 @@ func (r *PushTopNDownOuterJoin) Match(expr *memo.ExprIter) bool {
 	}
 	join := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case logicalop.LeftOuterJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin, logicalop.RightOuterJoin:
+	case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin, base.RightOuterJoin:
 		return true
 	default:
 		return false
@@ -1253,9 +1255,9 @@ func (r *PushTopNDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	rightGroup := joinExpr.Children[1]
 
 	switch join.JoinType {
-	case logicalop.LeftOuterJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 		leftGroup = pushTopNDownOuterJoinToChild(topN, leftGroup)
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		rightGroup = pushTopNDownOuterJoinToChild(topN, rightGroup)
 	default:
 		return nil, false, false, nil
@@ -1790,9 +1792,9 @@ func (r *PushLimitDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*me
 	rightGroup := old.Children[0].GetExpr().Children[1]
 
 	switch join.JoinType {
-	case logicalop.LeftOuterJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 		leftGroup = r.pushLimitDownOuterJoinToChild(limit, leftGroup)
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		rightGroup = r.pushLimitDownOuterJoinToChild(limit, rightGroup)
 	default:
 		return nil, false, false, nil
@@ -1870,9 +1872,9 @@ func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExp
 	join := joinExpr.ExprNode.(*logicalop.LogicalJoin)
 
 	switch join.JoinType {
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		innerChildIdx = 1
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		innerChildIdx = 0
 	default:
 		ok = false
@@ -1930,7 +1932,7 @@ func NewRuleEliminateOuterJoinBelowAggregation() Transformation {
 // Match implements Transformation interface.
 func (*EliminateOuterJoinBelowAggregation) Match(expr *memo.ExprIter) bool {
 	joinType := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalJoin).JoinType
-	return joinType == logicalop.LeftOuterJoin || joinType == logicalop.RightOuterJoin
+	return joinType == base.LeftOuterJoin || joinType == base.RightOuterJoin
 }
 
 // OnTransform implements Transformation interface.
@@ -1992,7 +1994,7 @@ func NewRuleEliminateOuterJoinBelowProjection() Transformation {
 // Match implements Transformation interface.
 func (*EliminateOuterJoinBelowProjection) Match(expr *memo.ExprIter) bool {
 	joinType := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalJoin).JoinType
-	return joinType == logicalop.LeftOuterJoin || joinType == logicalop.RightOuterJoin
+	return joinType == base.LeftOuterJoin || joinType == base.RightOuterJoin
 }
 
 // OnTransform implements Transformation interface.

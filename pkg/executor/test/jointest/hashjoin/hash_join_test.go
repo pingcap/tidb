@@ -475,26 +475,6 @@ func TestIssue31129(t *testing.T) {
 	require.NoError(t, failpoint.Disable(fpName2))
 }
 
-func TestFinalizeCurrentSegPanic(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (a int, b int, c int)")
-	tk.MustExec("create table t2 (a int, b int, c int)")
-	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	tk.MustExec(join.EnableHashJoinV2)
-	fpName := "github.com/pingcap/tidb/pkg/executor/join/finalizeCurrentSegPanic"
-	require.NoError(t, failpoint.Enable(fpName, "panic(\"finalizeCurrentSegPanic\")"))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fpName))
-	}()
-	err := tk.QueryToErr("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
-	require.EqualError(t, err, "failpoint panic: finalizeCurrentSegPanic")
-}
-
 func TestSplitPartitionPanic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -424,8 +424,8 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		proto.TaskStateRunning,
 		proto.TaskStateReverting,
 		proto.TaskStateCancelling,
-		proto.TaskStatePausing,
-		proto.TaskStateResuming,
+		proto.TaskStatePausing,  // key/5
+		proto.TaskStateResuming, // key/6
 		proto.TaskStateFailed,
 		proto.TaskStatePending,
 		proto.TaskStatePending,
@@ -486,6 +486,16 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 11)
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
+
+	proto.MaxConcurrentTask = 3
+	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"key/5", "key/3", "key/4", "key/12"}, getTaskKeys(tasks))
+
+	proto.MaxConcurrentTask = 1
+	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"key/5", "key/3"}, getTaskKeys(tasks))
 }
 
 func TestGetUsedSlotsOnNodesAndBusyNodes(t *testing.T) {
@@ -1060,6 +1070,9 @@ func TestInitMeta(t *testing.T) {
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows(""))
 	require.NoError(t, sm.InitMeta(ctx, "tidb1", "background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows("background"))
+	t.Cleanup(func() {
+		tk.MustExec(`set global tidb_service_scope=""`)
+	})
 	tk.MustExec(`set global tidb_service_scope=""`)
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
 

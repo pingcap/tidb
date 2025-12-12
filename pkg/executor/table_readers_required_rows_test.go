@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
@@ -71,6 +72,10 @@ func (r *requiredRowsSelectResult) Next(ctx context.Context, chk *chunk.Chunk) e
 	}
 	r.count += required
 	return nil
+}
+
+func (r *requiredRowsSelectResult) IntoIter(_ [][]*types.FieldType) (distsql.SelectResultIter, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (r *requiredRowsSelectResult) genOneRow() chunk.Row {

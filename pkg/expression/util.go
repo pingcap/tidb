@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -188,6 +189,23 @@ func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expres
 	return m
 }
 
+var uniqueIDToColumnMapPool = sync.Pool{
+	New: func() any {
+		return make(map[int64]*Column, 4)
+	},
+}
+
+// GetUniqueIDToColumnMap gets map[int64]*Column map from the pool.
+func GetUniqueIDToColumnMap() map[int64]*Column {
+	return uniqueIDToColumnMapPool.Get().(map[int64]*Column)
+}
+
+// PutUniqueIDToColumnMap puts map[int64]*Column map back to the pool.
+func PutUniqueIDToColumnMap(m map[int64]*Column) {
+	clear(m)
+	uniqueIDToColumnMapPool.Put(m)
+}
+
 // ExtractColumnsMapFromExpressionsWithReusedMap is the same as ExtractColumnsFromExpressions, but map can be reused.
 func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter func(*Column) bool, exprs ...Expression) {
 	if len(exprs) == 0 {
@@ -199,6 +217,23 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 	for _, expr := range exprs {
 		extractColumns(m, expr, filter)
 	}
+}
+
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr, filter)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
 }
 
 // ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
@@ -647,7 +682,21 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
-			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			var newFunc Expression
+			var err error
+			switch v.FuncName.L {
+			case ast.EQ:
+				// keep order as col=value to avoid flaky test.
+				args := refExprArr.Result()
+				switch args[0].(type) {
+				case *Constant:
+					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, args[1], args[0])
+				default:
+					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, args[0], args[1])
+				}
+			default:
+				newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			}
 			if err != nil {
 				return true, true, v
 			}

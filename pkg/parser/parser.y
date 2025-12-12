@@ -323,6 +323,7 @@ import (
 	ascii                      "ASCII"
 	attribute                  "ATTRIBUTE"
 	attributes                 "ATTRIBUTES"
+	autoextendSize             "AUTOEXTEND_SIZE"
 	autoIdCache                "AUTO_ID_CACHE"
 	autoIncrement              "AUTO_INCREMENT"
 	autoRandom                 "AUTO_RANDOM"
@@ -456,6 +457,7 @@ import (
 	hour                       "HOUR"
 	hypo                       "HYPO"
 	identified                 "IDENTIFIED"
+	ietfQuotes                 "IETF_QUOTES"
 	ignoreStats                "IGNORE_STATS"
 	importKwd                  "IMPORT"
 	imports                    "IMPORTS"
@@ -533,6 +535,9 @@ import (
 	optional                   "OPTIONAL"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
+	pageChecksum               "PAGE_CHECKSUM"
+	pageCompressed             "PAGE_COMPRESSED"
+	pageCompressionLevel       "PAGE_COMPRESSION_LEVEL"
 	parser                     "PARSER"
 	partial                    "PARTIAL"
 	partitioning               "PARTITIONING"
@@ -669,6 +674,7 @@ import (
 	trace                      "TRACE"
 	traditional                "TRADITIONAL"
 	transaction                "TRANSACTION"
+	transactional              "TRANSACTIONAL"
 	triggers                   "TRIGGERS"
 	truncate                   "TRUNCATE"
 	tsoType                    "TSO"
@@ -879,6 +885,7 @@ import (
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
 	jobs                       "JOBS"
+	lite                       "LITE"
 	nodeID                     "NODE_ID"
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
@@ -1300,6 +1307,9 @@ import (
 	PrivElem                               "Privilege element"
 	RefreshObject                          "Refresh object"
 	RefreshObjectList                      "Refresh object list"
+	RefreshStatsModeOpt                    "Refresh stats mode optional"
+	RefreshStatsMode                       "Refresh stats mode"
+	RefreshStatsClusterOpt                 "Refresh stats cluster option"
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
@@ -3964,7 +3974,6 @@ ConstraintElem:
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
 		}
-
 		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
@@ -6777,6 +6786,8 @@ IndexOptionList:
 				opt1.SplitOpt = opt2.SplitOpt
 			} else if len(opt2.SecondaryEngineAttr) > 0 {
 				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
+			} else if opt2.Condition != nil {
+				opt1.Condition = opt2.Condition
 			}
 			$$ = opt1
 		}
@@ -6854,6 +6865,12 @@ IndexOption:
 |	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
 	{
 		$$ = &ast.IndexOption{SecondaryEngineAttr: $3}
+	}
+|	"WHERE" Expression
+	{
+		$$ = &ast.IndexOption{
+			Condition: $2.(ast.ExprNode),
+		}
 	}
 
 /*
@@ -7338,6 +7355,12 @@ UnReservedKeyword:
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEYFILE"
+|	"AUTOEXTEND_SIZE"
+|	"PAGE_CHECKSUM"
+|	"PAGE_COMPRESSED"
+|	"PAGE_COMPRESSION_LEVEL"
+|	"TRANSACTIONAL"
+|	"IETF_QUOTES"
 
 TiDBKeyword:
 	"ADMIN"
@@ -7372,6 +7395,7 @@ TiDBKeyword:
 |	"STATS_META"
 |	"STATS_TOPN"
 |	"HISTOGRAMS_IN_FLIGHT"
+|	"LITE"
 |	"TIDB"
 |	"TIFLASH"
 |	"TOPN"
@@ -11160,6 +11184,10 @@ VariableAssignment:
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsGlobal: true, IsSystem: true}
 	}
+|	"INSTANCE" VariableName EqOrAssignmentEq SetExpr
+	{
+		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsInstance: true, IsSystem: true}
+	}
 |	"SESSION" VariableName EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
@@ -11172,9 +11200,13 @@ VariableAssignment:
 	{
 		v := strings.ToLower($1)
 		var isGlobal bool
+		var isInstance bool
 		if strings.HasPrefix(v, "@@global.") {
 			isGlobal = true
 			v = strings.TrimPrefix(v, "@@global.")
+		} else if strings.HasPrefix(v, "@@instance.") {
+			isInstance = true
+			v = strings.TrimPrefix(v, "@@instance.")
 		} else if strings.HasPrefix(v, "@@session.") {
 			v = strings.TrimPrefix(v, "@@session.")
 		} else if strings.HasPrefix(v, "@@local.") {
@@ -11182,7 +11214,7 @@ VariableAssignment:
 		} else if strings.HasPrefix(v, "@@") {
 			v = strings.TrimPrefix(v, "@@")
 		}
-		$$ = &ast.VariableAssignment{Name: v, Value: $3, IsGlobal: isGlobal, IsSystem: true}
+		$$ = &ast.VariableAssignment{Name: v, Value: $3, IsGlobal: isGlobal, IsInstance: isInstance, IsSystem: true}
 	}
 |	singleAtIdentifier EqOrAssignmentEq Expression
 	{
@@ -11284,10 +11316,14 @@ SystemVariable:
 	{
 		v := strings.ToLower($1)
 		var isGlobal bool
+		var isInstance bool
 		explicitScope := true
 		if strings.HasPrefix(v, "@@global.") {
 			isGlobal = true
 			v = strings.TrimPrefix(v, "@@global.")
+		} else if strings.HasPrefix(v, "@@instance.") {
+			isInstance = true
+			v = strings.TrimPrefix(v, "@@instance.")
 		} else if strings.HasPrefix(v, "@@session.") {
 			v = strings.TrimPrefix(v, "@@session.")
 		} else if strings.HasPrefix(v, "@@local.") {
@@ -11295,7 +11331,7 @@ SystemVariable:
 		} else if strings.HasPrefix(v, "@@") {
 			v, explicitScope = strings.TrimPrefix(v, "@@"), false
 		}
-		$$ = &ast.VariableExpr{Name: v, IsGlobal: isGlobal, IsSystem: true, ExplicitScope: explicitScope}
+		$$ = &ast.VariableExpr{Name: v, IsGlobal: isGlobal, IsInstance: isInstance, IsSystem: true, ExplicitScope: explicitScope}
 	}
 
 UserVariable:
@@ -12272,11 +12308,11 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
-| 	"IMPORT" "GROUPS"
+|	"IMPORT" "GROUPS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups}
 	}
-| 	"IMPORT" "GROUP" stringLit 
+|	"IMPORT" "GROUP" stringLit
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
 	}
@@ -12838,6 +12874,8 @@ TableOption:
 |	"PASSWORD" EqOpt stringLit
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3}
+		yylex.AppendError(yylex.Errorf("The PASSWORD option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 |	"COMPRESSION" EqOpt stringLit
 	{
@@ -12968,6 +13006,8 @@ TableOption:
 	{
 		// Parse it but will ignore it
 		$$ = &ast.TableOption{Tp: ast.TableOptionEncryption, StrValue: $3}
+		yylex.AppendError(yylex.Errorf("The ENCRYPTION option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 |	"TTL" EqOpt Identifier '+' "INTERVAL" Literal TimeUnit
 	{
@@ -12998,6 +13038,58 @@ TableOption:
 			return 1
 		}
 		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
+	}
+|	"AUTOEXTEND_SIZE" EqOpt StringName
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionAutoextendSize, StrValue: $3}
+		yylex.AppendError(yylex.Errorf("The AUTOEXTEND_SIZE option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+/* MariaDB specific options 
+ * - https://mariadb.com/docs/server/reference/sql-statements/data-definition/create/create-table
+ */
+|	"PAGE_CHECKSUM" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionPageChecksum, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The PAGE_CHECKSUM option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"PAGE_COMPRESSED" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionPageCompressed, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The PAGE_COMPRESSED option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"PAGE_COMPRESSION_LEVEL" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionPageCompressionLevel, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The PAGE_COMPRESSION_LEVEL option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"TRANSACTIONAL" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionTransactional, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The TRANSACTIONAL option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"SEQUENCE" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionSequence, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The SEQUENCE option is parsed but ignored by all storage engines. Use CREATE SEQUENCE instead."))
+		parser.lastErrorAsWarn()
+	}
+|	"IETF_QUOTES" EqOpt StringName
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionIetfQuotes, StrValue: $3}
+		yylex.AppendError(yylex.Errorf("The IETF_QUOTES option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 
 ForceOpt:
@@ -15613,11 +15705,16 @@ UnlockStatsStmt:
 	}
 
 RefreshStatsStmt:
-	"REFRESH" "STATS" RefreshObjectList
+	"REFRESH" "STATS" RefreshObjectList RefreshStatsModeOpt RefreshStatsClusterOpt
 	{
-		$$ = &ast.RefreshStatsStmt{
+		stmt := &ast.RefreshStatsStmt{
 			RefreshObjects: $3.([]*ast.RefreshObject),
 		}
+		if mode, ok := $4.(*ast.RefreshStatsMode); ok {
+			stmt.RefreshMode = mode
+		}
+		stmt.IsClusterWide = $5.(bool)
+		$$ = stmt
 	}
 
 RefreshObjectList:
@@ -15628,6 +15725,37 @@ RefreshObjectList:
 |	RefreshObjectList ',' RefreshObject
 	{
 		$$ = append($1.([]*ast.RefreshObject), $3.(*ast.RefreshObject))
+	}
+
+RefreshStatsModeOpt:
+	/* empty */
+	{
+		$$ = nil
+	}
+|	RefreshStatsMode
+	{
+		mode := $1.(ast.RefreshStatsMode)
+		$$ = &mode
+	}
+
+RefreshStatsMode:
+	"FULL"
+	{
+		$$ = ast.RefreshStatsModeFull
+	}
+|	"LITE"
+	{
+		$$ = ast.RefreshStatsModeLite
+	}
+
+RefreshStatsClusterOpt:
+	/* empty */
+	{
+		$$ = false
+	}
+|	"CLUSTER"
+	{
+		$$ = true
 	}
 
 RefreshObject:

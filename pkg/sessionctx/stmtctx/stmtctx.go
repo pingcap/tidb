@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/types"
@@ -69,12 +68,6 @@ func AllocateTaskID() uint64 {
 
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
-
-type jsonSQLWarn struct {
-	Level  string        `json:"level"`
-	SQLErr *terror.Error `json:"err,omitempty"`
-	Msg    string        `json:"msg,omitempty"`
-}
 
 // ReferenceCount indicates the reference count of StmtCtx.
 type ReferenceCount int32
@@ -145,7 +138,7 @@ type stmtCtxMu struct {
 	foundRows uint64
 
 	/*
-		following variables are ported from 'COPY_INFO' struct of MySQL server source,
+		These variables serve a similar purpose to those in MySQL's `COPY_INFO`,
 		they are used to count rows for INSERT/REPLACE/UPDATE queries:
 		  If a row is inserted then the copied variable is incremented.
 		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
@@ -313,6 +306,7 @@ type StatementContext struct {
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
 	MemTracker   *memory.Tracker
+	MemSensitive bool // whether this statement is memory sensitive
 	DiskTracker  *disk.Tracker
 	// per statement resource group name
 	// hint /* +ResourceGroup(name) */ can change the statement group name
@@ -334,6 +328,15 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
+
+	// ExecRetryCount records the number of retries for executing the statement.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
+	ExecRetryCount uint64
+	// ExecSuccess indicates whether the statement execution succeeded.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
+	ExecSuccess bool
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
@@ -476,8 +479,8 @@ type StatementContext struct {
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
 	StaleTSOProvider *staleTSOProvider
 
-	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
-	MDLRelatedTableIDs map[int64]struct{}
+	// RelatedTableIDs stores the IDs of tables used in statement.
+	RelatedTableIDs map[int64]struct{}
 
 	// ForShareLockEnabledByNoop indicates whether the current statement contains `for share` clause
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
@@ -514,6 +517,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
 	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	sc.RelatedTableIDs = make(map[int64]struct{})
 	return sc
 }
 
@@ -543,7 +547,7 @@ func (sc *StatementContext) Reset() bool {
 		CTEStorageMap:       sc.CTEStorageMap,
 		LockTableIDs:        sc.LockTableIDs,
 		TableStats:          sc.TableStats,
-		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		RelatedTableIDs:     sc.RelatedTableIDs,
 		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
 		WarnHandler:         sc.WarnHandler,
 		ExtraWarnHandler:    sc.ExtraWarnHandler,

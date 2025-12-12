@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -36,37 +35,6 @@ func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
 	}
 	return sctx, nil
-}
-
-func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext, fd *funcdep.FDSet) base.Task {
-	if p.TaskTp == property.MppTaskType {
-		mpp, ok := tsk.(*MppTask)
-		if !ok || mpp.Invalid() {
-			return base.InvalidTask
-		}
-		if !p.IsSortItemAllForPartition() {
-			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
-			return base.InvalidTask
-		}
-		tsk = mpp.enforceExchanger(p, fd)
-	}
-	// when task is double cop task warping a index merge reader, tsk.plan() may be nil when indexPlanFinished is marked
-	// as false, while the real plan is in idxMergePartPlans. tsk.plan()==nil is not right here.
-	if p.IsSortItemEmpty() || tsk.Invalid() {
-		return tsk
-	}
-	if p.TaskTp != property.MppTaskType {
-		tsk = tsk.ConvertToRootTask(ctx)
-	}
-	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
-	sort := physicalop.PhysicalSort{
-		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
-		IsPartialSort: p.IsSortItemAllForPartition(),
-	}.Init(ctx, tsk.Plan().StatsInfo(), tsk.Plan().QueryBlockOffset(), sortReqProp)
-	for _, col := range p.SortItems {
-		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
-	}
-	return sort.Attach2Task(tsk)
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
@@ -110,7 +78,7 @@ func optimizeByShuffle4Window(pp *physicalop.PhysicalWindow, ctx base.PlanContex
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ctx, partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
@@ -151,7 +119,7 @@ func optimizeByShuffle4StreamAgg(pp *physicalop.PhysicalStreamAgg, ctx base.Plan
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ctx, partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}

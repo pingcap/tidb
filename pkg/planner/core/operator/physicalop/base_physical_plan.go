@@ -15,22 +15,106 @@
 package physicalop
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+//go:generate go run ../../generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
+var (
+	_ base.PhysicalPlan = &PhysicalSelection{}
+	_ base.PhysicalPlan = &PhysicalProjection{}
+	_ base.PhysicalPlan = &PhysicalTopN{}
+	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
+	_ base.PhysicalPlan = &PhysicalTableDual{}
+	_ base.PhysicalPlan = &PhysicalUnionAll{}
+	_ base.PhysicalPlan = &PhysicalSort{}
+	_ base.PhysicalPlan = &NominalSort{}
+	_ base.PhysicalPlan = &PhysicalLock{}
+	_ base.PhysicalPlan = &PhysicalLimit{}
+	_ base.PhysicalPlan = &PhysicalIndexScan{}
+	_ base.PhysicalPlan = &PhysicalTableScan{}
+	_ base.PhysicalPlan = &PhysicalTableReader{}
+	_ base.PhysicalPlan = &PhysicalIndexReader{}
+	_ base.PhysicalPlan = &PhysicalIndexLookUpReader{}
+	_ base.PhysicalPlan = &PhysicalIndexMergeReader{}
+	_ base.PhysicalPlan = &PhysicalHashAgg{}
+	_ base.PhysicalPlan = &PhysicalStreamAgg{}
+	_ base.PhysicalPlan = &PhysicalApply{}
+	_ base.PhysicalPlan = &PhysicalIndexJoin{}
+	_ base.PhysicalPlan = &PhysicalHashJoin{}
+	_ base.PhysicalPlan = &PhysicalMergeJoin{}
+	_ base.PhysicalPlan = &PhysicalUnionScan{}
+	_ base.PhysicalPlan = &PhysicalWindow{}
+	_ base.PhysicalPlan = &PhysicalShuffle{}
+	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
+	_ base.PhysicalPlan = &BatchPointGetPlan{}
+	_ base.PhysicalPlan = &PhysicalTableSample{}
+	_ base.PhysicalPlan = &PhysicalSequence{}
+)
+
+// AddExtraPhysTblIDColumn for partition table.
+// For keepOrder with partition table,
+// we need use partitionHandle to distinct two handles,
+// the `_tidb_rowid` in different partitions can have the same value.
+func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+	// Not adding the ExtraPhysTblID if already exists
+	if model.FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
+		return columns, schema, false
+	}
+	columns = append(columns, model.NewExtraPhysTblIDColInfo())
+	schema.Append(&expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraPhysTblID,
+	})
+	return columns, schema, true
+}
+
+// CollectPlanStatsVersion uses to collect the statistics version of the plan.
+func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
+	for _, child := range plan.Children() {
+		statsInfos = CollectPlanStatsVersion(child, statsInfos)
+	}
+	switch copPlan := plan.(type) {
+	case *PhysicalTableReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.TablePlan, statsInfos)
+	case *PhysicalIndexReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
+	case *PhysicalIndexLookUpReader:
+		// For index loop up, only the indexPlan is necessary,
+		// because they use the same stats and we do not set the stats info for tablePlan.
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
+	case *PhysicalIndexScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
+	case *PhysicalTableScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
+	}
+
+	return statsInfos
+}
+
+// SafeClone clones this op.PhysicalPlan and handles its panic.
+func SafeClone(sctx base.PlanContext, v base.PhysicalPlan) (_ base.PhysicalPlan, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	return v.Clone(sctx)
+}
 
 // BasePhysicalPlan is the common structure that used in physical plan.
 type BasePhysicalPlan struct {
@@ -67,29 +151,13 @@ func (p *BasePhysicalPlan) Schema() *expression.Schema {
 	return p.children[0].Schema()
 }
 
-// BuildPlanTrace implements Plan BuildPlanTrace interface.
-func (p *BasePhysicalPlan) BuildPlanTrace() *tracing.PlanTrace {
-	tp := ""
-	info := ""
-	if p.Self != nil {
-		tp = p.Self.TP()
-		info = p.Self.ExplainInfo()
-	}
-
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: tp, ExplainInfo: info}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
-	}
-	return planTrace
-}
-
 // ******************************* end implementation of Plan interface *********************************
 
 // *************************** start implementation of PhysicalPlan interface ***************************
 
 // GetPlanCostVer1 implements the base.PhysicalPlan.<0th> interface.
 // which calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *BasePhysicalPlan) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *BasePhysicalPlan) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !costusage.HasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		// just calculate the cost once and always reuse it
@@ -109,7 +177,7 @@ func (p *BasePhysicalPlan) GetPlanCostVer1(taskType property.TaskType, option *o
 
 // GetPlanCostVer2 implements the base.PhysicalPlan.<1st> interface.
 // which calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *BasePhysicalPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func (p *BasePhysicalPlan) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	if p.PlanCostInit && !costusage.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -148,9 +216,6 @@ func (p *BasePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 
 // StatsCount implements the base.PhysicalPlan.<5th> interface.
 func (p *BasePhysicalPlan) StatsCount() float64 {
-	if p == nil || p.StatsInfo() == nil {
-		fmt.Println(1)
-	}
 	return p.StatsInfo().RowCount
 }
 
@@ -197,24 +262,6 @@ func (*BasePhysicalPlan) ExplainNormalizedInfo() string {
 // Clone implements the base.PhysicalPlan.<14th> interface.
 func (p *BasePhysicalPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p.Self)
-}
-
-// AppendChildCandidate implements the base.PhysicalPlan.<15th> interface.
-func (p *BasePhysicalPlan) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	if len(p.Children()) < 1 {
-		return
-	}
-	childrenID := make([]int, 0)
-	for _, child := range p.Children() {
-		childCandidate := &tracing.CandidatePlanTrace{
-			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
-				ExplainInfo: child.ExplainInfo()},
-		}
-		op.AppendCandidate(childCandidate)
-		child.AppendChildCandidate(op)
-		childrenID = append(childrenID, child.ID())
-	}
-	op.GetTracer().Candidates[p.ID()].PlanTrace.AppendChildrenID(childrenID...)
 }
 
 // MemoryUsage implements the base.PhysicalPlan.<16th> interface.
@@ -320,5 +367,132 @@ func NewBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan
 	return BasePhysicalPlan{
 		Plan: baseimpl.NewBasePlan(ctx, tp, offset),
 		Self: self,
+	}
+}
+
+func admitIndexJoinProps(children []*property.PhysicalProperty, prop *property.PhysicalProperty) []*property.PhysicalProperty {
+	if prop.TaskTp == property.MppTaskType {
+		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
+		// which is guaranteed by the parent physical plans enumeration.
+		return children
+	}
+	// only admit root & cop task type to push down indexJoinProp.
+	if prop.IndexJoinProp != nil {
+		newChildren := children[:0]
+		for _, child := range children {
+			if child.TaskTp != property.MppTaskType {
+				child.IndexJoinProp = prop.IndexJoinProp
+				// only admit non-mpp task prop.
+				newChildren = append(newChildren, child)
+			}
+		}
+		children = newChildren
+	}
+	return children
+}
+
+func admitIndexJoinProp(child, prop *property.PhysicalProperty) *property.PhysicalProperty {
+	if prop.TaskTp == property.MppTaskType {
+		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
+		// which is guaranteed by the parent physical plans enumeration.
+		return child
+	}
+	// only admit root & cop task type to push down indexJoinProp.
+	if prop.IndexJoinProp != nil {
+		if child.TaskTp != property.MppTaskType {
+			child.IndexJoinProp = prop.IndexJoinProp
+		} else {
+			// only admit non-mpp task prop.
+			child = nil
+		}
+	}
+	return child
+}
+
+func admitIndexJoinTypes(types []property.TaskType, prop *property.PhysicalProperty) []property.TaskType {
+	if prop.TaskTp == property.MppTaskType {
+		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
+		// which is guaranteed by the parent physical plans enumeration.
+		return types
+	}
+	// only admit root & cop task type to push down indexJoinProp.
+	if prop.IndexJoinProp != nil {
+		newTypes := types[:0]
+		for _, tp := range types {
+			if tp != property.MppTaskType {
+				newTypes = append(newTypes, tp)
+			}
+		}
+		types = newTypes
+	}
+	return types
+}
+
+// GetStatsInfo gets the statistics info from a physical plan tree.
+func GetStatsInfo(i any) map[string]uint64 {
+	if i == nil {
+		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
+		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
+		return nil
+	}
+	p := i.(base.Plan)
+	var physicalPlan base.PhysicalPlan
+	switch x := p.(type) {
+	case *Insert:
+		physicalPlan = x.SelectPlan
+	case *Update:
+		physicalPlan = x.SelectPlan
+	case *Delete:
+		physicalPlan = x.SelectPlan
+	case base.PhysicalPlan:
+		physicalPlan = x
+	}
+
+	if physicalPlan == nil {
+		return nil
+	}
+
+	statsInfos := make(map[string]uint64)
+	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
+	return statsInfos
+}
+
+// FindBestTask converts the logical plan to the physical plan.
+// It is called recursively from the parent to the children to create the result physical plan.
+// Some logical plans will convert the children to the physical plans in different ways, and return the one
+// With the lowest cost and how many plans are found in this function.
+func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask base.Task, err error) {
+	// since different logical operator may have different findBestTask before like:
+	// 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
+	//	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
+	//	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
+	//	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
+	//	utilfuncp.FindBestTask4LogicalMemTable = findBestTask4LogicalMemTable
+	//	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
+	//	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
+	// once we call GE's findBestTask from group expression level, we should judge from here, and get the
+	// wrapped logical plan and then call their specific function pointer to handle logic inside. At the
+	// same time, we will pass ge (also implement LogicalPlan interface) as the first parameter for iterate
+	// ge's children in memo scenario.
+	// And since base.LogicalPlan is a common parent pointer of GE and LogicalPlan, we can use same portal.
+	switch lop := e.GetWrappedLogicalPlan().(type) {
+	case *logicalop.LogicalCTE:
+		return findBestTask4LogicalCTE(e, prop)
+	case *logicalop.LogicalShow:
+		return findBestTask4LogicalShow(e, prop)
+	case *logicalop.LogicalCTETable:
+		return findBestTask4LogicalCTETable(e, prop)
+	case *logicalop.LogicalMemTable:
+		return findBestTask4LogicalMemTable(lop, prop)
+	case *logicalop.LogicalTableDual:
+		return findBestTask4LogicalTableDual(lop, prop)
+	case *logicalop.DataSource:
+		return utilfuncp.FindBestTask4LogicalDataSource(e, prop)
+	case *logicalop.LogicalShowDDLJobs:
+		return findBestTask4LogicalShowDDLJobs(e, prop)
+	case *logicalop.MockDataSource:
+		return findBestTask4LogicalMockDatasource(lop, prop)
+	default:
+		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop)
 	}
 }

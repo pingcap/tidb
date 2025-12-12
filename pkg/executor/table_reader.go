@@ -38,6 +38,7 @@ import (
 	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -150,6 +152,13 @@ type TableReaderExecutor struct {
 	// TODO: remove this field, use the kvRangeBuilder interface.
 	ranges []*ranger.Range
 
+	// groupedRanges and groupByColIdxs are from AccessPath.groupedRanges, please see the comment there for more details
+	// In brief, it splits TableReaderExecutor.ranges into groups. When it's set, we need to access them respectively
+	// and use a merge sort to combine them.
+
+	groupedRanges  [][]*ranger.Range
+	groupByColIdxs []int
+
 	// kvRanges are only use for union scan.
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
@@ -206,7 +215,7 @@ func (e *TableReaderExecutor) setDummy() {
 }
 
 func (e *TableReaderExecutor) memUsage() int64 {
-	const sizeofTableReaderExecutor = int64(unsafe.Sizeof(*(*TableReaderExecutor)(nil)))
+	const sizeofTableReaderExecutor = int64(unsafe.Sizeof(*e))
 
 	res := sizeofTableReaderExecutor
 	res += size.SizeOfPointer * int64(cap(e.ranges))
@@ -261,17 +270,42 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// Rebuild groupedRanges if it was originally set
+		if len(e.groupByColIdxs) != 0 {
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, e.groupByColIdxs)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	e.resultHandler = &tableResultHandler{}
 
-	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
+	// To make the code more clean, we use a unified `groupedRanges` to represent the ranges to be read, no matter
+	// whether they are from `e.ranges` or `e.groupedRanges`.
+	var groupedRanges [][]*ranger.Range
+	if len(e.groupedRanges) > 0 {
+		groupedRanges = e.groupedRanges
+	} else if len(e.ranges) > 0 {
+		groupedRanges = [][]*ranger.Range{e.ranges}
+	}
+
+	var firstPartGroupedRanges, secondPartGroupedRanges [][]*ranger.Range
+	for _, ranges := range groupedRanges {
+		signedRanges, unsignedRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
+		if len(signedRanges) > 0 {
+			firstPartGroupedRanges = append(firstPartGroupedRanges, signedRanges)
+		}
+		if len(unsignedRanges) > 0 {
+			secondPartGroupedRanges = append(secondPartGroupedRanges, unsignedRanges)
+		}
+	}
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
 	// cached table and temporary table are similar
 	if e.dummy {
-		if e.desc && len(secondPartRanges) != 0 {
+		if e.desc && len(secondPartGroupedRanges) != 0 {
 			// TiKV support reverse scan and the `resultHandler` process the range order.
 			// While in UnionScan, it doesn't use reverse scan and reverse the final result rows manually.
 			// So things are differ, we need to reverse the kv range here.
@@ -280,15 +314,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			// [1 3] [65535 9734095886065816707] | [9734095886065816708 9734095886065816709] => ranges part reverse here
 			// [1 3  65535 9734095886065816707 9734095886065816708 9734095886065816709] => scan (normal order) in UnionScan
 			// [9734095886065816709 9734095886065816708 9734095886065816707 65535 3  1] => rows reverse in UnionScan
-			firstPartRanges, secondPartRanges = secondPartRanges, firstPartRanges
+			firstPartGroupedRanges, secondPartGroupedRanges = secondPartGroupedRanges, firstPartGroupedRanges
 		}
-		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
-		if err != nil {
-			return err
+		for _, ranges := range firstPartGroupedRanges {
+			kvReq, err := e.buildKVReq(ctx, ranges)
+			if err != nil {
+				return err
+			}
+			e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		}
-		e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
-		if len(secondPartRanges) != 0 {
-			kvReq, err = e.buildKVReq(ctx, secondPartRanges)
+		for _, ranges := range secondPartGroupedRanges {
+			kvReq, err := e.buildKVReq(ctx, ranges)
 			if err != nil {
 				return err
 			}
@@ -297,16 +333,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		return nil
 	}
 
-	firstResult, err := e.buildResp(ctx, firstPartRanges)
+	var firstResult distsql.SelectResult
+	firstResult, err = e.buildRespForGroupedRanges(ctx, firstPartGroupedRanges)
 	if err != nil {
 		return err
 	}
-	if len(secondPartRanges) == 0 {
+	if len(secondPartGroupedRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
 		return nil
 	}
 	var secondResult distsql.SelectResult
-	secondResult, err = e.buildResp(ctx, secondPartRanges)
+	secondResult, err = e.buildRespForGroupedRanges(ctx, secondPartGroupedRanges)
 	if err != nil {
 		return err
 	}
@@ -359,16 +396,23 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
-// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
-// to fetch all results.
-func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
+// buildRespForGroupedRanges builds the input ranger.Range into SelectResult.
+// Note that no matter the range is from e.ranges or e.groupedRanges, they are all passed in as groupedRanges here.
+func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) (distsql.SelectResult, error) {
+	// Accessing partitioned table on TiFlash is slightly different right now, we use a different code path for it.
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
+		// Since accessing partitioned table on TiFlash doesn't support keep order, so e.groupedRanges must be empty.
+		intest.Assert(len(groupedRanges) == 1 && len(e.groupedRanges) == 0)
+	}
+	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil && len(groupedRanges) == 1 && len(e.groupedRanges) == 0 {
+		ranges := groupedRanges[0]
 		if !e.batchCop {
 			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
 			kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
 			if err != nil {
 				return nil, err
 			}
+			e.kvRanges = sortAndGetKVRangesFromReqs(kvReqs)
 			var results []distsql.SelectResult
 			for _, kvReq := range kvReqs {
 				result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
@@ -384,6 +428,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		if err != nil {
 			return nil, err
 		}
+		e.kvRanges = sortAndGetKVRangesFromReqs([]*kv.Request{kvReq})
 		result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
 			return nil, err
@@ -391,40 +436,69 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return result, nil
 	}
 
-	// use sortedSelectResults here when pushDown limit for partition table.
-	if e.kvRangeBuilder != nil && e.byItems != nil {
-		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+	kvReqs, err := e.buildKVReqSeparatelyForGroupedRanges(ctx, groupedRanges)
+	if err != nil {
+		return nil, err
+	}
+	// Even if it's an empty request, we still need to build a kvReq to make the following execution logic work.
+	// Otherwise, there will be panic.
+	if len(kvReqs) == 0 {
+		kvReq, err := e.buildKVReq(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
-		var results []distsql.SelectResult
-		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+		kvReqs = append(kvReqs, kvReq)
+	}
+	e.kvRanges = sortAndGetKVRangesFromReqs(kvReqs)
+	results := make([]distsql.SelectResult, 0, len(kvReqs))
+	for _, kvReq := range kvReqs {
+		result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	if len(results) == 1 {
+		return results[0], nil
+	}
+
+	intest.Assert(len(e.byItems) > 0,
+		"In current logic, if there are more than one result, len(e.byItems) must be > 0")
+	return distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker), nil
+}
+
+func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) ([]*kv.Request, error) {
+	var kvReqs []*kv.Request
+	for _, ranges := range groupedRanges {
+		if e.kvRangeBuilder != nil && e.byItems != nil {
+			reqs, err := e.buildKVReqSeparately(ctx, ranges)
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, result)
+			kvReqs = append(kvReqs, reqs...)
+		} else {
+			kvReq, err := e.buildKVReq(ctx, ranges)
+			if err != nil {
+				return nil, err
+			}
+			kvReqs = append(kvReqs, kvReq)
 		}
-		if len(results) == 1 {
-			return results[0], nil
-		}
-		return distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker), nil
 	}
+	return kvReqs, nil
+}
 
-	kvReq, err := e.buildKVReq(ctx, ranges)
-	if err != nil {
-		return nil, err
+func sortAndGetKVRangesFromReqs(kvReqs []*kv.Request) []kv.KeyRange {
+	kvRanges := make([]kv.KeyRange, 0, len(kvReqs))
+	for _, kvReq := range kvReqs {
+		kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) int {
+			return bytes.Compare(i.StartKey, j.StartKey)
+		})
+		kvRanges = kvReq.KeyRanges.AppendSelfTo(kvRanges)
 	}
-	kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) int {
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
-	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
-
-	result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return kvRanges
 }
 
 func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges []*ranger.Range) ([]*kv.Request, error) {
@@ -434,7 +508,6 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	}
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
-		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
 			return nil, err
 		}
@@ -471,7 +544,6 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 	}
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(pids))
 	for i, kvRange := range kvRanges {
-		e.kvRanges = append(e.kvRanges, kvRange...)
 		partitionIDAndRanges = append(partitionIDAndRanges, kv.PartitionIDAndRanges{
 			ID:        pids[i],
 			KeyRanges: kvRange,

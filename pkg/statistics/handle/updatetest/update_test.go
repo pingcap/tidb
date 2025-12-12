@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -43,6 +43,9 @@ import (
 )
 
 func TestSingleSessionInsert(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -91,10 +94,6 @@ func TestSingleSessionInsert(t *testing.T) {
 	require.Equal(t, int64(rowCount1*2), stats1.RealtimeCount)
 
 	// Test IncreaseFactor.
-	count, err := cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stats1, types.NewIntDatum(1), tableInfo1.Columns[0].ID)
-	require.NoError(t, err)
-	require.Equal(t, float64(rowCount1*2), count)
-
 	testKit.MustExec("begin")
 	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
@@ -1115,6 +1114,9 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 }
 
 func TestStatsLockForDelta(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")

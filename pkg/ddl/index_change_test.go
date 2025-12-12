@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -393,6 +394,9 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 }
 
 func TestAddIndexRowCountUpdate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -431,4 +435,29 @@ func TestAddIndexRowCountUpdate(t *testing.T) {
 		}, 2*time.Minute, 60*time.Millisecond)
 	}()
 	tk.MustExec("alter table t add index idx(c2);")
+}
+
+func TestFastReOrgAlwaysEnabledOnNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for next-gen TiDB")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg").Equal(testkit.Rows("1"))
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_enable_fast_reorg=0"),
+		"setting tidb_ddl_enable_fast_reorg is not supported in the next generation of TiDB")
+}
+
+func TestReadOnlyVarsInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for next-gen TiDB")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_max_dist_task_nodes=5"),
+		"setting tidb_max_dist_task_nodes is not supported in the next generation of TiDB")
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_reorg_max_write_speed=5"),
+		"setting tidb_ddl_reorg_max_write_speed is not supported in the next generation of TiDB")
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_disk_quota=5"),
+		"setting tidb_ddl_disk_quota is not supported in the next generation of TiDB")
 }

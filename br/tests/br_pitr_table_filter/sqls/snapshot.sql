@@ -23,9 +23,10 @@ create table test_snapshot_db_create.t_drop_index (id int, key i1(id));
 create table test_snapshot_db_create.t_drop_unique_key (id int, unique key i1(id));
 
 -- ActionAddForeignKey
--- TODO: Known issue - DROP FOREIGN KEY conflicts with auto-created indexes during PITR restore
--- create table test_snapshot_db_create.t_fk_parent (id int primary key, name varchar(50));
--- create table test_snapshot_db_create.t_fk_child_add (id int primary key, parent_id int);
+create table test_snapshot_db_create.t_fk_parent (id int primary key, name varchar(50));
+create table test_snapshot_db_create.t_fk_child_add (id int primary key, parent_id int);
+insert into test_snapshot_db_create.t_fk_parent values (1, 'a'), (2, 'b');
+insert into test_snapshot_db_create.t_fk_child_add values (1, 1), (2, 2);
 
 -- ActionTruncateTable
 create table test_snapshot_db_create.t_to_be_truncated (id int);
@@ -61,6 +62,23 @@ create table test_snapshot_db_rename_1.t_renames_c (id int);
 insert into test_snapshot_db_rename_1.t_renames_a values (1);
 insert into test_snapshot_db_rename_2.t_renames_b values (2);
 insert into test_snapshot_db_rename_1.t_renames_c values (3);
+
+-- ActionRenameTable back
+SET GLOBAL tidb_enable_foreign_key = ON;
+create database test_snapshot_db_rename_3;
+create database test_snapshot_db_rename_4;
+create database filtered_out_test_snapshot_db_rename;
+create table test_snapshot_db_rename_3.t_parent (id int primary key, name varchar(50));
+create table test_snapshot_db_rename_3.t_child_filtered_in (id int primary key, parent_id int, constraint fk_preserve_child foreign key (parent_id) references test_snapshot_db_rename_3.t_parent(id));
+create table test_snapshot_db_rename_3.t_child_filtered_out (id int primary key, parent_id int, constraint fk_preserve_child foreign key (parent_id) references test_snapshot_db_rename_3.t_parent(id));
+create table test_snapshot_db_rename_3.t_parts_filtered_in (id int primary key, name_id int) partition by range (id) (partition p0 values less than (100), partition p1 values less than (1000));
+create table test_snapshot_db_rename_3.t_parts_filtered_out (id int primary key, name_id int) partition by range (id) (partition p0 values less than (100), partition p1 values less than (1000));
+insert into test_snapshot_db_rename_3.t_parent values (10, 'aa'), (20, 'bb');
+insert into test_snapshot_db_rename_3.t_child_filtered_in values (10, 10), (20, 20);
+insert into test_snapshot_db_rename_3.t_child_filtered_out values (10, 10), (20, 20);
+insert into test_snapshot_db_rename_3.t_parts_filtered_in values (10, 10), (210, 210);
+insert into test_snapshot_db_rename_3.t_parts_filtered_out values (10, 10), (210, 210);
+SET GLOBAL tidb_enable_foreign_key = OFF;
 
 -- ActionSetDefaultValue
 create table test_snapshot_db_create.t_set_default (id int, status varchar(20));
@@ -169,6 +187,16 @@ create table test_snapshot_db_exchange_partition_1.t_exchange_partition (id int)
 insert into test_snapshot_db_exchange_partition_1.t_exchange_partition (id) values (105);
 create table test_snapshot_db_exchange_partition_2.t_non_partitioned_table (id int);
 insert into test_snapshot_db_exchange_partition_2.t_non_partitioned_table (id) values (115);
+
+-- ActionExchangeTablePartition back
+create database test_snapshot_db_exchange_partition_3;
+create table test_snapshot_db_exchange_partition_3.t_exchange_partition (id int) partition by range (id) (
+    partition p0 values less than (100),
+    partition p_to_be_exchanged values less than (200)
+);
+insert into test_snapshot_db_exchange_partition_3.t_exchange_partition (id) values (105);
+create table test_snapshot_db_exchange_partition_3.t_non_partitioned_table (id int);
+insert into test_snapshot_db_exchange_partition_3.t_non_partitioned_table (id) values (115);
 
 -- ActionAlterTableAttributes
 create table test_snapshot_db_create.t_alter_table_attributes (id int);

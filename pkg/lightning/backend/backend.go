@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
@@ -122,13 +123,13 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	StorageURI string
-	DataFiles  []string
-	StatFiles  []string
-	StartKey   []byte
-	EndKey     []byte
-	JobKeys    [][]byte
-	SplitKeys  [][]byte
+	ExtStore  storage.ExternalStorage
+	DataFiles []string
+	StatFiles []string
+	StartKey  []byte
+	EndKey    []byte
+	JobKeys   [][]byte
+	SplitKeys [][]byte
 	// TotalFileSize can be an estimated value.
 	TotalFileSize int64
 	// TotalKVCount can be an estimated value.
@@ -138,6 +139,8 @@ type ExternalEngineConfig struct {
 	MemCapacity int64
 	// OnDup is the action when a duplicate key is found during global sort.
 	OnDup engineapi.OnDuplicateKey
+	// this is the prefix of files recording conflicted KVs
+	FilePrefix string
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
@@ -424,16 +427,11 @@ func (engine *ClosedEngine) Logger() log.Logger {
 	return engine.logger
 }
 
-// ChunkFlushStatus is the status of a chunk flush.
-type ChunkFlushStatus interface {
-	Flushed() bool
-}
-
 // EngineWriter is the interface for writing data to an engine.
 type EngineWriter interface {
 	AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error
 	IsSynced() bool
-	Close(ctx context.Context) (ChunkFlushStatus, error)
+	Close(ctx context.Context) (common.ChunkFlushStatus, error)
 }
 
 // GetEngineUUID returns the engine UUID.

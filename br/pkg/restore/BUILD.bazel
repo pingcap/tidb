@@ -60,7 +60,7 @@ go_test(
     ],
     embed = [":restore"],
     flaky = True,
-    shard_count = 17,
+    shard_count = 19,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/mock",
@@ -83,6 +83,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//opt",
         "@org_golang_google_grpc//:grpc",
     ],
 )

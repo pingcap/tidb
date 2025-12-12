@@ -607,6 +607,9 @@ func TestCancelJobWriteConflict(t *testing.T) {
 }
 
 func TestTxnSavepointWithDDL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1358,9 +1361,19 @@ func TestGetAllTableInfos(t *testing.T) {
 		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
 		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
 	}
+
+	require.NoError(t, meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), 0, func(tblInfo *model.TableInfo) error {
+		return nil
+	}))
+	require.NoError(t, meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), -999, func(tblInfo *model.TableInfo) error {
+		return nil
+	}))
 }
 
 func TestGetVersionFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

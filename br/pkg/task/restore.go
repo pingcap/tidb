@@ -16,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
@@ -113,6 +112,8 @@ const (
 
 	FlagResetSysUsers = "reset-sys-users"
 
+	FlagSysCheckCollation = "sys-check-collation"
+
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
@@ -148,6 +149,8 @@ type RestoreCommonConfig struct {
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 
 	ResetSysUsers []string `json:"reset-sys-users" toml:"reset-sys-users"`
+
+	SysCheckCollation bool `json:"sys-check-collation" toml:"sys-check-collation"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -360,6 +363,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 		" default is true, the incremental restore will not perform rewrite on the incremental data"+
 		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
 		" these ddl jobs are Add index, Modify column and Reorganize partition")
+	flags.Bool(FlagSysCheckCollation, false, "whether check the privileges table rows to permit to restore the privilege data"+
+		" from utf8mb4_bin collate column to utf8mb4_general_ci collate column")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -490,7 +495,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
 	}
-
+	cfg.SysCheckCollation, err = flags.GetBool(FlagSysCheckCollation)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagSysCheckCollation)
+	}
 	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
@@ -730,6 +738,7 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 	client.SetRewriteMode(ctx)
+	client.SetCheckPrivilegeTableRowsCollateCompatiblity(cfg.SysCheckCollation)
 	return nil
 }
 
@@ -1135,10 +1144,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	schemaVersionPair := snapclient.SchemaVersionPairT{}
 	if loadStatsPhysical || loadSysTablePhysical {
-		upstreamClusterVersion, err := semver.NewVersion(backupMeta.ClusterVersion)
-		if err != nil {
+		upstreamClusterVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
+		if upstreamClusterVersion == nil {
 			log.Warn("The cluster version from backupmeta is invalid. Fallback to logically load system tables.",
-				zap.String("backupmeta cluster version", backupMeta.ClusterVersion), zap.Error(err))
+				zap.String("backupmeta cluster version", backupMeta.ClusterVersion))
 			loadStatsPhysical = false
 			loadSysTablePhysical = false
 		} else {
@@ -1152,10 +1161,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			loadStatsPhysical = false
 			loadSysTablePhysical = false
 		} else {
-			downstreamClusterVersion, err := semver.NewVersion(downstreamClusterVersionStr)
-			if err != nil {
+			downstreamClusterVersion := version.NormalizeBackupVersion(downstreamClusterVersionStr)
+			if downstreamClusterVersion == nil {
 				log.Warn("The downstream cluster version is invalid. Fallback to logically load system tables.",
-					zap.String("downstream cluster version", downstreamClusterVersionStr), zap.Error(err))
+					zap.String("downstream cluster version", downstreamClusterVersionStr))
 				loadStatsPhysical = false
 				loadSysTablePhysical = false
 			} else {
@@ -1229,6 +1238,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	err = RegisterRestoreIfNeeded(ctx, cfg.RestoreConfig, cmdName, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	isNextGenRestore := utils.CheckNextGenCompatibility(cfg.KeyspaceName, cfg.CheckRequirements)
+	if isNextGenRestore {
+		log.Info("start restore to next-gen cluster")
 	}
 
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
@@ -1395,8 +1409,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+		canLoadSysTablePhysical, err := snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables, client.GetCheckPrivilegeTableRowsCollateCompatiblity())
+		if err != nil {
 			return errors.Trace(err)
+		}
+		if loadSysTablePhysical && !canLoadSysTablePhysical {
+			log.Info("The system tables schema is not compatible. Fallback to logically load system tables.")
+			loadSysTablePhysical = false
 		}
 	}
 
@@ -1410,6 +1429,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		loadStatsPhysical = false
 	}
 	tables = client.CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical, tables)
+	preAllocRange, err := client.GetPreAllocedTableIDRange()
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	var restoreSchedulersFunc pdutil.UndoFunc
@@ -1417,11 +1440,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
 		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	} else {
-		var preAllocRange [2]int64
-		preAllocRange, err = client.GetPreAllocedTableIDRange()
-		if err != nil {
-			return errors.Trace(err)
-		}
 		if isPiTR && cfg.tableMappingManager != nil {
 			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
 		}
@@ -1522,7 +1540,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder)
+	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder, isNextGenRestore)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1650,6 +1668,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
+	compactProtectStartKey, compactProtectEndKey := encodeCompactAndCheckKey(mgr.GetStorage().GetCodec(), preAllocRange)
 	rtCtx := snapclient.RestoreTablesContext{
 		LogProgress:    cfg.LogProgress,
 		SplitSizeBytes: kvConfigs.MergeRegionSize.Value,
@@ -1663,6 +1682,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 		CreatedTables:            createdTables,
 		CheckpointSetWithTableID: checkpointSetWithTableID,
+
+		CompactProtectStartKey: compactProtectStartKey,
+		CompactProtectEndKey:   compactProtectEndKey,
 
 		Glue: g,
 	}
@@ -2211,7 +2233,21 @@ func PreCheckTableTiFlashReplica(
 	pdClient pd.Client,
 	tables []*metautil.Table,
 	recorder *tiflashrec.TiFlashRecorder,
+	isNextGenRestore bool,
 ) error {
+	if isNextGenRestore {
+		log.Warn("Restoring to NextGen TiFlash is experimental. TiFlash replicas are disabled; please reset them manually after restore.")
+		for _, tbl := range tables {
+			if tbl == nil || tbl.Info == nil {
+				// unreachable
+				continue
+			}
+			if tbl.Info.TiFlashReplica != nil {
+				tbl.Info.TiFlashReplica = nil
+			}
+		}
+		return nil
+	}
 	tiFlashStoreCount, err := getTiFlashNodeCount(ctx, pdClient)
 	if err != nil {
 		return err
@@ -2383,6 +2419,12 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	}
 
 	return
+}
+
+func encodeCompactAndCheckKey(codec tikv.Codec, preAlloced [2]int64) ([]byte, []byte) {
+	checkStartKey := tablecodec.EncodeTablePrefix(preAlloced[0])
+	checkEndKey := tablecodec.EncodeTablePrefix(preAlloced[1])
+	return codec.EncodeRange(checkStartKey, checkEndKey)
 }
 
 func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {

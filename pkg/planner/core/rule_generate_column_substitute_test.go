@@ -280,7 +280,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	b.ResetTimer()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		core.SubstituteExpression(selection.(*logicalop.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
+		core.SubstituteExpression(selection.(*logicalop.LogicalSelection).Conditions[0], selection, m, selection.Schema())
 	}
 	b.StopTimer()
 }

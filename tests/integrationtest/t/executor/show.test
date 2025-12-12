@@ -433,3 +433,14 @@ set @@session.default_collation_for_utf8mb4=default;
 DROP TABLE IF EXISTS `t`;
 CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
 SHOW CREATE TABLE `t`;
+
+# TestShowCreateTableWithPartialIndex
+set names utf8mb4 collate utf8mb4_bin;
+drop table if exists t;
+create table t (id int primary key, col int, key(col) where col > 100);
+show create table t;
+drop table t;
+create table t (id int primary key, col varchar(255), key(col) where col > "100");
+show create table t;
+drop table t;
+set names utf8mb4 collate utf8mb4_general_ci;

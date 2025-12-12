@@ -1,0 +1,8 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "util",
+    srcs = ["hash64.go"],
+    importpath = "github.com/pingcap/tidb/pkg/parser/util",
+    visibility = ["//visibility:public"],
+)

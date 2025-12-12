@@ -17,12 +17,13 @@ package join
 import (
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -69,6 +70,7 @@ type spillTestParam struct {
 	leftUsedByOtherCondition  []int
 	rightUsedByOtherCondition []int
 	memoryLimits              []int64
+	fileNamePrefixForTest     string
 }
 
 func getExpectedResults(t *testing.T, ctx *mock.Context, info *hashJoinInfo, resultTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) []chunk.Row {
@@ -160,11 +162,12 @@ func testInnerJoinSpillCase5(t *testing.T, ctx *mock.Context, info *hashJoinInfo
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	err := executeHashJoinExecAndGetError(t, hashJoinExec)
+	require.NotEqual(t, nil, err)
 	require.Equal(t, exceedMaxSpillRoundErrInfo, err.Error())
 }
 
 func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 5000000)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 3000000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -181,21 +184,21 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 	}
 }
 
-func getReturnTypes(joinType logicalop.JoinType, param spillTestParam) []*types.FieldType {
+func getReturnTypes(joinType base.JoinType, param spillTestParam) []*types.FieldType {
 	resultTypes := make([]*types.FieldType, 0, len(param.leftUsed)+len(param.rightUsed))
 	for _, colIndex := range param.leftUsed {
 		resultTypes = append(resultTypes, param.leftTypes[colIndex].Clone())
-		if joinType == logicalop.RightOuterJoin {
+		if joinType == base.RightOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
 	for _, colIndex := range param.rightUsed {
 		resultTypes = append(resultTypes, param.rightTypes[colIndex].Clone())
-		if joinType == logicalop.LeftOuterJoin {
+		if joinType == base.LeftOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
-	if joinType == logicalop.LeftOuterSemiJoin || joinType == logicalop.AntiLeftOuterSemiJoin {
+	if joinType == base.LeftOuterSemiJoin || joinType == base.AntiLeftOuterSemiJoin {
 		resultTypes = append(resultTypes, types.NewFieldType(mysql.TypeTiny))
 	}
 	return resultTypes
@@ -206,7 +209,7 @@ func getReturnTypes(joinType logicalop.JoinType, param spillTestParam) []*types.
 // Case 3: Trigger spill between the creation of hash table and the completion of building row table, then spill partial partitions
 // Case 4: Trigger re-spill
 // Case 5: Trigger re-spill and exceed max spill round
-func testSpill(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, param spillTestParam) {
+func testSpill(t *testing.T, ctx *mock.Context, joinType base.JoinType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, param spillTestParam) {
 	returnTypes := getReturnTypes(joinType, param)
 
 	var buildKeys []*expression.Column
@@ -233,6 +236,7 @@ func testSpill(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType, lef
 		otherCondition:        param.otherCondition,
 		lUsedInOtherCondition: param.leftUsedByOtherCondition,
 		rUsedInOtherCondition: param.rightUsedByOtherCondition,
+		fileNamePrefixForTest: param.fileNamePrefixForTest,
 	}
 
 	expectedResult := getExpectedResults(t, ctx, info, returnTypes, leftDataSource, rightDataSource)
@@ -244,6 +248,8 @@ func testSpill(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType, lef
 }
 
 func TestInnerJoinSpillBasic(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -268,29 +274,29 @@ func TestInnerJoinSpillBasic(t *testing.T) {
 
 	params := []spillTestParam{
 		// Normal case
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
 		// rightUsed is empty
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 250000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{2000000, 2000000, 3000000, 200000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
 		// leftUsed is empty
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 250000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{2000000, 2000000, 3000000, 200000, 10000}, testFuncName},
 	}
 
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
-	require.NoError(t, err)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/slowWorkers", "return(true)")
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	for _, param := range params {
-		testSpill(t, ctx, logicalop.InnerJoin, leftDataSource, rightDataSource, param)
+		testSpill(t, ctx, base.InnerJoin, leftDataSource, rightDataSource, param)
 	}
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -323,24 +329,24 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 	otherCondition = append(otherCondition, sf)
 
 	params := []spillTestParam{
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{5000000, 1700000, 6000000, 500000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{5000000, 1700000, 6000000, 500000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
 	}
 
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
-	require.NoError(t, err)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/slowWorkers", "return(true)")
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	for _, param := range params {
-		testSpill(t, ctx, logicalop.InnerJoin, leftDataSource, rightDataSource, param)
+		testSpill(t, ctx, base.InnerJoin, leftDataSource, rightDataSource, param)
 	}
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 // Hash join executor may be repeatedly closed and opened
 func TestInnerJoinUnderApplyExec(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -351,7 +357,7 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 		schema:           buildSchema(retTypes),
 		leftExec:         leftDataSource,
 		rightExec:        rightDataSource,
-		joinType:         logicalop.InnerJoin,
+		joinType:         base.InnerJoin,
 		rightAsBuildSide: true,
 		buildKeys: []*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -366,11 +372,12 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 		otherCondition:        expression.CNFExprs{},
 		lUsedInOtherCondition: []int{0},
 		rUsedInOtherCondition: []int{4},
+		fileNamePrefixForTest: testFuncName,
 	}
 
-	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	util.CheckNoLeakFiles(t, testFuncName)
 }

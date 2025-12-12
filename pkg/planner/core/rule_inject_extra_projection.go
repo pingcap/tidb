@@ -61,7 +61,7 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 
 	if tr, ok := plan.(*physicalop.PhysicalTableReader); ok && tr.StoreType == kv.TiFlash {
 		tr.TablePlan = pe.inject(tr.TablePlan)
-		tr.TablePlans = physicalop.FlattenPushDownPlan(tr.TablePlan)
+		tr.TablePlans = physicalop.FlattenListPushDownPlan(tr.TablePlan)
 	}
 
 	switch p := plan.(type) {
@@ -209,7 +209,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 	prop := aggPlan.GetChildReqProps(0).CloneEssentialFields()
 	proj := physicalop.PhysicalProjection{
 		Exprs: projExprs,
-	}.Init(aggPlan.SCtx(), child.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), aggPlan.QueryBlockOffset(), prop)
+	}.Init(aggPlan.SCtx(), child.StatsInfo().ScaleByExpectCnt(aggPlan.SCtx().GetSessionVars(), prop.ExpectedCnt), aggPlan.QueryBlockOffset(), prop)
 	proj.SetSchema(expression.NewSchema(projSchemaCols...))
 	proj.SetChildren(child)
 
@@ -274,7 +274,7 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := physicalop.PhysicalProjection{
 		Exprs: bottomProjExprs,
-	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
+	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
 	p.SetChildren(bottomProj)
@@ -323,7 +323,7 @@ func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems 
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := physicalop.PhysicalProjection{
 		Exprs: bottomProjExprs,
-	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
+	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
 
@@ -335,7 +335,7 @@ func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems 
 	}
 	topProj := physicalop.PhysicalProjection{
 		Exprs: topProjExprs,
-	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
+	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
 	topProj.SetSchema(childPlan.Schema().Clone())
 	topProj.SetChildren(bottomProj)
 

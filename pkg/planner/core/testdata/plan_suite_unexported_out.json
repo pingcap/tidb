@@ -75,8 +75,8 @@
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
-      "Join{DataScan(ta)->DataScan(tb)}->Projection",
-      "Join{DataScan(ta)->DataScan(tb)}->Projection",
+      "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
+      "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{Join{DataScan(ta)->DataScan(tb)}(test.t.a,test.t.a)->DataScan(tc)}(test.t.b,test.t.b)->Projection",
       "Join{Join{DataScan(ta)->DataScan(tb)}(test.t.a,test.t.a)->DataScan(tc)}(test.t.b,test.t.b)->Projection",
@@ -94,7 +94,7 @@
       "DataScan(t)->Aggr(sum(test.t.c),firstrow(test.t.a),firstrow(test.t.b))->Projection->Projection",
       "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Projection->Aggr(sum(Column#13),firstrow(test.t.a))->Projection->Projection",
       "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Sel([gt(cast(test.t.a, decimal(10,0) BINARY), Column#13)])->Projection->Projection",
-      "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Sel([gt(test.t.a, 1)])->Projection->Projection",
+      "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Projection->Projection",
       "Dual->Sel([gt(test.t.a, 1)])->Projection",
       "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Sel([lt(Column#13, 1)])->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
@@ -202,7 +202,7 @@
         "Err": false
       },
       {
-        "Best": "Join{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual}->Sort->Projection",
+        "Best": "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual->Projection}->Sort->Projection",
         "Err": false
       }
     ]
@@ -969,10 +969,10 @@
     "Cases": [
       "Join{Join{Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.b)->DataScan(t3)}(test.t.a,test.t.b)->DataScan(t4)}(test.t.c,test.t.a)(test.t.c,test.t.d)->Join{DataScan(t5)->DataScan(t6)}(test.t.d,test.t.d)}->Projection",
       "Join{Join{Join{Join{DataScan(t1)->DataScan(t8)}(test.t.a,test.t.a)->DataScan(t2)}->Join{DataScan(t3)->DataScan(t4)}}->Join{Join{DataScan(t5)->DataScan(t6)}->DataScan(t7)}}->Projection->Projection",
-      "Join{Join{Join{Join{DataScan(t5)->DataScan(t1)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)}(test.t.a,test.t.a)(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)(test.t.a,test.t.a)(test.t.a,test.t.a)->Projection->Projection",
-      "Join{Join{Join{DataScan(t1)->DataScan(t2)}->Join{DataScan(t3)->DataScan(t4)}}->DataScan(t5)}->Projection",
+      "Join{Join{Join{Join{DataScan(t5)->DataScan(t1)}(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection",
+      "Join{Join{Join{Join{DataScan(t1)->DataScan(t5)}(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)->DataScan(t2)}->DataScan(t3)}->Projection->Projection",
       "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection}->Projection",
-      "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(t3)}->Projection}->Projection"
+      "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection}->Projection"
     ]
   },
   {

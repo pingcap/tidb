@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -177,7 +178,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	return expr, err
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *physicalop.Insert) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -257,7 +258,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
-			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand},
+			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, curClause: b.curClause, rollExpand: b.currentBlockExpand},
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
@@ -273,6 +274,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.ctx = ctx
 	rewriter.err = nil
 	rewriter.planCtx.plan = p
+	rewriter.planCtx.curClause = b.curClause
 	rewriter.planCtx.aggrMap = nil
 	rewriter.planCtx.insertPlan = nil
 	rewriter.planCtx.rollExpand = b.currentBlockExpand
@@ -330,12 +332,15 @@ type exprRewriterPlanCtx struct {
 	plan    base.LogicalPlan
 	builder *PlanBuilder
 
+	// curClause tracks which part of the query is being processed
+	curClause clauseCode
+
 	aggrMap   map[*ast.AggregateFuncExpr]int
 	windowMap map[*ast.WindowFuncExpr]int
 
 	// insertPlan is only used to rewrite the expressions inside the assignment
 	// of the "INSERT" statement.
-	insertPlan *Insert
+	insertPlan *physicalop.Insert
 
 	rollExpand *logicalop.LogicalExpand
 }
@@ -594,6 +599,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			case *ast.ParenthesesExpr:
 				x = y.Expr
 			default:
+				// Expect its left and right child to be a scalar value.
+				er.asScalar = true
 				return inNode, false
 			}
 		}
@@ -609,8 +616,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			// expressions inside the assignment of "INSERT" statement. we have to
 			// use the "tableSchema" of that "insertPlan".
 			if planCtx.insertPlan != nil {
-				schema = planCtx.insertPlan.tableSchema
-				names = planCtx.insertPlan.tableColNames
+				schema = planCtx.insertPlan.TableSchema
+				names = planCtx.insertPlan.TableColNames
 			}
 			idx, err := expression.FindFieldName(names, v.Column.Name)
 			if err != nil {
@@ -735,7 +742,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 		return v, true
 	}
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingCompareSubquery)
 
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
@@ -915,7 +922,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	}
 	// If we treat the result as a scalar value, we will add a projection with a extra column to output true, false or null.
 	outerSchemaLen := planCtx.plan.Schema().Len()
-	planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, plan4Agg, logicalop.InnerJoin, markNoDecorrelate)
+	planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, plan4Agg, base.InnerJoin, markNoDecorrelate)
 	joinSchema := planCtx.plan.Schema()
 	proj := logicalop.LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
@@ -1039,9 +1046,24 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		er.err = err
 		return v, true
 	}
-	np = er.popExistsSubPlan(planCtx, np)
+	// Add LIMIT 1 when noDecorrelate is true for EXISTS subqueries to enable early exit
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingExistsSubquery)
+	if noDecorrelate {
+		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
+		if !hasLimit(np) {
+			limitClause := &ast.Limit{
+				Count: ast.NewValueExpr(1, "", ""),
+			}
+			var err error
+			np, err = planCtx.builder.buildLimit(np, limitClause)
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+		}
+	}
+	np = er.popExistsSubPlan(planCtx, np)
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
 		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
@@ -1093,6 +1115,21 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			er.ctxStackAppend(scalarSubQ, types.EmptyName)
 			return v, true
 		}
+		// register the subquery plan but continue with normal execution
+		subqueryCtx := ScalarSubqueryEvalCtx{
+			scalarSubQuery: physicalPlan,
+			ctx:            ctx,
+			is:             b.is,
+		}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
+		newColIDs := make([]int64, 0, np.Schema().Len())
+		for range np.Schema().Columns {
+			newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
+			newColIDs = append(newColIDs, newColID)
+		}
+		subqueryCtx.outputColIDs = newColIDs
+
+		planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
+
 		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
 		if err != nil {
 			er.err = err
@@ -1212,7 +1249,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	lt, rt := lexpr.GetType(er.sctx.GetEvalCtx()), rexpr.GetType(er.sctx.GetEvalCtx())
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
 
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
@@ -1231,7 +1268,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			return v, true
 		}
 		// Build inner join above the aggregation.
-		join := logicalop.LogicalJoin{JoinType: logicalop.InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+		join := logicalop.LogicalJoin{JoinType: base.InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 		join.SetChildren(planCtx.plan, agg)
 		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.Schema()))
 		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))
@@ -1264,12 +1301,32 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	return v, true
 }
 
-func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64) bool {
+func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64, sCtx subQueryCtx) bool {
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(corCols) == 0 {
-		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
+
+	if len(corCols) == 0 {
+		if noDecorrelate {
+			planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
+				"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
+			noDecorrelate = false
+		}
+	} else {
+		semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+		// We can't override noDecorrelate via the variable for EXISTS subqueries with semi join rewrite
+		// as this will cause a conflict that will result in both being disabled in later code
+		// SemiJoinRewrite does not check the variable TiDBOptEnableSemiJoinRewrite.
+		// If that variable is enabled - we can still choose NOT to decorrelate here.
+		if !(semiJoinRewrite && sCtx == handlingExistsSubquery) {
+			// Only support scalar and exists subqueries
+			validSubqType := sCtx == handlingScalarSubquery || sCtx == handlingExistsSubquery
+			if validSubqType && planCtx.curClause == fieldList { // subquery is in the select list
+				planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
+				// If it isn't already enabled via hint, and variable is set, then enable it
+				if !noDecorrelate && planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelateInSelect {
+					noDecorrelate = true
+				}
+			}
+		}
 	}
 	return noDecorrelate
 }
@@ -1285,10 +1342,10 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	}
 	np = planCtx.builder.buildMaxOneRow(np)
 	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags)
+	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags, handlingScalarSubquery)
 
 	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
-		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, logicalop.LeftOuterJoin, noDecorrelate)
+		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, base.LeftOuterJoin, noDecorrelate)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
 			for _, col := range np.Schema().Columns {
@@ -1348,33 +1405,46 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		}
 		return v, true
 	}
+
+	// register the subquery plan but continue with normal execution
+	subqueryCtx := ScalarSubqueryEvalCtx{
+		scalarSubQuery: physicalPlan,
+		ctx:            ctx,
+		is:             planCtx.builder.is,
+	}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
+	newColIDs := make([]int64, 0, np.Schema().Len())
+	for range np.Schema().Columns {
+		newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
+		newColIDs = append(newColIDs, newColID)
+	}
+	subqueryCtx.outputColIDs = newColIDs
+
+	planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
 	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
 	if err != nil {
 		er.err = err
 		return v, true
 	}
-	if np.Schema().Len() > 1 {
-		newCols := make([]expression.Expression, 0, np.Schema().Len())
-		for i, data := range row {
-			constant := &expression.Constant{
-				Value:   data,
-				RetType: np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx())}
-			constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
-			newCols = append(newCols, constant)
+	newCols := make([]expression.Expression, 0, np.Schema().Len())
+	for i, data := range row {
+		constant := &expression.Constant{
+			Value:         data,
+			RetType:       np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx()),
+			SubqueryRefID: newColIDs[i],
 		}
-		expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
-		if err1 != nil {
-			er.err = err1
+		constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
+		newCols = append(newCols, constant)
+	}
+
+	if np.Schema().Len() > 1 {
+		expr, err := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
+		if err != nil {
+			er.err = err
 			return v, true
 		}
 		er.ctxStackAppend(expr, types.EmptyName)
 	} else {
-		constant := &expression.Constant{
-			Value:   row[0],
-			RetType: np.Schema().Columns[0].GetType(er.sctx.GetEvalCtx()),
-		}
-		constant.SetCoercibility(np.Schema().Columns[0].Coercibility())
-		er.ctxStackAppend(constant, types.EmptyName)
+		er.ctxStackAppend(newCols[0], types.EmptyName)
 	}
 	return v, true
 }
@@ -1741,16 +1811,26 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
 			return
 		}
-		if !v.IsGlobal && !sysVar.HasSessionScope() {
-			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
+		if v.IsInstance && !sysVar.HasInstanceScope() {
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION or GLOBAL")
 			return
+		}
+		if !v.IsGlobal && !v.IsInstance {
+			if !sysVar.HasSessionScope() {
+				er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
+				return
+			}
+			if sysVar.InternalSessionVariable {
+				er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+				return
+			}
 		}
 	}
 	var val string
 	var err error
 	if sysVar.HasNoneScope() {
 		val = sysVar.Value
-	} else if v.IsGlobal {
+	} else if v.IsGlobal || v.IsInstance {
 		val, err = sessionVars.GetGlobalSystemVar(er.ctx, name)
 	} else {
 		val, err = sessionVars.GetSessionOrGlobalSystemVar(er.ctx, name)
@@ -2652,4 +2732,22 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 		return false
 	}
 	return strings.ToLower(x) == ast.CurrentTimestamp
+}
+
+// hasLimit checks if the plan already contains a LIMIT operator
+func hasLimit(plan base.LogicalPlan) bool {
+	if plan == nil {
+		return false
+	}
+	// Check if this is a LogicalLimit
+	if _, ok := plan.(*logicalop.LogicalLimit); ok {
+		return true
+	}
+	// Recursively check children
+	for _, child := range plan.Children() {
+		if hasLimit(child) {
+			return true
+		}
+	}
+	return false
 }

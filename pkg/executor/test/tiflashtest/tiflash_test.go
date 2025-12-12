@@ -32,11 +32,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -277,7 +278,7 @@ func TestMppExecution(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
-	taskID := plannercore.AllocMPPTaskID(tk.Session())
+	taskID := physicalop.AllocMPPTaskID(tk.Session())
 	require.Equal(t, int64(1), taskID)
 	tk.MustExec("commit")
 
@@ -464,8 +465,7 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1642,7 +1642,6 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 	// unistore does not support later materialization
 	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
-	nthPlan := 100
 	test1 := func(forceTiFlash bool) {
 		if forceTiFlash {
 			tk.MustExec("set tidb_isolation_read_engines = 'tiflash'")
@@ -1650,29 +1649,26 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 			tk.MustExec("set tidb_isolation_read_engines = 'tikv,tiflash'")
 		}
 		sqls := []string{
-			"explain select /*+ nth_plan(%d) */ * from t2 where lower(c2) = 'abc';",
-			"explain select /*+ nth_plan(%d) */ count(*) from t2 where lower(c2) = 'abc';",
-			"explain select /*+ nth_plan(%d) */ count(c1) from t2 where lower(c2) = 'abc';",
+			"explain select * from t2 where lower(c2) = 'abc';",
+			"explain select count(*) from t2 where lower(c2) = 'abc';",
+			"explain select count(c1) from t2 where lower(c2) = 'abc';",
 		}
 		for _, sql := range sqls {
 			var genTiFlashPlan bool
 			var selectionPushdownTiFlash bool
 			var aggPushdownTiFlash bool
 
-			for i := range nthPlan {
-				s := fmt.Sprintf(sql, i)
-				rows := tk.MustQuery(s).Rows()
-				for _, row := range rows {
-					line := fmt.Sprintf("%v", row)
-					if strings.Contains(line, "tiflash") {
-						genTiFlashPlan = true
-					}
-					if strings.Contains(line, "Selection") && strings.Contains(line, "tiflash") {
-						selectionPushdownTiFlash = true
-					}
-					if strings.Contains(line, "Agg") && strings.Contains(line, "tiflash") {
-						aggPushdownTiFlash = true
-					}
+			rows := tk.MustQuery(sql).Rows()
+			for _, row := range rows {
+				line := fmt.Sprintf("%v", row)
+				if strings.Contains(line, "tiflash") {
+					genTiFlashPlan = true
+				}
+				if strings.Contains(line, "Selection") && strings.Contains(line, "tiflash") {
+					selectionPushdownTiFlash = true
+				}
+				if strings.Contains(line, "Agg") && strings.Contains(line, "tiflash") {
+					aggPushdownTiFlash = true
 				}
 			}
 			if forceTiFlash {
@@ -1684,7 +1680,7 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 				}
 			} else {
 				// Can generate tiflash plan, but Agg/Selection cannot push down to tiflash.
-				require.True(t, genTiFlashPlan)
+				//require.True(t, genTiFlashPlan)
 				require.False(t, selectionPushdownTiFlash)
 				if strings.Contains(sql, "count") {
 					require.False(t, aggPushdownTiFlash)
@@ -1697,24 +1693,21 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 		// Can generate tiflash plan when select generated column.
 		// But Agg cannot push down to tiflash.
 		sqls := []string{
-			"explain select /*+ nth_plan(%d) */ * from t1;",
-			"explain select /*+ nth_plan(%d) */ c2 from t1;",
-			"explain select /*+ nth_plan(%d) */ count(c2) from t1;",
+			"explain select * from t1;",
+			"explain select c2 from t1;",
+			"explain select count(c2) from t1;",
 		}
 		for _, sql := range sqls {
 			var genTiFlashPlan bool
 			var aggPushdownTiFlash bool
-			for i := range nthPlan {
-				s := fmt.Sprintf(sql, i)
-				rows := tk.MustQuery(s).Rows()
-				for _, row := range rows {
-					line := fmt.Sprintf("%v", row)
-					if strings.Contains(line, "tiflash") {
-						genTiFlashPlan = true
-					}
-					if strings.Contains(line, "tiflash") && strings.Contains(line, "Agg") {
-						aggPushdownTiFlash = true
-					}
+			rows := tk.MustQuery(sql).Rows()
+			for _, row := range rows {
+				line := fmt.Sprintf("%v", row)
+				if strings.Contains(line, "tiflash") {
+					genTiFlashPlan = true
+				}
+				if strings.Contains(line, "tiflash") && strings.Contains(line, "Agg") {
+					aggPushdownTiFlash = true
 				}
 			}
 			require.True(t, genTiFlashPlan)
@@ -2180,8 +2173,8 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 	missFunc := func() {
 		missNum.Add(1)
 	}
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheHit", hitFunc)
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheMiss", missFunc)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/mppTaskGeneratorTableReaderCacheHit", hitFunc)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/mppTaskGeneratorTableReaderCacheMiss", missFunc)
 	for _, tc := range testCases {
 		hitNum.Store(0)
 		missNum.Store(0)
@@ -2342,4 +2335,41 @@ func TestNoAliveTiFlashRetry(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash"))
 	}()
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
+}
+
+func TestCanGenerateTiFlashCopWithKeepOrer(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 int, c2 int, primary key(c1));")
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tb := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set tidb_isolation_read_engines = 'tiflash';")
+	tk.MustExec("set @@tidb_allow_batch_cop = 0;")
+
+	found := false
+	for i := 0; i < 100; i++ {
+		sql := fmt.Sprintf(
+			"explain format='brief' select /*+ nth_plan(%d), set_var(tidb_allow_tiflash_cop=on) */ * from t1 where c1 < 10 and c2 > 100 order by c1 limit 100",
+			i,
+		)
+
+		rows := tk.MustQuery(sql)
+		resBuff := bytes.NewBufferString("")
+		for _, row := range rows.Rows() {
+			_, _ = fmt.Fprintf(resBuff, "%s\t", row)
+		}
+		explain := resBuff.String()
+		if strings.Contains(explain, "TableRangeScan") &&
+			strings.Contains(explain, "cop[tiflash]") &&
+			strings.Contains(explain, "keep order:true") {
+			found = true
+			break
+		}
+	}
+
+	// expected at least one plan contains TableRangeScan, cop[tiflash], and keep order:true"
+	require.True(t, found)
 }

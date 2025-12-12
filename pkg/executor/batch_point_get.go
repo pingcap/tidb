@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
@@ -237,10 +237,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var indexKeys []kv.Key
 	var err error
 	batchGetter := e.batchGetter
-	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+	maxExecutionTime := e.Ctx().GetSessionVars().GetMaxExecutionTime()
+	if maxExecutionTime > 0 {
 		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(maxExecutionTime)*time.Millisecond)
 		defer cancel()
 	}
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
@@ -255,7 +256,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			} else if len(e.planPhysIDs) > i {
 				physID = e.planPhysIDs[i]
 			}
-			idxKey, err1 := plannercore.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, idxVals, physID)
+			idxKey, err1 := physicalop.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
@@ -483,7 +484,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
-	txnCtx := sctx.GetSessionVars().TxnCtx
+	sessVars := sctx.GetSessionVars()
+
+	if err := checkMaxExecutionTimeExceeded(sctx); err != nil {
+		return err
+	}
+
+	txnCtx := sessVars.TxnCtx
 	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
 	if err != nil {
 		return err

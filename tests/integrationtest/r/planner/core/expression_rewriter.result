@@ -433,3 +433,16 @@ select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
 collation(_utf8mb4'@a' collate utf8mb4_general_ci)
 utf8mb4_general_ci
 set @@session.default_collation_for_utf8mb4=default;
+drop table if exists tb0;
+create table tb0 (c0 bigint unsigned not null);
+select 1 as col from tb0 where ((true not in (select 1)) not in (tb0.c0));
+col
+explain format='plan_tree' select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));
+id	task	access object	operator info
+Projection	root		1->Column#5
+└─Selection	root		ne(Column#4, planner__core__expression_rewriter.tb0.c0)
+  └─HashJoin	root		CARTESIAN anti left outer semi join, left side:TableReader
+    ├─Projection(Build)	root		0->Column#9
+    │ └─TableDual	root		rows:1
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:tb0	keep order:false, stats:pseudo

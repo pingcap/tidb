@@ -323,6 +323,15 @@ func TestMaxExecutionTime(t *testing.T) {
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("300"))
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("150"))
 
+	// max_execution_time should be 0 if in non-select statement
+	tk.MustExec("update MaxExecTime set age = age + 1 where id = 1000;")
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	tk.MustExec("update /*+ MAX_EXECUTION_TIME(10000) */ MaxExecTime set age = age + 1 where id = 1000;")
+	// hint works, maybe we should just ignore this hint in non-select statement?
+	require.Equal(t, uint64(10000), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
+	// but MaxExecutionTime is still 0
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetMaxExecutionTime())
+
 	tk.MustExec("set @@global.MAX_EXECUTION_TIME = 0;")
 	tk.MustExec("set @@MAX_EXECUTION_TIME = 0;")
 	tk.MustExec("commit")
@@ -333,11 +342,13 @@ func TestReplicaRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessionctx/variable/GetReplicaReadUnadjusted", "return(true)"))
 	require.Equal(t, kv.ReplicaReadLeader, tk.Session().GetSessionVars().GetReplicaRead())
 	tk.MustExec("set @@tidb_replica_read = 'follower';")
 	require.Equal(t, kv.ReplicaReadFollower, tk.Session().GetSessionVars().GetReplicaRead())
 	tk.MustExec("set @@tidb_replica_read = 'leader';")
 	require.Equal(t, kv.ReplicaReadLeader, tk.Session().GetSessionVars().GetReplicaRead())
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessionctx/variable/GetReplicaReadUnadjusted"))
 }
 
 func TestIsolationRead(t *testing.T) {

@@ -5,17 +5,17 @@ create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
 set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
-explain format = 'brief' select * from t1 where t1.a in (select t1.b + t2.b from t2);
+explain format = 'plan_tree' select * from t1 where t1.a in (select t1.b + t2.b from t2);
 
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
 insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
 analyze table t;
-explain format = 'brief' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
+explain format = 'plan_tree' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
 
 drop table if exists t;
 create table t(a int, b int, c int);
-explain format = 'brief' select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
+explain format = 'plan_tree' select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
 
 drop table if exists t1, t2;
 create table t1(a int(11));
@@ -29,8 +29,8 @@ insert into stu values(1, null);
 create table exam(stu_id int, course varchar(100), grade int);
 insert into exam values(1, 'math', 100);
 set names utf8 collate utf8_general_ci;
-explain format = 'brief' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+explain format = 'plan_tree' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
 select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
 set names utf8mb4;
-explain format = 'brief' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+explain format = 'plan_tree' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
 select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);

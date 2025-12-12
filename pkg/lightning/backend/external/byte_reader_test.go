@@ -261,7 +261,7 @@ func TestSwitchMode(t *testing.T) {
 				modeUseCon = true
 			}
 		}
-		key, val, err := kvReader.nextKV()
+		key, val, err := kvReader.NextKV()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
@@ -294,6 +294,6 @@ func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*sto
 		Acl:          "acl",
 		Sse:          "sse",
 		StorageClass: "sc",
-	})
+	}, nil)
 	return st, ts.Close
 }

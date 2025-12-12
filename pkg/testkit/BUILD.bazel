@@ -42,6 +42,7 @@ go_library(
         "//pkg/store/driver",
         "//pkg/store/helper",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/testkit/testenv",
         "//pkg/types",
         "//pkg/util",

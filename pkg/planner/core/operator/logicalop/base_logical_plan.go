@@ -26,12 +26,9 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 var _ base.LogicalPlan = &BaseLogicalPlan{}
@@ -69,9 +66,9 @@ type BaseLogicalPlan struct {
 
 // Hash64 implements HashEquals.<0th> interface.
 func (p *BaseLogicalPlan) Hash64(h base2.Hasher) {
-	_, ok1 := p.self.(*LogicalSequence)
-	_, ok2 := p.self.(*LogicalMaxOneRow)
-	if !ok1 && !ok2 {
+	switch p.self.(type) {
+	case *LogicalSequence, *LogicalMaxOneRow, *LogicalLock:
+	default:
 		intest.Assert(false, "Hash64 should not be called directly")
 	}
 	h.HashInt(p.ID())
@@ -116,15 +113,6 @@ func (p *BaseLogicalPlan) SetOutputNames(names types.NameSlice) {
 	p.children[0].SetOutputNames(names)
 }
 
-// BuildPlanTrace implements Plan
-func (p *BaseLogicalPlan) BuildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
-	}
-	return planTrace
-}
-
 // *************************** implementation of logicalPlan interface ***************************
 
 // HashCode implements LogicalPlan.<0th> interface.
@@ -137,36 +125,30 @@ func (p *BaseLogicalPlan) HashCode() []byte {
 }
 
 // PredicatePushDown implements LogicalPlan.<1st> interface.
-func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	if len(p.children) == 0 {
 		return predicates, p.self, nil
 	}
 	child := p.children[0]
-	rest, newChild, err := child.PredicatePushDown(predicates, opt)
+	rest, newChild, err := child.PredicatePushDown(predicates)
 	if err != nil {
 		return nil, p.self, err
 	}
-	AddSelection(p.self, newChild, rest, 0, opt)
+	AddSelection(p.self, newChild, rest, 0)
 	return nil, p.self, nil
 }
 
 // PruneColumns implements LogicalPlan.<2nd> interface.
-func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	if len(p.children) == 0 {
 		return p.self, nil
 	}
 	var err error
-	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
+	p.children[0], err = p.children[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
 	return p.self, nil
-}
-
-// FindBestTask implements LogicalPlan.<3rd> interface.
-func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop, planCounter, opt)
 }
 
 // BuildKeyInfo implements LogicalPlan.<4th> interface.
@@ -179,16 +161,16 @@ func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 }
 
 // PushDownTopN implements the LogicalPlan.<5th> interface.
-func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan, opt)
+func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
+	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan)
 }
 
 // DeriveTopN implements the LogicalPlan.<6th> interface.
-func (p *BaseLogicalPlan) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *BaseLogicalPlan) DeriveTopN() base.LogicalPlan {
 	s := p.self
 	if s.SCtx().GetSessionVars().AllowDeriveTopN {
 		for i, child := range s.Children() {
-			newChild := child.DeriveTopN(opt)
+			newChild := child.DeriveTopN()
 			s.SetChild(i, newChild)
 		}
 	}
@@ -196,17 +178,17 @@ func (p *BaseLogicalPlan) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.
 }
 
 // PredicateSimplification implements the LogicalPlan.<7th> interface.
-func (p *BaseLogicalPlan) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *BaseLogicalPlan) PredicateSimplification() base.LogicalPlan {
 	s := p.self
 	for i, child := range s.Children() {
-		newChild := child.PredicateSimplification(opt)
+		newChild := child.PredicateSimplification()
 		s.SetChild(i, newChild)
 	}
 	return s
 }
 
 // ConstantPropagation implements the LogicalPlan.<8th> interface.
-func (*BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+func (*BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int) (newRoot base.LogicalPlan) {
 	// Only LogicalJoin can apply constant propagation
 	// Other Logical plan do nothing
 	return nil
@@ -274,11 +256,6 @@ func (*BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expressi
 // PreparePossibleProperties implements LogicalPlan.<13th> interface.
 func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	return nil
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan.<14th> interface.
-func (*BaseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	panic("baseLogicalPlan.ExhaustPhysicalPlans() should never be called.")
 }
 
 // ExtractCorrelatedCols implements LogicalPlan.<15th> interface.
@@ -442,6 +419,16 @@ func (p *BaseLogicalPlan) GetPlanIDsHash() uint64 {
 // GetWrappedLogicalPlan implements the logical plan interface.
 func (p *BaseLogicalPlan) GetWrappedLogicalPlan() base.LogicalPlan {
 	return p.self
+}
+
+// GetChildStatsAndSchema gets the stats and schema of the first child.
+func (p *BaseLogicalPlan) GetChildStatsAndSchema() (*property.StatsInfo, *expression.Schema) {
+	return p.Children()[0].StatsInfo(), p.Children()[0].Schema()
+}
+
+// GetJoinChildStatsAndSchema gets the stats and schema of both children.
+func (*BaseLogicalPlan) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
+	panic("baseLogicalPlan.GetJoinChildStatsAndSchema() should never be called.")
 }
 
 // NewBaseLogicalPlan is the basic constructor of BaseLogicalPlan.

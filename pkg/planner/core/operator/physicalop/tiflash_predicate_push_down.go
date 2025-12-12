@@ -381,7 +381,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 			logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
 			selectivity = selectivityThreshold
 		}
-		ts.SetStats(ts.StatsInfo().Scale(selectivity))
+		ts.SetStats(ts.StatsInfo().Scale(ts.SCtx().GetSessionVars(), selectivity))
 		// just to make explain result stable
 		slices.SortFunc(ts.UsedColumnarIndexes, func(lhs, rhs *ColumnarIndexExtra) int {
 			return cmp.Compare(lhs.IndexInfo.ID, rhs.IndexInfo.ID)

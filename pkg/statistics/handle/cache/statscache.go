@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -206,7 +207,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		// If the column/index stats has not been updated, we can reuse the old table stats.
 		// Only need to update the count and modify count.
 		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsHistVersion >= latestHistUpdateVersion {
-			tbl = oldTbl.ShallowCopy()
+			tbl = oldTbl.CopyAs(statistics.MetaOnly)
 			// count and modify count is updated in finalProcess
 			needLoadColAndIdxStats = false
 		}
@@ -219,7 +220,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			)
 			// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 			if err != nil {
-				statslogutil.StatsLogger().Error(
+				statslogutil.StatsLogger().Warn(
 					"error occurred when read table stats",
 					zap.String("table", tableInfo.Name.O),
 					zap.Error(err),
@@ -357,39 +358,48 @@ func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 	s.Load().SetCapacity(c)
 }
 
-// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
+// UpdateStatsHealthyMetrics refreshes handle_metrics.StatsHealthyGauges. We
+// treat never-analyzed tables as healthy=0, count unanalyzed tables that fall below the
+// auto-analyze minimal count threshold as "unneeded analyze", and keep pseudo tables as a separate category.
+// The gauges satisfy: total tables = pseudo tables + unneeded analyze tables + tables in healthy buckets.
 func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
-	distribution := make([]int64, 9)
-	uneligibleAnalyze := 0
-	for _, tbl := range s.Values() {
-		distribution[7]++ // total table count
-		isEligibleForAnalysis := tbl.IsEligibleForAnalysis()
-		if !isEligibleForAnalysis {
-			uneligibleAnalyze++
+	var buckets [handle_metrics.StatsHealthyBucketCount]int64
+	for _, tbl := range s.Load().Values() {
+		buckets[handle_metrics.StatsHealthyBucketTotal]++
+
+		// Pseudo entries usually disappear after DDL processing or table updates load
+		// stats meta from storage, so usually you won't see many pseudo tables here.
+		if tbl.Pseudo {
+			buckets[handle_metrics.StatsHealthyBucketPseudo]++
 			continue
 		}
+		// Even if a table is ineligible for analysis, count it in the distribution once it has been analyzed before.
+		// Otherwise this metric may mislead users into thinking those tables are still unanalyzed.
+		if !tbl.MeetAutoAnalyzeMinCnt() && !tbl.IsAnalyzed() {
+			buckets[handle_metrics.StatsHealthyBucketUnneededAnalyze]++
+			continue
+		}
+		// NOTE: Tables that haven't been analyzed yet start from 0 healthy.
 		healthy, ok := tbl.GetStatsHealthy()
 		if !ok {
 			continue
 		}
-		if healthy < 50 {
-			distribution[0]++
-		} else if healthy < 55 {
-			distribution[1]++
-		} else if healthy < 60 {
-			distribution[2]++
-		} else if healthy < 70 {
-			distribution[3]++
-		} else if healthy < 80 {
-			distribution[4]++
-		} else if healthy < 100 {
-			distribution[5]++
-		} else {
-			distribution[6]++
+		buckets[statsHealthyBucketIndex(healthy)]++
+	}
+	for idx, gauge := range handle_metrics.StatsHealthyGauges {
+		gauge.Set(float64(buckets[idx]))
+	}
+}
+
+func statsHealthyBucketIndex(healthy int64) int {
+	intest.Assert(healthy >= 0 && healthy <= 100, "healthy value out of range: %d", healthy)
+	for _, cfg := range handle_metrics.HealthyBucketConfigs {
+		if cfg.UpperBound <= 0 {
+			continue
+		}
+		if healthy < cfg.UpperBound {
+			return cfg.Index
 		}
 	}
-	for i, val := range distribution {
-		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
-	}
-	handle_metrics.StatsHealthyGauges[8].Set(float64(uneligibleAnalyze))
+	return handle_metrics.StatsHealthyBucket100To100
 }
