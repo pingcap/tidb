@@ -923,9 +923,9 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 						continue
 					}
 					record := types.MakeDatums(
-						infoschema.CatalogVal, // CONSTRAINT_CATALOG
-						schema.O,              // CONSTRAINT_SCHEMA
-						constraint.Name.O,     // CONSTRAINT_NAME
+						infoschema.CatalogVal,                      // CONSTRAINT_CATALOG
+						schema.O,                                   // CONSTRAINT_SCHEMA
+						constraint.Name.O,                          // CONSTRAINT_NAME
 						fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
 					)
 					rows = append(rows, record)
@@ -968,12 +968,12 @@ func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context,
 					continue
 				}
 				record := types.MakeDatums(
-					infoschema.CatalogVal, // CONSTRAINT_CATALOG
-					schema.O,              // CONSTRAINT_SCHEMA
-					constraint.Name.O,     // CONSTRAINT_NAME
+					infoschema.CatalogVal,                      // CONSTRAINT_CATALOG
+					schema.O,                                   // CONSTRAINT_SCHEMA
+					constraint.Name.O,                          // CONSTRAINT_NAME
 					fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
-					table.Name.O, // TABLE_NAME
-					table.ID,     // TABLE_ID
+					table.Name.O,                               // TABLE_NAME
+					table.ID,                                   // TABLE_ID
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -1204,27 +1204,27 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			colType = mysql.TypeVarchar
 		}
 		record := types.MakeDatums(
-			infoschema.CatalogVal, // TABLE_CATALOG
-			schema.O,              // TABLE_SCHEMA
-			tbl.Name.O,            // TABLE_NAME
-			col.Name.O,            // COLUMN_NAME
-			ordinalPos[i],         // ORDINAL_POSITION
-			columnDefault,         // COLUMN_DEFAULT
-			columnDesc.Null,       // IS_NULLABLE
-			types.TypeToStr(colType, ft.GetCharset()), // DATA_TYPE
-			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
-			charOctLen,           // CHARACTER_OCTET_LENGTH
-			numericPrecision,     // NUMERIC_PRECISION
-			numericScale,         // NUMERIC_SCALE
-			datetimePrecision,    // DATETIME_PRECISION
-			columnDesc.Charset,   // CHARACTER_SET_NAME
-			columnDesc.Collation, // COLLATION_NAME
-			columnType,           // COLUMN_TYPE
-			columnDesc.Key,       // COLUMN_KEY
-			columnDesc.Extra,     // EXTRA
+			infoschema.CatalogVal,                                                                // TABLE_CATALOG
+			schema.O,                                                                             // TABLE_SCHEMA
+			tbl.Name.O,                                                                           // TABLE_NAME
+			col.Name.O,                                                                           // COLUMN_NAME
+			ordinalPos[i],                                                                        // ORDINAL_POSITION
+			columnDefault,                                                                        // COLUMN_DEFAULT
+			columnDesc.Null,                                                                      // IS_NULLABLE
+			types.TypeToStr(colType, ft.GetCharset()),                                            // DATA_TYPE
+			charMaxLen,                                                                           // CHARACTER_MAXIMUM_LENGTH
+			charOctLen,                                                                           // CHARACTER_OCTET_LENGTH
+			numericPrecision,                                                                     // NUMERIC_PRECISION
+			numericScale,                                                                         // NUMERIC_SCALE
+			datetimePrecision,                                                                    // DATETIME_PRECISION
+			columnDesc.Charset,                                                                   // CHARACTER_SET_NAME
+			columnDesc.Collation,                                                                 // COLLATION_NAME
+			columnType,                                                                           // COLUMN_TYPE
+			columnDesc.Key,                                                                       // COLUMN_KEY
+			columnDesc.Extra,                                                                     // EXTRA
 			strings.ToLower(privileges.PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)), // PRIVILEGES
-			columnDesc.Comment,      // COLUMN_COMMENT
-			col.GeneratedExprString, // GENERATION_EXPRESSION
+			columnDesc.Comment,                                                                   // COLUMN_COMMENT
+			col.GeneratedExprString,                                                              // GENERATION_EXPRESSION
 		)
 		e.rows = append(e.rows, record)
 	}
@@ -1716,12 +1716,12 @@ func (e *DDLJobsReaderExec) Close() error {
 func (e *memtableRetriever) setDataFromEngines() {
 	var rows [][]types.Datum
 	record := types.MakeDatums(
-		"InnoDB",  // Engine
-		"DEFAULT", // Support
+		"InnoDB",                                                     // Engine
+		"DEFAULT",                                                    // Support
 		"Supports transactions, row-level locking, and foreign keys", // Comment
-		"YES", // Transactions
-		"YES", // XA
-		"YES", // Savepoints
+		"YES",                                                        // Transactions
+		"YES",                                                        // XA
+		"YES",                                                        // Savepoints
 	)
 	rows = append(rows, record)
 	e.recordMemoryConsume(record)
@@ -1904,11 +1904,7 @@ func (e *memtableRetriever) setDataForMetricTables() {
 	e.rows = rows
 }
 
-<<<<<<< HEAD
-func keyColumnUsageInTable(schema pmodel.CIStr, table *model.TableInfo, ex *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
-=======
-func (e *memtableRetriever) keyColumnUsageInTable(schema ast.CIStr, table *model.TableInfo, ex *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
->>>>>>> 9f07f526cda (executor: make retriever memory tracker fine grained (#58986))
+func (e *memtableRetriever) keyColumnUsageInTable(schema pmodel.CIStr, table *model.TableInfo, ex *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
 	var rows [][]types.Datum
 	if table.PKIsHandle && ex.HasPrimaryKey() {
 		for _, col := range table.Columns {
@@ -2680,13 +2676,13 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 	rows := make([][]types.Datum, 0, len(serversInfo))
 	for _, info := range serversInfo {
 		row := types.MakeDatums(
-			info.ID,              // DDL_ID
-			info.IP,              // IP
-			int(info.Port),       // PORT
-			int(info.StatusPort), // STATUS_PORT
-			info.Lease,           // LEASE
-			info.Version,         // VERSION
-			info.GitHash,         // GIT_HASH
+			info.ID,                                       // DDL_ID
+			info.IP,                                       // IP
+			int(info.Port),                                // PORT
+			int(info.StatusPort),                          // STATUS_PORT
+			info.Lease,                                    // LEASE
+			info.Version,                                  // VERSION
+			info.GitHash,                                  // GIT_HASH
 			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		if sem.IsEnabled() {
@@ -2777,10 +2773,10 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 			progressString := types.TruncateFloatToString(progress, 2)
 			progress, _ = strconv.ParseFloat(progressString, 64)
 			record := types.MakeDatums(
-				schema.DBName.O,                 // TABLE_SCHEMA
-				tbl.Name.O,                      // TABLE_NAME
-				tbl.ID,                          // TABLE_ID
-				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
+				schema.DBName.O,                                      // TABLE_SCHEMA
+				tbl.Name.O,                                           // TABLE_NAME
+				tbl.ID,                                               // TABLE_ID
+				int64(tbl.TiFlashReplica.Count),                      // REPLICA_COUNT
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
 				progress,                                             // PROGRESS
@@ -4006,50 +4002,6 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	return nil
 }
 
-<<<<<<< HEAD
-=======
-func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context, cluster bool) (err error) {
-	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
-	rows := make([][]types.Datum, 0, len(values))
-	for _, v := range values {
-		pcv := v.(*plannercore.PlanCacheValue)
-
-		row := make([]types.Datum, 0, 16)
-		row = append(row, types.NewStringDatum(pcv.SQLDigest))
-		row = append(row, types.NewStringDatum(pcv.SQLText))
-		row = append(row, types.NewStringDatum(pcv.StmtType))
-		row = append(row, types.NewStringDatum(pcv.ParseUser))
-		row = append(row, types.NewStringDatum(pcv.PlanDigest))
-		row = append(row, types.NewStringDatum(pcv.BinaryPlan))
-		row = append(row, types.NewStringDatum(pcv.Binding))
-		row = append(row, types.NewStringDatum(pcv.OptimizerEnvHash))
-		row = append(row, types.NewStringDatum(pcv.ParseValues))
-		row = append(row, types.NewIntDatum(pcv.Memory))
-		exec, procKeys, totKeys, sumLat, lastTime := pcv.RuntimeInfo()
-		row = append(row, types.NewIntDatum(exec))
-		row = append(row, types.NewIntDatum(procKeys))
-		row = append(row, types.NewIntDatum(totKeys))
-		row = append(row, types.NewIntDatum(sumLat))
-		row = append(row, types.NewTimeDatum(
-			types.NewTime(types.FromGoTime(pcv.LoadTime), mysql.TypeTimestamp, types.DefaultFsp)))
-		row = append(row, types.NewTimeDatum(
-			types.NewTime(types.FromGoTime(lastTime), mysql.TypeTimestamp, types.DefaultFsp)))
-
-		rows = append(rows, row)
-		e.recordMemoryConsume(row)
-	}
-
-	if cluster {
-		if rows, err = infoschema.AppendHostInfoToRows(sctx, rows); err != nil {
-			return err
-		}
-	}
-
-	e.rows = rows
-	return nil
-}
-
->>>>>>> 9f07f526cda (executor: make retriever memory tracker fine grained (#58986))
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {
 	s := strings.Split(rule.ID, "/")
 	if len(s) < 3 {
