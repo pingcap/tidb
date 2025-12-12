@@ -597,7 +597,7 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, true)
 		}
 		// All the objects share the same stats version. Update it here.
-		if colHist.StatsVer != statistics.Version0 {
+		if statistics.IsAnalyzed(colHist.StatsVer) {
 			// SAFETY: The stats version only has a limited range, it is safe to convert int64 to int here.
 			tbl.StatsVer = int(colHist.StatsVer)
 		}

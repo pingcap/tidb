@@ -44,6 +44,22 @@ func (h mockHandleEncodedRowFn) HandleEncodedRow(ctx context.Context, handle tid
 	return h(ctx, handle, row, kvPairs)
 }
 
+func getEncoder(t *testing.T, tbl table.Table) *importer.TableKVEncoder {
+	t.Helper()
+	encodeCfg := &encode.EncodingConfig{
+		Table:                tbl,
+		UseIdentityAutoRowID: true,
+	}
+	controller := &importer.LoadDataController{
+		ASTArgs: &importer.ASTArgs{},
+		Plan:    &importer.Plan{},
+		Table:   tbl,
+	}
+	localEncoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
+	require.NoError(t, err)
+	return localEncoder
+}
+
 func TestHandler(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("skip test for next-gen kernel temporarily, we need to adapt the test later")
@@ -54,24 +70,7 @@ func TestHandler(t *testing.T) {
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
 	ctx := context.Background()
-	logger, err := zap.NewDevelopment()
-	require.NoError(t, err)
-
-	getEncoderFn := func(t *testing.T, tbl table.Table) *importer.TableKVEncoder {
-		t.Helper()
-		encodeCfg := &encode.EncodingConfig{
-			Table:                tbl,
-			UseIdentityAutoRowID: true,
-		}
-		controller := &importer.LoadDataController{
-			ASTArgs: &importer.ASTArgs{},
-			Plan:    &importer.Plan{},
-			Table:   tbl,
-		}
-		localEncoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
-		require.NoError(t, err)
-		return localEncoder
-	}
+	logger := zap.Must(zap.NewDevelopment())
 
 	cleanupEnvFn := func(t *testing.T, tableName string) table.Table {
 		t.Helper()
@@ -89,7 +88,7 @@ func TestHandler(t *testing.T) {
 	t.Run("test data kv handler", func(t *testing.T) {
 		doTestFn := func(t *testing.T, tableName string, expectedKVs int) {
 			tbl := cleanupEnvFn(t, tableName)
-			encoder := getEncoderFn(t, tbl)
+			encoder := getEncoder(t, tbl)
 			var rowCnt, kvPairCnt int64
 			mockEncodedKVHdl := mockHandleEncodedRowFn(func(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {
 				rowCnt++
@@ -111,7 +110,7 @@ func TestHandler(t *testing.T) {
 			eg.Go(func() error {
 				dupID := 100
 				row := []types.Datum{types.NewDatum(dupID), types.NewDatum(dupID), types.NewDatum(dupID)}
-				localEncoder := getEncoderFn(t, tbl)
+				localEncoder := getEncoder(t, tbl)
 				dupPairs, err2 := localEncoder.Encode(row, int64(dupID))
 				require.NoError(t, err2)
 				for _, pair := range dupPairs.Pairs {
@@ -150,7 +149,7 @@ func TestHandler(t *testing.T) {
 			// we insert those row to make sure the index kv handler can get the data
 			// KV from TiKV, it's not possible in real world conflicted KV case.
 			tk.MustExec(fmt.Sprintf("insert into %s values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)", tbl.Meta().Name.L))
-			encoder := getEncoderFn(t, tbl)
+			encoder := getEncoder(t, tbl)
 			require.NoError(t, err)
 			var sharedSize atomic.Int64
 			alreadyProcessedHandles := conflictedkv.NewBoundedHandleSet(logger, &sharedSize, 1<<20)
@@ -196,7 +195,7 @@ func TestHandler(t *testing.T) {
 					id := i + 1
 					ukVal := (id + 1) / 2
 					row := []types.Datum{types.NewDatum(id), types.NewDatum(id), types.NewDatum(ukVal)}
-					localEncoder := getEncoderFn(t, tbl)
+					localEncoder := getEncoder(t, tbl)
 					dupPairs, err2 := localEncoder.Encode(row, int64(id))
 					require.NoError(t, err2)
 					for _, pair := range dupPairs.Pairs {
