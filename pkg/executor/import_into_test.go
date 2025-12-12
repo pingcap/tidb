@@ -241,7 +241,7 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 		initFn(t, tk)
 		err := tk.ExecToErr("IMPORT INTO test.t FROM select 1")
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-		require.Regexp(t, `IMPORT INTO .* select`, err.Error())
+		require.ErrorContains(t, err, "IMPORT INTO from select")
 	})
 
 	t.Run("local sort", func(t *testing.T) {

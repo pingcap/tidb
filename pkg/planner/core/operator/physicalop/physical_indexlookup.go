@@ -45,7 +45,7 @@ func resetPlanIDRecursively(ctx base.PlanContext, p base.PhysicalPlan) {
 }
 
 func buildPushDownIndexLookUpPlan(
-	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan,
+	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan, isCommonHandle bool,
 ) (indexLookUpPlan base.PhysicalPlan, err error) {
 	tablePlan, err = tablePlan.Clone(ctx)
 	if err != nil {
@@ -53,10 +53,17 @@ func buildPushDownIndexLookUpPlan(
 	}
 	resetPlanIDRecursively(ctx, tablePlan)
 
+	var indexHandleOffsets []uint32
+	if !isCommonHandle {
+		// - If common handle, we don't need to set the indexHandleOffsets to build the common handle key
+		// which can be read from the index value directly.
+		// - If int handle, it is the last column in the index schema.
+		indexHandleOffsets = []uint32{uint32(indexPlan.Schema().Len()) - 1}
+	}
+
 	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)
 	indexLookUpPlan = PhysicalLocalIndexLookUp{
-		// Only int handle is supported now, so the handle is always the last column of index schema.
-		IndexHandleOffsets: []uint32{uint32(indexPlan.Schema().Len()) - 1},
+		IndexHandleOffsets: indexHandleOffsets,
 	}.Init(ctx, indexPlan, tableScanPlan, tablePlan.QueryBlockOffset())
 
 	if parentOfTableScan != nil {

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
@@ -279,11 +280,12 @@ func GetMaxOverlapping(points []Endpoint) int64 {
 
 // SortedKVMeta is the meta of sorted kv.
 type SortedKVMeta struct {
-	StartKey           []byte              `json:"start-key"`
-	EndKey             []byte              `json:"end-key"` // exclusive
-	TotalKVSize        uint64              `json:"total-kv-size"`
-	TotalKVCnt         uint64              `json:"total-kv-cnt"`
-	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
+	StartKey           []byte                 `json:"start-key"`
+	EndKey             []byte                 `json:"end-key"` // exclusive
+	TotalKVSize        uint64                 `json:"total-kv-size"`
+	TotalKVCnt         uint64                 `json:"total-kv-cnt"`
+	MultipleFilesStats []MultipleFilesStat    `json:"multiple-files-stats"`
+	ConflictInfo       engineapi.ConflictInfo `json:"conflict-info"`
 }
 
 // NewSortedKVMeta creates a SortedKVMeta from a WriterSummary. If the summary
@@ -298,6 +300,7 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 		TotalKVSize:        summary.TotalSize,
 		TotalKVCnt:         summary.TotalCnt,
 		MultipleFilesStats: summary.MultipleFilesStats,
+		ConflictInfo:       summary.ConflictInfo,
 	}
 }
 
@@ -317,6 +320,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 	m.TotalKVCnt += other.TotalKVCnt
 
 	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
+	m.ConflictInfo.Merge(&other.ConflictInfo)
 }
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.

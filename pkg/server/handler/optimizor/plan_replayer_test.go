@@ -131,7 +131,8 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 		filesInReplayer = append(filesInReplayer, f.Name)
 		// except for {global,session}_bindings.sql and table_tiflash_replica.txt, the file should not be empty
 		if !strings.Contains(f.Name, "table_tiflash_replica.txt") &&
-			!strings.Contains(f.Name, "bindings.sql") {
+			!strings.Contains(f.Name, "bindings.sql") &&
+			!strings.Contains(f.Name, "trace") {
 			require.NotZero(t, f.UncompressedSize64, f.Name)
 		}
 	}
@@ -373,7 +374,7 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec("drop table planReplayer.c")
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
-
+	tk.MustExec("admin reload bindings")
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
 	rows := tk.MustQuery("select @@last_plan_from_binding")
@@ -553,7 +554,7 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	return filename
 }
 
-func prepareData4Issue64802(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain) string {
+func prepareData4Issue64802(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain, injectedPanic bool) string {
 	h := dom.StatsHandle()
 	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
@@ -570,7 +571,7 @@ func prepareData4Issue64802(t *testing.T, client *testserverclient.TestServerCli
 );`)
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	tk.MustExec(`CREATE BINDING FOR
+	tk.MustExec(`CREATE global BINDING FOR
 SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
 FROM test_table t1
 JOIN test_table t2 ON t1.id = t2.id
@@ -579,6 +580,32 @@ SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2
 FROM test_table t1
 JOIN test_table t2 ON t1.id = t2.id;
 `)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`CREATE TABLE test_table (
+    id INT PRIMARY KEY,
+    value1 INT,
+    value2 INT
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`CREATE global BINDING FOR
+SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id
+USING
+SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id;
+`)
+	tk.MustExec(`use test`)
+	if injectedPanic {
+		fpName := "github.com/pingcap/tidb/pkg/planner/core/ConsumeVolcanoOptimizePanic"
+		require.NoError(t, failpoint.Enable(fpName, "panic(\"injected panic\")"))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+		}()
+	}
 	rows := tk.MustQuery("plan replayer dump explain SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2 FROM test_table t1 JOIN test_table t2 ON t1.id = t2.id;")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename string
@@ -590,6 +617,14 @@ JOIN test_table t2 ON t1.id = t2.id;
 }
 
 func TestIssue64802(t *testing.T) {
+	testIssue64802(t, false)
+}
+
+func TestIssue64802WithPanic(t *testing.T) {
+	testIssue64802(t, true)
+}
+
+func testIssue64802(t *testing.T, injectedPanic bool) {
 	origin := config.GetGlobalConfig().TempDir
 	defer func() {
 		config.GetGlobalConfig().TempDir = origin
@@ -602,7 +637,7 @@ func TestIssue64802(t *testing.T) {
 	server, client := prepareServerAndClientForTest(t, store, dom)
 	defer server.Close()
 
-	filename := prepareData4Issue64802(t, client, dom)
+	filename := prepareData4Issue64802(t, client, dom, false)
 	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 
 	// 2. check the contents of the plan replayer zip files.
@@ -667,8 +702,8 @@ func TestIssue64802(t *testing.T) {
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("use test")
 	tk.MustExec("drop table test.test_table")
+	tk.MustExec(`truncate table mysql.bind_info;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
-
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
 FROM test_table t1
@@ -679,6 +714,13 @@ JOIN test_table t2 ON t1.id = t2.id;
 	var count int64
 	err = rows.Scan(&count)
 	require.NoError(t, err)
+	require.Equal(t, int64(1), count)
+	rows = tk.MustQuery("select count(*) from mysql.bind_info")
+	require.True(t, rows.Next(), "unexpected data")
+	err = rows.Scan(&count)
+	require.NoError(t, err)
+	// because we truncated bind_info before loading, so it is without builtin_pseudo_sql_for_bind_lock.
+	// It is only for test.test_table.
 	require.Equal(t, int64(1), count)
 }
 

@@ -296,6 +296,8 @@ type indexScanExec struct {
 
 	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
 	physTblIDColIdx *int
+	// if common handle key is requested, fill the common handle in this column
+	commonHandleKeyIdx *int
 	// This is used to update the paging range result, updated in next().
 	paging                 *coprocessor.KeyRange
 	chunkLastProcessedKeys []kv.Key
@@ -352,6 +354,20 @@ func (e *indexScanExec) Process(key, value []byte) error {
 		tblID := tablecodec.DecodeTableID(decodedKey)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
+
+	// If we need common handle key, we should fill it here.
+	if e.commonHandleKeyIdx != nil && *e.commonHandleKeyIdx >= len(values) {
+		h, err := tablecodec.DecodeIndexHandle(decodedKey, value, e.numIdxCols)
+		if err != nil {
+			return err
+		}
+		commonHandle, ok := h.(*kv.CommonHandle)
+		if !ok {
+			return errors.New("common handle expected")
+		}
+		e.chk.AppendBytes(*e.commonHandleKeyIdx, commonHandle.Encoded())
+	}
+
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)
 		if e.paging != nil {
@@ -530,9 +546,14 @@ func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts
 		for i := range chk.NumRows() {
 			row := chk.GetRow(i)
 			indexRows = append(indexRows, row)
+			handle, err := e.buildHandle(row)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+
 			sortedHandles = append(sortedHandles, Handle{
 				IndexOrder: rowCnt,
-				Handle:     e.buildIntHandle(row),
+				Handle:     handle,
 			})
 			rowCnt++
 		}
@@ -662,9 +683,12 @@ func (e *indexLookUpExec) regionContainsKey(r *metapb.Region, key []byte) bool {
 		(bytes.Compare(key, r.GetEndKey()) < 0 || len(r.GetEndKey()) == 0)
 }
 
-func (e *indexLookUpExec) buildIntHandle(row chunk.Row) kv.Handle {
+func (e *indexLookUpExec) buildHandle(row chunk.Row) (kv.Handle, error) {
+	if e.isCommonHandle {
+		return kv.NewCommonHandle(row.GetBytes(row.Len() - 1))
+	}
 	i := row.GetInt64(int(e.indexHandleOffsets[0]))
-	return kv.IntHandle(i)
+	return kv.IntHandle(i), nil
 }
 
 func (e *indexLookUpExec) takeIntermediateResults() (ret []*chunk.Chunk) {

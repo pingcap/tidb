@@ -184,7 +184,8 @@ func (m *Meter) cleanupUnregisteredRecorders() []*Recorder {
 			// some non-flushed data even the recorder is unregistered, so we check
 			// current data too.
 			if fd.equals(r.currData()) {
-				delete(m.recorders, r.taskID)
+				delete(m.recorders, taskID)
+				delete(m.lastFlushedData, taskID)
 				removed = append(removed, r.Recorder)
 			}
 		}
