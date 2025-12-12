@@ -41,7 +41,7 @@ import (
 
 const CheckpointDir = "checkpoints"
 
-type flushPosition struct {
+type flushPath struct {
 	CheckpointDataDir     string
 	CheckpointChecksumDir string
 	CheckpointLockPath    string

@@ -11,7 +11,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -26,7 +25,7 @@ var _ split.SplitStrategy[*LogDataFileInfo] = &LogSplitStrategy{}
 func NewLogSplitStrategy(
 	ctx context.Context,
 	useCheckpoint bool,
-	execCtx sqlexec.RestrictedSQLExecutor,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	rules map[int64]*restoreutils.RewriteRules,
 	updateStatsFn func(uint64, uint64),
 ) (*LogSplitStrategy, error) {
@@ -36,8 +35,8 @@ func NewLogSplitStrategy(
 	}
 	skipMap := NewLogFilesSkipMap()
 	if useCheckpoint {
-		t, err := checkpoint.LoadCheckpointDataForLogRestore(
-			ctx, execCtx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+		t, err := logCheckpointMetaManager.LoadCheckpointData(
+			ctx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
 				for tableID, foffs := range off.Foffs {
 					// filter out the checkpoint data of dropped table
 					if _, exists := downstreamIdset[tableID]; exists {

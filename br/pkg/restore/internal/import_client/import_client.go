@@ -84,10 +84,6 @@ type ImporterClient interface {
 	CheckBatchDownloadSupport(ctx context.Context, stores []uint64) (bool, error)
 
 	CheckMultiIngestSupport(ctx context.Context, stores []uint64) error
-
-	AddForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.AddPartitionRangeRequest) error
-
-	RemoveForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.RemovePartitionRangeRequest) error
 }
 
 type importClient struct {
@@ -296,22 +292,4 @@ func (ic *importClient) CheckMultiIngestSupport(ctx context.Context, stores []ui
 		}
 	}
 	return nil
-}
-
-func (ic *importClient) AddForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.AddPartitionRangeRequest) error {
-	client, err := ic.GetImportClient(ctx, storeID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = client.AddForcePartitionRange(ctx, req)
-	return errors.Trace(err)
-}
-
-func (ic *importClient) RemoveForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.RemovePartitionRangeRequest) error {
-	client, err := ic.GetImportClient(ctx, storeID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = client.RemoveForcePartitionRange(ctx, req)
-	return errors.Trace(err)
 }

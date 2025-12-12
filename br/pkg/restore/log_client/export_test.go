@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -63,21 +64,22 @@ func (m *PhysicalWithMigrations) Physical() *backuppb.DataFileGroup {
 
 func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
-	sr *stream.SchemasReplace,
+	m *stream.TableMappingManager,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
-	return rc.saveIDMap(ctx, sr)
+	return rc.SaveIdMapWithFailPoints(ctx, m, logCheckpointMetaManager)
 }
 
 func (rc *LogClient) TEST_initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	return rc.initSchemasMap(ctx, restoreTS)
+	return rc.loadSchemasMap(ctx, restoreTS)
 }
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.
-func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, error) {
-	metas, err := rc.streamingMeta(ctx)
+func (lm *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, error) {
+	metas, err := lm.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
 	}

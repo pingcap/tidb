@@ -21,14 +21,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/task"
-	utiltest "github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -522,4 +524,250 @@ func TestTiflashUsage(t *testing.T) {
 func TestCheckTikvSpace(t *testing.T) {
 	store := pdhttp.StoreInfo{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{Available: "500PB"}}
 	require.NoError(t, task.CheckStoreSpace(400*pb, &store))
+}
+
+type testCase struct {
+	name             string
+	filterPattern    []string
+	logBackupHistory []struct {
+		tableID   int64
+		tableName string
+		dbID      int64
+	}
+	dbIDToName       map[int64]string
+	expectedTableIDs map[int64][]int64 // dbID -> []tableID
+	expectedDBs      []int64
+	expectedTables   []int64
+}
+
+func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
+	// Setup common test database and table maps
+	dbInfo1 := model.DBInfo{
+		ID:   1,
+		Name: pmodel.NewCIStr("test_db_1"),
+	}
+	dbInfo2 := model.DBInfo{
+		ID:   2,
+		Name: pmodel.NewCIStr("test_db_2"),
+	}
+	snapshotDBMap := map[int64]*metautil.Database{
+		1: {
+			Info: &dbInfo1,
+			Tables: []*metautil.Table{
+				{
+					DB: &dbInfo1,
+					Info: &model.TableInfo{
+						ID:   11,
+						Name: pmodel.NewCIStr("test_table_11"),
+					},
+				},
+				{
+					DB: &dbInfo1,
+					Info: &model.TableInfo{
+						ID:   12,
+						Name: pmodel.NewCIStr("test_table_12"),
+					},
+				},
+			},
+		},
+		2: {
+			Info: &dbInfo2,
+			Tables: []*metautil.Table{
+				{
+					DB: &dbInfo2,
+					Info: &model.TableInfo{
+						ID:   21,
+						Name: pmodel.NewCIStr("test_table_21"),
+					},
+				},
+			},
+		},
+	}
+
+	tests := []testCase{
+		{
+			name:          "Basic table tracking",
+			filterPattern: []string{"test_db*.*"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table_11", 1},
+				{12, "test_table_12", 1},
+				{21, "test_table_21", 2},
+			},
+			expectedTableIDs: map[int64][]int64{
+				1: {11, 12},
+				2: {21},
+			},
+			expectedDBs:    []int64{1, 2},
+			expectedTables: []int64{11, 12, 21},
+		},
+		{
+			name:          "Table not in filter",
+			filterPattern: []string{"other_db.other_table"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table_11", 1},
+				{12, "test_table_12", 1},
+				{21, "test_table_21", 2},
+			},
+			expectedTableIDs: map[int64][]int64{},
+			expectedDBs:      []int64{},
+			expectedTables:   []int64{},
+		},
+		{
+			name:          "New table created during log backup",
+			filterPattern: []string{"test_db*.*"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table_11", 1},
+				{12, "test_table_12", 1},
+				{21, "test_table_21", 2},
+				{13, "new_table", 1},
+			},
+			expectedTableIDs: map[int64][]int64{
+				1: {11, 12, 13},
+				2: {21},
+			},
+			expectedDBs:    []int64{1, 2},
+			expectedTables: []int64{11, 12, 21}, // 13 not in full backup
+		},
+		{
+			name:          "Table renamed into filter during log backup",
+			filterPattern: []string{"test_db_2.*"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table_11", 1}, // drop
+				{11, "renamed_table", 2}, // create
+				{12, "test_table_12", 1},
+				{21, "test_table_21", 2},
+			},
+			expectedTableIDs: map[int64][]int64{
+				2: {11, 21},
+			},
+			expectedDBs:    []int64{1, 2}, // need original db for restore
+			expectedTables: []int64{11, 21},
+		},
+		{
+			name:          "Table renamed out of filter during log backup",
+			filterPattern: []string{"test_db_1.*"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table_11", 1},
+				{11, "renamed_table", 2},
+				{12, "test_table_12", 1},
+				{21, "test_table_21", 2},
+			},
+			expectedTableIDs: map[int64][]int64{
+				1: {12},
+			},
+			expectedDBs:    []int64{1},
+			expectedTables: []int64{12},
+		},
+		{
+			name:          "Log backup table not in snapshot",
+			filterPattern: []string{"test_db_1.*"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table", 1},
+			},
+			// using empty snapshotDBMap for this test
+			expectedTableIDs: map[int64][]int64{},
+			expectedDBs:      []int64{},
+			expectedTables:   []int64{},
+		},
+		{
+			name:          "DB created during log backup",
+			filterPattern: []string{"test_db_1.*"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table", 1},
+			},
+			dbIDToName: map[int64]string{
+				1: "test_db_1",
+			},
+			// using empty snapshotDBMap for this test
+			expectedTableIDs: map[int64][]int64{
+				1: {11},
+			},
+			expectedDBs:    []int64{}, // not in full backup
+			expectedTables: []int64{}, // not in full backup
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// use local snapshotDBMap for special cases that need empty map
+			localSnapshotDBMap := snapshotDBMap
+			if tc.name == "Log backup table not in snapshot" || tc.name == "DB created during log backup" {
+				localSnapshotDBMap = map[int64]*metautil.Database{}
+			}
+
+			fileMap := map[int64][]*backuppb.File{}
+			tableMap := map[int64]*metautil.Table{}
+			dbMap := map[int64]*metautil.Database{}
+			logBackupTableHistory := stream.NewTableHistoryManager()
+
+			for _, h := range tc.logBackupHistory {
+				logBackupTableHistory.AddTableHistory(h.tableID, h.tableName, h.dbID)
+			}
+
+			for dbID, dbName := range tc.dbIDToName {
+				logBackupTableHistory.RecordDBIdToName(dbID, dbName)
+			}
+
+			testFilter, err := filter.Parse(tc.filterPattern)
+			require.NoError(t, err)
+			cfg := &task.RestoreConfig{
+				Config: task.Config{
+					TableFilter: testFilter,
+				},
+			}
+
+			// Run the function
+			err = task.AdjustTablesToRestoreAndCreateTableTracker(
+				logBackupTableHistory,
+				cfg,
+				localSnapshotDBMap,
+				fileMap,
+				tableMap,
+				dbMap,
+			)
+			require.NoError(t, err)
+
+			for dbID, tableIDs := range tc.expectedTableIDs {
+				for _, tableID := range tableIDs {
+					require.True(t, cfg.PiTRTableTracker.ContainsTableId(dbID, tableID))
+				}
+			}
+
+			for _, dbID := range tc.expectedDBs {
+				require.NotNil(t, dbMap[dbID])
+			}
+
+			for _, tableID := range tc.expectedTables {
+				require.NotNil(t, tableMap[tableID])
+			}
+		})
+	}
 }

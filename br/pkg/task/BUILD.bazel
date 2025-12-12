@@ -65,7 +65,6 @@ go_library(
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle",
-        "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/cdcutil",
@@ -119,7 +118,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 39,
+    shard_count = 40,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/config",

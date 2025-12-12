@@ -181,7 +181,7 @@ func newFullRestoreCommand() *cobra.Command {
 			return runRestoreCommand(cmd, task.FullRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -249,7 +249,7 @@ func newStreamRestoreCommand() *cobra.Command {
 			return runRestoreCommand(command, task.PointRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
+	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, true)
 	task.DefineStreamRestoreFlags(command)
 	return command
 }
