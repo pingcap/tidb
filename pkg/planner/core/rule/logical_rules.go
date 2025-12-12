@@ -35,12 +35,12 @@ const (
 	FlagCollectPredicateColumnsPoint
 	FlagPushDownAgg
 	FlagDeriveTopNFromWindow
+	FlagOuterJoinToSemiJoin
 	FlagPredicateSimplification
 	FlagPushDownTopN
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
 	FlagPruneColumnsAgain
-	FlagOuterJoinToSemiJoin
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
 	FlagEmptySelectionEliminator
