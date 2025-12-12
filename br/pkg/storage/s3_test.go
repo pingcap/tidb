@@ -17,10 +17,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -324,7 +324,7 @@ func TestS3Storage(t *testing.T) {
 
 	testFn := func(test *testcase, t *testing.T) {
 		t.Log(test.name)
-		ctx := aws.BackgroundContext()
+		ctx := context.Background()
 		_, err := New(ctx, &backuppb.StorageBackend{
 			Backend: &backuppb.StorageBackend_S3{
 				S3: test.s3,
@@ -480,27 +480,27 @@ func TestS3Range(t *testing.T) {
 func TestWriteNoError(t *testing.T) {
 	accessRec := &recording.AccessStats{}
 	s := createS3SuiteWithRec(t, accessRec)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	putCall := s.s3.EXPECT().
-		PutObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, opt ...request.Option) (*s3.PutObjectOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
-			require.Equal(t, "acl", aws.StringValue(input.ACL))
-			require.Equal(t, "sse", aws.StringValue(input.ServerSideEncryption))
-			require.Equal(t, "sc", aws.StringValue(input.StorageClass))
+		PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/file", aws.ToString(input.Key))
+			require.Equal(t, "acl", string(input.ACL))
+			require.Equal(t, "sse", string(input.ServerSideEncryption))
+			require.Equal(t, "sc", string(input.StorageClass))
 			body, err := io.ReadAll(input.Body)
 			require.NoError(t, err)
 			require.Equal(t, []byte("test"), body)
 			return &s3.PutObjectOutput{}, nil
 		})
 	s.s3.EXPECT().
-		WaitUntilObjectExistsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, opt ...request.Option) error {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
-			return nil
+		HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/file", aws.ToString(input.Key))
+			return &s3.HeadObjectOutput{}, nil
 		}).
 		After(putCall)
 
@@ -513,10 +513,10 @@ func TestWriteNoError(t *testing.T) {
 func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 	accessRec := &recording.AccessStats{}
 	s := createS3SuiteWithRec(t, accessRec)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	s.s3.EXPECT().
-		CreateMultipartUploadWithContext(ctx, gomock.Any(), gomock.Any()).
+		CreateMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("mock error"))
 
 	w, err := s.storage.Create(ctx, "file", &WriterOption{Concurrency: 2})
@@ -535,13 +535,13 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 func TestReadNoError(t *testing.T) {
 	accessRec := &recording.AccessStats{}
 	s := createS3SuiteWithRec(t, accessRec)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/file", aws.ToString(input.Key))
 			return &s3.GetObjectOutput{
 				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
 			}, nil
@@ -558,13 +558,13 @@ func TestReadNoError(t *testing.T) {
 // and reports a file exists.
 func TestFileExistsNoError(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	s.s3.EXPECT().
-		HeadObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, opt ...request.Option) (*s3.HeadObjectOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+		HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/file", aws.ToString(input.Key))
 			return &s3.HeadObjectOutput{}, nil
 		})
 
@@ -575,13 +575,13 @@ func TestFileExistsNoError(t *testing.T) {
 
 func TestDeleteFileNoError(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	s.s3.EXPECT().
-		DeleteObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.DeleteObjectInput, opt ...request.Option) (*s3.DeleteObjectInput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+		DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectInput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/file", aws.ToString(input.Key))
 			return &s3.DeleteObjectInput{}, nil
 		})
 
@@ -591,21 +591,21 @@ func TestDeleteFileNoError(t *testing.T) {
 
 func TestDeleteFileMissing(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
-	err := awserr.New(s3.ErrCodeNoSuchKey, "no such key", nil)
-	s.s3.EXPECT().DeleteObjectWithContext(ctx, gomock.Any()).Return(nil, err)
+	err := &smithy.GenericAPIError{Code: "NoSuchKey", Message: "no such key", Fault: smithy.FaultUnknown}
+	s.s3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err)
 	require.EqualError(t, s.storage.DeleteFile(ctx, "file-missing"), err.Error())
 }
 
 func TestDeleteFileError(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	expectedErr := errors.New("just some unrelated error")
 
 	s.s3.EXPECT().
-		DeleteObjectWithContext(ctx, gomock.Any()).
+		DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
 	err := s.storage.DeleteFile(ctx, "file3")
@@ -617,11 +617,11 @@ func TestDeleteFileError(t *testing.T) {
 // HeadObject request replied NoSuchKey.
 func TestFileExistsMissing(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	s.s3.EXPECT().
-		HeadObjectWithContext(ctx, gomock.Any()).
-		Return(nil, awserr.New(s3.ErrCodeNoSuchKey, "no such key", nil))
+		HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, &smithy.GenericAPIError{Code: "NoSuchKey", Message: "no such key", Fault: smithy.FaultUnknown})
 
 	exists, err := s.storage.FileExists(ctx, "file-missing")
 	require.NoError(t, err)
@@ -631,12 +631,12 @@ func TestFileExistsMissing(t *testing.T) {
 // TestWriteError checks that a PutObject error is propagated.
 func TestWriteError(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
-	expectedErr := awserr.New(s3.ErrCodeNoSuchBucket, "no such bucket", nil)
+	expectedErr := &smithy.GenericAPIError{Code: "NoSuchBucket", Message: "no such bucket", Fault: smithy.FaultUnknown}
 
 	s.s3.EXPECT().
-		PutObjectWithContext(ctx, gomock.Any()).
+		PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
 	err := s.storage.WriteFile(ctx, "file2", []byte("test"))
@@ -646,12 +646,12 @@ func TestWriteError(t *testing.T) {
 // TestWriteError checks that a GetObject error is propagated.
 func TestReadError(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
-	expectedErr := awserr.New(s3.ErrCodeNoSuchKey, "no such key", nil)
+	expectedErr := &smithy.GenericAPIError{Code: "NoSuchKey", Message: "no such key", Fault: smithy.FaultUnknown}
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
 	_, err := s.storage.ReadFile(ctx, "file-missing")
@@ -662,12 +662,12 @@ func TestReadError(t *testing.T) {
 // TestFileExistsError checks that a HeadObject error is propagated.
 func TestFileExistsError(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	expectedErr := errors.New("just some unrelated error")
 
 	s.s3.EXPECT().
-		HeadObjectWithContext(ctx, gomock.Any()).
+		HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
 	_, err := s.storage.FileExists(ctx, "file3")
@@ -679,11 +679,11 @@ func TestFileExistsError(t *testing.T) {
 func TestOpenAsBufio(t *testing.T) {
 	accessRec := &recording.AccessStats{}
 	s := createS3SuiteWithRec(t, accessRec)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 			require.Equal(t, (*string)(nil), input.Range)
 			return &s3.GetObjectOutput{
 				Body:          io.NopCloser(bytes.NewReader([]byte("plain text\ncontent"))),
@@ -729,10 +729,10 @@ func (r *alphabetReader) Close() error {
 // reader emits content one byte at a time.
 func TestOpenReadSlowly(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&s3.GetObjectOutput{
 			Body:          &alphabetReader{character: 'A'},
 			ContentLength: aws.Int64(26),
@@ -747,33 +747,33 @@ func TestOpenReadSlowly(t *testing.T) {
 
 func TestPutAndDeleteObjectCheck(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
-	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
-	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
+	s.s3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
+	s.s3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 	require.NoError(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}))
 
-	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
-	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
+	s.s3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
+	s.s3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}), "mock put error")
 
-	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
-	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
+	s.s3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
+	s.s3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
 	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}), "mock del error")
 
-	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, nil)
-	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, awserr.New("AccessDenied", "", nil))
+	s.s3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
+	s.s3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &smithy.GenericAPIError{Code: "AccessDenied", Message: "AccessDenied", Fault: smithy.FaultUnknown})
 	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}), "AccessDenied")
 
-	s.s3.EXPECT().PutObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
-	s.s3.EXPECT().DeleteObjectWithContext(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
+	s.s3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
+	s.s3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
 	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.s3, &backuppb.S3{}), "mock put error")
 }
 
 // TestOpenSeek checks that Seek is implemented correctly.
 func TestOpenSeek(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	someRandomBytes := make([]byte, 1000000)
 	rnd := rand.New(rand.NewSource(0))
@@ -861,10 +861,10 @@ func (s *s3Suite) expectedCalls(ctx context.Context, t *testing.T, data []byte, 
 	for _, offset := range startOffsets {
 		thisOffset := offset
 		thisCall := s.s3.EXPECT().
-			GetObjectWithContext(ctx, gomock.Any()).
-			DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+			GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 				if thisOffset > 0 {
-					require.Equal(t, fmt.Sprintf("bytes=%d-", thisOffset), aws.StringValue(input.Range))
+					require.Equal(t, fmt.Sprintf("bytes=%d-", thisOffset), aws.ToString(input.Range))
 				} else {
 					require.Equal(t, (*string)(nil), input.Range)
 				}
@@ -904,11 +904,11 @@ func (f *mockFailReader) Read(p []byte) (n int, err error) {
 
 func TestS3RangeReaderRetryRead(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 	content := []byte("0123456789")
 	var failCount atomic.Int32
-	s.s3.EXPECT().GetObjectWithContext(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+	s.s3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 			var start int
 			_, err := fmt.Sscanf(*input.Range, "bytes=%d-", &start)
 			require.NoError(t, err)
@@ -940,8 +940,8 @@ func TestS3RangeReaderShouldNotRetryWhenContextCancelled(t *testing.T) {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	content := []byte("0123456789")
 	var failCount atomic.Int32
-	s.s3.EXPECT().GetObjectWithContext(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+	s.s3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 			var start int
 			_, err := fmt.Sscanf(*input.Range, "bytes=%d-", &start)
 			require.NoError(t, err)
@@ -971,7 +971,7 @@ func TestS3RangeReaderShouldNotRetryWhenContextCancelled(t *testing.T) {
 // TestS3ReaderWithRetryEOF check the Read with retry and end with io.EOF.
 func TestS3ReaderWithRetryEOF(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	someRandomBytes := make([]byte, 100)
 	rnd := rand.New(rand.NewSource(0))
@@ -1024,7 +1024,7 @@ func (alwaysFailReader) Read([]byte) (n int, err error) {
 // TestS3ReaderWithRetryFailed check the Read with retry failed after maxRetryTimes.
 func TestS3ReaderWithRetryFailed(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	someRandomBytes := make([]byte, 100)
 	rnd := rand.New(rand.NewSource(0))
@@ -1063,7 +1063,7 @@ func (f *failEvenReadReader) Read(p []byte) (n int, err error) {
 
 func TestS3ReaderResetRetry(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
 	someRandomBytes := make([]byte, 100)
 	rnd := rand.New(rand.NewSource(0))
@@ -1104,9 +1104,9 @@ func TestS3ReaderResetRetry(t *testing.T) {
 // TestWalkDir checks WalkDir retrieves all directory content under a prefix.
 func TestWalkDir(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
-	contents := []*s3.Object{
+	contents := []*types.Object{
 		{
 			Key:  aws.String("prefix/sp/.gitignore"),
 			Size: aws.Int64(437),
@@ -1131,76 +1131,95 @@ func TestWalkDir(t *testing.T) {
 
 	// first call serve item #0, #1; second call #2, #3; third call #4.
 	firstCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/sp/", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
-			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
-			require.Equal(t, "", aws.StringValue(input.Delimiter))
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/sp/", aws.ToString(input.Prefix))
+			require.Equal(t, "", aws.ToString(input.Marker))
+			require.Equal(t, int32(2), aws.ToInt32(input.MaxKeys))
+			require.Equal(t, "", aws.ToString(input.Delimiter))
 			return &s3.ListObjectsOutput{
 				IsTruncated: aws.Bool(true),
-				Contents:    contents[:2],
+				Contents: []types.Object{
+					*contents[0],
+					*contents[1],
+				},
 			}, nil
 		})
 	secondCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, aws.StringValue(contents[1].Key), aws.StringValue(input.Marker))
-			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, aws.ToString(contents[1].Key), aws.ToString(input.Marker))
+			require.Equal(t, int32(2), aws.ToInt32(input.MaxKeys))
 			return &s3.ListObjectsOutput{
 				IsTruncated: aws.Bool(true),
-				Contents:    contents[2:4],
+				Contents: []types.Object{
+					*contents[2],
+					*contents[3],
+				},
 			}, nil
 		}).
 		After(firstCall)
 	thirdCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.Marker))
-			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, aws.ToString(contents[3].Key), aws.ToString(input.Marker))
+			require.Equal(t, int32(2), aws.ToInt32(input.MaxKeys))
 			return &s3.ListObjectsOutput{
 				IsTruncated: aws.Bool(false),
-				Contents:    contents[4:],
+				Contents: []types.Object{
+					*contents[4],
+				},
 			}, nil
 		}).
 		After(secondCall)
 	fourthCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
-			require.Equal(t, int64(4), aws.Int64Value(input.MaxKeys))
-			require.Equal(t, "", aws.StringValue(input.Delimiter))
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/", aws.ToString(input.Prefix))
+			require.Equal(t, "", aws.ToString(input.Marker))
+			require.Equal(t, int32(4), aws.ToInt32(input.MaxKeys))
+			require.Equal(t, "", aws.ToString(input.Delimiter))
 			return &s3.ListObjectsOutput{
 				IsTruncated: aws.Bool(true),
-				Contents:    contents[:4],
+				Contents: []types.Object{
+					*contents[0],
+					*contents[1],
+					*contents[2],
+					*contents[3],
+				},
 			}, nil
 		}).
 		After(thirdCall)
 	fifthCall := s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.Marker))
-			require.Equal(t, int64(4), aws.Int64Value(input.MaxKeys))
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, aws.ToString(contents[3].Key), aws.ToString(input.Marker))
+			require.Equal(t, int32(4), aws.ToInt32(input.MaxKeys))
 			return &s3.ListObjectsOutput{
 				IsTruncated: aws.Bool(false),
-				Contents:    contents[4:],
+				Contents: []types.Object{
+					*contents[4],
+				},
 			}, nil
 		}).
 		After(fourthCall)
 	s.s3.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/sp/1", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
-			require.Equal(t, int64(3), aws.Int64Value(input.MaxKeys))
-			require.Equal(t, "", aws.StringValue(input.Delimiter))
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/sp/1", aws.ToString(input.Prefix))
+			require.Equal(t, "", aws.ToString(input.Marker))
+			require.Equal(t, int32(3), aws.ToInt32(input.MaxKeys))
+			require.Equal(t, "", aws.ToString(input.Delimiter))
 			return &s3.ListObjectsOutput{
 				IsTruncated: aws.Bool(false),
-				Contents:    contents[2:],
+				Contents: []types.Object{
+					*contents[2],
+					*contents[3],
+					*contents[4],
+				},
 			}, nil
 		}).
 		After(fifthCall)
@@ -1268,9 +1287,9 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 		nil,
 	)
 	defer controller.Finish()
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 
-	contents := []*s3.Object{
+	contents := []*types.Object{
 		{
 			Key:  aws.String("sp/.gitignore"),
 			Size: aws.Int64(437),
@@ -1281,29 +1300,34 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 		},
 	}
 	firstCall := s3API.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
-			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
-			require.Equal(t, "", aws.StringValue(input.Delimiter))
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "", aws.ToString(input.Prefix))
+			require.Equal(t, "", aws.ToString(input.Marker))
+			require.Equal(t, int32(2), aws.ToInt32(input.MaxKeys))
+			require.Equal(t, "", aws.ToString(input.Delimiter))
 			return &s3.ListObjectsOutput{
 				IsTruncated: aws.Bool(false),
-				Contents:    contents,
+				Contents: []types.Object{
+					*contents[0],
+					*contents[1],
+				},
 			}, nil
 		})
 	s3API.EXPECT().
-		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "sp/", aws.StringValue(input.Prefix))
-			require.Equal(t, "", aws.StringValue(input.Marker))
-			require.Equal(t, int64(2), aws.Int64Value(input.MaxKeys))
-			require.Equal(t, "", aws.StringValue(input.Delimiter))
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "sp/", aws.ToString(input.Prefix))
+			require.Equal(t, "", aws.ToString(input.Marker))
+			require.Equal(t, int32(2), aws.ToInt32(input.MaxKeys))
+			require.Equal(t, "", aws.ToString(input.Delimiter))
 			return &s3.ListObjectsOutput{
 				IsTruncated: aws.Bool(false),
-				Contents:    contents[:1],
+				Contents: []types.Object{
+					*contents[0],
+				},
 			}, nil
 		}).
 		After(firstCall)
@@ -1389,42 +1413,40 @@ func TestSendCreds(t *testing.T) {
 func TestObjectLock(t *testing.T) {
 	s := createS3Suite(t)
 	// resp is nil
-	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(nil, nil)
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 	require.Equal(t, false, s.storage.IsObjectLockEnabled())
 
 	// resp is not nil, but resp.ObjectLockConfiguration is nil
-	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
 		&s3.GetObjectLockConfigurationOutput{
 			ObjectLockConfiguration: nil,
 		}, nil,
 	)
 	require.Equal(t, false, s.storage.IsObjectLockEnabled())
 
-	// resp.ObjectLockConfiguration is not nil, but resp.ObjectLockConfiguration.ObjectLockEnabled is nil
-	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+	// resp.ObjectLockConfiguration is not nil, but resp.ObjectLockConfiguration.ObjectLockEnabled is empty
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
 		&s3.GetObjectLockConfigurationOutput{
-			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
-				ObjectLockEnabled: nil,
-			},
+			ObjectLockConfiguration: &types.ObjectLockConfiguration{},
 		}, nil,
 	)
 	require.Equal(t, false, s.storage.IsObjectLockEnabled())
 
 	// resp.ObjectLockConfiguration.ObjectLockEnabled is illegal string
-	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
 		&s3.GetObjectLockConfigurationOutput{
-			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
-				ObjectLockEnabled: aws.String("EnaBled"),
+			ObjectLockConfiguration: &types.ObjectLockConfiguration{
+				ObjectLockEnabled: "EnaBled",
 			},
 		}, nil,
 	)
 	require.Equal(t, false, s.storage.IsObjectLockEnabled())
 
 	// resp.ObjectLockConfiguration.ObjectLockEnabled is enabled
-	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
 		&s3.GetObjectLockConfigurationOutput{
-			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
-				ObjectLockEnabled: aws.String("Enabled"),
+			ObjectLockConfiguration: &types.ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
 			},
 		}, nil,
 	)
@@ -1551,30 +1573,30 @@ func TestRetryError(t *testing.T) {
 
 func TestS3ReadFileRetryable(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 	errMsg := "just some unrelated error"
 	expectedErr := errors.New(errMsg)
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/file", aws.ToString(input.Key))
 			return &s3.GetObjectOutput{
 				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
 			}, nil
 		})
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
-			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
-			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/file", aws.ToString(input.Key))
 			return &s3.GetObjectOutput{
 				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
 			}, nil
 		})
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/read-s3-body-failed", "2*return(true)"))
@@ -1588,12 +1610,12 @@ func TestS3ReadFileRetryable(t *testing.T) {
 
 func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
+	ctx := context.Background()
 	start, end := int64(10), int64(30)
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 			return &s3.GetObjectOutput{
 				ContentRange: aws.String("bytes 10-20/20"),
 			}, nil
@@ -1603,8 +1625,8 @@ func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 	require.Nil(t, reader)
 
 	s.s3.EXPECT().
-		GetObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 			return &s3.GetObjectOutput{}, nil
 		})
 	reader, err = s.storage.Open(ctx, "test", &ReaderOption{StartOffset: &start, EndOffset: &end})

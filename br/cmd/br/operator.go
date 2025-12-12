@@ -37,6 +37,7 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newMigrateToCommand())
 	cmd.AddCommand(newForceFlushCommand())
 	cmd.AddCommand(newChecksumCommand())
+	cmd.AddCommand(newTestStorageCommand())
 	cmd.AddCommand(newPitrChecksumCommand())
 	cmd.AddCommand(newUpstreamChecksumCommand())
 	return cmd
@@ -196,5 +197,26 @@ func newForceFlushCommand() *cobra.Command {
 		},
 	}
 	operator.DefineFlagsForForceFlushConfig(cmd.Flags())
+	return cmd
+}
+
+func newTestStorageCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "test-storage",
+		Short: "test all operations of an external storage",
+		Long: "Test all ExternalStorage operations including read, write, delete, " +
+			"rename, walk, and streaming operations. This helps verify storage " +
+			"configuration and permissions before using it for backup/restore.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.TestStorageConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunTestStorage(ctx, cfg)
+		},
+	}
+	operator.DefineFlagsForTestStorageConfig(cmd.Flags())
 	return cmd
 }

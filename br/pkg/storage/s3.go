@@ -5,6 +5,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -17,17 +18,19 @@ import (
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
 	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/client"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
-	"github.com/aws/aws-sdk-go/aws/defaults"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3iface"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/logging"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -60,6 +63,8 @@ const (
 	s3ExternalIDOption   = "s3." + S3ExternalID
 	s3ProfileOption      = "s3.profile"
 	notFound             = "NotFound"
+	noSuchBucket         = "NoSuchBucket"
+	noSuchKey            = "NoSuchKey"
 	// number of retries to make of operations.
 	maxRetries = 7
 	// max number of retries when meets error
@@ -75,7 +80,7 @@ const (
 	domainAWS    = "amazonaws.com"
 )
 
-var permissionCheckFn = map[Permission]func(context.Context, s3iface.S3API, *backuppb.S3) error{
+var permissionCheckFn = map[Permission]func(context.Context, S3API, *backuppb.S3) error{
 	AccessBuckets:      s3BucketExistenceCheck,
 	ListObjects:        listObjectsCheck,
 	GetObject:          getObjectCheck,
@@ -88,18 +93,13 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
 type S3Storage struct {
-	svc       s3iface.S3API
+	svc       S3API
 	options   *backuppb.S3
 	accessRec *recording.AccessStats
 }
 
 func (*S3Storage) MarkStrongConsistency() {
 	// See https://aws.amazon.com/cn/s3/consistency/
-}
-
-// GetS3APIHandle gets the handle to the S3 API.
-func (rs *S3Storage) GetS3APIHandle() s3iface.S3API {
-	return rs.svc
 }
 
 // GetOptions gets the external storage operations for the S3.
@@ -121,15 +121,15 @@ func (rs *S3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopyS
 	}
 
 	// We must use the client of the target region.
-	_, err := rs.svc.CopyObjectWithContext(ctx, copyInput)
+	_, err := rs.svc.CopyObject(ctx, copyInput)
 	return err
 }
 
 // S3Uploader does multi-part upload to s3.
 type S3Uploader struct {
-	svc           s3iface.S3API
+	svc           S3API
 	createOutput  *s3.CreateMultipartUploadOutput
-	completeParts []*s3.CompletedPart
+	completeParts []types.CompletedPart
 }
 
 // UploadPart update partial data to s3, we should call CreateMultipartUpload to start it,
@@ -139,16 +139,16 @@ func (u *S3Uploader) Write(ctx context.Context, data []byte) (int, error) {
 		Body:          bytes.NewReader(data),
 		Bucket:        u.createOutput.Bucket,
 		Key:           u.createOutput.Key,
-		PartNumber:    aws.Int64(int64(len(u.completeParts) + 1)),
+		PartNumber:    aws.Int32(int32(len(u.completeParts) + 1)),
 		UploadId:      u.createOutput.UploadId,
 		ContentLength: aws.Int64(int64(len(data))),
 	}
 
-	uploadResult, err := u.svc.UploadPartWithContext(ctx, partInput)
+	uploadResult, err := u.svc.UploadPart(ctx, partInput)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	u.completeParts = append(u.completeParts, &s3.CompletedPart{
+	u.completeParts = append(u.completeParts, types.CompletedPart{
 		ETag:       uploadResult.ETag,
 		PartNumber: partInput.PartNumber,
 	})
@@ -161,11 +161,11 @@ func (u *S3Uploader) Close(ctx context.Context) error {
 		Bucket:   u.createOutput.Bucket,
 		Key:      u.createOutput.Key,
 		UploadId: u.createOutput.UploadId,
-		MultipartUpload: &s3.CompletedMultipartUpload{
+		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: u.completeParts,
 		},
 	}
-	_, err := u.svc.CompleteMultipartUploadWithContext(ctx, completeInput)
+	_, err := u.svc.CompleteMultipartUpload(ctx, completeInput)
 	return errors.Trace(err)
 }
 
@@ -322,7 +322,7 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 }
 
 // NewS3StorageForTest creates a new S3Storage for testing only.
-func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
+func NewS3StorageForTest(svc S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
 	return &S3Storage{
 		svc:       svc,
 		options:   options,
@@ -331,9 +331,9 @@ func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3, accessRec *rec
 }
 
 // auto access without ak / sk.
-func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
+func autoNewCred(qs *backuppb.S3) (cred aws.CredentialsProvider, err error) {
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken), nil
+		return credentials.NewStaticCredentialsProvider(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken), nil
 	}
 	endpoint := qs.Endpoint
 	// if endpoint is empty,return no error and run default(aws) follow.
@@ -348,7 +348,8 @@ func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	return nil, nil
 }
 
-func createOssRAMCred() (*credentials.Credentials, error) {
+// Object Storage Service (OSS) provided by alibaba cloud
+func createOssRAMCred() (aws.CredentialsProvider, error) {
 	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
 	if err != nil {
 		log.Warn("failed to get aliyun ram credential", zap.Error(err))
@@ -358,44 +359,129 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 	if !ok {
 		return nil, errors.Errorf("invalid credential type %T", cred)
 	}
-	newCred := credentials.NewChainCredentials([]credentials.Provider{
-		&credentials.EnvProvider{},
-		&credentials.SharedCredentialsProvider{},
-		&credentials.StaticProvider{Value: credentials.Value{AccessKeyID: aliCred.AccessKeyId, SecretAccessKey: aliCred.AccessKeySecret, SessionToken: aliCred.AccessKeyStsToken, ProviderName: ""}},
-	})
-	if _, err := newCred.Get(); err != nil {
-		return nil, errors.Trace(err)
+	// In AWS SDK v2, we create a static credentials provider with the STS token
+	// The credential chain (env vars, shared credentials, etc.) is already handled
+	// by the LoadDefaultConfig process, so we just return the STS credentials
+	return credentials.NewStaticCredentialsProvider(
+		aliCred.AccessKeyId,
+		aliCred.AccessKeySecret,
+		aliCred.AccessKeyStsToken,
+	), nil
+}
+
+type pingcapLogger struct {
+	logger *zap.Logger
+}
+
+func newLogger(extraFields ...zap.Field) pingcapLogger {
+	return pingcapLogger{
+		logger: log.L().WithOptions(zap.AddCallerSkip(1)).With(extraFields...),
 	}
-	return newCred, nil
+}
+
+func (p pingcapLogger) Logf(classification logging.Classification, format string, v ...any) {
+	var loggerF func(string, ...zap.Field)
+	switch classification {
+	case logging.Warn:
+		loggerF = p.logger.Warn
+	case logging.Debug:
+		loggerF = p.logger.Debug
+	default:
+		loggerF = p.logger.Info
+	}
+
+	msg := fmt.Sprintf(format, v...)
+	loggerF(msg)
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.
 func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
-	awsConfig := aws.NewConfig().
-		WithS3ForcePathStyle(qs.ForcePathStyle).
-		WithCredentialsChainVerboseErrors(true)
-	if qs.Region == "" {
-		awsConfig.WithRegion(defaultRegion)
+
+	// Start with default configuration loading
+	var configOpts []func(*config.LoadOptions) error
+
+	// Set region (use default if not specified)
+	region := qs.Region
+	if region == "" {
+		region = defaultRegion
+	}
+	configOpts = append(configOpts,
+		config.WithRegion(region),
+		config.WithLogger(newLogger(
+			zap.String("bucket", backend.GetBucket()),
+			zap.String("prefix", backend.GetPrefix()),
+			zap.String("context", "aws-sdk-global"))),
+		config.WithClientLogMode(aws.LogRequest|aws.LogRetries|aws.LogResponse|aws.LogDeprecatedUsage),
+		config.WithLogConfigurationWarnings(true),
+	)
+
+	// Configure custom retryer
+	if opts.S3Retryer.MaxAttempts() > 0 {
+		// Use the provided S3Retryer (which is already a v2 retry.Standard)
+		configOpts = append(configOpts, config.WithRetryer(func() aws.Retryer {
+			return &opts.S3Retryer
+		}))
 	} else {
-		awsConfig.WithRegion(qs.Region)
+		// Use default TiDB retryer that handles some corner cases found in production
+		configOpts = append(configOpts, config.WithRetryer(func() aws.Retryer {
+			return newTidbRetryer()
+		}))
 	}
 
-	if opts.S3Retryer != nil {
-		request.WithRetryer(awsConfig, opts.S3Retryer)
+	if qs.Profile != "" {
+		configOpts = append(configOpts, config.WithSharedConfigProfile(qs.Profile))
 	} else {
-		request.WithRetryer(awsConfig, defaultS3Retryer())
+		// Handle custom credentials
+		cred, err := autoNewCred(&qs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if cred != nil {
+			configOpts = append(configOpts, config.WithCredentialsProvider(cred))
+		}
 	}
+
+	// Load the default configuration with our options
+	cfg, err := config.LoadDefaultConfig(ctx, configOpts...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Handle HTTP client configuration
+	if opts.HTTPClient != nil {
+		cfg.HTTPClient = opts.HTTPClient
+	}
+
+	// Configure S3-specific options
+	var s3Opts []func(*s3.Options)
+
+	// Configure path style addressing
+	if qs.ForcePathStyle {
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.UsePathStyle = true
+		})
+	}
+
+	s3Opts = append(s3Opts, func(o *s3.Options) {
+		o.Logger = newLogger(zap.String("bucket", backend.GetBucket()), zap.String("prefix", backend.GetPrefix()), zap.String("context", "s3"))
+		// These logs will be printed when log level is `DEBUG`.
+		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogDeprecatedUsage
+	})
 
 	// ⚠️ Do NOT set a global endpoint in the AWS config.
 	// Setting a global endpoint will break AssumeRoleWithWebIdentity,
 	// as it overrides the STS endpoint and causes authentication to fail.
 	// See: https://github.com/aws/aws-sdk-go/issues/3972
 	if len(qs.Endpoint) != 0 && qs.Provider != "aws" {
-		awsConfig.WithEndpoint(qs.Endpoint)
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(qs.Endpoint)
+		})
 	}
 	if opts.HTTPClient != nil {
-		awsConfig.WithHTTPClient(opts.HTTPClient)
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.HTTPClient = opts.HTTPClient
+		})
 	}
 	// When using a profile, let AWS SDK handle credentials through the profile
 	// Don't call autoNewCred as it interferes with profile-based authentication
@@ -405,142 +491,177 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 			return nil, errors.Trace(err)
 		}
 		if cred != nil {
-			awsConfig.WithCredentials(cred)
+			s3Opts = append(s3Opts, func(o *s3.Options) {
+				o.Credentials = cred
+			})
 		}
 	}
-	// awsConfig.WithLogLevel(aws.LogDebugWithSigning)
-	awsSessionOpts := session.Options{
-		Config: *awsConfig,
-	}
-	if qs.Profile != "" {
-		awsSessionOpts.Profile = qs.Profile
-		// Use default credential chain when profile is specified
-		awsSessionOpts.SharedConfigState = session.SharedConfigEnable
-	}
-	if opts.AccessRecording != nil {
-		awsSessionOpts.Handlers = defaults.Handlers()
-		awsSessionOpts.Handlers.Send.PushBack(func(r *request.Request) {
-			opts.AccessRecording.RecRequest(r.HTTPRequest)
-		})
-	}
-	ses, err := session.NewSessionWithOptions(awsSessionOpts)
-	if err != nil {
-		return nil, errors.Trace(err)
+
+	// Handle role assumption if specified
+	if len(qs.RoleArn) > 0 {
+		// Create STS client for role assumption
+		stsClient := sts.NewFromConfig(cfg)
+
+		// Configure assume role provider with external ID if provided
+		var assumeRoleProvider aws.CredentialsProvider
+		if len(qs.ExternalId) > 0 {
+			assumeRoleProvider = stscreds.NewAssumeRoleProvider(stsClient, qs.RoleArn, func(o *stscreds.AssumeRoleOptions) {
+				o.ExternalID = &qs.ExternalId
+			})
+		} else {
+			assumeRoleProvider = stscreds.NewAssumeRoleProvider(stsClient, qs.RoleArn)
+		}
+
+		// Update config with assume role credentials
+		cfg.Credentials = assumeRoleProvider
 	}
 
+	if opts.AccessRecording != nil {
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+				return stack.Finalize.Add(middleware.FinalizeMiddlewareFunc(
+					"RecordRequests",
+					func(ctx context.Context, input middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+						// Call the next middleware and get the result
+						output, metadata, err := next.HandleFinalize(ctx, input)
+
+						// Record the request if we have an HTTP request
+						if req, ok := input.Request.(*smithyhttp.Request); ok {
+							opts.AccessRecording.RecRequest(req.Request)
+						}
+
+						return output, metadata, err
+					},
+				), middleware.After)
+			})
+		})
+	}
+
+	// Create S3 client with all configured options
+	client := s3.NewFromConfig(cfg, s3Opts...)
+
+	// Handle AWS provider endpoint configuration (must be done after client creation)
+	if len(qs.Endpoint) != 0 && qs.Provider == "aws" {
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.BaseEndpoint = &qs.Endpoint
+		})
+
+		// Recreate client with endpoint resolver
+		client = s3.NewFromConfig(cfg, s3Opts...)
+	}
+
+	// Get current credentials for SendCredentials handling
 	if !opts.SendCredentials {
 		// Clear the credentials if exists so that they will not be sent to TiKV
 		backend.AccessKey = ""
 		backend.SecretAccessKey = ""
 		backend.SessionToken = ""
-	} else if ses.Config.Credentials != nil {
-		if qs.AccessKey == "" || qs.SecretAccessKey == "" {
-			v, cerr := ses.Config.Credentials.Get()
-			if cerr != nil {
-				return nil, errors.Trace(cerr)
+	} else {
+		// Retrieve current credentials to populate backend
+		if creds, err := cfg.Credentials.Retrieve(ctx); err == nil {
+			if qs.AccessKey == "" || qs.SecretAccessKey == "" {
+				backend.AccessKey = creds.AccessKeyID
+				backend.SecretAccessKey = creds.SecretAccessKey
+				backend.SessionToken = creds.SessionToken
 			}
-			backend.AccessKey = v.AccessKeyID
-			backend.SecretAccessKey = v.SecretAccessKey
-			backend.SessionToken = v.SessionToken
 		}
 	}
 
-	s3CliConfigs := []*aws.Config{}
-	// if role ARN and external ID are provided, try to get the credential using this way
-	if len(qs.RoleArn) > 0 {
-		creds := stscreds.NewCredentials(ses, qs.RoleArn, func(p *stscreds.AssumeRoleProvider) {
-			if len(qs.ExternalId) > 0 {
-				p.ExternalID = &qs.ExternalId
-			}
-		})
-		s3CliConfigs = append(s3CliConfigs,
-			aws.NewConfig().WithCredentials(creds),
-		)
-	}
-	if len(qs.Endpoint) != 0 && qs.Provider == "aws" {
-		s3CliConfigs = append(s3CliConfigs, aws.NewConfig().WithEndpoint(qs.Endpoint))
-	}
-	c := s3.New(ses, s3CliConfigs...)
-
-	var region string
+	// Perform region detection and validation
+	var detectedRegion string
 	if len(qs.Provider) == 0 || qs.Provider == "aws" {
-		confCred := ses.Config.Credentials
-		setCredOpt := func(req *request.Request) {
+		// For AWS provider, detect the actual bucket region
+		// In AWS SDK v2, GetBucketRegion has a simpler signature
+		detectedRegion, err = manager.GetBucketRegion(ctx, client, qs.Bucket, func(o *s3.Options) {
 			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
 			// we need reassign credential to be compatible with minio authentication.
-			if confCred != nil {
-				req.Config.Credentials = confCred
+			if cred := client.Options().Credentials; cred != nil {
+				o.Credentials = cred
 			}
 			// s3manager.GetBucketRegionWithClient use path style addressing default.
 			// we need set S3ForcePathStyle by our config if we set endpoint.
 			if qs.Endpoint != "" {
-				req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
+				o.UsePathStyle = client.Options().UsePathStyle
 			}
-		}
-		region, err = s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
+		})
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 		}
+		if len(detectedRegion) == 0 {
+			// AWS GO SDK v1 normalized the response of `GetBucketRegion` while v2 doesn't.
+			// Manually "normalize" here to be compatible with old behavior.
+			detectedRegion = defaultRegion
+		}
 	} else {
-		// for other s3 compatible provider like ovh storage didn't return the region correctlly
-		// so we cannot automatically get the bucket region. just fallback to manually region setting.
-		region = qs.Region
+		// For other S3 compatible providers like OVH storage that don't return the region correctly,
+		// just fallback to manually region setting.
+		detectedRegion = qs.Region
 	}
 
-	if qs.Region != region {
+	// Validate region consistency
+	if qs.Region != detectedRegion {
 		if qs.Region != "" {
 			return nil, errors.Trace(fmt.Errorf("s3 bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
-				qs.Bucket, qs.Region, region))
+				qs.Bucket, qs.Region, detectedRegion))
 		}
 
-		qs.Region = region
-		backend.Region = region
-		if region != defaultRegion {
-			s3CliConfigs = append(s3CliConfigs, aws.NewConfig().WithRegion(region))
-			c = s3.New(ses, s3CliConfigs...)
+		// Update region and recreate client if needed
+		qs.Region = detectedRegion
+		backend.Region = detectedRegion
+		if detectedRegion != defaultRegion {
+			// Update config with correct region
+			cfg.Region = detectedRegion
+			// Recreate client with correct region
+			client = s3.NewFromConfig(cfg, s3Opts...)
 		}
 	}
-	log.Info("succeed to get bucket region from s3", zap.String("bucket region", region))
+	log.Info("succeed to get bucket region from s3", zap.String("bucket region", detectedRegion))
 
+	// Ensure prefix ends with "/"
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
 	}
 
+	// Perform permission checks
 	for _, p := range opts.CheckPermissions {
-		err := permissionCheckFn[p](ctx, c, &qs)
+		err := permissionCheckFn[p](ctx, client, &qs)
 		if err != nil {
 			return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
 		}
 	}
 
+	// Create final S3Storage instance
 	s3Storage := &S3Storage{
-		svc:       c,
+		svc:       client,
 		options:   &qs,
 		accessRec: opts.AccessRecording,
 	}
+
+	// Check object lock status if requested
 	if opts.CheckS3ObjectLockOptions {
 		backend.ObjectLockEnabled = s3Storage.IsObjectLockEnabled()
 	}
+
 	return s3Storage, nil
 }
 
 // s3BucketExistenceCheck checks if a bucket exists.
-func s3BucketExistenceCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
+func s3BucketExistenceCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
 	input := &s3.HeadBucketInput{
 		Bucket: aws.String(qs.Bucket),
 	}
-	_, err := svc.HeadBucket(input)
+	_, err := svc.HeadBucket(ctx, input)
 	return errors.Trace(err)
 }
 
 // listObjectsCheck checks the permission of listObjects
-func listObjectsCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
+func listObjectsCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
 	input := &s3.ListObjectsInput{
 		Bucket:  aws.String(qs.Bucket),
 		Prefix:  aws.String(qs.Prefix),
-		MaxKeys: aws.Int64(1),
+		MaxKeys: aws.Int32(1),
 	}
-	_, err := svc.ListObjects(input)
+	_, err := svc.ListObjects(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -548,14 +669,15 @@ func listObjectsCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) err
 }
 
 // getObjectCheck checks the permission of getObject
-func getObjectCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
+func getObjectCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(qs.Bucket),
 		Key:    aws.String("not-exists"),
 	}
-	_, err := svc.GetObject(input)
-	if aerr, ok := err.(awserr.Error); ok {
-		if aerr.Code() == s3.ErrCodeNoSuchKey {
+	_, err := svc.GetObject(ctx, input)
+	var aerr smithy.APIError
+	if goerrors.As(err, &aerr) {
+		if aerr.ErrorCode() == noSuchKey {
 			// if key not exists and we reach this error, that
 			// means we have the correct permission to GetObject
 			// other we will get another error
@@ -570,7 +692,7 @@ func getObjectCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error
 // S3 API doesn't provide a way to check the permission, we have to put an
 // object to check the permission.
 // exported for testing.
-func PutAndDeleteObjectCheck(ctx context.Context, svc s3iface.S3API, options *backuppb.S3) (err error) {
+func PutAndDeleteObjectCheck(ctx context.Context, svc S3API, options *backuppb.S3) (err error) {
 	file := fmt.Sprintf("access-check/%s", uuid.New().String())
 	defer func() {
 		// we always delete the object used for permission check,
@@ -580,13 +702,12 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc s3iface.S3API, options *ba
 			Bucket: aws.String(options.Bucket),
 			Key:    aws.String(options.Prefix + file),
 		}
-		_, err2 := svc.DeleteObjectWithContext(ctx, input)
-		if aerr, ok := err2.(awserr.Error); ok {
-			if aerr.Code() != s3.ErrCodeNoSuchKey {
-				log.Warn("failed to delete object used for permission check",
-					zap.String("bucket", options.Bucket),
-					zap.String("key", *input.Key), zap.Error(err2))
-			}
+		_, err2 := svc.DeleteObject(ctx, input)
+		var noSuchKey *types.NoSuchKey
+		if !goerrors.As(err2, &noSuchKey) {
+			log.Warn("failed to delete object used for permission check",
+				zap.String("bucket", options.Bucket),
+				zap.String("key", *input.Key), zap.Error(err2))
 		}
 		if err == nil {
 			err = errors.Trace(err2)
@@ -594,7 +715,7 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc s3iface.S3API, options *ba
 	}()
 	// when no permission, aws returns err with code "AccessDenied"
 	input := buildPutObjectInput(options, file, []byte("check"))
-	_, err = svc.PutObjectWithContext(ctx, input)
+	_, err = svc.PutObject(ctx, input)
 	return errors.Trace(err)
 }
 
@@ -602,13 +723,13 @@ func (rs *S3Storage) IsObjectLockEnabled() bool {
 	input := &s3.GetObjectLockConfigurationInput{
 		Bucket: aws.String(rs.options.Bucket),
 	}
-	resp, err := rs.svc.GetObjectLockConfiguration(input)
+	resp, err := rs.svc.GetObjectLockConfiguration(context.Background(), input)
 	if err != nil {
 		log.Warn("failed to check object lock for bucket", zap.String("bucket", rs.options.Bucket), zap.Error(err))
 		return false
 	}
 	if resp != nil && resp.ObjectLockConfiguration != nil {
-		if s3.ObjectLockEnabledEnabled == aws.StringValue(resp.ObjectLockConfiguration.ObjectLockEnabled) {
+		if types.ObjectLockEnabledEnabled == resp.ObjectLockConfiguration.ObjectLockEnabled {
 			return true
 		}
 	}
@@ -617,21 +738,21 @@ func (rs *S3Storage) IsObjectLockEnabled() bool {
 
 func buildPutObjectInput(options *backuppb.S3, file string, data []byte) *s3.PutObjectInput {
 	input := &s3.PutObjectInput{
-		Body:   aws.ReadSeekCloser(bytes.NewReader(data)),
+		Body:   bytes.NewReader(data),
 		Bucket: aws.String(options.Bucket),
 		Key:    aws.String(options.Prefix + file),
 	}
 	if options.Acl != "" {
-		input = input.SetACL(options.Acl)
+		input.ACL = types.ObjectCannedACL(options.Acl)
 	}
 	if options.Sse != "" {
-		input = input.SetServerSideEncryption(options.Sse)
+		input.ServerSideEncryption = types.ServerSideEncryption(options.Sse)
 	}
 	if options.SseKmsKeyId != "" {
-		input = input.SetSSEKMSKeyId(options.SseKmsKeyId)
+		input.SSEKMSKeyId = aws.String(options.SseKmsKeyId)
 	}
 	if options.StorageClass != "" {
-		input = input.SetStorageClass(options.StorageClass)
+		input.StorageClass = types.StorageClass(options.StorageClass)
 	}
 	return input
 }
@@ -642,16 +763,18 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
-	_, err := rs.svc.PutObjectWithContext(ctx, input)
+	_, err := rs.svc.PutObject(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rs.accessRec.RecWrite(len(data))
+	// Use the proper waiter pattern in AWS SDK v2
+	waiter := s3.NewObjectExistsWaiter(rs.svc)
 	hinput := &s3.HeadObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
-	err = rs.svc.WaitUntilObjectExistsWithContext(ctx, hinput)
+	err = waiter.Wait(ctx, hinput, 30*time.Second)
+	rs.accessRec.RecWrite(len(data))
 	return errors.Trace(err)
 }
 
@@ -697,7 +820,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + file),
 		}
-		result, err := rs.svc.GetObjectWithContext(ctx, input)
+		result, err := rs.svc.GetObject(ctx, input)
 		if err != nil {
 			return nil, errors.Annotatef(err,
 				"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
@@ -734,12 +857,12 @@ func (rs *S3Storage) DeleteFile(ctx context.Context, file string) error {
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
-	_, err := rs.svc.DeleteObjectWithContext(ctx, input)
+	_, err := rs.svc.DeleteObject(ctx, input)
 	return errors.Trace(err)
 }
 
 // s3DeleteObjectsLimit is the upper limit of objects in a delete request.
-// See https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#S3.DeleteObjects.
+// See https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html.
 const s3DeleteObjectsLimit = 1000
 
 // DeleteFiles delete the files in batch in s3 storage.
@@ -749,20 +872,20 @@ func (rs *S3Storage) DeleteFiles(ctx context.Context, files []string) error {
 		if len(batch) > s3DeleteObjectsLimit {
 			batch = batch[:s3DeleteObjectsLimit]
 		}
-		objects := make([]*s3.ObjectIdentifier, 0, len(batch))
+		objects := make([]types.ObjectIdentifier, 0, len(batch))
 		for _, file := range batch {
-			objects = append(objects, &s3.ObjectIdentifier{
+			objects = append(objects, types.ObjectIdentifier{
 				Key: aws.String(rs.options.Prefix + file),
 			})
 		}
 		input := &s3.DeleteObjectsInput{
 			Bucket: aws.String(rs.options.Bucket),
-			Delete: &s3.Delete{
+			Delete: &types.Delete{
 				Objects: objects,
 				Quiet:   aws.Bool(false),
 			},
 		}
-		_, err := rs.svc.DeleteObjectsWithContext(ctx, input)
+		_, err := rs.svc.DeleteObjects(ctx, input)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -778,11 +901,12 @@ func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) 
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
-	_, err := rs.svc.HeadObjectWithContext(ctx, input)
+	_, err := rs.svc.HeadObject(ctx, input)
 	if err != nil {
-		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
-			switch aerr.Code() {
-			case s3.ErrCodeNoSuchBucket, s3.ErrCodeNoSuchKey, notFound:
+		var aerr smithy.APIError
+		if goerrors.As(errors.Cause(err), &aerr) {
+			switch aerr.ErrorCode() {
+			case noSuchBucket, noSuchKey, notFound:
 				return false, nil
 			}
 		}
@@ -817,14 +941,14 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	req := &s3.ListObjectsInput{
 		Bucket:  aws.String(rs.options.Bucket),
 		Prefix:  aws.String(prefix),
-		MaxKeys: aws.Int64(maxKeys),
+		MaxKeys: aws.Int32(int32(maxKeys)),
 	}
 
 	for {
 		// FIXME: We can't use ListObjectsV2, it is not universally supported.
 		// (Ceph RGW supported ListObjectsV2 since v15.1.0, released 2020 Jan 30th)
 		// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
-		res, err := rs.svc.ListObjectsWithContext(ctx, req)
+		res, err := rs.svc.ListObjects(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -857,7 +981,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 				return errors.Trace(err)
 			}
 		}
-		if !aws.BoolValue(res.IsTruncated) {
+		if !aws.ToBool(res.IsTruncated) {
 			break
 		}
 	}
@@ -951,7 +1075,7 @@ func (rs *S3Storage) open(
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-", startOffset))
 	}
 	input.Range = rangeOffset
-	result, err := rs.svc.GetObjectWithContext(ctx, input)
+	result, err := rs.svc.GetObject(ctx, input)
 	if err != nil {
 		return nil, RangeInfo{}, errors.Trace(err)
 	}
@@ -1162,26 +1286,26 @@ func (rs *S3Storage) createUploader(ctx context.Context, name string) (ExternalF
 		Key:    aws.String(rs.options.Prefix + name),
 	}
 	if rs.options.Acl != "" {
-		input = input.SetACL(rs.options.Acl)
+		input.ACL = types.ObjectCannedACL(rs.options.Acl)
 	}
 	if rs.options.Sse != "" {
-		input = input.SetServerSideEncryption(rs.options.Sse)
+		input.ServerSideEncryption = types.ServerSideEncryption(rs.options.Sse)
 	}
 	if rs.options.SseKmsKeyId != "" {
-		input = input.SetSSEKMSKeyId(rs.options.SseKmsKeyId)
+		input.SSEKMSKeyId = aws.String(rs.options.SseKmsKeyId)
 	}
 	if rs.options.StorageClass != "" {
-		input = input.SetStorageClass(rs.options.StorageClass)
+		input.StorageClass = types.StorageClass(rs.options.StorageClass)
 	}
 
-	resp, err := rs.svc.CreateMultipartUploadWithContext(ctx, input)
+	resp, err := rs.svc.CreateMultipartUpload(ctx, input)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return &S3Uploader{
 		svc:           rs.svc,
 		createOutput:  resp,
-		completeParts: make([]*s3.CompletedPart, 0, 128),
+		completeParts: make([]types.CompletedPart, 0, 128),
 	}, nil
 }
 
@@ -1216,13 +1340,13 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 			return nil, err
 		}
 	} else {
-		up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
+		up := manager.NewUploader(rs.svc, func(u *manager.Uploader) {
 			u.PartSize = option.PartSize
 			u.Concurrency = option.Concurrency
-			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
+			u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
 		})
 		rd, wd := io.Pipe()
-		upParams := &s3manager.UploadInput{
+		upParams := &s3.PutObjectInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + name),
 			Body:   rd,
@@ -1230,7 +1354,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
 		go func() {
-			_, err := up.UploadWithContext(ctx, upParams)
+			_, err := up.Upload(ctx, upParams)
 			// like a channel we only let sender close the pipe in happy path
 			if err != nil {
 				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err))
@@ -1268,9 +1392,92 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 // Close implements ExternalStorage interface.
 func (*S3Storage) Close() {}
 
-// retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.
-type retryerWithLog struct {
-	client.DefaultRetryer
+// tidbRetryer implements aws.Retryer for TiDB-specific retry logic
+type tidbRetryer struct {
+	standardRetryer aws.Retryer
+}
+
+func newTidbRetryer() aws.Retryer {
+	return &tidbRetryer{
+		standardRetryer: retry.NewStandard(func(so *retry.StandardOptions) {
+			so.MaxAttempts = maxRetries
+			so.MaxBackoff = 30 * time.Second
+		}),
+	}
+}
+
+func (tr *tidbRetryer) IsErrorRetryable(err error) bool {
+	var isRetryable bool
+	defer func() {
+		log.Warn("failed to request s3, checking whether we can retry", zap.Error(err), zap.Bool("retry", isRetryable))
+		if isRetryable {
+			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		}
+	}()
+
+	// for unit test
+	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
+		log.Info("original error", zap.Error(err))
+		if err != nil {
+			err = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
+		}
+	})
+
+	// TiDB-specific error handling
+	errStr := err.Error()
+
+	// Fast fail for unreachable EC2 metadata in containers
+	if strings.Contains(errStr, ec2MetaAddress) && (isDeadlineExceedError(err) || isConnectionResetError(err)) {
+		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(err))
+		isRetryable = false
+		return isRetryable
+	}
+
+	// Custom connection error handling
+	if isConnectionResetError(err) {
+		isRetryable = true
+		return isRetryable
+	}
+	if isConnectionRefusedError(err) {
+		isRetryable = false
+		return isRetryable
+	}
+	if isHTTP2ConnAborted(err) {
+		isRetryable = true
+		return isRetryable
+	}
+
+	// Fall back to standard retry logic
+	isRetryable = tr.standardRetryer.IsErrorRetryable(err)
+	return isRetryable
+}
+
+func (tr *tidbRetryer) MaxAttempts() int {
+	return maxRetries
+}
+
+func (tr *tidbRetryer) RetryDelay(attempt int, err error) (time.Duration, error) {
+	delay, retryErr := tr.standardRetryer.RetryDelay(attempt, err)
+	if retryErr != nil {
+		return 0, retryErr
+	}
+
+	// Apply minimum delays similar to v1 configuration
+	minDelay := 1 * time.Second
+	if delay < minDelay {
+		delay = minDelay
+	}
+
+	log.Warn("failed to request s3, retrying", zap.Error(err), zap.Duration("backoff", delay))
+	return delay, nil
+}
+
+func (tr *tidbRetryer) GetRetryToken(ctx context.Context, opErr error) (releaseToken func(error) error, err error) {
+	return tr.standardRetryer.GetRetryToken(ctx, opErr)
+}
+
+func (tr *tidbRetryer) GetInitialToken() (releaseToken func(error) error) {
+	return tr.standardRetryer.GetInitialToken()
 }
 
 func isCancelError(err error) bool {
@@ -1282,8 +1489,8 @@ func isDeadlineExceedError(err error) bool {
 	// Known challenges:
 	//
 	// If we want to unwrap the r.Error:
-	// 1. the err should be an awserr.Error (let it be awsErr)
-	// 2. awsErr.OrigErr() should be an *url.Error (let it be urlErr).
+	// 1. the err should be a smithy.APIError (let it be apiErr)
+	// 2. We'd need to check the underlying error chain for *url.Error.
 	// 3. urlErr.Err should be a http.httpError (which is private).
 	//
 	// If we want to reterive the error from the request context:
@@ -1313,52 +1520,4 @@ func isHTTP2ConnAborted(err error) bool {
 		}
 	}
 	return false
-}
-
-func (rl retryerWithLog) ShouldRetry(r *request.Request) (retry bool) {
-	defer func() {
-		log.Warn("failed to request s3, checking whether we can retry", zap.Error(r.Error), zap.Bool("retry", retry))
-		if retry {
-			metrics.RetryableErrorCount.WithLabelValues(r.Error.Error()).Inc()
-		}
-	}()
-
-	// for unit test
-	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
-		log.Info("original error", zap.Error(r.Error))
-		if r.Error != nil {
-			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
-		}
-	})
-	if r.HTTPRequest.URL.Host == ec2MetaAddress && (isDeadlineExceedError(r.Error) || isConnectionResetError(r.Error)) {
-		// fast fail for unreachable linklocal address in EC2 containers.
-		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
-		return false
-	}
-	if isConnectionResetError(r.Error) {
-		return true
-	}
-	if isConnectionRefusedError(r.Error) {
-		return false
-	}
-	if isHTTP2ConnAborted(r.Error) {
-		return true
-	}
-	return rl.DefaultRetryer.ShouldRetry(r)
-}
-
-func (rl retryerWithLog) RetryRules(r *request.Request) time.Duration {
-	backoffTime := rl.DefaultRetryer.RetryRules(r)
-	log.Warn("failed to request s3, retrying", zap.Error(r.Error), zap.Duration("backoff", backoffTime))
-	return backoffTime
-}
-
-func defaultS3Retryer() request.Retryer {
-	return retryerWithLog{
-		DefaultRetryer: client.DefaultRetryer{
-			NumMaxRetries:    maxRetries,
-			MinRetryDelay:    1 * time.Second,
-			MinThrottleDelay: 2 * time.Second,
-		},
-	}
 }
