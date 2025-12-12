@@ -1170,6 +1170,9 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 				txn.SetOption(kv.CommitWaitUntilTSO, value.GetUint64())
 			}
 		} else {
+			if len(r) < len(t.DeletableCols()) {
+				return errors.New("Column pruning happened for DELETE on active-active table but no extraOriginTSOffset option is provided")
+			}
 			// When no pruning happened, directly use Column.Offset to find _tidb_origin_ts column in the row.
 			for _, col := range t.Columns {
 				if col.State == model.StatePublic && col.Name == model.ExtraOriginTSName {
