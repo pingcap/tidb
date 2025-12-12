@@ -21,7 +21,28 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
-// OuterJoinToSemiJoin is a logical optimization rule that converts outer joins followed by selections into semi-joins.
+// OuterJoinToSemiJoin is a logical optimization rule that converts a `LogicalJoin` operator
+// (LEFT or RIGHT outer join) into a more efficient `LogicalSemiJoin` operator. While users
+// cannot write `SEMI JOIN` directly in SQL, the optimizer can apply this transformation
+// internally when a `WHERE` clause makes an outer join behave like a semi join. This avoids
+// building the full join result and significantly improves performance.
+//
+// This rule identifies two main patterns that can be transformed into a `LogicalSemiJoin` operator:
+//
+//  1. With a standard `SemiJoin` mode:
+//     When a `WHERE` clause contains a "null-rejecting" predicate on the inner table of a
+//     `LEFT JOIN`, it filters out all non-matching rows. If the query only needs to check for
+//     the existence of matching rows, the `LogicalJoin` can be converted to a `LogicalSemiJoin`.
+//     SQL Example: `SELECT a.* FROM a LEFT JOIN b ON a.id=b.id WHERE b.val > 0`
+//     This is transformed internally into a plan with a `LogicalSemiJoin` operator.
+//
+//  2. With an `Anti` mode (`AntiSemiJoin`):
+//     When a `WHERE` clause checks for `IS NULL` on a `NOT NULL` column of the inner table,
+//     it's a clear indication that the query seeks rows from the outer table that have NO match.
+//     This pattern is transformed internally into a `LogicalSemiJoin` operator with its `JoinType`
+//     set to `AntiSemiJoin`.
+//     SQL Example: `SELECT a.* FROM a LEFT JOIN b ON a.id=b.id WHERE b.id IS NULL`
+//     This is transformed internally into a plan with an `AntiSemiJoin` operator.
 type OuterJoinToSemiJoin struct{}
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
@@ -32,14 +53,18 @@ func (o *OuterJoinToSemiJoin) Optimize(_ context.Context, p base.LogicalPlan) (b
 
 func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	var isChanged bool
-	for _, child := range p.Children() {
+	for idx, child := range p.Children() {
 		if sel, ok := child.(*logicalop.LogicalSelection); ok {
 			join, ok := sel.Children()[0].(*logicalop.LogicalJoin)
 			if ok {
-				ok := join.CanConvertAntiJoin(sel.Conditions, sel.Schema())
+				proj, ok := join.CanConvertAntiJoin(sel.Conditions, sel.Schema())
 				if ok {
-					join.JoinType = base.AntiSemiJoin
-					p.SetChildren(join)
+					if proj != nil {
+						proj.SetChildren(join)
+						p.SetChild(idx, proj)
+					} else {
+						p.SetChild(idx, join)
+					}
 					isChanged = true
 				}
 			}
