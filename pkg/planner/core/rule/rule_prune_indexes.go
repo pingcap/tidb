@@ -15,6 +15,7 @@
 package rule
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -31,25 +32,16 @@ const (
 
 // indexWithScore stores an access path along with its coverage scores for ranking.
 type indexWithScore struct {
-	path                     *util.AccessPath
-	whereCount               int
-	joinCount                int
-	orderingCount            int
-	consecutiveWhereCount    int // Consecutive WHERE columns from start of index
-	consecutiveJoinCount     int // Consecutive JOIN columns from start of index
-	consecutiveOrderingCount int // Consecutive ordering columns from start of index
+	path                 *util.AccessPath
+	interestingCount     int     // Total number of interesting columns covered
+	consecutiveCount     int     // Consecutive interesting columns from start of index
+	consecutiveColumnIDs []int64 // IDs of consecutive columns (for detecting different orderings)
 }
 
 // columnRequirements holds the column maps and totals needed for index pruning.
 type columnRequirements struct {
-	whereColIDs            map[int64]struct{}
-	joinColIDs             map[int64]struct{}
-	orderingColIDs         map[int64]struct{}
-	totalWhereColumns      int
-	totalJoinColumns       int
-	totalOrderingColumns   int
-	totalLocalRequiredCols int // WHERE + ordering columns
-	totalJoinRequiredCols  int // JOIN + WHERE columns
+	interestingColIDs map[int64]struct{}
+	totalColumns      int
 }
 
 // ShouldPreferIndexMerge returns true if index merge should be preferred, either due to hints or fix control.
@@ -61,18 +53,19 @@ func ShouldPreferIndexMerge(ds *logicalop.DataSource) bool {
 	)
 }
 
-// PruneIndexesByWhereAndOrder prunes indexes based on their coverage of WHERE, join and ordering columns.
+// PruneIndexesByWhereAndOrder prunes indexes based on their coverage of interesting columns.
 // It keeps the most promising indexes up to the threshold, prioritizing those that:
-// 1. Cover more required columns (WHERE, JOIN, ORDER BY)
+// 1. Cover more interesting columns
 // 2. Have consecutive column matches from the index start (enabling index prefix usage)
 // 3. Support single-scan (covering index without table lookups)
-func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, whereColumns, orderingColumns, joinColumns []*expression.Column, threshold int) []*util.AccessPath {
+// 4. Have different consecutive column orderings (e.g., if interesting columns are A, B, keep both (A,B) and (B,A))
+func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, interestingColumns []*expression.Column, threshold int) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
 	}
 
 	// Build column ID maps and calculate totals
-	req := buildColumnRequirements(whereColumns, orderingColumns, joinColumns)
+	req := buildColumnRequirements(interestingColumns)
 
 	totalPathCount := len(paths)
 
@@ -87,12 +80,14 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		maxToKeep = totalPathCount
 	}
 
-	preferredWhereIndexes := make([]indexWithScore, 0, maxToKeep)
-	preferredJoinIndexes := make([]indexWithScore, 0, maxToKeep)
+	preferredIndexes := make([]indexWithScore, 0, maxToKeep)
 	tablePaths := make([]*util.AccessPath, 0, 1)
 	mvIndexPaths := make([]*util.AccessPath, 0, 1)
 	indexMergeIndexPaths := make([]*util.AccessPath, 0, 1)
 	preferMerge := ShouldPreferIndexMerge(ds)
+
+	// Track consecutive column orderings to ensure we keep indexes with different orderings
+	consecutiveOrderings := make(map[string]struct{})
 
 	// Categorize each index path
 	for _, path := range paths {
@@ -120,31 +115,41 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		// Calculate coverage for this index
 		idxScore := scoreIndexPath(path, req)
 
-		// Calculate aggregate metrics
-		totalConsecutive := idxScore.consecutiveWhereCount + idxScore.consecutiveOrderingCount + idxScore.consecutiveJoinCount
-
 		path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 
 		// If index merge is preferred, keep all indexes as index merge might need any of them
-		if preferMerge && totalConsecutive > 0 {
+		if preferMerge && idxScore.consecutiveCount > 0 {
 			// Keep all indexes when index merge is preferred
-			preferredWhereIndexes = append(preferredWhereIndexes, idxScore)
+			preferredIndexes = append(preferredIndexes, idxScore)
 			continue
 		}
 
 		// Add to preferred indexes if it has any coverage or is a covering scan
-		shouldAddWhere := totalConsecutive > 0 || path.IsSingleScan || idxScore.whereCount > 0
-		if shouldAddWhere {
-			preferredWhereIndexes = append(preferredWhereIndexes, idxScore)
-		}
-
-		if idxScore.consecutiveJoinCount > 0 {
-			preferredJoinIndexes = append(preferredJoinIndexes, idxScore)
+		shouldAdd := idxScore.consecutiveCount > 0 || path.IsSingleScan || idxScore.interestingCount > 0
+		if shouldAdd {
+			// Check if this index has a different consecutive ordering than we've seen
+			orderingKey := buildOrderingKey(idxScore.consecutiveColumnIDs)
+			if idxScore.consecutiveCount > 0 {
+				if _, seen := consecutiveOrderings[orderingKey]; !seen {
+					// This is a new ordering, keep it
+					preferredIndexes = append(preferredIndexes, idxScore)
+					consecutiveOrderings[orderingKey] = struct{}{}
+				} else {
+					// We've seen this ordering before, but still consider the index
+					// if it has good coverage or is a covering scan
+					if idxScore.interestingCount > 0 || path.IsSingleScan {
+						preferredIndexes = append(preferredIndexes, idxScore)
+					}
+				}
+			} else {
+				// No consecutive columns, but still add if it has coverage
+				preferredIndexes = append(preferredIndexes, idxScore)
+			}
 		}
 	}
 
 	// Build final result by sorting and selecting top indexes
-	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredWhereIndexes, preferredJoinIndexes, maxToKeep, req)
+	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, req)
 
 	// Safety check: if we ended up with nothing, return the original paths
 	if len(result) == 0 {
@@ -152,7 +157,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	}
 
 	// Additional safety: if we only have table paths and MVIndex paths and no regular indexes, keep original
-	if len(result) == len(tablePaths)+len(mvIndexPaths) && len(preferredWhereIndexes) == 0 && len(preferredJoinIndexes) == 0 {
+	if len(result) == len(tablePaths)+len(mvIndexPaths) && len(preferredIndexes) == 0 {
 		return paths
 	}
 
@@ -160,44 +165,36 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 }
 
 // buildColumnRequirements builds column ID maps for efficient lookup and calculates totals.
-// It handles deduplication to avoid double-counting columns that appear in multiple contexts.
-func buildColumnRequirements(whereColumns, orderingColumns, joinColumns []*expression.Column) columnRequirements {
+func buildColumnRequirements(interestingColumns []*expression.Column) columnRequirements {
 	req := columnRequirements{
-		whereColIDs:    make(map[int64]struct{}, len(whereColumns)),
-		joinColIDs:     make(map[int64]struct{}, len(joinColumns)),
-		orderingColIDs: make(map[int64]struct{}, len(orderingColumns)),
+		interestingColIDs: make(map[int64]struct{}, len(interestingColumns)),
 	}
 
-	// Build join column IDs first (highest priority for deduplication)
-	for _, col := range joinColumns {
-		req.joinColIDs[col.ID] = struct{}{}
-		req.totalJoinColumns++
-	}
-
-	// Build WHERE column IDs (exclude join columns to avoid double-counting)
-	for _, col := range whereColumns {
-		if _, exists := req.joinColIDs[col.ID]; !exists {
-			req.whereColIDs[col.ID] = struct{}{}
-			req.totalWhereColumns++
-		}
-	}
-
-	// Build ordering column IDs (exclude WHERE columns to avoid double-counting)
-	for _, col := range orderingColumns {
-		if _, exists := req.whereColIDs[col.ID]; !exists {
-			req.orderingColIDs[col.ID] = struct{}{}
-			req.totalOrderingColumns++
-		}
-	}
-
-	// Calculate total coverage requirements
-	req.totalLocalRequiredCols = req.totalWhereColumns + req.totalOrderingColumns
-	req.totalJoinRequiredCols = req.totalJoinColumns
-	if req.totalJoinRequiredCols > 0 {
-		req.totalJoinRequiredCols += req.totalWhereColumns
+	// Build interesting column IDs
+	for _, col := range interestingColumns {
+		req.interestingColIDs[col.ID] = struct{}{}
+		req.totalColumns++
 	}
 
 	return req
+}
+
+// buildOrderingKey creates a string key representing the consecutive column ordering.
+// This is used to detect and keep indexes with different orderings.
+func buildOrderingKey(columnIDs []int64) string {
+	if len(columnIDs) == 0 {
+		return ""
+	}
+	// Create a simple string representation of the column ID sequence
+	// Using a format like "1,2,3" for columns with IDs 1, 2, 3
+	key := ""
+	for i, id := range columnIDs {
+		if i > 0 {
+			key += ","
+		}
+		key += fmt.Sprintf("%d", id)
+	}
+	return key
 }
 
 // scoreIndexPath calculates coverage metrics for a single index path.
@@ -214,43 +211,20 @@ func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScor
 		}
 		idxColID := idxCol.ID
 
-		// Check if this index column matches a WHERE column
-		if req.totalWhereColumns > 0 {
-			if _, found := req.whereColIDs[idxColID]; found {
-				score.whereCount++
-				if i == score.consecutiveWhereCount {
-					score.consecutiveWhereCount++
-				}
-				// Incrementing consecutiveJoinCount here is intentional - it is intended to count both
-				// WHERE and JOIN columns that are consecutive for an index join.
-				// This can double count join columns - which is why join indexes and where indexes are
-				// treated separately in the score calculation.
-				if score.consecutiveJoinCount > 0 && i == score.consecutiveJoinCount+score.consecutiveWhereCount {
-					score.consecutiveJoinCount++
-				}
-				continue
+		// Check if this index column matches an interesting column
+		if _, found := req.interestingColIDs[idxColID]; found {
+			score.interestingCount++
+			// Track consecutive columns from the start of the index
+			if i == score.consecutiveCount {
+				score.consecutiveCount++
+				score.consecutiveColumnIDs = append(score.consecutiveColumnIDs, idxColID)
 			}
-		}
-
-		// Check if this index column matches a join column
-		if req.totalJoinColumns > 0 {
-			if _, found := req.joinColIDs[idxColID]; found {
-				score.joinCount++
-				if i == score.consecutiveJoinCount+score.consecutiveWhereCount {
-					score.consecutiveJoinCount++
-				}
-				continue
-			}
-		}
-
-		// Check if this index column matches an ordering column
-		if req.totalOrderingColumns > 0 {
-			if _, found := req.orderingColIDs[idxColID]; found {
-				score.orderingCount++
-				if i == score.consecutiveOrderingCount+score.consecutiveWhereCount {
-					score.consecutiveOrderingCount++
-				}
-				continue
+		} else {
+			// Once we hit a non-interesting column, stop tracking consecutive columns
+			// (we only care about consecutive matches from the start)
+			// If we've already started tracking consecutive columns and hit a non-interesting one, break
+			if score.consecutiveCount > 0 && i >= score.consecutiveCount {
+				break
 			}
 		}
 	}
@@ -276,21 +250,18 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	}
 	scored := make([]scoredIndex, 0, len(indexes))
 	for _, candidate := range indexes {
-		score := calculateScoreFromCoverage(candidate, req.totalWhereColumns, req.totalJoinColumns, req.totalOrderingColumns, candidate.path.IsSingleScan)
+		score := calculateScoreFromCoverage(candidate, req.totalColumns, candidate.path.IsSingleScan)
 		// Skip indexes with score == 0 as they don't provide any value
 		if score == 0 {
 			continue
 		}
 		cols := len(candidate.path.FullIdxCols)
-		totalConsecutive := candidate.consecutiveWhereCount + candidate.consecutiveJoinCount + candidate.consecutiveOrderingCount
 		scored = append(scored, scoredIndex{
-			info:                candidate,
-			score:               score,
-			columns:             cols,
-			hasConsecutiveWhere: candidate.consecutiveWhereCount > 0,
-			hasConsecutiveJoin:  candidate.consecutiveJoinCount > 0,
-			isSingleScan:        candidate.path.IsSingleScan,
-			totalConsecutive:    totalConsecutive,
+			info:             candidate,
+			score:            score,
+			columns:          cols,
+			isSingleScan:     candidate.path.IsSingleScan,
+			totalConsecutive: candidate.consecutiveCount,
 		})
 	}
 	slices.SortFunc(scored, func(a, b scoredIndex) int {
@@ -326,7 +297,7 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	return scored
 }
 
-func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, whereIndexes, joinIndexes []indexWithScore, maxToKeep int, req columnRequirements) []*util.AccessPath {
+func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, maxToKeep int, req columnRequirements) []*util.AccessPath {
 	result := make([]*util.AccessPath, 0, defaultMaxIndexes)
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
@@ -352,14 +323,13 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 		added[path] = struct{}{}
 	}
 
-	whereScored := scoreAndSort(whereIndexes, req)
-	joinScored := scoreAndSort(joinIndexes, req)
+	preferredScored := scoreAndSort(preferredIndexes, req)
 
 	remaining := maxToKeep
 	hasNonZeroScore := false
 
-	if len(whereScored) > 0 && remaining > 0 {
-		for _, entry := range whereScored {
+	if len(preferredScored) > 0 && remaining > 0 {
+		for _, entry := range preferredScored {
 			path := entry.info.path
 			if _, ok := added[path]; ok {
 				continue
@@ -380,84 +350,29 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 		}
 	}
 
-	if len(joinScored) > 0 {
-		maxJoinScore := joinScored[0].score
-		bestJoinPath := joinScored[0].info.path
-		if _, ok := added[bestJoinPath]; !ok {
-			result = append(result, bestJoinPath)
-			added[bestJoinPath] = struct{}{}
-			if maxJoinScore > 0 {
-				hasNonZeroScore = true
-			}
-			if remaining > 0 {
-				remaining--
-			}
-		}
-		if remaining > 0 {
-			for idx := range joinScored {
-				if idx == 0 {
-					continue
-				}
-				entry := joinScored[idx]
-				path := entry.info.path
-				if _, ok := added[path]; ok {
-					continue
-				}
-				if remaining == 0 {
-					break
-				}
-				// If we have at least 1 index with score > 0, don't append any with score == 0
-				if hasNonZeroScore && entry.score == 0 {
-					continue
-				}
-				result = append(result, path)
-				added[path] = struct{}{}
-				if entry.score > 0 {
-					hasNonZeroScore = true
-				}
-				remaining--
-			}
-		}
-	}
-
 	return result
 }
 
 // calculateScoreFromCoverage calculates a ranking score using already-computed coverage information.
 // This avoids re-iterating through index columns.
-func calculateScoreFromCoverage(info indexWithScore, totalWhereColumns, totalJoinColumns, totalOrderingCols int, isSingleScan bool) int {
+func calculateScoreFromCoverage(info indexWithScore, totalColumns int, isSingleScan bool) int {
 	score := 0
 
-	// Score for WHERE column coverage
-	score += info.whereCount * 10
+	// Score for interesting column coverage
+	score += info.interestingCount * 10
 
-	// Bonus for consecutive WHERE columns from start (critical for index usage)
+	// Bonus for consecutive interesting columns from start (critical for index usage)
 	// Consecutive columns are much more valuable than scattered matches
-	// Index on (a,b,c,d) with WHERE a=1 AND b=2 AND c=3 can use first 3 columns
-	// But with WHERE a=1 AND d=4, can only use first 1 column
-	score += info.consecutiveWhereCount * 10
+	// Index on (a,b,c,d) with interesting columns a, b, c can use first 3 columns
+	// But with interesting columns a, d, can only use first 1 column
+	score += info.consecutiveCount * 10
 
-	// Bonus if the index is covering all WHERE columns
-	if info.whereCount == totalWhereColumns {
+	// Bonus if the index is covering all interesting columns
+	if info.interestingCount == totalColumns {
 		score += 10
 	}
 
-	// Bonus for consecutive JOIN columns from start (critical for index usage)
-	// Consecutive columns are much more valuable than scattered matches
-	score += info.consecutiveJoinCount * 10
-
-	// Bonus if the index is covering all WHERE columns
-	if info.joinCount > 0 && info.joinCount == totalJoinColumns {
-		score += 10
-	}
-
-	// NOTE: For ordering, we cannot guarantee that the presence of ordering
-	// columns will always lead to a plan that doesn't need sort.
-	// So we only give a bonus for consecutive ordering columns
-	if info.consecutiveOrderingCount == totalOrderingCols {
-		score += 10
-	}
-	// Bonus for single-scan
+	// Bonus for single-scan (covering index without table lookups)
 	if isSingleScan {
 		score += 20
 	}

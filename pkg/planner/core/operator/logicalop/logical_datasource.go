@@ -124,26 +124,10 @@ type DataSource struct {
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
 
-	// JoinColumns stores columns from this DataSource that are used in join conditions.
-	// These are columns that participate in join predicates with other tables.
-	// NOTE: This list does not distinguish between the type of predicate. It is used in
+	// InterestingColumnsstores columns from this DataSource that are used in the query.
+	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
 	// index pruning early in the planning phase - which is an approximate heuristic.
-	JoinColumns []*expression.Column
-
-	// WhereColumns stores columns from this DataSource that are used in WHERE/selection conditions.
-	// These are columns that appear in filter predicates (excluding join conditions).
-	// NOTE: This list does not distinguish between the type of predicate. It is used in
-	// index pruning early in the planning phase - which is an approximate heuristic.
-	WhereColumns []*expression.Column
-
-	// OrderingColumns stores columns that require ordered access from this DataSource.
-	// This includes columns used in:
-	//   - ORDER BY clauses (need sorted data)
-	//   - MIN/MAX aggregates (can benefit from ordered data)
-	// Indexes on these columns can eliminate sorting or enable efficient min/max retrieval.
-	// NOTE: This list does not differentiate the ordering requirement of the columns.
-	// It is used in index pruning early in the planning phase - which is an approximate heuristic.
-	OrderingColumns []*expression.Column
+	InterestingColumns []*expression.Column
 }
 
 // Init initializes DataSource.

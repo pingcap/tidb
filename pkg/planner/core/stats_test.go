@@ -77,16 +77,16 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 		t.Logf("This is acceptable for the test - we'll use %d as the baseline", expectedFull)
 	}
 
-	// Extract WHERE columns (a and f) and paths for testing
-	// WhereColumns might not be populated, extract from PushedDownConds
-	whereColumns := dsBaseline.WhereColumns
-	if len(whereColumns) == 0 && len(dsBaseline.PushedDownConds) > 0 {
-		whereColumns = expression.ExtractColumnsFromExpressions(dsBaseline.PushedDownConds, nil)
+	// Extract interesting columns (a and f) and paths for testing
+	// InterestingColumns might not be populated, extract from PushedDownConds
+	interestingColumns := dsBaseline.InterestingColumns
+	if len(interestingColumns) == 0 && len(dsBaseline.PushedDownConds) > 0 {
+		interestingColumns = expression.ExtractColumnsFromExpressions(dsBaseline.PushedDownConds, nil)
 	}
 
-	t.Logf("WHERE columns: %d (from PushedDownConds: %d), paths: %d", len(whereColumns), len(dsBaseline.PushedDownConds), len(dsBaseline.AllPossibleAccessPaths))
-	for i, col := range whereColumns {
-		t.Logf("WHERE col %d: ID=%d", i, col.ID)
+	t.Logf("Interesting columns: %d (from PushedDownConds: %d), paths: %d", len(interestingColumns), len(dsBaseline.PushedDownConds), len(dsBaseline.AllPossibleAccessPaths))
+	for i, col := range interestingColumns {
+		t.Logf("Interesting col %d: ID=%d", i, col.ID)
 	}
 
 	t.Run("threshold_20", func(t *testing.T) {
@@ -132,10 +132,10 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 		}
 	})
 
-	t.Run("no_where_columns", func(t *testing.T) {
+	t.Run("no_interesting_columns", func(t *testing.T) {
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
-		dsNoWhere := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1")
-		require.Equal(t, expectedFull, len(dsNoWhere.AllPossibleAccessPaths), "With no WHERE columns, should return all paths")
+		dsNoInteresting := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1")
+		require.Equal(t, expectedFull, len(dsNoInteresting.AllPossibleAccessPaths), "With no interesting columns, should return all paths")
 	})
 }
 
@@ -247,8 +247,8 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessionapi.Sess
 	var dsAfterOpt *logicalop.DataSource
 	findDataSource(logicalPlan, &dsAfterOpt)
 	if dsAfterOpt != nil {
-		t.Logf("After optimization - Threshold: %d, WhereColumns: %d, Paths: %d",
-			threshold, len(dsAfterOpt.WhereColumns), len(dsAfterOpt.AllPossibleAccessPaths))
+		t.Logf("After optimization - Threshold: %d, InterestingColumns: %d, Paths: %d",
+			threshold, len(dsAfterOpt.InterestingColumns), len(dsAfterOpt.AllPossibleAccessPaths))
 	}
 
 	// Trigger stats derivation

@@ -73,7 +73,7 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	}
 
 	// Prune indexes before collecting sync indices to avoid loading stats for indexes that will be pruned.
-	// This must happen after WhereColumns, OrderingColumns, and JoinColumns are set (which happens in CollectColumnStatsUsage).
+	// This must happen after InterestingColumns is set (which happens in CollectColumnStatsUsage).
 	keptIndexIDs := c.pruneIndexesForAllDataSources(plan)
 
 	// collect needed virtual columns from already needed columns
@@ -240,9 +240,7 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 	prunedPaths := PruneIndexesByWhereAndOrder(
 		ds,
 		ds.AllPossibleAccessPaths,
-		ds.WhereColumns,
-		ds.OrderingColumns,
-		ds.JoinColumns,
+		ds.InterestingColumns,
 		threshold,
 	)
 
