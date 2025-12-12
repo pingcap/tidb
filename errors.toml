@@ -236,6 +236,11 @@ error = '''
 databases already existed in restored cluster
 '''
 
+["BR:Restore:ErrRestoreCheckpointMismatch"]
+error = '''
+restore checkpoint mismatch
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch
@@ -319,6 +324,11 @@ the system table isn't supported for restoring yet
 ["BR:Stream:ErrStreamLogTaskExist"]
 error = '''
 stream task already exists
+'''
+
+["BR:Stream:ErrStreamLogTaskHasNoStorage"]
+error = '''
+stream task has no storage
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
