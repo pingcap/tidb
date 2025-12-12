@@ -2858,6 +2858,13 @@ func (m *mockEngineWithData) ImportedStatistics() (importedKVSize int64, importe
 	return 0, 0
 }
 
+func (m *mockEngineWithData) ConflictInfo() engineapi.ConflictInfo {
+	return engineapi.ConflictInfo{
+		Count: 0,
+		Files: nil,
+	}
+}
+
 func (m *mockEngineWithData) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 	if len(m.ranges) == 0 {
 		return nil, nil, nil
