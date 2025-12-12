@@ -258,7 +258,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
 		// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
 		// we must check the type again here as utf8mb4->utf8 is an invalid change.
-		if err = checkModifyTypes(&oldCol.FieldType, &args.Column.FieldType, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+		if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
