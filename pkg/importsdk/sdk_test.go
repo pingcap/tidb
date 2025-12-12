@@ -571,3 +571,134 @@ func TestGenerateWildcardPath(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cannot generate a unique wildcard pattern")
 }
+
+func (s *mockGCSSuite) TestSkipInvalidFiles() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "invalid_files"})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "invalid_files", Name: "db1.tb1-schema.sql"},
+		Content:     []byte("CREATE TABLE IF NOT EXISTS db1.tb1 (a INT, b VARCHAR(10));\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "invalid_files", Name: "uez.md"},
+		Content:     []byte("test;\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "invalid_files", Name: "db2.tb2-schema.sql"},
+		Content:     []byte("CREATE TABLE IF NOT EXISTS db2.tb2 (x INT, y VARCHAR(10));\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "invalid_files", Name: "db2.tb2.001.csv"},
+		Content:     []byte("5,e\n6,f\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "invalid_files", Name: "db2.tb2.002.csv"},
+		Content:     []byte("7,g\n8,h\n"),
+	})
+
+	db, mock, err := sqlmock.New()
+	s.NoError(err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`).
+		WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
+	mock.ExpectExec("CREATE DATABASE IF NOT EXISTS `db`;").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SHOW CREATE TABLE `db`.`tb`").
+		WillReturnRows(sqlmock.NewRows([]string{"Create Table"}).AddRow("CREATE TABLE `db`.`tb` (`a` INT, `b` VARCHAR(10));"))
+	importSDK, err := NewImportSDK(
+		context.Background(),
+		fmt.Sprintf("gs://invalid_files?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+		db,
+		WithCharset("utf8"),
+		WithConcurrency(8),
+		WithFilter([]string{"*.*"}),
+		WithSQLMode(mysql.ModeANSIQuotes),
+		WithLogger(log.L()),
+		WithSkipInvalidFiles(true),
+	)
+	s.NoError(err)
+	defer importSDK.Close()
+	metas, err := importSDK.GetTableMetas(context.Background())
+	s.NoError(err)
+	s.Len(metas, 1)
+}
+
+func (s *mockGCSSuite) TestScanLimitation() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "limitation"})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "limitation", Name: "db2.tb2.001.csv"},
+		Content:     []byte("5,e\n6,f\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "limitation", Name: "db2.tb2.002.csv"},
+		Content:     []byte("7,g\n8,h\n"),
+	})
+	db, _, err := sqlmock.New()
+	s.NoError(err)
+	defer db.Close()
+	importSDK, err := NewImportSDK(
+		context.Background(),
+		fmt.Sprintf("gs://limitation?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+		db,
+		WithCharset("utf8"),
+		WithConcurrency(8),
+		WithFilter([]string{"*.*"}),
+		WithSQLMode(mysql.ModeANSIQuotes),
+		WithLogger(log.L()),
+		WithSkipInvalidFiles(true),
+		WithMaxScanFiles(1),
+	)
+	s.NoError(err)
+	defer importSDK.Close()
+	metas, err := importSDK.GetTableMetas(context.Background())
+	s.NoError(err)
+	s.Len(metas, 1)
+	s.Len(metas[0].DataFiles, 1)
+}
+
+func (s *mockGCSSuite) TestCreateTableMetaByName() {
+	for i := 0; i < 2; i++ {
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("db%d-schema-create.sql", i)},
+			Content:     []byte(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS db%d;\n", i)),
+		})
+		for j := 0; j != 2; j++ {
+			tableName := fmt.Sprintf("db%d.tb%d", i, j)
+			s.server.CreateObject(fakestorage.Object{
+				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("%s-schema.sql", tableName)},
+				Content:     []byte(fmt.Sprintf("CREATE TABLE IF NOT EXISTS db%d.tb%d (a INT, b VARCHAR(10));\n", i, j)),
+			})
+			s.server.CreateObject(fakestorage.Object{
+				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("%s.001.sql", tableName)},
+				Content:     []byte(fmt.Sprintf("INSERT INTO db%d.tb%d VALUES (1,'a'),(2,'b');\n", i, j)),
+			})
+			s.server.CreateObject(fakestorage.Object{
+				ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "specific-table-test", Name: fmt.Sprintf("%s.002.sql", tableName)},
+				Content:     []byte(fmt.Sprintf("INSERT INTO db%d.tb%d VALUES (3,'c'),(4,'d');\n", i, j)),
+			})
+		}
+	}
+
+	db, mock, err := sqlmock.New()
+	s.NoError(err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`).
+		WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
+	mock.ExpectExec("CREATE DATABASE IF NOT EXISTS `db1`;").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `db1`.`tb1` (`a` INT,`b` VARCHAR(10));")).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	importSDK, err := NewImportSDK(
+		context.Background(),
+		fmt.Sprintf("gs://specific-table-test?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+		db,
+		WithConcurrency(1),
+	)
+	s.NoError(err)
+	defer importSDK.Close()
+
+	err = importSDK.CreateSchemaAndTableByName(context.Background(), "db1", "tb1")
+	s.NoError(err)
+}
