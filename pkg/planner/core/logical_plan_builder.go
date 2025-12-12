@@ -5353,7 +5353,7 @@ func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *physicalop
 }
 
 // pruneAndBuildSingleTableColPosInfoForDelete builds columns mapping for delete.
-// And it will try to prune columns that not used in pk or indexes.
+// And it will try to prune columns that not used.
 func pruneAndBuildSingleTableColPosInfoForDelete(
 	t table.Table,
 	tableName string,
@@ -5373,9 +5373,20 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 
 	// fixedPos records the columns that can not be pruned and their new positions in the row after pruning.
 	fixedPos := make(map[int]int, len(deletableCols))
+
 	// Mark the columns in handle.
 	for col := range colPosInfo.HandleCols.IterColumns() {
 		fixedPos[col.Index-originalStart] = 0
+	}
+
+	// Mark the columns in indexes.
+	for _, idx := range deletableIdxs {
+		for _, col := range idx.Meta().Columns {
+			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.L {
+				return plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
+			}
+			fixedPos[col.Offset] = 0
+		}
 	}
 
 	// Mark the _tidb_origin_ts column for active-active tables.
@@ -5389,16 +5400,6 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 				extraOriginTSColOffset = col.Offset
 				break
 			}
-		}
-	}
-
-	// Mark the columns in indexes.
-	for _, idx := range deletableIdxs {
-		for _, col := range idx.Meta().Columns {
-			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.L {
-				return plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
-			}
-			fixedPos[col.Offset] = 0
 		}
 	}
 
