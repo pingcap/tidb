@@ -653,5 +653,4 @@ func TestIndexChangeWithModifyColumn(t *testing.T) {
 	require.ErrorContains(t, checkErr, "when index is defined")
 	tk.MustExec("admin check table t")
 	tk.MustExec("delete from t;")
->>>>>>> d1b5834868f (ddl: double check collation compatibility before modifying column (#61707))
 }
