@@ -143,7 +143,7 @@
 // removed during encode-merge-ingest workflow, there will be no change to the
 // cluster.
 //
-// s an example for the recorded UK KV (c1=1 -> handle=2), we will get its data
+// as an example for the recorded UK KV (c1=1 -> handle=2), we will get its data
 // KV from the cluster which is (handle=2 -> <2,1,1>), and re-encode it to get
 // all KVs for the row <2,1,1>:
 //
