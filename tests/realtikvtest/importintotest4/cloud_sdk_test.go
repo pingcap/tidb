@@ -18,23 +18,27 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/golang/snappy"
 	"github.com/klauspost/compress/zstd"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/xitongsys/parquet-go-source/local"
-	"github.com/xitongsys/parquet-go/parquet"
-	"github.com/xitongsys/parquet-go/writer"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func (s *mockGCSSuite) TestCSVSource() {
@@ -234,11 +238,15 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		// CSV-only option applied to SQL file
 		{objectName: "data.sql", options: "fields_enclosed_by='\"'", wantSubstr: "Unsupported option fields_enclosed_by for non-CSV"},
 		// SQL data present but no suffix
-		{objectName: "sql_noext", options: "", wantSubstr: "encode kv erro"},
+		{objectName: "sql_noext", options: "", wantSubstr: "encode kv error"},
 		// CSV data but filename ends with .sql
-		{objectName: "csv_as_sql.sql", options: "", wantSubstr: "encode kv erro"},
+		{objectName: "csv_as_sql.sql", options: "", wantSubstr: "encode kv error"},
 	}
 
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	taskMgr, err := storage.GetTaskManager()
+	s.NoError(err)
+	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
 	for _, nc := range negativeCases {
 		s.tk.MustExec("CREATE TABLE IF NOT EXISTS auto_detect.t (a INT, b VARCHAR(10));")
 		path := fmt.Sprintf("gs://auto_detect/%s?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", nc.objectName, gcsEndpoint)
@@ -250,6 +258,15 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		}
 		err := s.tk.QueryToErr(badImportSQL)
 		s.Require().ErrorContains(err, nc.wantSubstr)
+		s.T().Logf("the task id is %d", storage.TestLastTaskID.Load())
+		// wait cleanup done, so the table mode is switched back to normal
+		// Note: the first case doesn't submit the task, so no task id, but it's
+		// ok to call GetTaskByID with non-existing id, it will just return
+		// ErrTaskNotFound immediately.
+		s.Eventually(func() bool {
+			_, err2 := taskMgr.GetTaskByID(ctx, storage.TestLastTaskID.Load())
+			return goerrors.Is(err2, storage.ErrTaskNotFound)
+		}, 30*time.Second, 100*time.Millisecond)
 		s.tk.MustExec("DROP TABLE auto_detect.t;")
 	}
 }
@@ -278,35 +295,28 @@ func (s *mockGCSSuite) getCompressedData(compression mydump.Compression, data []
 }
 
 func (s *mockGCSSuite) getParquetData() []byte {
-	type ParquetRow struct {
-		A int32  `parquet:"name=a, type=INT32"`
-		B string `parquet:"name=b, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN"`
-	}
-	// create temp file inside the test's TempDir (managed by Go test)
-	dir := s.T().TempDir()
-	tmpPath := filepath.Join(dir, "test.parquet")
-
-	fw, err := local.NewLocalFileWriter(tmpPath)
-	s.Require().NoError(err)
-	pw, err := writer.NewParquetWriter(fw, new(ParquetRow), 4)
-	s.Require().NoError(err)
-
-	pw.RowGroupSize = 128 * 1024 * 1024
-	pw.CompressionType = parquet.CompressionCodec_SNAPPY
-
-	rows := []ParquetRow{{A: 1, B: "one"}, {A: 2, B: "two"}}
-	for _, r := range rows {
-		if err := pw.Write(r); err != nil {
-			_ = pw.WriteStop()
-			_ = fw.Close()
-			s.Require().NoError(err)
-		}
+	pc := []mydump.ParquetColumn{
+		{
+			Name:      "a",
+			Type:      parquet.Types.Int32,
+			Converted: schema.ConvertedTypes.Int32,
+			Gen: func(_ int) (any, []int16) {
+				return []int32{1, 2}, []int16{1, 1}
+			},
+		},
+		{
+			Name:      "b",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(_ int) (any, []int16) {
+				return []parquet.ByteArray{[]byte("one"), []byte("two")}, []int16{1, 1}
+			},
+		},
 	}
 
-	s.Require().NoError(pw.WriteStop())
-	s.Require().NoError(fw.Close())
-
-	data, err := os.ReadFile(tmpPath)
+	tmpDir := s.T().TempDir()
+	s.Require().NoError(mydump.WriteParquetFile(tmpDir, "test.parquet", pc, 2))
+	data, err := os.ReadFile(filepath.Join(tmpDir, "test.parquet"))
 	s.Require().NoError(err)
 	s.NotEmpty(data)
 	return data

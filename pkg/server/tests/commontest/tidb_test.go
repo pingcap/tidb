@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
@@ -2291,10 +2292,10 @@ func TestTopSQLResourceTag(t *testing.T) {
 		reqs []tikvrpc.CmdType
 	}{
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0) group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0) group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0) group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
 		dsn := ts.GetDSN(func(config *mysql.Config) {
@@ -3652,5 +3653,165 @@ func TestAuditPluginInfoForStarting(t *testing.T) {
 		})
 
 		testResults = testResults[:0]
+	})
+}
+
+func TestAuditPluginRetrying(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	type normalTest struct {
+		sql      string
+		retrying bool
+	}
+	testResults := make([]normalTest, 0)
+
+	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
+		// Only consider the Completed event
+		if event != plugin.Completed || cmd != "Query" {
+			return
+		}
+
+		audit := normalTest{}
+		if retrying := ctx.Value(plugin.IsRetryingCtxKey); retrying != nil {
+			audit.retrying = retrying.(bool)
+		}
+		audit.sql = sctx.StmtCtx.OriginalSQL
+		testResults = append(testResults, audit)
+	}
+	plugin.LoadPluginForTest(t, onGeneralEvent)
+	defer plugin.Shutdown(context.Background())
+
+	// We have these possible paths to retry:
+	// 1. Auto-commit retry
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		db := dbt.GetDB()
+
+		_, err := db.Exec("DROP TABLE IF EXISTS auto_retry_test")
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE TABLE auto_retry_test (id INT PRIMARY KEY, val INT)")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO auto_retry_test VALUES (1, 0)")
+		require.NoError(t, err)
+
+		testResults = testResults[:0]
+		// a big enough concurrency to trigger retries
+		concurrency := 500
+		var wg sync.WaitGroup
+		for range concurrency {
+			wg.Add(1)
+			conn, err := db.Conn(context.Background())
+			require.NoError(t, err)
+			go func() {
+				defer wg.Done()
+				_, err := conn.QueryContext(context.Background(), "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1")
+				require.NoError(t, err)
+			}()
+		}
+		wg.Wait()
+
+		require.Greater(t, len(testResults), concurrency)
+		nonRetryingCount := 0
+		for _, res := range testResults {
+			if !res.retrying {
+				nonRetryingCount++
+			}
+		}
+		require.Equal(t, concurrency, nonRetryingCount)
+	})
+
+	runExplicitTransactionRetry := func(db *sql.DB, isOptimistic bool) {
+		_, err := db.Exec("DROP TABLE IF EXISTS retry_test")
+		require.NoError(t, err)
+		_, err = db.Exec("CREATE TABLE retry_test (id INT PRIMARY KEY, val INT)")
+		require.NoError(t, err)
+		_, err = db.Exec("INSERT INTO retry_test VALUES (1, 0)")
+		require.NoError(t, err)
+
+		step1T1Started := make(chan struct{})
+		step2T2Committed := make(chan struct{})
+
+		connect := func() *sql.Conn {
+			conn, err := db.Conn(context.Background())
+			require.NoError(t, err)
+			if isOptimistic {
+				_, err = conn.ExecContext(context.Background(), "SET tidb_txn_mode = 'optimistic'")
+				require.NoError(t, err)
+				// We cannot set `tidb_disable_txn_auto_retry` to `OFF` because it's already deprecated.
+				// For the test, we just use failpoint to workaround this limitation.
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
+			}
+
+			return conn
+		}
+
+		testResults = testResults[:0]
+		var wg sync.WaitGroup
+		wg.Add(2)
+		// Transaction 1
+		go func() {
+			defer wg.Done()
+			conn := connect()
+			defer conn.Close()
+
+			_, err = conn.ExecContext(context.Background(), "BEGIN")
+			require.NoError(t, err)
+			close(step1T1Started)
+			<-step2T2Committed
+			_, err = conn.ExecContext(context.Background(), "UPDATE retry_test SET val = val + 10 WHERE id = 1")
+			require.NoError(t, err)
+			_, err = conn.ExecContext(context.Background(), "COMMIT")
+			require.NoError(t, err)
+		}()
+		// Transaction 2
+		go func() {
+			defer wg.Done()
+			<-step1T1Started
+			conn := connect()
+			defer conn.Close()
+
+			_, err = conn.ExecContext(context.Background(), "BEGIN")
+			require.NoError(t, err)
+			_, err = conn.ExecContext(context.Background(), "UPDATE retry_test SET val = val + 20 WHERE id = 1")
+			require.NoError(t, err)
+			_, err = conn.ExecContext(context.Background(), "COMMIT")
+			require.NoError(t, err)
+
+			close(step2T2Committed)
+		}()
+		wg.Wait()
+
+		retryingCount := 0
+		nonRetryingCount := 0
+		for _, res := range testResults {
+			if res.retrying {
+				retryingCount++
+			} else {
+				nonRetryingCount++
+			}
+		}
+
+		require.Greater(t, retryingCount, 0)
+		// (BEGIN + UPDATE + COMMIT) * 2 transactions = 6
+		expectedSQLCount := 6
+		if isOptimistic {
+			expectedSQLCount += 2 // extra `SET` variable SQL
+		}
+		require.Equal(t, expectedSQLCount, nonRetryingCount)
+	}
+
+	// 2. Pessimistic DML retry
+	// Ref `handleAfterPessimisticLockError` for RC and RR
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		db := dbt.GetDB()
+
+		runExplicitTransactionRetry(db, false)
+	})
+
+	// 3. Optimistic transaction commit retry
+	// This branch is already deprecated. If we remove it in the future, this test can be removed too.
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		db := dbt.GetDB()
+
+		testResults = testResults[:0]
+		runExplicitTransactionRetry(db, true)
 	})
 }

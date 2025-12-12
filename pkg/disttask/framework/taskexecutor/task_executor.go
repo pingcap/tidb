@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -41,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -217,10 +220,26 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}
 	}
+
+	lastUpdate := func() {
+		// Try the best effort to update the summary before exiting.
+		// Total retry time is 0.2s + 0.4s + 0.8s + 1.6s + 3.2s + 5s * 5 = 31.2s
+		backoffer := backoff.NewExponential(time.Millisecond*200, 2, time.Second*5)
+		if err := handle.RunWithRetry(runStepCtx, 10, backoffer, e.logger,
+			func(context.Context) (bool, error) {
+				summary := stepExec.RealtimeSummary()
+				err := taskMgr.UpdateSubtaskSummary(runStepCtx, curSubtaskID, summary)
+				return true, err
+			},
+		); err != nil {
+			e.logger.Info("update subtask row count failed", zap.Error(err))
+		}
+	}
+
 	for {
 		select {
 		case <-checkCtx.Done():
-			update()
+			lastUpdate()
 			return
 		case <-ticker.C:
 		}
@@ -251,7 +270,11 @@ func (e *BaseTaskExecutor) Run() {
 		if e.stepExec != nil {
 			e.cleanStepExecutor()
 		}
+		metering.UnregisterRecorder(e.GetTaskBase().ID)
 	}()
+
+	trace := traceevent.NewTrace()
+	ctx := tracing.WithFlightRecorder(e.ctx, trace)
 	// task executor occupies resources, if there's no subtask to run for 10s,
 	// we release the resources so that other tasks can use them.
 	// 300ms + 600ms + 1.2s + 2s * 4 = 10.1s
@@ -259,6 +282,7 @@ func (e *BaseTaskExecutor) Run() {
 	checkInterval, noSubtaskCheckCnt := SubtaskCheckInterval, 0
 	skipBackoff := false
 	for {
+		trace.DiscardOrFlush(ctx)
 		if e.ctx.Err() != nil {
 			return
 		}
@@ -272,7 +296,7 @@ func (e *BaseTaskExecutor) Run() {
 		skipBackoff = false
 		oldTask := e.task.Load()
 		failpoint.InjectCall("beforeGetTaskByIDInRun", oldTask.ID)
-		newTask, err := e.taskTable.GetTaskByID(e.ctx, oldTask.ID)
+		newTask, err := e.taskTable.GetTaskByID(ctx, oldTask.ID)
 		if err != nil {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
@@ -319,7 +343,7 @@ func (e *BaseTaskExecutor) Run() {
 			return
 		}
 
-		subtask, err := e.taskTable.GetFirstSubtaskInStates(e.ctx, e.execID, task.ID, task.Step,
+		subtask, err := e.taskTable.GetFirstSubtaskInStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
 			e.logger.Warn("get first subtask meets error", zap.Error(err))
@@ -376,7 +400,7 @@ func (e *BaseTaskExecutor) createStepExecutor() error {
 		return errors.Trace(err)
 	}
 	resource := e.nodeRc.GetStepResource(e.GetTaskBase().Concurrency)
-	execute.SetFrameworkInfo(stepExecutor, task.Step, resource)
+	execute.SetFrameworkInfo(stepExecutor, task, resource, e.taskTable.UpdateSubtaskCheckpoint, e.taskTable.GetSubtaskCheckpoint)
 
 	if err := stepExecutor.Init(e.ctx); err != nil {
 		if e.IsRetryableError(err) {
@@ -465,6 +489,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
+			e.stepExec.ResetSummary()
 			wg.RunWithLog(func() {
 				e.updateSubtaskSummaryLoop(checkCtx, subtaskCtx, e.stepExec)
 			})
@@ -557,7 +582,7 @@ func (e *BaseTaskExecutor) detectAndHandleParamModify(ctx context.Context) error
 		}
 		e.metaModifyApplied(latestTask.Meta)
 	}
-	failpoint.InjectCall("afterDetectAndHandleParamModify")
+	failpoint.InjectCall("afterDetectAndHandleParamModify", e.task.Load().Step)
 	return nil
 }
 
@@ -580,7 +605,7 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 			return
 		}
 
-		// after application reduced memory usage, the garbage might not recycle
+		// After reducing memory usage, garbage may not be recycled
 		// in time, so we trigger GC here.
 		//nolint: revive
 		runtime.GC()

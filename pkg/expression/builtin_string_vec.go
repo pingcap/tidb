@@ -2989,29 +2989,33 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 		}
 
 		locale := "en_US"
+		isNull := false
 		if localeBuf == nil {
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
+			isNull = true
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
-			// TODO: support other locales.
-			tc := typeCtx(ctx)
-
+		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
 		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
-
-		formatString, err := localeFormatFunction(xStr, dStr)
+		formatString, found, err := mysql.FormatByLocale(xStr, dStr, locale)
 		if err != nil {
 			return err
+		}
+		// Check 'found' flag, only warn for unknown locales
+		if !isNull && !found {
+			tc := typeCtx(ctx)
+			if localeBuf != nil {
+				locale = strings.Clone(localeBuf.GetString(i))
+			}
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 		result.AppendString(formatString)
 	}
@@ -3035,29 +3039,33 @@ func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *ch
 		}
 
 		locale := "en_US"
+		isNull := false
 		if localeBuf == nil {
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
+			isNull = true
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
-			// TODO: support other locales.
-			tc := typeCtx(ctx)
-
+		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
 		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
 
-		formatString, err := localeFormatFunction(xStr, dStr)
+		formatString, found, err := mysql.FormatByLocale(xStr, dStr, locale)
 		if err != nil {
 			return err
+		}
+		if !isNull && !found {
+			tc := typeCtx(ctx)
+			if localeBuf != nil {
+				locale = strings.Clone(localeBuf.GetString(i))
+			}
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 		result.AppendString(formatString)
 	}

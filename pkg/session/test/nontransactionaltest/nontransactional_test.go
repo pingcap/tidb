@@ -509,3 +509,18 @@ func TestNonTransactionalMetrics(t *testing.T) {
 		tk.MustExec("BATCH LIMIT 10 REPLACE INTO t2 SELECT * FROM t1")
 	})
 }
+
+func TestNonTransactionalDmlIgnoreMaxExecutionTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=10")
+	tk.MustExec("set @@max_execution_time=1000")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	for i := range 100 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/CheckMaxExecutionTime", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/CheckMaxExecutionTime")
+	tk.MustExec("batch on a limit 10 update t set b = b + 1 where b > 0")
+}

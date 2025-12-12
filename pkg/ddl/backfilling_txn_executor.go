@@ -120,17 +120,12 @@ func (b *txnBackfillExecutor) resultChan() <-chan *backfillResult {
 
 // NewReorgCopContext creates a CopContext for reorg
 func NewReorgCopContext(
-	store kv.Storage,
 	reorgMeta *model.DDLReorgMeta,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
 ) (copr.CopContext, error) {
 	warnHandler := contextutil.NewStaticWarnHandler(0)
-	distSQLCtx, err := newReorgDistSQLCtxWithReorgMeta(store.GetClient(), reorgMeta, warnHandler)
-	if err != nil {
-		return nil, err
-	}
 
 	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
 	if err != nil {
@@ -143,7 +138,6 @@ func NewReorgCopContext(
 
 	return copr.NewCopContext(
 		exprCtx,
-		distSQLCtx,
 		pushDownFlags,
 		tblInfo,
 		allIdxInfo,
@@ -178,6 +172,7 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnA
 		TiFlashHashJoinVersion:               vardef.DefTiFlashHashJoinVersion,
 		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
 		ExecDetails:                          &execDetails,
+		RuntimeStatsColl:                     execdetails.NewRuntimeStatsColl(nil),
 	}
 }
 
@@ -285,7 +280,10 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			if err != nil {
 				return err
 			}
-			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
+			tmpIdxWorker, err := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
+			if err != nil {
+				return err
+			}
 			runner = newBackfillWorker(b.ctx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:

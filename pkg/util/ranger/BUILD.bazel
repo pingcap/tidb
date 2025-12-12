@@ -61,6 +61,7 @@ go_test(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
+        "//pkg/planner/util",
         "//pkg/planner/util/coretestsdk",
         "//pkg/planner/util/utilfuncp",
         "//pkg/session",

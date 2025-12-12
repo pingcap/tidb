@@ -89,7 +89,6 @@ func TestByteReader(t *testing.T) {
 	require.Equal(t, 2, n)
 	require.Equal(t, [][]byte{{'b', 'c'}}, bs)
 	require.NoError(t, br.Close())
-	require.Equal(t, int64(1), br.requestCnt.Load())
 
 	// Test basic readNBytes() usage.
 	br, err = newByteReader(context.Background(), newRsc(), 3)
@@ -100,7 +99,6 @@ func TestByteReader(t *testing.T) {
 	require.Equal(t, byte('a'), x[0])
 	require.Equal(t, byte('b'), x[1])
 	require.NoError(t, br.Close())
-	require.Equal(t, int64(1), br.requestCnt.Load())
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
@@ -111,13 +109,11 @@ func TestByteReader(t *testing.T) {
 	_, err = br.readNBytes(1) // EOF
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, br.Close())
-	require.Equal(t, int64(1), br.requestCnt.Load())
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
 	_, err = br.readNBytes(7) // EOF
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-	require.Equal(t, int64(1), br.requestCnt.Load())
 
 	err = st.WriteFile(context.Background(), "testfile", []byte("abcdef"))
 	require.NoError(t, err)
@@ -132,7 +128,6 @@ func TestByteReader(t *testing.T) {
 	require.Equal(t, 3, len(x))
 	require.Equal(t, byte('c'), x[2])
 	require.NoError(t, br.Close())
-	require.Equal(t, int64(1), br.requestCnt.Load())
 
 	ms = &mockExtStore{src: []byte("abcdef")}
 	br, err = newByteReader(context.Background(), ms, 2)
@@ -144,7 +139,6 @@ func TestByteReader(t *testing.T) {
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[1])
 	require.NoError(t, br.Close())
-	require.Equal(t, int64(1), br.requestCnt.Load())
 }
 
 func TestByteReaderAuxBuf(t *testing.T) {
@@ -267,7 +261,7 @@ func TestSwitchMode(t *testing.T) {
 				modeUseCon = true
 			}
 		}
-		key, val, err := kvReader.nextKV()
+		key, val, err := kvReader.NextKV()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
@@ -300,6 +294,6 @@ func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*sto
 		Acl:          "acl",
 		Sse:          "sse",
 		StorageClass: "sc",
-	})
+	}, nil)
 	return st, ts.Close
 }

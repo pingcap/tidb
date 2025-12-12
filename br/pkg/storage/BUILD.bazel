@@ -28,6 +28,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/storage/recording",
         "//br/pkg/utils",
         "//br/pkg/utils/iter",
         "//pkg/metrics",
@@ -44,6 +45,7 @@ go_library(
         "@com_github_aws_aws_sdk_go//aws/client",
         "@com_github_aws_aws_sdk_go//aws/credentials",
         "@com_github_aws_aws_sdk_go//aws/credentials/stscreds",
+        "@com_github_aws_aws_sdk_go//aws/defaults",
         "@com_github_aws_aws_sdk_go//aws/request",
         "@com_github_aws_aws_sdk_go//aws/session",
         "@com_github_aws_aws_sdk_go//service/s3",
@@ -109,6 +111,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//br/pkg/mock",
+        "//br/pkg/storage/recording",
         "//pkg/util/intest",
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//aws/awserr",

@@ -69,12 +69,12 @@ func TestTraceEventCategoryFiltering(t *testing.T) {
 	t.Cleanup(func() {
 		SetCategories(originalCategories)
 		_, _ = SetMode(prevMode)
-		FlightRecorder().Reset()
+		FlightRecorder().DiscardOrFlush()
 	})
 
 	SetCategories(0)
 	_, _ = SetMode(ModeFull)
-	FlightRecorder().Reset()
+	FlightRecorder().DiscardOrFlush()
 	recorder := installRecorderSink(t, 8)
 
 	ctx := context.Background()
@@ -120,12 +120,12 @@ func TestTraceEventRecordsEvent(t *testing.T) {
 		SetCategories(originalCategories)
 		_, _ = SetMode(prevMode)
 		SetSink(prevSink)
-		FlightRecorder().Reset()
+		FlightRecorder().DiscardOrFlush()
 	})
 
 	SetCategories(AllCategories)
 	_, _ = SetMode(ModeFull)
-	FlightRecorder().Reset()
+	FlightRecorder().DiscardOrFlush()
 	recorder := installRecorderSink(t, 8)
 	ctx := context.Background()
 
@@ -156,12 +156,12 @@ func TestTraceEventCarriesTraceID(t *testing.T) {
 	t.Cleanup(func() {
 		SetCategories(originalCategories)
 		_, _ = SetMode(prevMode)
-		FlightRecorder().Reset()
+		FlightRecorder().DiscardOrFlush()
 	})
 
 	SetCategories(AllCategories)
 	_, _ = SetMode(ModeFull)
-	FlightRecorder().Reset()
+	FlightRecorder().DiscardOrFlush()
 
 	rawTrace := []byte{0x01, 0x10, 0xFE, 0xAA}
 	ctx := trace.ContextWithTraceID(context.Background(), rawTrace)
@@ -181,12 +181,12 @@ func TestTraceEventLoggingSwitch(t *testing.T) {
 	t.Cleanup(func() {
 		SetCategories(originalCategories)
 		_, _ = SetMode(prevMode)
-		FlightRecorder().Reset()
+		FlightRecorder().DiscardOrFlush()
 	})
 
 	SetCategories(AllCategories)
 	_, _ = SetMode(ModeBase)
-	FlightRecorder().Reset()
+	FlightRecorder().DiscardOrFlush()
 	recorder := installRecorderSink(t, 8)
 	_, _ = SetMode(ModeBase)
 	ctx := context.Background()
@@ -258,7 +258,7 @@ func TestCategoryNames(t *testing.T) {
 		{TraceCategory(999), "unknown(999)"},
 	}
 	for _, tc := range cases {
-		require.Equal(t, tc.name, getCategoryName(tc.category))
+		require.Equal(t, tc.name, tc.category.String())
 	}
 }
 
@@ -320,13 +320,13 @@ func TestFlightRecorderCoolingOff(t *testing.T) {
 	t.Cleanup(func() {
 		SetCategories(originalCategories)
 		_, _ = SetMode(prevMode)
-		FlightRecorder().Reset()
+		FlightRecorder().DiscardOrFlush()
 		lastDumpTime.Store(0) // Reset cooling-off state
 	})
 
 	SetCategories(AllCategories)
 	_, _ = SetMode(ModeFull)
-	FlightRecorder().Reset()
+	FlightRecorder().DiscardOrFlush()
 	lastDumpTime.Store(0) // Reset cooling-off state
 
 	ctx := context.Background()

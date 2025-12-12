@@ -161,6 +161,70 @@ func validEqualCond(ctx EvalContext, cond Expression) (*Column, *Constant) {
 	return nil, nil
 }
 
+// replaceEqCondtionWithTrue replaces eq condition in 'cond' by true if both 'src' and 'tgt' appear in 'eq cond'.
+func replaceEqCondtionWithTrue(ctx BuildContext, src *Column, tgt *Column, cond Expression) (Expression, bool) {
+	if src.RetType.GetType() != tgt.RetType.GetType() {
+		return cond, false
+	}
+	sf, ok := cond.(*ScalarFunction)
+	if !ok {
+		return cond, false
+	}
+	replaced := false
+	args := sf.GetArgs()
+	evalCtx := ctx.GetEvalCtx()
+	switch sf.FuncName.L {
+	case ast.In:
+		if src.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString || tgt.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString {
+			// It is duo to ```CheckAndDeriveCollationFromExprs``` in the ```deriveCollation```.
+			// If we have an expression a in (b,c,d) with each column which has difference collation, the expression's
+			// return type is decided by ```CheckAndDeriveCollationFromExprs```. it will get diffence return type.
+			// So when encountering a string type, we can just return it directly.
+			return cond, false
+		}
+		// for 'a in (b, c, d)', if a = b or a = c or a = d, we can replace it with true
+		constTrue := false
+		switch {
+		case args[0].Equal(ctx.GetEvalCtx(), src):
+			constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
+				return arg.Equal(ctx.GetEvalCtx(), tgt)
+			})
+		case args[0].Equal(ctx.GetEvalCtx(), tgt):
+			constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
+				return arg.Equal(ctx.GetEvalCtx(), src)
+			})
+		}
+		if constTrue {
+			return &Constant{
+				Value:   types.NewDatum(true),
+				RetType: types.NewFieldType(mysql.TypeTiny),
+			}, true
+		}
+	case ast.EQ:
+		// If it has equal condition `a=b`, we meet it again and we can replace it with true
+		if (args[0].Equal(evalCtx, src) && args[1].Equal(evalCtx, tgt)) || (args[1].Equal(evalCtx, src) && args[0].Equal(evalCtx, tgt)) {
+			return &Constant{
+				Value:   types.NewDatum(true),
+				RetType: types.NewFieldType(mysql.TypeTiny),
+			}, true
+		}
+	case ast.LogicOr, ast.LogicAnd:
+		for idx, expr := range args {
+			if sf, ok := expr.(*ScalarFunction); ok {
+				newExpr, subReplaced := replaceEqCondtionWithTrue(ctx, src, tgt, sf)
+				if subReplaced {
+					replaced = true
+					args[idx] = newExpr
+				}
+			}
+		}
+		if replaced {
+			return NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...), true
+		}
+	}
+	return cond, false
+}
+
 // tryToReplaceCond aims to replace all occurrences of column 'src' and try to replace it with 'tgt' in 'cond'
 // It returns
 //
@@ -203,10 +267,11 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 			sf.FuncName.L == ast.NullEQ) {
 		return false, true, cond
 	}
+	evalCtx := ctx.GetEvalCtx()
 	for idx, expr := range sf.GetArgs() {
 		if src.EqualColumn(expr) {
 			_, coll := cond.CharsetAndCollation()
-			if tgt.GetType(ctx.GetEvalCtx()).GetCollate() != coll {
+			if tgt.GetType(evalCtx).GetCollate() != coll {
 				continue
 			}
 			replaced = true
@@ -340,6 +405,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 	} else {
 		s.unionSet.GrowNewIntSet(len(s.columns))
 	}
+	allVisited := true
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
@@ -348,12 +414,26 @@ func (s *propConstSolver) propagateColumnEQ() {
 			if lOk && rOk && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
-				s.unionSet.Union(lID, rID)
 				visited[i] = true
+				if s.unionSet.FindRoot(lID) != s.unionSet.FindRoot(rID) {
+					// Add the equality relation to unionSet
+					// if it has been added, we don't need to process it again.
+					// It will be deleted in the replaceEqCondtionWithTrueitionsWithConstants
+					s.unionSet.Union(lID, rID)
+				} else if lID != rID {
+					s.conditions[i] = &Constant{
+						Value:   types.NewDatum(true),
+						RetType: types.NewFieldType(mysql.TypeTiny),
+					}
+				}
+				continue
 			}
 		}
+		allVisited = false
 	}
-
+	if allVisited {
+		return
+	}
 	condsLen := len(s.conditions)
 	for i, coli := range s.columns {
 		for j := i + 1; j < len(s.columns); j++ {
@@ -367,22 +447,31 @@ func (s *propConstSolver) propagateColumnEQ() {
 					// cond_k has been used to retrieve equality relation
 					continue
 				}
+				s.conditions[k], _ = replaceEqCondtionWithTrue(s.ctx, coli, colj, s.conditions[k])
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
+				// Why do we need to replace colj with coli again?
+				// Consider the case: col1 = col3
+				// Join Schema: left schema: {col1,col2}, right schema: {col3,col4}
+				// Conditions: col1 in (col3, col4)
+				//
+				// because the order of columns in equaility relation is not guaranteed,
+				// We may replace col3 with col1 first, it cannot push down the condition to the child.
+				// because two columns are from different side.
+				// But if we replace col1 with col3, it can be pushed down.
+				// So we need to try both directions.
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
 					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
-					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
-						continue
+					if isConstant(newExpr) || s.vaildExprFunc == nil || s.vaildExprFunc(newExpr) {
+						s.conditions = append(s.conditions, newExpr)
 					}
-					s.conditions = append(s.conditions, newExpr)
 				}
 			}
 		}

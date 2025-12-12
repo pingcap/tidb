@@ -36,7 +36,6 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -219,12 +218,8 @@ func generateStatsCreatedTables(hasGlobalIndex bool, tableID int64, partitionIDs
 
 func TestUpdateStatsMeta(t *testing.T) {
 	ctx := context.Background()
-	initStatsCtx := mock.NewContext()
-	initStatsCtx.Store = &mock.Store{
-		Client: &mock.Client{},
-	}
 	dom := domain.NewMockDomain()
-	err := dom.CreateStatsHandle(ctx, initStatsCtx)
+	err := dom.CreateStatsHandle(ctx)
 	require.NoError(t, err)
 	defer func() {
 		dom.StatsHandle().Close()

@@ -167,12 +167,12 @@ func TestKVReadWrite(t *testing.T) {
 	kvReader, err := NewKVReader(ctx, "/test", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, keys[i], key)
 		require.Equal(t, values[i], value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 
 	require.NoError(t, kvReader.Close())

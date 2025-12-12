@@ -69,10 +69,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
-	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -173,6 +173,8 @@ var (
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
 		threadOption:          {},
+		checksumTableOption:   {},
+		recordErrorsOption:    {},
 	}
 
 	disallowedOptionsForSEM = map[string]struct{}{
@@ -256,6 +258,10 @@ type Plan struct {
 	// operation.
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
+
+	// Location is used to convert time type for parquet, see
+	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
+	Location *time.Location
 
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
@@ -364,7 +370,7 @@ type LoadDataController struct {
 	// as IMPORT INTO have 2 place to state columns, in column-vars and in set clause,
 	// so it's computed from both clauses:
 	//  - append columns from column-vars to InsertColumns
-	//  - append columns from left hand fo set clause to InsertColumns
+	//  - append columns from left hand of set clause to InsertColumns
 	// it's similar to InsertValues.InsertColumns.
 	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
@@ -375,8 +381,8 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
-	// GlobalSortStore is used to store sorted data when using global sort.
-	GlobalSortStore storage.ExternalStorage
+	// globalSortStore is used to store sorted data when using global sort.
+	globalSortStore storage.ExternalStorage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
 }
@@ -486,6 +492,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		FieldNullDef:   defaultFieldNullDef,
 		LineFieldsInfo: lineFieldsInfo,
 
+		Location:         userSctx.GetSessionVars().Location(),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
@@ -685,14 +692,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	p.specifiedOptions = specifiedOptions
 
-	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
-	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
-	if kerneltype.IsNextGen() && semv1.IsEnabled() {
+	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
-	}
-	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -1163,7 +1166,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 		if err3 != nil {
 			return err3
 		}
-		e.GlobalSortStore = store
+		e.globalSortStore = store
 	}
 	return nil
 }
@@ -1173,8 +1176,8 @@ func (e *LoadDataController) Close() {
 	if e.dataStore != nil {
 		e.dataStore.Close()
 	}
-	if e.GlobalSortStore != nil {
-		e.GlobalSortStore.Close()
+	if e.globalSortStore != nil {
+		e.globalSortStore.Close()
 	}
 }
 
@@ -1199,6 +1202,120 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.
 		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, errors.GetErrStackMsg(err))
 	}
 	return s, nil
+}
+
+func estimateCompressionRatio(
+	ctx context.Context,
+	filePath string,
+	fileSize int64,
+	tp mydump.SourceType,
+	store storage.ExternalStorage,
+) (float64, error) {
+	if tp != mydump.SourceTypeParquet {
+		return 1.0, nil
+	}
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2.0, nil)
+		}
+	})
+	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	if err != nil {
+		return 1.0, err
+	}
+	// No row in the file, use 2.0 as default compression ratio.
+	if rowSize == 0 || rows == 0 {
+		return 2.0, nil
+	}
+
+	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
+	return compressionRatio, nil
+}
+
+// maxSampledCompressedFiles indicates the max number of files we used to sample
+// compression ratio for each compression type. Consider the extreme case that
+// user data contains all 3 compression types. Then we need to sample about 1,500
+// files. Suppose each file costs 0.5 second (for example, cross region access),
+// we still can finish in one minute with 16 concurrency.
+const maxSampledCompressedFiles = 512
+
+// compressionEstimator estimates compression ratio for different compression types.
+// It uses harmonic mean to get the average compression ratio.
+type compressionEstimator struct {
+	mu      sync.Mutex
+	records map[mydump.Compression][]float64
+	ratio   sync.Map
+}
+
+func newCompressionRecorder() *compressionEstimator {
+	return &compressionEstimator{
+		records: make(map[mydump.Compression][]float64),
+	}
+}
+
+func getHarmonicMean(rs []float64) float64 {
+	if len(rs) == 0 {
+		return 1.0
+	}
+	var (
+		sumInverse float64
+		count      int
+	)
+	for _, r := range rs {
+		if r > 0 {
+			sumInverse += 1.0 / r
+			count++
+		}
+	}
+
+	if count == 0 {
+		return 1.0
+	}
+	return float64(count) / sumInverse
+}
+
+func (r *compressionEstimator) estimate(
+	ctx context.Context,
+	fileMeta mydump.SourceFileMeta,
+	store storage.ExternalStorage,
+) float64 {
+	compressTp := mydump.ParseCompressionOnFileExtension(fileMeta.Path)
+	if compressTp == mydump.CompressionNone {
+		return 1.0
+	}
+	if v, ok := r.ratio.Load(compressTp); ok {
+		return v.(float64)
+	}
+
+	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
+	if err != nil {
+		logutil.Logger(ctx).Error("fail to calculate data file compress ratio",
+			zap.String("category", "loader"),
+			zap.String("path", fileMeta.Path),
+			zap.Stringer("type", fileMeta.Type), zap.Error(err),
+		)
+		return 1.0
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.ratio.Load(compressTp); ok {
+		return compressRatio
+	}
+
+	if r.records[compressTp] == nil {
+		r.records[compressTp] = make([]float64, 0, 256)
+	}
+	if len(r.records[compressTp]) < maxSampledCompressedFiles {
+		r.records[compressTp] = append(r.records[compressTp], compressRatio)
+	}
+	if len(r.records[compressTp]) >= maxSampledCompressedFiles {
+		// Using harmonic mean can better handle outlier values.
+		compressRatio = getHarmonicMean(r.records[compressTp])
+		r.ratio.Store(compressTp, compressRatio)
+	}
+	return compressRatio
 }
 
 // InitDataFiles initializes the data store and files.
@@ -1254,6 +1371,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	var (
 		totalSize  int64
 		sourceType mydump.SourceType
+		// sizeExpansionRatio is the estimated size expansion for parquet format.
+		// For non-parquet format, it's always 1.0.
+		sizeExpansionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1274,6 +1394,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
+		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1282,6 +1406,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Type:        sourceType,
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1308,6 +1433,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		var err error
 		var processedFiles []*mydump.SourceFileMeta
 		var once sync.Once
+
+		ce := newCompressionRecorder()
+
 		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				// we have checked in LoadDataExec.Next
@@ -1318,10 +1446,15 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				}
 				path, size := f.Path, f.Size
 				// pick arbitrary one file to detect the format.
+				var err2 error
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
+					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
 				})
+				if err2 != nil {
+					return nil, err2
+				}
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1329,7 +1462,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Compression: compressTp,
 					Type:        sourceType,
 				}
-				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
@@ -1505,6 +1639,7 @@ func (e *LoadDataController) GetParser(
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {
@@ -1636,7 +1771,7 @@ func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.ThreadCnt,
+		WorkerConcurrency:      *atomic.NewInt32(int32(e.ThreadCnt)),
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),

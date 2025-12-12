@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -211,6 +213,8 @@ func (sm *Manager) scheduleTaskLoop() {
 	sm.logger.Info("schedule task loop start")
 	ticker := time.NewTicker(CheckTaskRunningInterval)
 	defer ticker.Stop()
+	trace := traceevent.NewTrace()
+	ctx := tracing.WithFlightRecorder(sm.ctx, trace)
 	for {
 		select {
 		case <-sm.ctx.Done():
@@ -221,7 +225,8 @@ func (sm *Manager) scheduleTaskLoop() {
 		}
 
 		failpoint.InjectCall("beforeGetSchedulableTasks")
-		schedulableTasks, err := sm.getSchedulableTasks()
+		schedulableTasks, err := sm.getSchedulableTasks(ctx)
+		trace.DiscardOrFlush(ctx)
 		if err != nil {
 			continue
 		}
@@ -233,7 +238,9 @@ func (sm *Manager) scheduleTaskLoop() {
 	}
 }
 
-func (sm *Manager) getSchedulableTasks() ([]*proto.TaskBase, error) {
+func (sm *Manager) getSchedulableTasks(ctx context.Context) ([]*proto.TaskBase, error) {
+	r := tracing.StartRegion(ctx, "Manager.getSchedulableTasks")
+	defer r.End()
 	getTasksFn := sm.taskMgr.GetTopUnfinishedTasks
 	taskCnt := sm.getSchedulerCount()
 	if taskCnt >= proto.MaxConcurrentTask {
@@ -242,7 +249,7 @@ func (sm *Manager) getSchedulableTasks() ([]*proto.TaskBase, error) {
 		// pausing/modifying.
 		getTasksFn = sm.taskMgr.GetTopNoNeedResourceTasks
 	}
-	tasks, err := getTasksFn(sm.ctx)
+	tasks, err := getTasksFn(ctx)
 	if err != nil {
 		sm.logger.Warn("get unfinished tasks failed", zap.Error(err))
 		return nil, err
@@ -466,23 +473,29 @@ func (sm *Manager) collectLoop() {
 	defer func() {
 		metrics.Unregister(sm.metricCollector)
 	}()
+	trace := traceevent.NewTrace()
+	ctx := tracing.WithFlightRecorder(sm.ctx, trace)
 	for {
 		select {
 		case <-sm.ctx.Done():
 			sm.logger.Info("collect loop exits")
 			return
 		case <-ticker.C:
-			sm.collect()
+			sm.collect(ctx)
+			trace.DiscardOrFlush(ctx)
 		}
 	}
 }
 
-func (sm *Manager) collect() {
-	tasks, err := sm.taskMgr.GetAllTasks(sm.ctx)
+func (sm *Manager) collect(ctx context.Context) {
+	r := tracing.StartRegion(ctx, "Manager.collect")
+	defer r.End()
+
+	tasks, err := sm.taskMgr.GetAllTasks(ctx)
 	if err != nil {
 		sm.logger.Warn("get all tasks failed", zap.Error(err))
 	}
-	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
+	subtasks, err := sm.taskMgr.GetAllSubtasks(ctx)
 	if err != nil {
 		sm.logger.Warn("get all subtasks failed", zap.Error(err))
 		return
@@ -514,7 +527,7 @@ func (sm *Manager) collectWorkerMetrics(tasks []*proto.TaskBase) {
 	slices.SortFunc(scheduledTasks, func(i, j *proto.TaskBase) int {
 		return i.Compare(j)
 	})
-	requiredNodes := handle.CalculateRequiredNodes(tasks, nodeCPU)
+	requiredNodes := handle.CalculateRequiredNodes(scheduledTasks, nodeCPU)
 	dxfmetric.WorkerCount.WithLabelValues("required").Set(float64(requiredNodes))
 	dxfmetric.WorkerCount.WithLabelValues("current").Set(float64(nodeCount))
 }

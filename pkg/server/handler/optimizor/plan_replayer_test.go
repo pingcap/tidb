@@ -33,6 +33,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -107,6 +108,11 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 }
 
 func TestDumpPlanReplayerAPI(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -125,7 +131,8 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 		filesInReplayer = append(filesInReplayer, f.Name)
 		// except for {global,session}_bindings.sql and table_tiflash_replica.txt, the file should not be empty
 		if !strings.Contains(f.Name, "table_tiflash_replica.txt") &&
-			!strings.Contains(f.Name, "bindings.sql") {
+			!strings.Contains(f.Name, "bindings.sql") &&
+			!strings.Contains(f.Name, "trace") {
 			require.NotZero(t, f.UncompressedSize64, f.Name)
 		}
 	}
@@ -267,6 +274,11 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 }
 
 func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -362,7 +374,7 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec("drop table planReplayer.c")
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
-
+	tk.MustExec("admin reload bindings")
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
 	rows := tk.MustQuery("select @@last_plan_from_binding")
@@ -374,6 +386,11 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 }
 
 func TestIssue43192(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -535,6 +552,176 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
 	require.True(t, rows.Next(), "unexpected data")
 	return filename
+}
+
+func prepareData4Issue64802(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain, injectedPanic bool) string {
+	h := dom.StatsHandle()
+	db, err := sql.Open("mysql", client.GetDSN())
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE test_table (
+    id INT PRIMARY KEY,
+    value1 INT,
+    value2 INT
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`CREATE global BINDING FOR
+SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id
+USING
+SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id;
+`)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`CREATE TABLE test_table (
+    id INT PRIMARY KEY,
+    value1 INT,
+    value2 INT
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`CREATE global BINDING FOR
+SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id
+USING
+SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id;
+`)
+	tk.MustExec(`use test`)
+	if injectedPanic {
+		fpName := "github.com/pingcap/tidb/pkg/planner/core/ConsumeVolcanoOptimizePanic"
+		require.NoError(t, failpoint.Enable(fpName, "panic(\"injected panic\")"))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+		}()
+	}
+	rows := tk.MustQuery("plan replayer dump explain SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2 FROM test_table t1 JOIN test_table t2 ON t1.id = t2.id;")
+	require.True(t, rows.Next(), "unexpected data")
+	var filename string
+	require.NoError(t, rows.Scan(&filename))
+	require.NoError(t, rows.Close())
+	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
+	require.True(t, rows.Next(), "unexpected data")
+	return filename
+}
+
+func TestIssue64802(t *testing.T) {
+	testIssue64802(t, false)
+}
+
+func TestIssue64802WithPanic(t *testing.T) {
+	testIssue64802(t, true)
+}
+
+func testIssue64802(t *testing.T, injectedPanic bool) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
+	store := testkit.CreateMockStore(t)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	// 1. setup and prepare plan replayer files by manual command and capture
+	server, client := prepareServerAndClientForTest(t, store, dom)
+	defer server.Close()
+
+	filename := prepareData4Issue64802(t, client, dom, false)
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
+
+	// 2. check the contents of the plan replayer zip files.
+	var filesInReplayer []string
+	collectFileNameAndAssertFileSize := func(f *zip.File) {
+		// collect file name
+		filesInReplayer = append(filesInReplayer, f.Name)
+	}
+
+	// 2-1. check the plan replayer file from manual command
+	resp0, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp0.Body.Close())
+	}()
+	body, err := io.ReadAll(resp0.Body)
+	require.NoError(t, err)
+	forEachFileInZipBytes(t, body, collectFileNameAndAssertFileSize)
+	slices.Sort(filesInReplayer)
+	require.Equal(t, []string{
+		"config.toml",
+		"debug_trace/debug_trace0.json",
+		"explain.txt",
+		"global_bindings.sql",
+		"meta.txt",
+		"schema/schema_meta.txt",
+		"schema/test.test_table.schema.txt",
+		"session_bindings.sql",
+		"sql/sql0.sql",
+		"sql_meta.toml",
+		"stats/test.test_table.json",
+		"statsMem/test.test_table.txt",
+		"table_tiflash_replica.txt",
+		"variables.toml",
+	}, filesInReplayer)
+
+	// 3. check plan replayer load
+	// 3-1. write the plan replayer file from manual command to a file
+	path := t.TempDir()
+	path = filepath.Join(path, "plan_replayer.zip")
+	fp, err := os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
+
+	_, err = io.Copy(fp, bytes.NewReader(body))
+	require.NoError(t, err)
+	require.NoError(t, fp.Sync())
+
+	// 3-2. connect to tidb and use PLAN REPLAYER LOAD to load this file
+	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+	}))
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("use test")
+	tk.MustExec("drop table test.test_table")
+	tk.MustExec(`truncate table mysql.bind_info;`)
+	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
+	// 3-3. check whether binding takes effect
+	tk.MustExec(`SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id;
+`)
+	rows := tk.MustQuery("select @@last_plan_from_binding")
+	require.True(t, rows.Next(), "unexpected data")
+	var count int64
+	err = rows.Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count)
+	rows = tk.MustQuery("select count(*) from mysql.bind_info")
+	require.True(t, rows.Next(), "unexpected data")
+	err = rows.Scan(&count)
+	require.NoError(t, err)
+	// because we truncated bind_info before loading, so it is without builtin_pseudo_sql_for_bind_lock.
+	// It is only for test.test_table.
+	require.Equal(t, int64(1), count)
 }
 
 func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {

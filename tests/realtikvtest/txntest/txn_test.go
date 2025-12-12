@@ -548,9 +548,10 @@ func TestDMLWithAddForeignKey(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_1pc='OFF';")
-	if !kerneltype.IsNextGen() {
-		tk.MustExec("set global tidb_enable_metadata_lock='OFF';")
+	if kerneltype.IsNextGen() {
+		t.Skip("The test requires disabling MDL. Skip it until it is rewritten")
 	}
+	tk.MustExec("set global tidb_enable_metadata_lock='OFF';")
 	tk.MustExec("set global tidb_enable_async_commit='ON'")
 
 	tkDML := testkit.NewTestKit(t, store)
