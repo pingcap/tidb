@@ -16,7 +16,6 @@ package ddl_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -774,6 +773,10 @@ func TestAlterSchemaReadOnlyDDLRollback(t *testing.T) {
 
 func TestTTLDeleteError(t *testing.T) {
 	enableReadOnlyDDLFp(t)
+	var ttlError error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ttl/ttlworker/getTTLDeleteError", func(err error) {
+		ttlError = err
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_ttl_job_enable = off")
@@ -782,15 +785,7 @@ func TestTTLDeleteError(t *testing.T) {
 	tk.MustExec("insert into t values (1, now() - interval 10 second);")
 	tk.MustExec("alter schema test read only = 1")
 	tk.MustExec("set global tidb_ttl_job_enable = on")
-	lastJobSummary := "select last_job_summary from mysql.tidb_ttl_table_status;"
 	require.Eventually(t, func() bool {
-		res := tk.MustQuery(lastJobSummary).Rows()
-		if len(res) != 1 || !strings.Contains(res[0][0].(string), "error_rows") {
-			return false
-		}
-		var m map[string]int
-		json.Unmarshal([]byte(res[0][0].(string)), &m)
-		a := m["error_rows"] == 1
-		return a
-	}, time.Minute, 2*time.Second)
+		return ttlError != nil && strings.Contains(ttlError.Error(), "Schema 'test' is in read only mode")
+	}, 10*time.Second, 100*time.Millisecond)
 }
