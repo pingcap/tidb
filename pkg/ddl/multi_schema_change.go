@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -28,6 +29,79 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
+
+// For multi-schema change, analyze and index reorg is done by parent job.
+// So we just skip them for sub-jobs.
+func skipReorgAndAnalyzeForSubJob(jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job) (int64, error) {
+	v, err := getValidCurrentVersion(jobCtx.store)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	job.SnapshotVer = v.Ver
+	// Although reorg is done by parent job, we still set the ReorgTp here.
+	job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+	job.ReorgMeta.Stage = model.AnalyzeStateSkipped
+	checkAndMarkNonRevertible(job)
+
+	return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+}
+
+// reorgAndAnalyzeForMultiSchemaChange performs reorg and analyze for the table if needed
+// and returns whether the table info is updated.
+func (w *worker) reorgAndAnalyzeForMultiSchemaChange(
+	jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo,
+) (finished bool, ver int64, err error) {
+	switch job.ReorgMeta.Stage {
+	case model.ReorgStageNone:
+		job.SnapshotVer = 0
+		job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		return false, ver, err
+	case model.ReorgStageModifyColumnRecreateIndex:
+
+	}
+
+	switch job.ReorgMeta.AnalyzeState {
+	case model.AnalyzeStateNone:
+		if !checkNeedReorg(tblInfo) {
+			logutil.DDLLogger().Info("analyze skipped or finished for multi-schema change",
+				zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
+			return false, 0, nil
+		}
+
+		dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
+		if err != nil {
+			return false, 0, errors.Trace(err)
+		}
+
+		tbl, err := getTable(jobCtx.getAutoIDRequirement(), dbInfo.ID, tblInfo)
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+
+		buildIndexes := make([]*model.IndexInfo, 0)
+		for _, idx := range tblInfo.Indices {
+			if idx.State == model.StateWriteReorganization {
+				buildIndexes = append(buildIndexes, idx)
+			}
+		}
+
+		done, ver, err := doReorgWorkForCreateIndex(w, jobCtx, job, tbl, buildIndexes)
+		if done {
+			checkAndUpdateNeedAnalyze(job, tblInfo)
+		}
+
+		return false, ver, err
+	case model.AnalyzeStateRunning:
+		w.startAnalyzeAndWait(job, tblInfo)
+		return false, ver, err
+	default:
+		logutil.DDLLogger().Info("analyze skipped or finished for multi-schema change",
+			zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
+		return true, 0, nil
+	}
+}
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	jobCtx.inInnerRunOneJobStep = true
@@ -81,9 +155,9 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			return ver, err
 		}
 
-		finished := w.doAnalyzeWithoutReorg(job, tblInfo)
+		finished, ver, err := w.reorgAndAnalyzeForMultiSchemaChange(jobCtx, job, tblInfo)
 		if !finished {
-			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			return ver, err
 		}
 
 		var schemaVersionGenerated = false
@@ -377,8 +451,17 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	info.SubJobs = newSubJobs
 }
 
-// checkNeedAnalyze check if the job need analyze.
-func checkNeedAnalyze(job *model.Job, tblInfo *model.TableInfo) bool {
+func checkNeedReorg(tblInfo *model.TableInfo) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StateWriteReorganization {
+			return true
+		}
+	}
+	return false
+}
+
+// checkNeedAnalyze check if the job need analyze and update meta.
+func checkAndUpdateNeedAnalyze(job *model.Job, tblInfo *model.TableInfo) {
 	analyzeVer := vardef.DefTiDBAnalyzeVersion
 	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
 		analyzeVer = variable.TidbOptInt(val, analyzeVer)
@@ -393,18 +476,18 @@ func checkNeedAnalyze(job *model.Job, tblInfo *model.TableInfo) bool {
 			zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
 			zap.Bool("is partitioned table", hasPartition),
 			zap.Int("tidb_analyze_version", analyzeVer))
-		return false
+		job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+		return
 	}
 
 	// If we reach here, it means all the reorg work has been done, either after
 	// MODIFY COLUMN or ADD INDEX. So we can just check the index state to decide
 	// whether there are new indexes added.
-	for _, idx := range tblInfo.Indices {
-		if idx.State == model.StateWriteReorganization {
-			return true
-		}
+	if checkNeedReorg(tblInfo) {
+		job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+	} else {
+		job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 	}
-	return false
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {

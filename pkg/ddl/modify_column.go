@@ -1018,6 +1018,10 @@ func (w *worker) doModifyColumnTypeWithData(
 					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 				}
 			case model.ReorgStageModifyColumnRecreateIndex:
+				if job.MultiSchemaInfo != nil {
+					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
+					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
+				}
 				var done bool
 				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxs)
 				if !done {
@@ -1025,13 +1029,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				// For multi-schema change, analyze is done by parent job.
-				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-				} else {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-					checkAndMarkNonRevertible(job)
-				}
+				checkAndUpdateNeedAnalyze(job, tblInfo)
 			}
 		case model.AnalyzeStateRunning:
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
@@ -1222,10 +1220,12 @@ func (w *worker) doModifyColumnIndexReorg(
 		case model.AnalyzeStateNone:
 			switch job.ReorgMeta.Stage {
 			case model.ReorgStageModifyColumnUpdateColumn:
-				// Now row reorg
 				job.SnapshotVer = 0
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
 			case model.ReorgStageModifyColumnRecreateIndex:
+				if job.MultiSchemaInfo != nil {
+					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
+				}
 				var done bool
 				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxInfos)
 				if !done {
@@ -1233,13 +1233,8 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				// For multi-schema change, analyze is done by parent job.
-				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
-				} else {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-					checkAndMarkNonRevertible(job)
-				}
+				intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
+				checkAndUpdateNeedAnalyze(job, tblInfo)
 			}
 		case model.AnalyzeStateRunning:
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
