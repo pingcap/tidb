@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -509,7 +510,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 					break
 				}
 
-				if err == systable.ErrNotFound {
+				if goerrors.Is(err, systable.ErrNotFound) {
 					logutil.DDLLogger().Info("job not found, might already finished",
 						zap.Int64("job_id", jobID))
 					return
@@ -569,7 +570,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 					return err
 				}
 				s.cleanMDLInfo(job, ownerID)
-			} else if err != systable.ErrNotFound {
+			} else if !goerrors.Is(err, systable.ErrNotFound) {
 				jobCtx.logger.Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
@@ -583,7 +584,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW, s.sysTblMgr)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW)
 	if err != nil {
 		jobCtx.logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err

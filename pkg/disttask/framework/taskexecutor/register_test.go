@@ -25,17 +25,14 @@ import (
 func TestRegisterTaskType(t *testing.T) {
 	// other case might add task types, so we need to clear it first
 	ClearTaskExecutors()
-	factoryFn := func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+	factoryFn := func(ctx context.Context, task *proto.Task, param Param) TaskExecutor {
 		return nil
 	}
 	RegisterTaskType("test1", factoryFn)
-	require.Len(t, taskTypes, 1)
-	require.Len(t, taskExecutorFactories, 1)
+	require.Len(t, factoryFns, 1)
 	RegisterTaskType("test2", factoryFn)
-	require.Len(t, taskTypes, 2)
-	require.Len(t, taskExecutorFactories, 2)
+	require.Len(t, factoryFns, 2)
 	// register again
 	RegisterTaskType("test2", factoryFn)
-	require.Len(t, taskTypes, 2)
-	require.Len(t, taskExecutorFactories, 2)
+	require.Len(t, factoryFns, 2)
 }
