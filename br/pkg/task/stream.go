@@ -1500,7 +1500,19 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	client.BuildMigrations(migs.Migs)
-	defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+
+	skipCleanup := false
+	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
+		// Skip the cleanup - this keeps the read lock held
+		// and will cause lock conflicts for other restore operations
+		log.Info("Skipping migration read lock cleanup due to failpoint")
+		skipCleanup = true
+	})
+
+	if !skipCleanup {
+		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+	}
+
 	defer client.RestoreSSTStatisticFields(&extraFields)
 
 	ddlFiles := cfg.ddlFiles

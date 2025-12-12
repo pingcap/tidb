@@ -720,6 +720,81 @@ test_restore_abort() {
     cleanup
 }
 
+test_cross_cluster_lock_conflict() {
+    echo "Test Case 7: Cross-cluster lock conflict"
+    echo "This test reproduces the lock conflict when two clusters restore from the same log backup storage"
+
+    # Use separate backup directories for this test
+    LOCK_BACKUP_DIR="local://$TEST_DIR/lock_backup"
+    LOCK_LOG_BACKUP_DIR="local://$TEST_DIR/lock_log_backup"
+
+    echo "Setting up backup data for lock conflict testing..."
+
+    # Create both DB1 and DB2 data
+    run_sql "create database if not exists ${DB}1;"
+    run_sql "create database if not exists ${DB}2;"
+
+    create_tables_with_values "cluster_a" $TABLE_COUNT ${DB}1
+    create_tables_with_values "cluster_b" $TABLE_COUNT ${DB}2
+
+    # Start log backup
+    run_br log start --task-name ${TASK_NAME}_lock -s "$LOCK_LOG_BACKUP_DIR"
+
+    # Take snapshot backup (contains both DB1 and DB2 data)
+    run_br backup full -s "$LOCK_BACKUP_DIR"
+
+    # Wait for log checkpoint to advance
+    log_backup_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
+    echo "Using log backup timestamp: $log_backup_ts"
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance ${TASK_NAME}_lock
+
+    # Stop log backup
+    run_br log stop --task-name ${TASK_NAME}_lock
+
+    # Drop all databases to simulate fresh cluster state
+    run_sql "drop database ${DB}1;"
+    run_sql "drop database ${DB}2;"
+
+    echo "=== Step 1: First restore (DB1) acquires lock and holds it ==="
+    run_br log start --task-name ${TASK_NAME}_lock -s "$LOCK_LOG_BACKUP_DIR"
+
+    # Use failpoint to skip migration read lock cleanup
+    # This simulates the first restore holding the migration read lock indefinitely
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/skip-migration-read-lock-cleanup=return(true)"
+
+    echo "Starting first restore: ${DB}1 (will hold migration read lock)..."
+    echo "This restore will acquire the migration read lock and not release it due to failpoint"
+
+    # Start the first restore in background since it will complete but not release the lock
+    run_br restore point --filter "${DB}1.*" --restored-ts $log_backup_ts --full-backup-storage "$LOCK_BACKUP_DIR" -s "$LOCK_LOG_BACKUP_DIR"
+    export GO_FAILPOINTS=""
+
+    echo "=== Step 2: Second restore (DB2) attempts do get read lock and append lock ==="
+
+    restore_fail=0
+    run_br restore point --filter "${DB}2.*" --restored-ts $log_backup_ts --full-backup-storage "$LOCK_BACKUP_DIR" -s "$LOCK_LOG_BACKUP_DIR" > ${res_file}_second 2>&1 || restore_fail=1
+
+    if [ $restore_fail -ne 0 ]; then
+        echo 'ERROR: Second restore failed but should have succeeded'
+        echo "Second restore error output:"
+        cat ${res_file}_second
+        exit 1
+    fi
+
+    echo "Verifying second restore data (DB2)..."
+    for i in $(seq 1 $TABLE_COUNT); do
+        verify_table_data ${DB}2 "cluster_b" $i "Second restore of DB2"
+    done
+
+    verify_no_temporary_databases "Concurrent restore operations test"
+
+    echo "lock conflict tests succeeded"
+
+    # Clean up the test databases
+    run_sql "drop database if exists ${DB}1;"
+    run_sql "drop database if exists ${DB}2;"
+}
+
 setup_test_environment
 
 test_mixed_parallel_restores
@@ -727,5 +802,6 @@ test_concurrent_restore_table_conflicts
 test_restore_with_different_systable_settings
 test_auto_restored_ts_conflict
 test_restore_abort
+test_cross_cluster_lock_conflict
 
 echo "Parallel restore tests completed successfully"
