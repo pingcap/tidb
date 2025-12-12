@@ -71,3 +71,18 @@ insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
 insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
 --replace_regex /^[1-9][0-9]+/TSO/
 select * from t;
+delete from t;
+insert into t (a,b,c,_tidb_softdelete_time) values (2,2,2, now()) on duplicate key update a = _tidb_commit_ts;
+explain format = 'brief' select * from t;
+select * from t;
+explain format = 'brief' update t set b = 3;
+update t set b = 3;
+set @@tidb_translate_softdelete_sql = false;
+explain format = 'brief' select * from t;
+select * from t;
+select * from t where a = 2;
+explain format = 'brief' update t set b = 3;
+update t set b = 3;
+select * from t;
+delete from t where a > 1;
+select * from t;

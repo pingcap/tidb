@@ -425,6 +425,13 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 	tbl := tnW.TableInfo
+
+	// If tidb_translate_softdelete_sql is enabled, we must add an extra isnull(_tidb_softdelete_time) filter, which
+	// makes the point get plan inapplicable.
+	if tbl.SoftdeleteInfo != nil && ctx.GetSessionVars().SoftDeleteRewrite {
+		return nil
+	}
+
 	// Skip the optimization with partition selection.
 	// TODO: Add test and remove this!
 	if len(tblName.PartitionNames) > 0 {
@@ -538,6 +545,12 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		return nil
 	}
 	tbl := tnW.TableInfo
+
+	// If tidb_translate_softdelete_sql is enabled, we must add an extra isnull(_tidb_softdelete_time) filter, which
+	// makes the point get plan inapplicable.
+	if tbl.SoftdeleteInfo != nil && ctx.GetSessionVars().SoftDeleteRewrite {
+		return nil
+	}
 
 	var pkColOffset int
 	for i, col := range tbl.Columns {
@@ -815,6 +828,12 @@ func buildSchemaFromFields(
 					return nil, nil
 				}
 				for _, col := range tbl.Columns {
+					// Similar to what we do in buildDataSource(), we don't expand the _tidb_softdelete_time and
+					// _tidb_origin_ts columns in the wildcard if it's softdelete or active-active table respectively.
+					if (tbl.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+						(tbl.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L) {
+						continue
+					}
 					names = append(names, &types.FieldName{
 						DBName:      dbName,
 						OrigTblName: tbl.Name,

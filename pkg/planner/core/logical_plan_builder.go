@@ -5333,9 +5333,10 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 		return physicalop.TblColPosInfo{}, err
 	}
 	return physicalop.TblColPosInfo{
-		TblID:      tid,
-		Start:      offset,
-		HandleCols: handleCol,
+		TblID:               tid,
+		Start:               offset,
+		HandleCols:          handleCol,
+		ExtraOriginTSOffset: -1,
 	}, nil
 }
 
@@ -5352,7 +5353,7 @@ func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *physicalop
 }
 
 // pruneAndBuildSingleTableColPosInfoForDelete builds columns mapping for delete.
-// And it will try to prune columns that not used in pk or indexes.
+// And it will try to prune columns that not used.
 func pruneAndBuildSingleTableColPosInfoForDelete(
 	t table.Table,
 	tableName string,
@@ -5370,8 +5371,10 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	originalStart := colPosInfo.Start
 	colPosInfo.Start -= prePrunedCount
 
-	// Mark the columns in handle.
+	// fixedPos records the columns that can not be pruned and their new positions in the row after pruning.
 	fixedPos := make(map[int]int, len(deletableCols))
+
+	// Mark the columns in handle.
 	for col := range colPosInfo.HandleCols.IterColumns() {
 		fixedPos[col.Index-originalStart] = 0
 	}
@@ -5383,6 +5386,20 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 				return plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
 			}
 			fixedPos[col.Offset] = 0
+		}
+	}
+
+	// Mark the _tidb_origin_ts column for active-active tables.
+	// For active-active tables, the _tidb_origin_ts column is always needed (see (t *TableCommon) removeRecord()), so
+	// we need to make sure it is not pruned here.
+	extraOriginTSColOffset := -1
+	if t.Meta().IsActiveActive {
+		for _, col := range deletableCols {
+			if col.Name.Equals(&model.ExtraOriginTSName) {
+				fixedPos[col.Offset] = 0
+				extraOriginTSColOffset = col.Offset
+				break
+			}
 		}
 	}
 
@@ -5426,6 +5443,11 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	}
 	colPosInfo.End = colPosInfo.Start + tblLen - pruned
 	colPosInfo.IndexesRowLayout = indexColMap
+
+	// Fix the ExtraOriginTS column offset for active-active tables
+	if extraOriginTSColOffset >= 0 {
+		colPosInfo.ExtraOriginTSOffset = table.ExtraOriginTSOffset(fixedPos[extraOriginTSColOffset])
+	}
 
 	return nil
 }
