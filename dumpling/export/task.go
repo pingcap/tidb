@@ -104,7 +104,7 @@ func NewTaskPolicyMeta(policyName, createPolicySQL string) *TaskPolicyMeta {
 	}
 }
 
-// NewTaskTableData returns a new dumping table data task
+// NewTaskTableData returns a new dumpling table data task
 func NewTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
 	return &TaskTableData{
 		Meta:        meta,
