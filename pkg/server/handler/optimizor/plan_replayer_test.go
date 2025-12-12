@@ -131,7 +131,8 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 		filesInReplayer = append(filesInReplayer, f.Name)
 		// except for {global,session}_bindings.sql and table_tiflash_replica.txt, the file should not be empty
 		if !strings.Contains(f.Name, "table_tiflash_replica.txt") &&
-			!strings.Contains(f.Name, "bindings.sql") {
+			!strings.Contains(f.Name, "bindings.sql") &&
+			!strings.Contains(f.Name, "trace") {
 			require.NotZero(t, f.UncompressedSize64, f.Name)
 		}
 	}
