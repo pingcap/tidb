@@ -840,7 +840,7 @@ func bootstrap(s sessionapi.Session) {
 	startTime := time.Now()
 	err := InitMDLVariableForBootstrap(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("[bootstrap] init metadata lock failed", zap.Error(err))
+		logutil.BgLogger().Fatal("init metadata lock failed during bootstrap", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
 	bootLogger := logutil.SampleLoggerFactory(30*time.Second, 1)()
@@ -1007,7 +1007,7 @@ func upgrade(s sessionapi.Session) {
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
+		logutil.BgLogger().Fatal("init metadata lock failed during upgrade", zap.Error(err))
 	}
 
 	var ver int64
