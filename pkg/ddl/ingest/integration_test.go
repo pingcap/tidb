@@ -17,6 +17,7 @@ package ingest_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -546,7 +547,6 @@ func TestAddIndexValidateRangesFailed(t *testing.T) {
 	tk.MustExec("admin check table t;")
 }
 
-<<<<<<< HEAD
 func TestModifyColumnWithMultipleIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
@@ -613,10 +613,11 @@ func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
 			tk.MustExec("alter table t1 drop index idx;")
 		})
 	}
-=======
+}
+
 func TestIndexChangeWithModifyColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (b int, c varchar(100) collate utf8mb4_unicode_ci)")

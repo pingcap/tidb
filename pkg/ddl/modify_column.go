@@ -299,19 +299,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-<<<<<<< HEAD
-	if err = checkModifyTypes(&oldCol.FieldType, &args.Column.FieldType, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-=======
 	if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-
-	if !needChangeColumnData(oldCol, args.Column) {
-		return w.doModifyColumn(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
->>>>>>> d1b5834868f (ddl: double check collation compatibility before modifying column (#61707))
 	}
 
 	if args.ChangingColumn == nil {
