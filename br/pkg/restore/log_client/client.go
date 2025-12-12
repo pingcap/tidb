@@ -555,7 +555,8 @@ func (rc *LogClient) InitClients(
 		}
 	}
 	rc.sstRestoreManager = &SstRestoreManager{
-		restorer: restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner),
+		restorer:         restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner),
+		checkpointRunner: checkpointRunner,
 	}
 	return nil
 }
