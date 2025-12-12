@@ -441,7 +441,7 @@ func TestNextGenMetering(t *testing.T) {
 	s.NoError(srcStore.WriteFile(ctx, "t.1.csv", []byte("1,test-1\n2,test-2\n3,test-3\n")))
 	s.prepareAndUseDB("metering")
 	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort")
-	s.tk.MustExec("create table t (a bigint primary key , b varchar(100));")
+	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), index(b));")
 
 	baseTime := time.Now().Truncate(time.Minute).Unix()
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
@@ -453,6 +453,10 @@ func TestNextGenMetering(t *testing.T) {
 	var gotMeterData atomic.String
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
 		gotMeterData.Store(s.String())
+	})
+	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+		rowAndSizeMeterItems.Store(&items)
 	})
 
 	// 1 subtask, encoding 10 files using 4 threads.
@@ -473,19 +477,33 @@ func TestNextGenMetering(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Contains(gotMeterData.Load(), "requests{get: 8, put: 6}, read: 27B, write: 102B")
+	s.Contains(gotMeterData.Load(), "requests{get: 14, put: 11}")
+	// note: the read/write of subtask meta file is also counted in obj_store part,
+	// but meta file contains file name which contains task and subtask ID, so
+	// the length may vary, we just use regexp to match here.
+	s.Regexp(`obj_store{r: 2.\d*KiB, w: 3.\d*KiB}`, gotMeterData.Load())
+	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
+	s.Regexp(`cluster{r: 0B, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
 
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(3, sum.RowCnt.Load())
 	s.EqualValues(27, sum.Bytes.Load())
 	s.EqualValues(2, sum.GetReqCnt.Load())
-	s.EqualValues(3, sum.PutReqCnt.Load())
+	s.EqualValues(5, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
-	s.EqualValues(3, sum.GetReqCnt.Load())
-	s.EqualValues(3, sum.PutReqCnt.Load())
+	s.EqualValues(288, sum.Bytes.Load())
+	s.EqualValues(6, sum.GetReqCnt.Load())
+	s.EqualValues(6, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.EqualValues(3, sum.GetReqCnt.Load())
+	s.EqualValues(288, sum.Bytes.Load())
+	s.EqualValues(6, sum.GetReqCnt.Load())
 	s.EqualValues(0, sum.PutReqCnt.Load())
+
+	s.Eventually(func() bool {
+		items := *rowAndSizeMeterItems.Load()
+		return items != nil && items["row_count"].(int64) == 3 &&
+			items["data_kv_bytes"].(int64) == 114 && items["index_kv_bytes"].(int64) == 174
+	}, 30*time.Second, 100*time.Millisecond)
 }

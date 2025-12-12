@@ -88,8 +88,9 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
 type S3Storage struct {
-	svc     s3iface.S3API
-	options *backuppb.S3
+	svc       s3iface.S3API
+	options   *backuppb.S3
+	accessRec *recording.AccessStats
 }
 
 func (*S3Storage) MarkStrongConsistency() {
@@ -321,10 +322,11 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 }
 
 // NewS3StorageForTest creates a new S3Storage for testing only.
-func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
+func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
 	return &S3Storage{
-		svc:     svc,
-		options: options,
+		svc:       svc,
+		options:   options,
+		accessRec: accessRec,
 	}
 }
 
@@ -415,10 +417,10 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		// Use default credential chain when profile is specified
 		awsSessionOpts.SharedConfigState = session.SharedConfigEnable
 	}
-	if reqRec := recording.GetRequests(ctx); reqRec != nil {
+	if opts.AccessRecording != nil {
 		awsSessionOpts.Handlers = defaults.Handlers()
 		awsSessionOpts.Handlers.Send.PushBack(func(r *request.Request) {
-			reqRec.Rec(r.HTTPRequest)
+			opts.AccessRecording.RecRequest(r.HTTPRequest)
 		})
 	}
 	ses, err := session.NewSessionWithOptions(awsSessionOpts)
@@ -512,8 +514,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	s3Storage := &S3Storage{
-		svc:     c,
-		options: &qs,
+		svc:       c,
+		options:   &qs,
+		accessRec: opts.AccessRecording,
 	}
 	if opts.CheckS3ObjectLockOptions {
 		backend.ObjectLockEnabled = s3Storage.IsObjectLockEnabled()
@@ -552,7 +555,7 @@ func getObjectCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error
 	}
 	_, err := svc.GetObject(input)
 	if aerr, ok := err.(awserr.Error); ok {
-		if aerr.Code() == "NoSuchKey" {
+		if aerr.Code() == s3.ErrCodeNoSuchKey {
 			// if key not exists and we reach this error, that
 			// means we have the correct permission to GetObject
 			// other we will get another error
@@ -579,7 +582,7 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc s3iface.S3API, options *ba
 		}
 		_, err2 := svc.DeleteObjectWithContext(ctx, input)
 		if aerr, ok := err2.(awserr.Error); ok {
-			if aerr.Code() != "NoSuchKey" {
+			if aerr.Code() != s3.ErrCodeNoSuchKey {
 				log.Warn("failed to delete object used for permission check",
 					zap.String("bucket", options.Bucket),
 					zap.String("key", *input.Key), zap.Error(err2))
@@ -643,6 +646,7 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rs.accessRec.RecWrite(len(data))
 	hinput := &s3.HeadObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
@@ -678,6 +682,7 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 			}
 			continue
 		}
+		rs.accessRec.RecRead(len(data))
 		return data, nil
 	}
 }
@@ -1072,6 +1077,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
+	r.storage.accessRec.RecRead(n)
 	r.pos += int64(n)
 	return
 }
@@ -1239,7 +1245,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 

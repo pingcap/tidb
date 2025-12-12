@@ -36,6 +36,8 @@ func TestStep(t *testing.T) {
 	require.Equal(t, "merge-sort", Step2Str(ImportInto, ImportStepMergeSort))
 	require.Equal(t, "encode", Step2Str(ImportInto, ImportStepEncodeAndSort))
 	require.Equal(t, "ingest", Step2Str(ImportInto, ImportStepWriteAndIngest))
+	require.Equal(t, "collect-conflicts", Step2Str(ImportInto, ImportStepCollectConflicts))
+	require.Equal(t, "conflict-resolution", Step2Str(ImportInto, ImportStepConflictResolution))
 	require.Equal(t, "done", Step2Str(ImportInto, StepDone))
 	require.Equal(t, "unknown step 123", Step2Str(ImportInto, 123))
 

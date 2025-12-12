@@ -86,7 +86,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.optimizerTrace {
 		switch e.optimizerTraceTarget {
 		case core.TracePlanTargetEstimation:
-			return e.nextOptimizerCEPlanTrace(ctx, e.Ctx(), req)
+			return errors.New("this feature has been deprecated")
 		case core.TracePlanTargetDebug:
 			return e.nextOptimizerDebugPlanTrace(ctx, e.Ctx(), req)
 		default:
@@ -101,35 +101,6 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		return e.nextRowJSON(ctx, se, req)
 	}
-}
-
-func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
-	stmtCtx := se.GetSessionVars().StmtCtx
-	origin := stmtCtx.EnableOptimizerCETrace
-	stmtCtx.EnableOptimizerCETrace = true
-	defer func() {
-		stmtCtx.EnableOptimizerCETrace = origin
-	}()
-
-	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
-	_, _, err := core.OptimizeAstNodeNoCache(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
-	if err != nil {
-		return err
-	}
-
-	writer := strings.Builder{}
-	jsonEncoder := json.NewEncoder(&writer)
-	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
-	jsonEncoder.SetEscapeHTML(false)
-	err = jsonEncoder.Encode(stmtCtx.OptimizerCETrace)
-	if err != nil {
-		return errors.AddStack(err)
-	}
-	res := []byte(writer.String())
-
-	req.AppendBytes(0, res)
-	e.exhausted = true
-	return nil
 }
 
 func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {

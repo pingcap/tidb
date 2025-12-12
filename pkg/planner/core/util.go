@@ -166,3 +166,11 @@ func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool
 	}
 	return false
 }
+
+func getLowerDB(dbName ast.CIStr, vars *variable.SessionVars) string {
+	dbNameL := dbName.L
+	if dbNameL == "" {
+		dbNameL = strings.ToLower(vars.CurrentDB)
+	}
+	return dbNameL
+}

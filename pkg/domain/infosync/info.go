@@ -363,7 +363,7 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	return nil
 }
 
-// MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache not exist, it calculates progress from PD and TiFlash and inserts progress into cache.
+// MustGetTiFlashProgress gets tiflash replica progress of a specified tableID from tiflashProgressCache, if cache not exist, it calculates progress from PD and TiFlash and inserts progress into cache.
 func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -383,12 +383,14 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		}
 		stores := make(map[int64]pdhttp.StoreInfo)
 		for _, store := range tikvStats.Stores {
-			if engine.IsTiFlashHTTPResp(&store.Store) {
+			// Note that only TiFlash write nodes need to be polled under NextGen kernel.
+			// TiFlash compute nodes under NextGen kernel do not hold any Regions data, so it is excluded here.
+			if engine.IsTiFlashWriteHTTPResp(&store.Store) {
 				stores[store.Store.ID] = store
 			}
 		}
 		*tiFlashStores = stores
-		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
+		logutil.BgLogger().Debug("MustGetTiFlashProgress updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
 	}
 	progress, _, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
 	if err != nil {
@@ -813,7 +815,8 @@ func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
 	}
 	tiflashStores := make([]pdhttp.StoreInfo, 0, len(tikvStats.Stores))
 	for _, store := range tikvStats.Stores {
-		if engine.IsTiFlashHTTPResp(&store.Store) {
+		// Only need to sync schema to TiFlash write nodes under NextGen kernel.
+		if engine.IsTiFlashWriteHTTPResp(&store.Store) {
 			tiflashStores = append(tiflashStores, store)
 		}
 	}
