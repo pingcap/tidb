@@ -540,6 +540,10 @@ type MockExpr struct {
 	i   any
 }
 
+func (m *MockExpr) SafeToShareAcrossSession() bool {
+	return false
+}
+
 func (m *MockExpr) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }

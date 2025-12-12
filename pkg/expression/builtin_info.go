@@ -120,6 +120,9 @@ func (c *databaseFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinDatabaseSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinDatabaseSig) Clone() builtinFunc {
@@ -539,6 +542,9 @@ func (c *versionFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinVersionSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinVersionSig) Clone() builtinFunc {
@@ -572,6 +578,9 @@ func (c *tidbVersionFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinTiDBVersionSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTiDBVersionSig) Clone() builtinFunc {
@@ -872,6 +881,9 @@ func (c *charsetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinCharsetSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCharsetSig) Clone() builtinFunc {
@@ -903,6 +915,9 @@ func (c *coercibilityFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinCoercibilitySig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (c *builtinCoercibilitySig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
@@ -941,6 +956,9 @@ func (c *collationFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinCollationSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinCollationSig) Clone() builtinFunc {
@@ -1465,6 +1483,9 @@ func (c *tidbEncodeSQLDigestFunctionClass) getFunction(ctx BuildContext, args []
 
 type builtinTiDBEncodeSQLDigestSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTiDBEncodeSQLDigestSig) Clone() builtinFunc {
@@ -1506,6 +1527,9 @@ func (c *tidbDecodePlanFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinTiDBDecodePlanSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTiDBDecodePlanSig) Clone() builtinFunc {
@@ -1528,6 +1552,9 @@ func (b *builtinTiDBDecodePlanSig) evalString(ctx EvalContext, row chunk.Row) (s
 
 type builtinTiDBDecodeBinaryPlanSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTiDBDecodeBinaryPlanSig) Clone() builtinFunc {
@@ -1790,6 +1817,9 @@ func (c *formatBytesFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinFormatBytesSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinFormatBytesSig) Clone() builtinFunc {
@@ -1829,6 +1859,9 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinFormatNanoTimeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinFormatNanoTimeSig) Clone() builtinFunc {

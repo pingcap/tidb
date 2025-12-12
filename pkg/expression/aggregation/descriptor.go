@@ -277,7 +277,7 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
 	for _, arg := range a.Args {
-		result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
+		result, err := expression.EvaluateExprWithNull(ctx, schema, arg, true)
 		if err != nil {
 			return types.Datum{}, false, err
 		}
@@ -290,7 +290,7 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext
 }
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
+	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0], true)
 	if err != nil {
 		return types.Datum{}, false, err
 	}
@@ -302,7 +302,7 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx expression.BuildContext, 
 }
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
+	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0], true)
 	if err != nil {
 		return types.Datum{}, false, err
 	}
@@ -314,7 +314,7 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx expression.BuildContex
 }
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
+	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0], true)
 	if err != nil {
 		return types.Datum{}, false, err
 	}

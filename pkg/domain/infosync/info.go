@@ -898,6 +898,9 @@ func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
 
 // GetAllTiDBTopology gets all tidb topology
 func (is *InfoSyncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error) {
+	if is.etcdCli == nil {
+		return nil, nil
+	}
 	topos := make([]*TopologyInfo, 0)
 	response, err := is.etcdCli.Get(ctx, TopologyInformationPath, clientv3.WithPrefix())
 	if err != nil {
