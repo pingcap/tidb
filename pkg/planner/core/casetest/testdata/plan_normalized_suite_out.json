@@ -406,10 +406,10 @@
       {
         "SQL": "explain select a from t1 where a>1",
         "Plan": [
-          " TableReader         root         ",
-          " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.a, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:empty, keep order:false"
+          " TableReader         root         ", 
+          " └─ExchangeSender    cop[tiflash] ", 
+          "   └─Selection       cop[tiflash] gt(test.t1.a, ?)", 
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
       {

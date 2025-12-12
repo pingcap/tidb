@@ -396,8 +396,8 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain select * from tint where b=1;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 1)
+TableReader_7	1.06	root		data:Selection_6
+└─Selection_6	1.06	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 1)
   └─TableFullScan_5	8.00	cop[tikv]	table:tint	keep order:false
 explain select * from tint where b=4;
 id	estRows	task	access object	operator info
@@ -406,13 +406,13 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	8.00	cop[tikv]	table:tint	keep order:false
 explain select * from tint where b=8;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 8)
+TableReader_7	1.06	root		data:Selection_6
+└─Selection_6	1.06	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 8)
   └─TableFullScan_5	8.00	cop[tikv]	table:tint	keep order:false
 explain select * from tdouble where b=1;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdouble.b, 1)
+TableReader_7	1.06	root		data:Selection_6
+└─Selection_6	1.06	cop[tikv]		eq(planner__cardinality__selectivity.tdouble.b, 1)
   └─TableFullScan_5	8.00	cop[tikv]	table:tdouble	keep order:false
 explain select * from tdouble where b=4;
 id	estRows	task	access object	operator info
@@ -421,13 +421,13 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	8.00	cop[tikv]	table:tdouble	keep order:false
 explain select * from tdouble where b=8;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdouble.b, 8)
+TableReader_7	1.06	root		data:Selection_6
+└─Selection_6	1.06	cop[tikv]		eq(planner__cardinality__selectivity.tdouble.b, 8)
   └─TableFullScan_5	8.00	cop[tikv]	table:tdouble	keep order:false
 explain select * from tdecimal where b=1;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdecimal.b, 1)
+TableReader_7	1.06	root		data:Selection_6
+└─Selection_6	1.06	cop[tikv]		eq(planner__cardinality__selectivity.tdecimal.b, 1)
   └─TableFullScan_5	8.00	cop[tikv]	table:tdecimal	keep order:false
 explain select * from tdecimal where b=4;
 id	estRows	task	access object	operator info
@@ -436,13 +436,13 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	8.00	cop[tikv]	table:tdecimal	keep order:false
 explain select * from tdecimal where b=8;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdecimal.b, 8)
+TableReader_7	1.06	root		data:Selection_6
+└─Selection_6	1.06	cop[tikv]		eq(planner__cardinality__selectivity.tdecimal.b, 8)
   └─TableFullScan_5	8.00	cop[tikv]	table:tdecimal	keep order:false
 explain select * from tstring where b='1';
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tstring.b, "1")
+TableReader_7	1.06	root		data:Selection_6
+└─Selection_6	1.06	cop[tikv]		eq(planner__cardinality__selectivity.tstring.b, "1")
   └─TableFullScan_5	8.00	cop[tikv]	table:tstring	keep order:false
 explain select * from tstring where b='4';
 id	estRows	task	access object	operator info
@@ -451,48 +451,48 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	8.00	cop[tikv]	table:tstring	keep order:false
 explain select * from tstring where b='8';
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tstring.b, "8")
+TableReader_7	1.06	root		data:Selection_6
+└─Selection_6	1.06	cop[tikv]		eq(planner__cardinality__selectivity.tstring.b, "8")
   └─TableFullScan_5	8.00	cop[tikv]	table:tstring	keep order:false
 explain select * from tdatetime where b='2001-01-01';
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-01 00:00:00.000000)
+TableReader_7	1.02	root		data:Selection_6
+└─Selection_6	1.02	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-01 00:00:00.000000)
   └─TableFullScan_5	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain select * from tdatetime where b='2001-01-02';
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-02 00:00:00.000000)
+TableReader_7	1.02	root		data:Selection_6
+└─Selection_6	1.02	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-02 00:00:00.000000)
   └─TableFullScan_5	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain select * from tdatetime where b='2001-01-04';
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-04 00:00:00.000000)
+TableReader_7	1.02	root		data:Selection_6
+└─Selection_6	1.02	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-04 00:00:00.000000)
   └─TableFullScan_5	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain select * from ct1 where pk>='1' and pk <='4';
 id	estRows	task	access object	operator info
-TableReader_6	5.00	root		data:TableRangeScan_5
-└─TableRangeScan_5	5.00	cop[tikv]	table:ct1	range:["1","4"], keep order:false
+TableReader_6	5.07	root		data:TableRangeScan_5
+└─TableRangeScan_5	5.07	cop[tikv]	table:ct1	range:["1","4"], keep order:false
 explain select * from ct1 where pk>='4' and pk <='6';
 id	estRows	task	access object	operator info
 TableReader_6	3.75	root		data:TableRangeScan_5
 └─TableRangeScan_5	3.75	cop[tikv]	table:ct1	range:["4","6"], keep order:false
 explain select * from ct1 where pk>='6' and pk <='8';
 id	estRows	task	access object	operator info
-TableReader_6	3.00	root		data:TableRangeScan_5
-└─TableRangeScan_5	3.00	cop[tikv]	table:ct1	range:["6","8"], keep order:false
+TableReader_6	3.06	root		data:TableRangeScan_5
+└─TableRangeScan_5	3.06	cop[tikv]	table:ct1	range:["6","8"], keep order:false
 explain select * from ct2 where a=1 and b>=1 and b<=8;
 id	estRows	task	access object	operator info
-TableReader_6	1.00	root		data:TableRangeScan_5
-└─TableRangeScan_5	1.00	cop[tikv]	table:ct2	range:[1 1,1 8], keep order:false
+TableReader_6	1.06	root		data:TableRangeScan_5
+└─TableRangeScan_5	1.06	cop[tikv]	table:ct2	range:[1 1,1 8], keep order:false
 explain select * from ct2 where a=4 and b>=1 and b<=8;
 id	estRows	task	access object	operator info
 TableReader_6	1.00	root		data:TableRangeScan_5
 └─TableRangeScan_5	1.00	cop[tikv]	table:ct2	range:[4 1,4 8], keep order:false
 explain select * from ct2 where a=8 and b>=1 and b<=8;
 id	estRows	task	access object	operator info
-TableReader_6	1.00	root		data:TableRangeScan_5
-└─TableRangeScan_5	1.00	cop[tikv]	table:ct2	range:[8 1,8 8], keep order:false
+TableReader_6	1.06	root		data:TableRangeScan_5
+└─TableRangeScan_5	1.06	cop[tikv]	table:ct2	range:[8 1,8 8], keep order:false
 set tidb_analyze_version=2;
 drop table if exists topn_before_hist;
 create table topn_before_hist(a int, index idx(a));
@@ -1225,13 +1225,13 @@ insert into t values ('tw', 0);
 analyze table t all columns;
 explain select * from t where a = 'tw' and b < 0;
 id	estRows	task	access object	operator info
-IndexReader_6	1.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	1.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
+IndexReader_6	2.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	2.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
 set @@tidb_opt_fix_control = '47400:on';
 explain select * from t where a = 'tw' and b < 0;
 id	estRows	task	access object	operator info
-IndexReader_6	0.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
+IndexReader_6	2.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	2.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
 set @@tidb_opt_fix_control = '47400:off';
 drop table if exists t;
 create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid));

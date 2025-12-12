@@ -54,8 +54,8 @@ col1	col1
 1.7905151735809062e308	1.7905151735809062e308
 explain format='brief' select t1. col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0;
 id	estRows	task	access object	operator info
-MergeJoin	49.00	root		inner join, left key:statistics__overflow_calc.lrr_test.col1, right key:statistics__overflow_calc.lrr_test.col1
-├─TableReader(Build)	49.00	root		data:TableRangeScan
-│ └─TableRangeScan	49.00	cop[tikv]	table:t2	range:[0,+inf], keep order:true
-└─TableReader(Probe)	49.00	root		data:TableRangeScan
-  └─TableRangeScan	49.00	cop[tikv]	table:t1	range:[0,+inf], keep order:true
+MergeJoin	50.00	root		inner join, left key:statistics__overflow_calc.lrr_test.col1, right key:statistics__overflow_calc.lrr_test.col1
+├─TableReader(Build)	50.00	root		data:TableRangeScan
+│ └─TableRangeScan	50.00	cop[tikv]	table:t2	range:[0,+inf], keep order:true
+└─TableReader(Probe)	50.00	root		data:TableRangeScan
+  └─TableRangeScan	50.00	cop[tikv]	table:t1	range:[0,+inf], keep order:true

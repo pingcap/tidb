@@ -47,6 +47,10 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	outOfRangeBetweenRate float64 = 100
+)
+
 // Histogram represents statistics for a column or index.
 type Histogram struct {
 	Tp *types.FieldType
@@ -947,12 +951,23 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return 0
 	}
 
-	// If there are no modifications to the table, return 0 - since all of this logic is
-	// redundant if we get to the end and return the min - which includes zero,
-	// TODO: The execution here is if we are out of range due to sampling of the histograms - which
-	// may miss the lowest/highest values - and we are out of range without any modifications.
+	// oneValue assumes "one value qualifes", and is used as a lower bound.
+	oneValue := float64(0)
+	if histNDV > 0 {
+		oneValue = hg.NotNullCount() / max(float64(histNDV), outOfRangeBetweenRate) // avoid inaccurate selectivity caused by small NDV
+	}
+
+	// We may have missed the true lowest/highest values due to sampling - and we are out of
+	// range without any modifications. So return oneValue to avoid underestimation.
 	if modifyCount == 0 {
-		return 0
+		return oneValue
+	}
+
+	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
+	// one value qualifies.
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
+	if !allowUseModifyCount {
+		return oneValue
 	}
 
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
@@ -996,8 +1011,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return 0
 	}
 
-	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
-
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
@@ -1006,22 +1019,15 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// the impact of modifications to the table
 	histInvalid := false
 	if histWidth <= 0 {
-		if !allowUseModifyCount {
-			return 0
-		}
 		histInvalid = true
 	}
 	if math.IsInf(histWidth, 1) {
-		if !allowUseModifyCount {
-			// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
-			return 0
-		}
 		histInvalid = true
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, rowCount float64
+	var leftPercent, rightPercent, avgRowCount float64
 	if debugTrace {
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx,
@@ -1031,7 +1037,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 				"boundR", boundR,
 				"lPercent", leftPercent,
 				"rPercent", rightPercent,
-				"rowCount", rowCount,
+				"avgRowCount", avgRowCount,
 			)
 		}()
 	}
@@ -1070,36 +1076,23 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
+	// Use absolute value to account for the case where rows may have been added on one side,
+	// but deleted from the other, resulting in qualifying out of range rows even though
+	// realtimeRowCount is less than histogram count
+	addedRows := math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	rowCount = totalPercent * hg.NotNullCount()
+	// Assume on average, half of newly added rows are within the histogram range, and the other
+	// half are distributed out of range according to the diagram in the function description.
+	avgRowCount = (addedRows * 0.5) * totalPercent
 
-	// oneValue assumes "one value qualies", and is used as either an Upper & lower bound.
-	oneValue := rowCount
-	if histNDV > 0 {
-		oneValue = hg.NotNullCount() / float64(histNDV)
+	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
+	if skewRatio > 0 {
+		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
+		avgRowCount = avgRowCount + (addedRows-avgRowCount)*skewRatio
 	}
 
-	if !allowUseModifyCount {
-		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
-		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
-		// We use 1/NDV here to assume that at most 1 value qualifies.
-		return min(rowCount, oneValue)
-	}
-
-	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
-	addedPct := addedRows / float64(realtimeRowCount)
-	// If the newly added rows is larger than the percentage that we've estimated that we're
-	// searching for out of the range, rowCount may need to be adjusted.
-	if addedPct > totalPercent {
-		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
-		// Attempt to account for the added rows - but not more than the totalPercent
-		outOfRangeAdded := addedRows * totalPercent
-		// Return the max of each estimate - with a minimum of one value.
-		rowCount = max(rowCount, outOfRangeAdded, oneValue)
-	}
-
-	// Use modifyCount as a final bound
-	return min(rowCount, float64(modifyCount))
+	// Use oneValue as lower bound
+	return max(avgRowCount, oneValue)
 }
 
 // Copy deep copies the histogram.

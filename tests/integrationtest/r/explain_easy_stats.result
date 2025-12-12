@@ -51,8 +51,8 @@ HashJoin	2481.25	root		left outer join, equal:[eq(explain_easy_stats.t1.c2, expl
 ├─TableReader(Build)	1985.00	root		data:Selection
 │ └─Selection	1985.00	cop[tikv]		not(isnull(explain_easy_stats.t2.c1))
 │   └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false, stats:partial[c1:missing]
-└─TableReader(Probe)	1998.00	root		data:TableRangeScan
-  └─TableRangeScan	1998.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
+└─TableReader(Probe)	1999.00	root		data:TableRangeScan
+  └─TableRangeScan	1999.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
 explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
