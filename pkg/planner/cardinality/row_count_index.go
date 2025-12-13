@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -183,7 +182,9 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 				idxID := idxIDs[0]
 				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
 			} else {
-				count, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
+				var countEst statistics.RowEstimate
+				countEst, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
+				count = countEst.Est
 			}
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -376,6 +377,10 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		// Don't allow the final result to go below 1 row
 		totalCount = mathutil.Clamp(totalCount, 1, float64(realtimeRowCount))
 	}
+<<<<<<< HEAD
+=======
+	totalCount.Clamp(minCount, float64(realtimeRowCount))
+>>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 	return totalCount, nil
 }
 
@@ -534,6 +539,10 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	}
 	colsIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
 	singleColumnEstResults := make([]float64, 0, len(indexRange.LowVal))
+<<<<<<< HEAD
+=======
+	minSel, maxSel = 1.0, 1.0
+>>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 	// The following codes uses Exponential Backoff to reduce the impact of independent assumption. It works like:
 	//   1. Calc the selectivity of each column.
 	//   2. Sort them and choose the first 4 most selective filter and the corresponding selectivity is sel_1, sel_2, sel_3, sel_4 where i < j => sel_i < sel_j.
@@ -551,13 +560,18 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		var (
 			count       float64
 			selectivity float64
-			err         error
 			foundStats  bool
 		)
 		if !statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
 			foundStats = true
-			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			var countEst statistics.RowEstimate
+			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			if err != nil {
+				return 0, 0, 0, false, err
+			}
+			count = countEst.Est
 			selectivity = count / float64(coll.RealtimeCount)
+			maxSel = min(maxSel, countEst.MaxEst/float64(coll.RealtimeCount))
 		}
 		if idxIDs, ok := coll.ColUniqueID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
 			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
@@ -574,15 +588,23 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 					break
 				}
 				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
+<<<<<<< HEAD
 				selectivity = count / float64(realtimeCnt)
+=======
+				selectivity = countResult.Est / float64(realtimeCnt)
+				maxSel = min(maxSel, countResult.MaxEst/float64(coll.RealtimeCount))
+>>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 			}
 		}
 		if !foundStats {
 			continue
 		}
+<<<<<<< HEAD
 		if err != nil {
 			return 0, false, err
 		}
+=======
+>>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 		singleColumnEstResults = append(singleColumnEstResults, selectivity)
 	}
 	// Sort them.
@@ -608,10 +630,22 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	if l < len(idx.Info.Columns) {
 		idxLowBound /= 0.9
 	}
+<<<<<<< HEAD
 	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
 	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
 	if l == 2 {
 		return max(minTwoCol, multTwoCol), true, nil
+=======
+	// maxSel is the "best" selectivity from all maximum of single column selectivities.
+	maxSel = max(idxLowBound, maxSel)
+	// minSel assumes independence between columns, so is the product of all single column selectivities.
+	minSel = max(minBound, minSel)
+
+	// Calculate minimum bound: take minimum of all selectivities (up to limit) and index bound
+	maxCols := min(MaxExponentialBackoffCols, l)
+	for i := range maxCols {
+		minBound = min(minBound, singleColumnEstResults[i])
+>>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 	}
 	minThreeCol := min(minTwoCol, singleColumnEstResults[2])
 	multThreeCol := multTwoCol * math.Sqrt(math.Sqrt(singleColumnEstResults[2]))
