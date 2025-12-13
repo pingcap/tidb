@@ -390,7 +390,7 @@ func collectSyncIndices(ctx base.PlanContext,
 			continue
 		}
 		for _, idx := range tbl.Indices {
-			if idx.State != model.StatePublic {
+			if idx.State != model.StatePublic || idx.MVIndex {
 				continue
 			}
 			idxCol := idx.FindColumnByName(colName)
@@ -400,6 +400,10 @@ func collectSyncIndices(ctx base.PlanContext,
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
+				// For prefix indexes, we need to ensure they're loaded when their base column
+				// is used in predicates. Prefix indexes have the same column name as their base
+				// column, so FindColumnByName will find them. However, we need to check if
+				// the index is analyzed and needs loading.
 				_, loadNeeded := tblStats.IndexIsLoadNeeded(idxID)
 				if !loadNeeded {
 					continue

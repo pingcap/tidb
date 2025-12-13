@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -61,37 +60,15 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	// Wait for stats to be fully persisted and loaded
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
-	// Verify table stats are in cache before running queries
-	// This ensures h.Update() has completed and populated the cache
-	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableID := table.Meta().ID
-	tblStats, ok := h.Get(tableID)
-	require.True(t, ok, "Table stats should be in cache after Update()")
-	require.NotNil(t, tblStats, "Table stats should not be nil")
-
 	// Priming select followed by explain to load needed histograms.
 	// These queries will add items to AsyncLoadHistogramNeededItems during planning.
+	// With the fix to IndexIsLoadNeeded and collectSyncIndices, prefix indexes should now
+	// be automatically loaded when their base column is used in predicates.
 	tk.MustExec("select count(*) from t where a = 'aaa'")
 	tk.MustExec("explain select * from t where a = 'aaa'")
 
-	// Race condition fix: h.Update() might not have fully populated ColAndIdxExistenceMap
-	// when it returns (especially with lazy loading). Re-update to ensure existence map
-	// is populated with histogram metadata before LoadNeededHistograms runs.
-	// This ensures that ColumnIsLoadNeeded/IndexIsLoadNeeded will correctly identify
-	// which columns/indices need loading.
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
-
-	// Verify table stats are still in cache and existence map is populated
-	tblStats, ok = h.Get(tableID)
-	require.True(t, ok, "Table stats should still be in cache")
-	// Verify that column 'a' is marked as analyzed in the existence map
-	colA := table.Meta().FindPublicColumnByName("a")
-	require.NotNil(t, colA, "Column 'a' should exist")
-	require.True(t, tblStats.ColAndIdxExistenceMap.HasAnalyzed(colA.ID, false),
-		"Column 'a' should be marked as analyzed in existence map")
-
-	// Now load the histograms - they should load successfully since existence map is populated
+	// Load histograms for columns/indexes that were requested during query planning.
+	// This should now include prefix indexes (ia3, ia10, ia) since column 'a' is used.
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
 	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(

@@ -921,8 +921,20 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 		return nil, true
 	}
 	// If the index is in the memory, we check its embedded func.
-	if ok && idx.IsAnalyzed() && !idx.IsFullLoad() {
-		return idx, true
+	// For prefix indexes and other indexes that might be partially loaded (e.g., via lazy loading),
+	// we need to ensure they're loaded if they're analyzed but not fully loaded.
+	if ok {
+		// Check if the index is analyzed according to its StatsVer
+		if idx.IsAnalyzed() && !idx.IsFullLoad() {
+			return idx, true
+		}
+		// Also check the existence map as a fallback: if the existence map says the index is analyzed
+		// but the index object itself doesn't reflect that (e.g., due to lazy loading timing), we should
+		// still load it. This is particularly important for prefix indexes which might be created with
+		// lazy loading before the existence map is fully populated.
+		if t.ColAndIdxExistenceMap.HasAnalyzed(id, true) && !idx.IsFullLoad() {
+			return idx, true
+		}
 	}
 	return idx, false
 }
