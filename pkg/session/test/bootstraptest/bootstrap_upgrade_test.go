@@ -993,7 +993,7 @@ func TestUpgradeBindInfo(t *testing.T) {
 	seLatestV.Close()
 }
 
-func TestUpgradeVersion254(t *testing.T) {
+func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
