@@ -121,7 +121,11 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
+<<<<<<< HEAD
 	require.Equal(t, int64(222), session.CurrentBootstrapVersion)
+=======
+	require.Equal(t, int64(253), session.CurrentBootstrapVersion)
+>>>>>>> c0659c16436 (sesssion: remove useless upgrade254 (#65020))
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {
