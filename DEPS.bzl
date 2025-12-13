@@ -6972,6 +6972,7 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sha256 = "b0a067425a329c47e5d34d40eb3390a8b141ff1d3d4b19ee3a9d05aa4168c165",
         strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20251202113147-065a1251aea9",
         urls = [
@@ -6979,6 +6980,15 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251202113147-065a1251aea9.zip",
             "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251202113147-065a1251aea9.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251202113147-065a1251aea9.zip",
+=======
+        sha256 = "16b28a000b4032420d542ed038104a253934521292d7f2fc68bd10f24bbeb7b8",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20251204034052-9dd1b8e41dbf",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251204034052-9dd1b8e41dbf.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251204034052-9dd1b8e41dbf.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251204034052-9dd1b8e41dbf.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251204034052-9dd1b8e41dbf.zip",
+>>>>>>> a1f423ace5d (client-go: support fall back to leader handle when using ScanRegions/BatchScanRegions (#64934))
         ],
     )
     go_repository(
