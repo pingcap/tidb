@@ -16,7 +16,7 @@ go_library(
         "//pkg/domain",
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
         "//pkg/util/table-filter",

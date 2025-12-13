@@ -193,7 +193,8 @@ func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
 // to make sure DDL execution in order. It's only check during the
 // test environment, so it would panic directly.
 func (*executor) checkInvolvingSchemaInfoInTest(job *model.Job) {
-	if !intest.EnableInternalCheck {
+	// TODO: replace by intest.EnableInternalCheck if PR#60141 cherry-picked
+	if !(intest.InTest || intest.EnableAssert) {
 		return
 	}
 	// all DDLs should set InvolvingSchemaInfo to make sure DDL execution in order.

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -219,7 +219,7 @@ func NewRestoreRegistry(ctx context.Context, g glue.Glue, dom *domain.Domain) (*
 		return nil, errors.Trace(err)
 	}
 	tableExists := true
-	_, err = dom.InfoSchema().TableByName(ctx, ast.NewCIStr(RestoreRegistryDBName), ast.NewCIStr(RestoreRegistryTableName))
+	_, err = dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(RestoreRegistryDBName), pmodel.NewCIStr(RestoreRegistryTableName))
 	if err != nil {
 		if !infoschema.ErrTableNotExists.Equal(err) {
 			return nil, errors.Trace(err)
