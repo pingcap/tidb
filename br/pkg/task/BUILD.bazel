@@ -140,6 +140,7 @@ go_test(
         "//br/pkg/utiltest",
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

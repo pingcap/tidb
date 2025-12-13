@@ -36,6 +36,7 @@ type BackupSender interface {
 		ctx context.Context,
 		round uint64,
 		storeID uint64,
+		limiter *ResourceConcurrentLimiter,
 		request backuppb.BackupRequest,
 		concurrency uint,
 		cli backuppb.BackupClient,
@@ -120,6 +121,7 @@ func StartTimeoutRecv(ctx context.Context, timeout time.Duration, storeID uint64
 func doSendBackup(
 	ctx context.Context,
 	client backuppb.BackupClient,
+	limiter *ResourceConcurrentLimiter,
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
@@ -138,7 +140,12 @@ func doSendBackup(
 		time.Sleep(3 * time.Second)
 	})
 	reqStartKey, reqEndKey := req.StartKey, req.EndKey
+	// Note: BR can set ranges into req.StartKey/req.EndKey, req.SubRanges or req.SortedSubRangesGroups.
+	// TODO: reqRangeSize += len(req.SortedSubRangesGroups) if the feature merged SST files is implemented.
+	reqRangeSize := len(req.SubRanges) + 1
+	limiter.Acquire(reqRangeSize)
 	bCli, err := client.Backup(ctx, &req)
+	limiter.Release(reqRangeSize)
 	// Note: derefer req here to let req.SubRanges be released as soon as possible.
 	// That's because in the backup main loop, the sub ranges is generated every about 15 seconds,
 	// which may accumulate a large number of incomplete ranges.
@@ -195,6 +202,7 @@ func doSendBackup(
 func startBackup(
 	pctx context.Context,
 	storeID uint64,
+	limiter *ResourceConcurrentLimiter,
 	backupReq backuppb.BackupRequest,
 	backupCli backuppb.BackupClient,
 	concurrency uint,
@@ -208,7 +216,7 @@ func startBackup(
 		// Send backup request to the store.
 		// handle the backup response or internal error here.
 		// handle the store error(reboot or network partition) outside.
-		reqs := SplitBackupReqRanges(backupReq, concurrency)
+		reqs := SplitBackupReqRanges(backupReq, int(concurrency))
 		logutil.CL(pctx).Info("starting backup to the corresponding store", zap.Uint64("storeID", storeID),
 			zap.Int("requestCount", len(reqs)), zap.Uint("concurrency", concurrency))
 
@@ -230,7 +238,7 @@ func startBackup(
 						logutil.CL(ectx).Info("retry backup to store", zap.Uint64("storeID", storeID),
 							zap.Int("retry", retry), zap.Int("reqIndex", reqIndex))
 					}
-					return doSendBackup(ectx, backupCli, bkReq, func(resp *backuppb.BackupResponse) error {
+					return doSendBackup(ectx, backupCli, limiter, bkReq, func(resp *backuppb.BackupResponse) error {
 						// Forward all responses (including error).
 						failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
 							msg := val.(string)
@@ -345,7 +353,7 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 	}()
 }
 
-func SplitBackupReqRanges(req backuppb.BackupRequest, count uint) []backuppb.BackupRequest {
+func SplitBackupReqRanges(req backuppb.BackupRequest, count int) []backuppb.BackupRequest {
 	rangeCount := len(req.SubRanges)
 	if rangeCount == 0 {
 		return []backuppb.BackupRequest{req}
@@ -355,17 +363,20 @@ func SplitBackupReqRanges(req backuppb.BackupRequest, count uint) []backuppb.Bac
 		// 0/1 means no need to split, just send one batch request
 		return []backuppb.BackupRequest{req}
 	}
-	splitStep := rangeCount / int(count)
-	if splitStep == 0 {
-		// splitStep should be at least 1
-		// if count >= rangeCount, means no batch, split them all
-		splitStep = 1
-	}
-	subRanges := req.SubRanges
-	for i := 0; i < rangeCount; i += splitStep {
+	splitStep := rangeCount / count
+	overCount := rangeCount - count*splitStep
+	start := 0
+	for i := range count {
+		nextStart := start + splitStep
+		if i < overCount {
+			nextStart += 1
+		} else if nextStart == start {
+			break
+		}
 		splitReq := req
-		splitReq.SubRanges = subRanges[i:min(i+splitStep, rangeCount)]
+		splitReq.SubRanges = req.SubRanges[start:nextStart]
 		splitRequests = append(splitRequests, splitReq)
+		start = nextStart
 	}
 	return splitRequests
 }
