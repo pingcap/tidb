@@ -626,10 +626,10 @@ type updateColumnWorker struct {
 func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (oldCol, newCol *model.ColumnInfo) {
 	for _, col := range t.WritableCols() {
 		if col.ID == currElementID {
-			changeColumnOrigName := table.FindCol(t.Cols(), getChangingColumnOriginName(col.ColumnInfo))
-			if changeColumnOrigName != nil {
+			changingColumn := table.FindCol(t.Cols(), col.GetChangingOriginName())
+			if changingColumn != nil {
 				newCol = col.ColumnInfo
-				oldCol = changeColumnOrigName.ColumnInfo
+				oldCol = changingColumn.ColumnInfo
 				return
 			}
 		}
@@ -922,8 +922,13 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.IndexInfo) {
 	for i := range oldIdxs {
 		oldIdxName := oldIdxs[i].Name.O
+<<<<<<< HEAD
 		publicName := pmodel.NewCIStr(getRemovingObjOriginName(oldIdxName))
 		removingName := pmodel.NewCIStr(getRemovingObjName(oldIdxName))
+=======
+		publicName := ast.NewCIStr(oldIdxs[i].GetRemovingOriginName())
+		removingName := ast.NewCIStr(model.GenRemovingObjName(oldIdxName))
+>>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 
 		changingIdxs[i].Name = publicName
 		oldIdxs[i].Name = removingName
@@ -934,7 +939,11 @@ func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.In
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName pmodel.CIStr) {
 	if oldCol.ID != changingCol.ID {
 		publicName := newColName
+<<<<<<< HEAD
 		removingName := pmodel.NewCIStr(getRemovingObjName(oldCol.Name.O))
+=======
+		removingName := ast.NewCIStr(model.GenRemovingObjName(oldCol.Name.O))
+>>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 		renameColumnTo(oldCol, oldIdxs, removingName)
 		renameColumnTo(changingCol, changingIdxs, publicName)
 	}
@@ -1347,6 +1356,7 @@ func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
 	return ids
 }
 
+<<<<<<< HEAD
 func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) string {
 	// Check whether the new column name is used.
 	columnNameMap := make(map[string]bool, len(tblInfo.Columns))
@@ -1397,21 +1407,13 @@ func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
 }
 
 func getExpressionIndexOriginName(originalName pmodel.CIStr) string {
+=======
+func getExpressionIndexOriginName(originalName ast.CIStr) string {
+>>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 	columnName := strings.TrimPrefix(originalName.O, expressionIndexPrefix+"_")
 	var pos int
 	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
 		return columnName
 	}
 	return columnName[:pos]
-}
-
-func getRemovingObjName(name string) string {
-	if strings.HasPrefix(name, removingObjPrefix) {
-		return name
-	}
-	return fmt.Sprintf("%s%s", removingObjPrefix, name)
-}
-
-func getRemovingObjOriginName(idxName string) string {
-	return strings.TrimPrefix(idxName, removingObjPrefix)
 }

@@ -101,9 +101,20 @@ type DDLReorgMeta struct {
 	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
 }
 
+<<<<<<< HEAD
 // GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta,
 // pass the default value in case of the reorg meta coming from old cluster and Concurrency is 0.
 func (dm *DDLReorgMeta) GetConcurrencyOrDefault(defaultVal int) int {
+=======
+// ShallowCopy creates a shallow copy of DDLReorgMeta.
+func (dm *DDLReorgMeta) ShallowCopy() *DDLReorgMeta {
+	newMeta := *dm
+	return &newMeta
+}
+
+// GetConcurrency gets the concurrency from DDLReorgMeta.
+func (dm *DDLReorgMeta) GetConcurrency() int {
+>>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 	concurrency := dm.Concurrency.Load()
 	if concurrency == 0 {
 		return defaultVal
