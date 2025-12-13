@@ -1469,6 +1469,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 	}
 
+	if tableInfo.Affinity != nil {
+		fmt.Fprintf(buf, " /*T![%s] AFFINITY='%s' */", tidb.FeatureIDAffinity, tableInfo.Affinity.Level)
+	}
+
 	// add partition info here.
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil

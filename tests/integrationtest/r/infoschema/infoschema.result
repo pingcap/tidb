@@ -54,11 +54,11 @@ count(*)
 3
 explain format='plan_tree' SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
 id	task	access object	operator info
-HashAgg	root		funcs:count(1)->Column#27
+HashAgg	root		funcs:count(1)->Column#28
 └─MemTableScan	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 explain format='plan_tree' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
 id	task	access object	operator info
-HashAgg	root		funcs:count(1)->Column#27
+HashAgg	root		funcs:count(1)->Column#28
 └─MemTableScan	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
 count(*)

@@ -117,6 +117,7 @@ const (
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
 	ActionModifySchemaReadOnly   ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableAffinity     ActionType = 78
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -193,6 +194,7 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTableMode:                "alter table mode",
 	ActionRefreshMeta:                   "refresh meta",
 	ActionModifySchemaReadOnly:          "modify schema read only",
+	ActionAlterTableAffinity:            "alter table affinity",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.

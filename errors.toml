@@ -1616,6 +1616,11 @@ error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
 '''
 
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
 ["ddl:8270"]
 error = '''
 Invalid engine attribute format: %s
