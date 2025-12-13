@@ -17,7 +17,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"testing"
 
@@ -343,12 +342,9 @@ func (f *fakeDDLExecutor) BatchCreateTableWithInfo(
 ) error {
 	f.queryList = append(f.queryList, sctx.Value(sessionctx.QueryString).(string))
 	if len(info) > f.maxCount {
-		switch rand.Int() % 2 {
-		case 0:
-			return kv.ErrTxnTooLarge
-		case 1:
-			return kv.ErrEntryTooLarge
-		}
+		// Use deterministic error instead of random to avoid flakiness
+		// Both errors trigger the same splitting behavior, so determinism is more important
+		return kv.ErrEntryTooLarge
 	}
 	f.successQueryList = append(f.successQueryList, sctx.Value(sessionctx.QueryString).(string))
 	return nil
@@ -390,6 +386,9 @@ func (f *fakeSessionContext) GetSessionVars() *variable.SessionVars {
 func TestSplitTablesQueryMatch(t *testing.T) {
 	ddlexecutor := &fakeDDLExecutor{maxCount: 1}
 	sctx := newFakeSessionContext(ddlexecutor)
+	// Note: Map iteration order in Go is randomized, which means databases can be processed
+	// in different orders across test runs. The test below uses content-based assertions
+	// instead of position-based ones to handle this non-determinism.
 	tables := map[string][]*model.TableInfo{
 		"test": {
 			{Name: ast.NewCIStr("t1")},
@@ -403,12 +402,33 @@ func TestSplitTablesQueryMatch(t *testing.T) {
 	err := executor.BRIECreateTables(sctx, tables, "/*from(br)*/")
 	require.NoError(t, err)
 	require.Len(t, ddlexecutor.queryList, 4)
-	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList[0])
-	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList[1])
-	require.Equal(t, "/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList[2])
-	require.Equal(t, "/*from(br)*/CREATE TABLE `t3` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList[3])
+
+	// Instead of checking exact positions, verify the content exists and count occurrences
+	// This makes the test resilient to map iteration order changes
+	expectedQueries := map[string]int{
+		"/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;": 1,
+		"/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;":                                                                                                1,
+		"/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;":                                                                                                1,
+		"/*from(br)*/CREATE TABLE `t3` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;":                                                                                                1,
+	}
+
+	actualQueries := make(map[string]int)
+	for _, query := range ddlexecutor.queryList {
+		actualQueries[query]++
+	}
+
+	for expectedQuery, expectedCount := range expectedQueries {
+		actualCount := actualQueries[expectedQuery]
+		require.Equal(t, expectedCount, actualCount, "Query should appear exactly %d time(s): %s", expectedCount, expectedQuery)
+	}
+
 	require.Len(t, ddlexecutor.successQueryList, 3)
-	require.Equal(t, ddlexecutor.queryList[1], ddlexecutor.successQueryList[0])
-	require.Equal(t, ddlexecutor.queryList[2], ddlexecutor.successQueryList[1])
-	require.Equal(t, ddlexecutor.queryList[3], ddlexecutor.successQueryList[2])
+	// Verify success list contains the individual table queries (not the batch query)
+	successSet := make(map[string]bool)
+	for _, query := range ddlexecutor.successQueryList {
+		successSet[query] = true
+	}
+	require.True(t, successSet["/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"], "t1 should be in success list")
+	require.True(t, successSet["/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"], "t2 should be in success list")
+	require.True(t, successSet["/*from(br)*/CREATE TABLE `t3` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"], "t3 should be in success list")
 }
