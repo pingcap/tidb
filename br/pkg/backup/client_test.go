@@ -74,6 +74,7 @@ func (m *mockBackupBackupSender) SendAsync(
 	ctx context.Context,
 	round uint64,
 	storeID uint64,
+	limiter *backup.ResourceConcurrentLimiter,
 	request backuppb.BackupRequest,
 	concurrency uint,
 	cli backuppb.BackupClient,
@@ -826,6 +827,15 @@ func TestObserveStoreChangesAsync(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/backup-store-change-tick"))
 }
 
+func genSubRanges(req *backuppb.BackupRequest, count int) {
+	for i := range count {
+		req.SubRanges = append(req.SubRanges, &kvrpcpb.KeyRange{
+			StartKey: []byte{byte(i)},
+			EndKey:   []byte{byte(i + 1)},
+		})
+	}
+}
+
 func TestSplitBackupReqRanges(t *testing.T) {
 	req := backuppb.BackupRequest{
 		SubRanges: []*kvrpcpb.KeyRange{},
@@ -837,15 +847,6 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	// case #2 empty ranges and limit is 0
 	res = backup.SplitBackupReqRanges(req, 0)
 	require.Len(t, res, 1)
-
-	genSubRanges := func(req *backuppb.BackupRequest, count int) {
-		for i := 0; i < count; i++ {
-			req.SubRanges = append(req.SubRanges, &kvrpcpb.KeyRange{
-				StartKey: []byte{byte(i)},
-				EndKey:   []byte{byte(i + 1)},
-			})
-		}
-	}
 
 	genSubRanges(&req, 10)
 	// case #3: 10 subranges and split into 10 parts
@@ -864,26 +865,125 @@ func TestSplitBackupReqRanges(t *testing.T) {
 		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
 	}
 
-	// case #3.2: 10 subranges and split into 9 parts(has no difference with 10 parts)
+	// case #3.2: 10 subranges and split into 9 parts
 	res = backup.SplitBackupReqRanges(req, 9)
-	require.Len(t, res, 10)
+	require.Len(t, res, 9)
 	for i := 0; i < 10; i++ {
-		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
-		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
-	}
-
-	// case #4: 10 subranges and split into 3 parts, each part has 3 subranges
-	// but actually it will generate 4 parts due to not divisible.
-	res = backup.SplitBackupReqRanges(req, 3)
-	require.Len(t, res, 4)
-	for i := 0; i < 3; i++ {
-		require.Len(t, res[i].SubRanges, 3)
-		for j := 0; j < 3; j++ {
-			require.Equal(t, res[i].SubRanges[j].StartKey, req.SubRanges[i*3+j].StartKey)
-			require.Equal(t, res[i].SubRanges[j].EndKey, req.SubRanges[i*3+j].EndKey)
+		if i == 0 {
+			require.Equal(t, res[0].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
+			require.Equal(t, res[0].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
+		} else if i == 1 {
+			require.Equal(t, res[0].SubRanges[1].StartKey, req.SubRanges[i].StartKey)
+			require.Equal(t, res[0].SubRanges[1].EndKey, req.SubRanges[i].EndKey)
+		} else {
+			require.Equal(t, res[i-1].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
+			require.Equal(t, res[i-1].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
 		}
 	}
-	require.Len(t, res[3].SubRanges, 1)
-	require.Equal(t, res[3].SubRanges[0].StartKey, req.SubRanges[9].StartKey)
-	require.Equal(t, res[3].SubRanges[0].EndKey, req.SubRanges[9].EndKey)
+
+	// case #4: 10 subranges and split into 3 parts, the first part has 4 subranges
+	// and other part has 3 subranges
+	res = backup.SplitBackupReqRanges(req, 3)
+	require.Len(t, res, 3)
+	for i := 0; i < 3; i++ {
+		if i == 0 {
+			require.Len(t, res[0].SubRanges, 4)
+			for j := range 4 {
+				require.Equal(t, res[0].SubRanges[j].StartKey, req.SubRanges[j].StartKey)
+				require.Equal(t, res[0].SubRanges[j].EndKey, req.SubRanges[j].EndKey)
+			}
+		} else {
+			require.Len(t, res[i].SubRanges, 3)
+			for j := range 3 {
+				require.Equal(t, res[i].SubRanges[j].StartKey, req.SubRanges[i*3+j+1].StartKey)
+				require.Equal(t, res[i].SubRanges[j].EndKey, req.SubRanges[i*3+j+1].EndKey)
+			}
+		}
+	}
+}
+
+func TestSplitBackupReqRanges2(t *testing.T) {
+	cases := []struct {
+		totalLen int
+		splitN   int
+		lens     []int
+	}{
+		{
+			totalLen: 8,
+			splitN:   0,
+			lens:     []int{8},
+		},
+		{
+			totalLen: 8,
+			splitN:   1,
+			lens:     []int{8},
+		},
+		{
+			totalLen: 8,
+			splitN:   2,
+			lens:     []int{4, 4},
+		},
+		{
+			totalLen: 8,
+			splitN:   3,
+			lens:     []int{3, 3, 2},
+		},
+		{
+			totalLen: 8,
+			splitN:   4,
+			lens:     []int{2, 2, 2, 2},
+		},
+		{
+			totalLen: 8,
+			splitN:   5,
+			lens:     []int{2, 2, 2, 1, 1},
+		},
+		{
+			totalLen: 8,
+			splitN:   6,
+			lens:     []int{2, 2, 1, 1, 1, 1},
+		},
+		{
+			totalLen: 8,
+			splitN:   7,
+			lens:     []int{2, 1, 1, 1, 1, 1, 1},
+		},
+		{
+			totalLen: 8,
+			splitN:   8,
+			lens:     []int{1, 1, 1, 1, 1, 1, 1, 1},
+		},
+		{
+			totalLen: 8,
+			splitN:   9,
+			lens:     []int{1, 1, 1, 1, 1, 1, 1, 1},
+		},
+		{
+			totalLen: 8,
+			splitN:   1024,
+			lens:     []int{1, 1, 1, 1, 1, 1, 1, 1},
+		},
+		{
+			totalLen: 73,
+			splitN:   13,
+			lens:     []int{6, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5},
+		},
+	}
+
+	for _, cs := range cases {
+		req := backuppb.BackupRequest{
+			SubRanges: []*kvrpcpb.KeyRange{},
+		}
+		genSubRanges(&req, cs.totalLen)
+		res := backup.SplitBackupReqRanges(req, cs.splitN)
+		rangesIndex := 0
+		for i, l := range cs.lens {
+			require.Len(t, res[i].SubRanges, l)
+			for _, subRanges := range res[i].SubRanges {
+				require.Equal(t, req.SubRanges[rangesIndex].StartKey, subRanges.StartKey)
+				require.Equal(t, req.SubRanges[rangesIndex].EndKey, subRanges.EndKey)
+				rangesIndex += 1
+			}
+		}
+	}
 }

@@ -19,6 +19,7 @@ go_test(
         "//br/pkg/gluetidb",
         "//br/pkg/logutil",
         "//br/pkg/registry",
+        "//br/pkg/stream",
         "//br/pkg/streamhelper",
         "//br/pkg/summary",
         "//br/pkg/task",

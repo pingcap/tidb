@@ -50,6 +50,8 @@ const (
 	MaxResolveLocksbackupOffSleepMs = 600000
 
 	IncompleteRangesUpdateInterval = time.Second * 15
+
+	RangesSentThreshold = 30000000
 )
 
 // ClientMgr manages connections needed by backup.
@@ -83,6 +85,8 @@ type MainBackupLoop struct {
 	GlobalProgressTree *rtree.ProgressRangeTree
 	ReplicaReadLabel   map[string]string
 	StateNotifier      chan BackupRetryPolicy
+	// make sure not too many requests are marshaled at the same time
+	Limiter *ResourceConcurrentLimiter
 
 	ProgressCallBack        func(ProgressUnit)
 	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
@@ -94,6 +98,7 @@ func (s *MainBackupSender) SendAsync(
 	ctx context.Context,
 	round uint64,
 	storeID uint64,
+	limiter *ResourceConcurrentLimiter,
 	request backuppb.BackupRequest,
 	concurrency uint,
 	cli backuppb.BackupClient,
@@ -105,7 +110,7 @@ func (s *MainBackupSender) SendAsync(
 			logutil.CL(ctx).Info("store backup goroutine exits", zap.Uint64("store", storeID))
 			close(respCh)
 		}()
-		err := startBackup(ctx, storeID, request, cli, concurrency, respCh)
+		err := startBackup(ctx, storeID, limiter, request, cli, concurrency, respCh)
 		if err != nil {
 			// only 2 kinds of errors will occur here.
 			// 1. grpc connection error(already retry inside)
@@ -262,7 +267,7 @@ mainLoop:
 			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
-			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
+			loop.SendAsync(mainCtx, round, storeID, loop.Limiter, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
@@ -333,7 +338,7 @@ mainLoop:
 
 					storeBackupResultChMap[storeID] = ch
 					// start backup for this store
-					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
+					loop.SendAsync(mainCtx, round, storeID, loop.Limiter, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 					// re-create context for new handler loop
 					handleCtx, handleCancel = context.WithCancel(mainCtx)
 					// handleCancel makes the former collect goroutine exits
@@ -687,7 +692,9 @@ func (bc *Client) BuildBackupRangeAndSchema(
 		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
 	}
 	ranges, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
-	schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
+	if schemas != nil {
+		schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
+	}
 	return ranges, schemas, policies, errors.Trace(err)
 }
 
@@ -1112,6 +1119,7 @@ func (bc *Client) BackupRanges(
 	ranges []rtree.KeyRange,
 	request backuppb.BackupRequest,
 	concurrency uint,
+	rangeLimit int,
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
@@ -1144,6 +1152,7 @@ func (bc *Client) BackupRanges(
 		GlobalProgressTree: &globalProgressTree,
 		ReplicaReadLabel:   replicaReadLabel,
 		StateNotifier:      stateNotifier,
+		Limiter:            NewResourceMemoryLimiter(rangeLimit),
 		ProgressCallBack:   progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.

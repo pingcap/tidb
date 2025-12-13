@@ -18,14 +18,14 @@ func TestLogRanges(t *testing.T) {
 		count  int
 		expect string
 	}{
-		{0, `{"ranges": {"total": 0, "ranges": []}}`},
-		{1, `{"ranges": {"total": 1, "ranges": ["[30, 31)"]}}`},
-		{2, `{"ranges": {"total": 2, "ranges": ["[30, 31)", "[31, 32)"]}}`},
-		{3, `{"ranges": {"total": 3, "ranges": ["[30, 31)", "[31, 32)", "[32, 33)"]}}`},
-		{4, `{"ranges": {"total": 4, "ranges": ["[30, 31)", "[31, 32)", "[32, 33)", "[33, 34)"]}}`},
-		{5, `{"ranges": {"total": 5, "ranges": ["[30, 31)", "(skip 3)", "[34, 35)"]}}`},
-		{6, `{"ranges": {"total": 6, "ranges": ["[30, 31)", "(skip 4)", "[35, 36)"]}}`},
-		{1024, `{"ranges": {"total": 1024, "ranges": ["[30, 31)", "(skip 1022)", "[31303233, 31303234)"]}}`},
+		{0, `{"ranges": []}`},
+		{1, `{"ranges": ["[30, 31)"]}`},
+		{2, `{"ranges": ["[30, 31)", "[31, 32)"]}`},
+		{3, `{"ranges": ["[30, 31)", "[31, 32)", "[32, 33)"]}`},
+		{4, `{"ranges": ["[30, 31)", "(skip 2)", "[33, 34)"]}`},
+		{5, `{"ranges": ["[30, 31)", "(skip 3)", "[34, 35)"]}`},
+		{6, `{"ranges": ["[30, 31)", "(skip 4)", "[35, 36)"]}`},
+		{1024, `{"ranges": ["[30, 31)", "(skip 1022)", "[31303233, 31303234)"]}`},
 	}
 
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
