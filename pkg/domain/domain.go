@@ -232,6 +232,9 @@ type Domain struct {
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
 	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
+
+	// used for backup/restore
+	loadDBFilter func(dbName ast.CIStr) bool
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -537,7 +540,7 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
-	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil, nil)
+	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil, nil, nil)
 }
 
 // NewDomainWithEtcdClient creates a new domain with etcd client. Should not create multiple domains for the same store.
@@ -549,6 +552,7 @@ func NewDomainWithEtcdClient(
 	factory pools.Factory,
 	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
+	loadDBFilter func(dbName ast.CIStr) bool,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	do := &Domain{
@@ -562,6 +566,7 @@ func NewDomainWithEtcdClient(
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
+		loadDBFilter:             loadDBFilter,
 	}
 
 	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
@@ -592,6 +597,7 @@ func NewDomainWithEtcdClient(
 		do.schemaLease,
 		do.sysSessionPool,
 		isvalidator.New(do.schemaLease),
+		do.loadDBFilter,
 	)
 	do.initDomainSysVars()
 
