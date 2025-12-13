@@ -113,7 +113,7 @@ func TestSlowStatsSaving(t *testing.T) {
 		"select version from mysql.stats_meta where table_id = ?",
 		tableInfo.ID,
 	).Rows()
-	require.Equal(t, 1, len(rows))
+	require.Equal(t, 3, len(rows))
 	version := rows[0][0].(string)
 	versionUint64, err := strconv.ParseUint(version, 10, 64)
 	require.NoError(t, err)

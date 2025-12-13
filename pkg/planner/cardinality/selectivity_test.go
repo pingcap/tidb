@@ -218,6 +218,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 func TestEstimationForUnknownValues(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
