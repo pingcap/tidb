@@ -117,6 +117,12 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
 
+	var err error
+	failpoint.InjectCall("beforeReadIndexStepExecRunSubtask", &err)
+	if err != nil {
+		return err
+	}
+
 	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
 	if err != nil {
 		return err
