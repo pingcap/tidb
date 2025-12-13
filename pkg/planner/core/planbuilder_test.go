@@ -333,7 +333,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 		ExtraHandleCol: col,
 		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}
-	indexLookup = indexLookup.Init(ctx, 0, false)
+	indexLookup = indexLookup.Init(ctx, 0, util.IndexLookUpPushDownNone)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
@@ -1200,7 +1200,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		TablePlan: tablePlan,
 		IndexPlan: indexPlan,
 		KeepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
 	check(reader)
 	cloned, err := reader.Clone(ctx)
 	require.NoError(t, err)
@@ -1268,7 +1268,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		TablePlan: projectionPlan,
 		IndexPlan: limitPlan,
 		KeepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
 	check(reader)
 	cloned, err = reader.Clone(ctx)
 	require.NoError(t, err)
