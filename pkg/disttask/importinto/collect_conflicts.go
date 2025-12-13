@@ -62,6 +62,22 @@ type collectConflictsStepExecutor struct {
 
 var _ execute.StepExecutor = &collectConflictsStepExecutor{}
 
+// NewCollectConflictsStepExecutor creates a new collectConflictsStepExecutor.
+// exported for test.
+func NewCollectConflictsStepExecutor(
+	taskID int64,
+	store tidbkv.Storage,
+	taskMeta *TaskMeta,
+	logger *zap.Logger,
+) execute.StepExecutor {
+	return &collectConflictsStepExecutor{
+		taskID:   taskID,
+		store:    store,
+		taskMeta: taskMeta,
+		logger:   logger,
+	}
+}
+
 func (e *collectConflictsStepExecutor) Init(ctx context.Context) error {
 	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store, e.logger)
 	if err != nil {
@@ -77,10 +93,6 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 	defer func() {
 		task.End(zapcore.ErrorLevel, err)
 	}()
-	stepMeta := &CollectConflictsStepMeta{}
-	if err = json.Unmarshal(subtask.Meta, stepMeta); err != nil {
-		return errors.Trace(err)
-	}
 	accessRec, objStore, err := dxfhandle.NewObjStoreWithRecording(ctx, e.taskMeta.Plan.CloudStorageURI)
 	if err != nil {
 		return err
@@ -90,6 +102,11 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 		e.summary.MergeObjStoreRequests(&accessRec.Requests)
 		e.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 	}()
+
+	stepMeta := &CollectConflictsStepMeta{}
+	if err = json.Unmarshal(subtask.Meta, stepMeta); err != nil {
+		return errors.Trace(err)
+	}
 	if stepMeta.ExternalPath != "" {
 		if err := stepMeta.ReadJSONFromExternalStorage(ctx, objStore, stepMeta); err != nil {
 			return errors.Trace(err)
@@ -198,14 +215,6 @@ func (e *collectConflictsStepExecutor) resetForNewSubtask(subtaskID int64) {
 func (e *collectConflictsStepExecutor) Cleanup(_ context.Context) (err error) {
 	e.logger.Info("cleanup subtask env")
 	return e.tableImporter.Close()
-}
-
-func (*collectConflictsStepExecutor) TaskMetaModified(context.Context, []byte) error {
-	return nil
-}
-
-func (*collectConflictsStepExecutor) ResourceModified(context.Context, *proto.StepResource) error {
-	return nil
 }
 
 func (e *collectConflictsStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
