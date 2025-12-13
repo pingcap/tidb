@@ -265,6 +265,51 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
+// CanConvertAntiJoin is used in outer-join-to-semi-join rule.
+func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema) (canConvert bool) {
+	if len(ret) != 1 || len(p.EqualConditions) == 0 {
+		return false
+	}
+	switch p.JoinType {
+	case base.LeftOuterJoin:
+		inner := p.children[0]
+		innerSch := inner.Schema()
+		outerSch := intset.NewFastIntSet()
+		expression.ExtractColumnsSetFromExpressions(&outerSch, func(c *expression.Column) bool {
+			return innerSch.Contains(c)
+		}, expression.Column2Exprs(p.Schema().Columns)...)
+		var sf *expression.ScalarFunction
+		var ok bool
+		if sf, ok = ret[0].(*expression.ScalarFunction); !ok {
+			return false
+		}
+		if sf.FuncName.L != ast.IsNull {
+			return false
+		}
+		args := sf.GetArgs()
+		if len(args) == 1 {
+			// It is a Not expression. then we check whether it has a IsNull expression.
+			if isNullcol, ok := args[0].(*expression.Column); ok {
+				// column in IsNull expression is from the outer side columns.
+				selConditionColInOuter := outerSch.Has(int(isNullcol.UniqueID))
+				// selection's schema doesn't contain the outer side columns.
+				selOutColNotInOuter := true
+				for _, c := range selectSch.Columns {
+					if outerSch.Has(int(c.UniqueID)) {
+						selOutColNotInOuter = false
+					}
+				}
+				if selConditionColInOuter && selOutColNotInOuter {
+					canConvert = true
+				}
+			}
+		}
+		return canConvert
+	default:
+		return false
+	}
+}
+
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
 func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.InnerJoin {

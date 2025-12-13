@@ -40,6 +40,7 @@ const (
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
 	FlagPruneColumnsAgain
+	FlagOuterJoinToSemiJoin
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
 	FlagEmptySelectionEliminator
