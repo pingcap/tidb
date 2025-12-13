@@ -1416,10 +1416,23 @@ func RunStreamRestore(
 		stream.LogDBReplaceMap("scanned log meta kv before snapshot restore", dbReplace)
 	}
 
+	// Save PITR-related info to cfg for blocklist creation in defer function
+	cfg.tableMappingManager = metaInfoProcessor.GetTableMappingManager()
+
+	// Capture restore start timestamp before any table creation (for blocklist)
+	restoreStartTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RestoreStartTS = restoreStartTS
+	log.Info("captured restore start timestamp for blocklist",
+		zap.Uint64("restoreStartTS", restoreStartTS))
+
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
+
 		snapshotRestoreConfig := SnapshotRestoreConfig{
 			RestoreConfig:          cfg,
 			piTRTaskInfo:           taskInfo,
