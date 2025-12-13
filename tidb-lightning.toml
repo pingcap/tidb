@@ -1,0 +1,33 @@
+[lightning]
+level = "info"
+max-error = 0
+io-concurrency = 8
+check-requirements = false
+status-addr = ":8289" 
+
+[tikv-importer]
+backend = "local"
+sorted-kv-dir = "/tmp/tidb_sort"
+
+[mydumper]
+data-source-dir = "/mnt/data/joechenrh/tidb/t1"
+
+[mydumper.csv]
+terminator = "\n"
+header = false
+not-null = false
+null = '\N'
+backslash-escape = true
+trim-last-separator = false
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+password = ""
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+
+[checkpoint]
+enable = false
+keep-after-success = false
