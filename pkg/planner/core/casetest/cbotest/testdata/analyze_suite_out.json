@@ -459,7 +459,7 @@
   {
     "Name": "TestAnalyze",
     "Cases": [
-      "Analyze{Table(_tidb_rowid, a, _tidb_rowid)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
       "IndexReader(Index(t.b)[[-inf,2)])",
       "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
