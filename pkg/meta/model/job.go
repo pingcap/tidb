@@ -111,6 +111,8 @@ const (
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
+	ActionAlterTableMode         ActionType = 75
+	ActionRefreshMeta            ActionType = 76
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -183,6 +185,8 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
+	ActionAlterTableMode:                "alter table mode",
+	ActionRefreshMeta:                   "refresh meta",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -1265,6 +1269,8 @@ type SchemaDiff struct {
 	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
 	// infoschema should read latest meta directly.
 	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
+	// IsRefreshMeta is set to true only when this diff is initiated by refreshMeta DDL that's only used by BR
+	IsRefreshMeta bool `json:"-"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }

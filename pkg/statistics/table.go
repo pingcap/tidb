@@ -95,9 +95,7 @@ type Table struct {
 
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
-// We use this map to decide the stats status of a column/index. So it should be fully initialized before we check whether a column/index is analyzed or not.
 type ColAndIdxExistenceMap struct {
-	checked     bool
 	colAnalyzed map[int64]bool
 	idxAnalyzed map[int64]bool
 }
@@ -110,16 +108,6 @@ func (m *ColAndIdxExistenceMap) DeleteColNotFound(id int64) {
 // DeleteIdxNotFound deletes the index with the given id.
 func (m *ColAndIdxExistenceMap) DeleteIdxNotFound(id int64) {
 	delete(m.idxAnalyzed, id)
-}
-
-// Checked returns whether the map has been checked.
-func (m *ColAndIdxExistenceMap) Checked() bool {
-	return m.checked
-}
-
-// SetChecked set the map as checked.
-func (m *ColAndIdxExistenceMap) SetChecked() {
-	m.checked = true
 }
 
 // HasAnalyzed checks whether a column/index stats exists and it has stats.
@@ -754,11 +742,16 @@ func (t *Table) IsEligibleForAnalysis() bool {
 	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
-	if t == nil || t.Pseudo || t.RealtimeCount < AutoAnalyzeMinCnt {
+	if !t.MeetAutoAnalyzeMinCnt() || t.Pseudo {
 		return false
 	}
 
 	return true
+}
+
+// MeetAutoAnalyzeMinCnt checks whether the table meets the minimum count required for auto-analyze.
+func (t *Table) MeetAutoAnalyzeMinCnt() bool {
+	return t != nil && t.RealtimeCount >= AutoAnalyzeMinCnt
 }
 
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
@@ -876,13 +869,13 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 }
 
 // IndexIsLoadNeeded checks whether the index needs trigger the async/sync load.
-// The Index should be visible in the table and really has analyzed statistics in the stroage.
+// The Index should be visible in the table and really has analyzed statistics in the storage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Index together with the checking result, to avoid accessing the map multiple times.
 func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	idx, ok := t.indices[id]
 	// If the index is not in the memory, and we have its stats in the storage. We need to trigger the load.
-	if !ok && (t.ColAndIdxExistenceMap.HasAnalyzed(id, true) || !t.ColAndIdxExistenceMap.Checked()) {
+	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, true) {
 		return nil, true
 	}
 	// If the index is in the memory, we check its embedded func.

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -74,13 +74,13 @@ func TestRestorePreWork(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	pdClient := utiltest.NewFakePDClient([]*metapb.Store{
+	pdClient := split.NewFakePDClient([]*metapb.Store{
 		{
 			Id:      1,
 			Address: fmt.Sprintf(":%d", 51111+port),
 		},
 	}, false, nil)
-	pdHTTPCli := utiltest.NewFakePDHTTPClient()
+	pdHTTPCli := split.NewFakePDHTTPClient()
 	mgr := &conn.Mgr{
 		PdController: pdutil.NewPdControllerWithPDClient(
 			pdClient, pdHTTPCli, &semver.Version{Major: 4, Minor: 0, Patch: 9}),
@@ -96,17 +96,17 @@ func TestRestorePreWork(t *testing.T) {
 			_, ok := pdutil.Schedulers[key]
 			require.True(t, ok)
 		}
-		require.Equal(t, len(utiltest.ExistPDCfgGeneratorBefore), len(cfg.ScheduleCfg))
+		require.Equal(t, len(split.ExistPDCfgGeneratorBefore), len(cfg.ScheduleCfg))
 		for key, value := range cfg.ScheduleCfg {
-			expectValue, ok := utiltest.ExistPDCfgGeneratorBefore[key]
+			expectValue, ok := split.ExistPDCfgGeneratorBefore[key]
 			require.True(t, ok)
 			require.Equal(t, expectValue, value)
 		}
 		cfgs, err := pdHTTPCli.GetConfig(context.TODO())
 		require.NoError(t, err)
-		require.Equal(t, len(utiltest.ExpectPDCfgGeneratorsResult), len(cfg.ScheduleCfg))
+		require.Equal(t, len(split.ExpectPDCfgGeneratorsResult), len(cfg.ScheduleCfg))
 		for key, value := range cfgs {
-			expectValue, ok := utiltest.ExpectPDCfgGeneratorsResult[key[len("schedule."):]]
+			expectValue, ok := split.ExpectPDCfgGeneratorsResult[key[len("schedule."):]]
 			require.True(t, ok)
 			require.Equal(t, expectValue, value)
 		}
@@ -123,9 +123,9 @@ func TestRestorePreWork(t *testing.T) {
 	{
 		cfgs, err := pdHTTPCli.GetConfig(context.TODO())
 		require.NoError(t, err)
-		require.Equal(t, len(utiltest.ExistPDCfgGeneratorBefore), len(cfg.ScheduleCfg))
+		require.Equal(t, len(split.ExistPDCfgGeneratorBefore), len(cfg.ScheduleCfg))
 		for key, value := range cfgs {
-			expectValue, ok := utiltest.ExistPDCfgGeneratorBefore[key[len("schedule."):]]
+			expectValue, ok := split.ExistPDCfgGeneratorBefore[key[len("schedule."):]]
 			require.True(t, ok)
 			require.Equal(t, expectValue, value)
 		}

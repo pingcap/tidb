@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
@@ -168,4 +169,24 @@ func TestWithCleanUp(t *testing.T) {
 		return nil
 	}
 	require.NoError(t, case3())
+}
+
+func generateFile(crc, kvs, bytes uint64) *backuppb.File {
+	return &backuppb.File{
+		Crc64Xor:   crc,
+		TotalKvs:   kvs,
+		TotalBytes: bytes,
+		Cf:         "write",
+	}
+}
+
+func TestSummaryFiles(t *testing.T) {
+	crc, kvs, bytes := SummaryFiles([]*backuppb.File{
+		generateFile(0xF, 10, 100),
+		generateFile(0xF0, 20, 200),
+		generateFile(0xF00, 30, 300),
+	})
+	require.Equal(t, uint64(0xFFF), crc)
+	require.Equal(t, uint64(60), kvs)
+	require.Equal(t, uint64(600), bytes)
 }
