@@ -280,6 +280,7 @@ go_test(
         "placement_policy_test.go",
         "placement_sql_test.go",
         "primary_key_handle_test.go",
+        "reorg_test.go",
         "repair_table_test.go",
         "restart_test.go",
         "rollingback_test.go",
