@@ -611,8 +611,6 @@ func TestIndexChangeWithModifyColumn(t *testing.T) {
 	tkddl := testkit.NewTestKit(t, store)
 	tkddl.MustExec("use test")
 
-	var checkErr error
-
 	var wg sync.WaitGroup
 	wg.Add(1)
 
@@ -625,7 +623,7 @@ func TestIndexChangeWithModifyColumn(t *testing.T) {
 			}
 			runModifyColumn = true
 			go func() {
-				_, checkErr = tkddl.Exec("alter table t modify column c varchar(120) default 'aaaaa' collate utf8mb4_general_ci first;")
+				tkddl.MustExec("alter table t modify column c varchar(120) default 'aaaaa' collate utf8mb4_general_ci first;")
 				wg.Done()
 			}()
 		default:
@@ -635,7 +633,6 @@ func TestIndexChangeWithModifyColumn(t *testing.T) {
 
 	tk.MustExec("alter table t add index idx(c);")
 	wg.Wait()
-	require.ErrorContains(t, checkErr, "when index is defined")
 	tk.MustExec("admin check table t")
 	tk.MustExec("delete from t;")
 }
