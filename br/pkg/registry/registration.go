@@ -219,7 +219,10 @@ func NewRestoreRegistry(ctx context.Context, g glue.Glue, dom *domain.Domain) (*
 		return nil, errors.Trace(err)
 	}
 	tableExists := true
-	_, err = dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(RestoreRegistryDBName), pmodel.NewCIStr(RestoreRegistryTableName))
+	_, err = dom.InfoSchema().TableByName(ctx,
+		pmodel.NewCIStr(RestoreRegistryDBName),
+		pmodel.NewCIStr(RestoreRegistryTableName),
+	)
 	if err != nil {
 		if !infoschema.ErrTableNotExists.Equal(err) {
 			return nil, errors.Trace(err)
