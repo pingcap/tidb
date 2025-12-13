@@ -306,17 +306,18 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	statsVer := row.GetInt64(7)
 	idx := table.GetIdx(histID)
 
+	// All the objects in the table share the same stats version.
+	// Update here before processing, so it's set even if we return early.
+	if statsVer != statistics.Version0 {
+		table.StatsVer = int(statsVer)
+		table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
+	}
+
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
 			continue
 		}
 		table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
-		// All the objects in the table shares the same stats version.
-		// Update here.
-		if statsVer != statistics.Version0 {
-			table.StatsVer = int(statsVer)
-			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
-		}
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
 		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
@@ -396,6 +397,13 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	correlation := row.GetFloat64(8)
 	col := table.GetCol(histID)
 
+	// All the objects in the table share the same stats version.
+	// Update here before processing, so it's set even if we return early.
+	if statsVer != statistics.Version0 {
+		table.StatsVer = int(statsVer)
+		table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
+	}
+
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
 			continue
@@ -404,12 +412,6 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		// Column stats can be synthesized when adding a column with default values, which keeps statsVer at 0 but
 		// still records NDV/null counts, so mark them as existing whenever any value is present.
 		table.ColAndIdxExistenceMap.InsertCol(histID, statistics.IsColumnAnalyzedOrSynthesized(statsVer, distinct, nullCount))
-		// All the objects in the table shares the same stats version.
-		// Update here.
-		if statsVer != statistics.Version0 {
-			table.StatsVer = int(statsVer)
-			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
-		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
@@ -566,9 +568,13 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		}
 	}
 	// If DROP STATS executes, we need to reset the stats version to 0.
+	// Only reset if we actually have columns/indices in the table. If all stats were skipped
+	// due to lazy loading, we should keep the StatsVer that was set from the storage row.
 	if statistics.IsAnalyzed(int64(table.StatsVer)) {
+		hasStats := false
 		allZero := true
 		table.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			hasStats = true
 			if statistics.IsAnalyzed(c.StatsVer) {
 				allZero = false
 				return true
@@ -576,13 +582,16 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			return false
 		})
 		table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			hasStats = true
 			if statistics.IsAnalyzed(idx.StatsVer) {
 				allZero = false
 				return true
 			}
 			return false
 		})
-		if allZero {
+		// Only reset if we have stats in memory and they're all Version0.
+		// If all stats were skipped due to lazy loading, keep the StatsVer from storage.
+		if hasStats && allZero {
 			table.StatsVer = statistics.Version0
 		}
 	}
