@@ -924,7 +924,6 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 	})
 
 	// Test case 2: Fresh 8.3.0 cluster (version 210) without explicit setting
-	// The variable doesn't exist in mysql.global_variables (was using code default PREDICATE)
 	// After upgrade, should be set to "PREDICATE" to preserve 8.3.0 behavior
 	t.Run("Fresh 8.3.0 upgrade without setting", func(t *testing.T) {
 		store, dom := session.CreateStoreAndBootstrap(t)
@@ -940,8 +939,9 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 		require.NoError(t, err)
 		revertVersionAndVariables(t, seV210, 210)
 
-		// Delete the variable to simulate 8.3.0 fresh install (no explicit setting)
-		session.MustExec(t, seV210, "DELETE FROM mysql.global_variables WHERE variable_name='tidb_analyze_column_options'")
+		// Set the variable to "PREDICATE" to simulate the default 8.3.0 state
+		// NOTE: When TiDB starts for the first time, it will insert the default value into mysql.global_variables.
+		session.MustExec(t, seV210, "REPLACE INTO mysql.global_variables VALUES ('tidb_analyze_column_options', 'PREDICATE')")
 		session.MustExec(t, seV210, "commit")
 
 		session.UnsetStoreBootstrapped(store.UUID())
@@ -958,7 +958,7 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, session.CurrentBootstrapVersion, ver)
 
-		// Check that the variable is set to "PREDICATE" (by upgradeToVer254)
+		// Check that the variable is kept as "PREDICATE" after upgrade
 		r := session.MustExecToRecodeSet(t, seCurrent, "SELECT variable_value FROM mysql.global_variables WHERE variable_name='tidb_analyze_column_options'")
 		req := r.NewChunk(nil)
 		require.NoError(t, r.Next(ctx, req))
