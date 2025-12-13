@@ -1695,3 +1695,206 @@ func TestIssue54652(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
 	tk.MustExec(`commit`)
 }
+<<<<<<< HEAD
+=======
+
+func TestNonPreparedPlanSupportsHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanSupportsBindings(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select * from t where pk >= ?`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+}
+
+func TestNonPreparedPlanSupportsSetVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select * from t where pk >= ?`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`DROP BINDING FOR select * from t where pk >= ?`)
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select /*+ set_var(max_execution_time=2000) */ * from t where pk >= ?`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+}
+
+func TestSupportForIgnorePlanCacheHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`select /*+ ignore_plan_cache() */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+	tk.MustExec(`select /*+ ignore_plan_cache() */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select * from t where pk >= ?`)
+	tk.MustExec(`select  /*+ ignore_plan_cache() */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select  /*+ ignore_plan_cache() */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+
+	tk.MustExec(`DROP BINDING FOR select * from t where pk >= ?`)
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select /*+ ignore_plan_cache() */ * from t where pk >= ?`)
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+
+	tk.MustExec(`DROP BINDING FOR select * from t where pk >= ?`)
+
+	tk.MustExec(`prepare st from 'select * from t where pk >= ?'`)
+	tk.MustExec(`set @a=4`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+
+	tk.MustExec(`prepare st from 'select /*+ ignore_plan_cache() */ * from t where pk >= ?'`)
+	tk.MustExec(`set @a=4`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select /*+ ignore_plan_cache() */ * from t where pk >= ?`)
+	tk.MustExec(`prepare st from 'select * from t where pk >= ?'`)
+	tk.MustExec(`set @a=4`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+}
+
+func TestNonPreparedPlanCacheResourceGroup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	// Check that the hint sets the resource group.
+	tk.MustExec(`select  /*+ RESOURCE_GROUP(rg1) */ * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+
+	tk.MustExec(`select  /*+ RESOURCE_GROUP(rg10) */ * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg10", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+
+	tk.MustExec(`select  /*+ RESOURCE_GROUP(rg1) */ * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select /*+ RESOURCE_GROUP(rg2) */ * from t where pk >= ?`)
+
+	// Test that the resource group comes from the binding.
+	tk.MustExec(`select * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	// Test that the resource group comes from the binding and the value in query is ignored.
+	tk.MustExec(`select  /*+ RESOURCE_GROUP(rg1) */ * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+}
+
+func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.Exec(`set @@global.tidb_enable_metadata_lock=off`)
+
+	tk.MustExec(`prepare stmt from 'select * from t where a = ?'`)
+	tk.MustExec(`set @a=1`)
+
+	// check that cache works without metadata lock
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+	tk.MustExec(`begin`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+	tk.MustExec(`rollback`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+}
+>>>>>>> e0813f3a475 (planner: Fix bug in the plan cache when the metadata lock is disabled. (#64795))
