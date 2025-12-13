@@ -24,7 +24,7 @@ BACKUPMETAV2_LOG="$TEST_DIR/backupv2.log"
 RESTORE_LOG="$TEST_DIR/restore.log"
 rm -rf $PROGRESS_FILE
 
-# functions to do float point arithmetric
+# functions to do float point arithmetic
 calc() { awk "BEGIN{print $*}"; }
 
 run_sql "create schema $DB;"
