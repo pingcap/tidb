@@ -1486,7 +1486,7 @@ const (
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
-	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
+	DefTiDBAnalyzeColumnOptions                       = "ALL"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 1
