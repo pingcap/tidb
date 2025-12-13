@@ -1941,59 +1941,146 @@ func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key,
 }
 
 // RefreshMetaForTables refreshes metadata for all tables in the schemasReplace map.
+// The ordering is critical for dependency management:
+// - DELETE operations: tables first, then databases
+// - ADD/UPDATE operations: databases first, then tables (to ensure parent exists)
 func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *stream.SchemasReplace) error {
 	deletedTablesMap := schemasReplace.GetDeletedTables()
 
-	deletedCount := 0
-	for dbID, tableIDsSet := range deletedTablesMap {
-		for tableID := range tableIDsSet {
-			args := &model.RefreshMetaArgs{
-				SchemaID: dbID,
-				TableID:  tableID,
+	// Step 1: Process DELETIONS in dependency-safe order (tables first, then databases)
+	deletedTableCount := 0
+
+	// First, delete all tables
+	for upstreamDBID, tableIDsSet := range deletedTablesMap {
+		if len(tableIDsSet) > 0 {
+			// handle table deletions
+			for upstreamTableID := range tableIDsSet {
+				dbReplace, ok := schemasReplace.DbReplaceMap[upstreamDBID]
+				if !ok {
+					return errors.Errorf("the database(upstream ID: %d) of deleted table has no record in replace map", upstreamDBID)
+				}
+				tableReplace, ok := dbReplace.TableMap[upstreamTableID]
+				if !ok {
+					return errors.Errorf("the deleted table(upstream ID: %d) has no record in replace map", upstreamTableID)
+				}
+
+				args := &model.RefreshMetaArgs{
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
+				}
+
+				log.Info("refreshing deleted table meta",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.String("dbName", dbReplace.Name),
+					zap.Any("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name))
+				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+					return errors.Annotatef(err,
+						"failed to refresh meta for deleted table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
+						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
+				}
+				deletedTableCount++
 			}
-			log.Info("refreshing deleted table meta", zap.Int64("schemaID", dbID),
-				zap.Any("tableID", tableID))
-			if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
-				return errors.Annotatef(err,
-					"failed to refresh meta for deleted table with schemaID=%d, tableID=%d", dbID, tableID)
-			}
-			deletedCount++
 		}
 	}
-	log.Info("refreshed metadata for deleted tables", zap.Int("deletedTableCount", deletedCount))
 
+	// Then, delete databases if needed
+	for upstreamDBID := range deletedTablesMap {
+		// Get database name for logging
+		dbReplace, ok := schemasReplace.DbReplaceMap[upstreamDBID]
+		if !ok {
+			return errors.Errorf("the deleted database(upstream ID: %d) has no record in replace map", upstreamDBID)
+		}
+		args := &model.RefreshMetaArgs{
+			SchemaID:      dbReplace.DbID,
+			TableID:       0, // 0 for database-only refresh
+			InvolvedDB:    dbReplace.Name,
+			InvolvedTable: model.InvolvingAll,
+		}
+
+		log.Info("refreshing potential deleted database meta",
+			zap.Int64("schemaID", dbReplace.DbID),
+			zap.String("dbName", dbReplace.Name))
+		if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+			return errors.Annotatef(err, "failed to refresh meta for deleted database with schemaID=%d, dbName=%s",
+				dbReplace.DbID, dbReplace.Name)
+		}
+	}
+
+	log.Info("refreshed metadata for deleted items",
+		zap.Int("deletedTableCount", deletedTableCount))
+
+	// Step 2: Process ADD/UPDATE operations in dependency-safe order (databases first, then tables)
 	regularCount := 0
-	for _, dbReplace := range schemasReplace.DbReplaceMap {
+
+	// First, handle database-only operations
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
 
-		for _, tableReplace := range dbReplace.TableMap {
-			if tableReplace.FilteredOut {
-				continue
-			}
+		// Skip if we already processed this database in delete section
+		if _, alreadyProcessed := deletedTablesMap[upstreamDBID]; alreadyProcessed {
+			continue
+		}
 
-			// skip if this table is in the deleted list
-			if tableIDsSet, dbExists := deletedTablesMap[dbReplace.DbID]; dbExists {
-				if _, isDeleted := tableIDsSet[tableReplace.TableID]; isDeleted {
-					continue
-				}
-			}
-
-			args := &model.RefreshMetaArgs{
-				SchemaID: dbReplace.DbID,
-				TableID:  tableReplace.TableID,
-			}
-			log.Info("refreshing regular table meta", zap.Int64("schemaID", dbReplace.DbID),
-				zap.Any("tableID", tableReplace.TableID))
-			if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
-				return errors.Annotatef(err, "failed to refresh meta for table with schemaID=%d, tableID=%d",
-					dbReplace.DbID, tableReplace.TableID)
-			}
-			regularCount++
+		args := &model.RefreshMetaArgs{
+			SchemaID:      dbReplace.DbID,
+			TableID:       0, // tableID = 0 for database-only refresh
+			InvolvedDB:    dbReplace.Name,
+			InvolvedTable: model.InvolvingAll,
+		}
+		log.Info("refreshing database-only meta",
+			zap.Int64("schemaID", dbReplace.DbID),
+			zap.String("dbName", dbReplace.Name))
+		if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+			return errors.Annotatef(err, "failed to refresh meta for database with schemaID=%d, dbName=%s",
+				dbReplace.DbID, dbReplace.Name)
 		}
 	}
 
-	log.Info("refreshed metadata for regular tables", zap.Int("regularTableCount", regularCount))
+	// Then, handle table operations
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+
+		if len(dbReplace.TableMap) > 0 {
+			for upstreamTableID, tableReplace := range dbReplace.TableMap {
+				if tableReplace.FilteredOut {
+					continue
+				}
+
+				// skip if this table is in the deleted list
+				if tableIDsSet, dbExists := deletedTablesMap[upstreamDBID]; dbExists {
+					if _, isDeleted := tableIDsSet[upstreamTableID]; isDeleted {
+						continue
+					}
+				}
+
+				args := &model.RefreshMetaArgs{
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
+				}
+				log.Info("refreshing regular table meta",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.String("dbName", dbReplace.Name),
+					zap.Any("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name))
+				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+					return errors.Annotatef(err, "failed to refresh meta for table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
+						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
+				}
+				regularCount++
+			}
+		}
+	}
+
+	log.Info("refreshed metadata for add/update operations",
+		zap.Int("regularTableCount", regularCount))
 	return nil
 }

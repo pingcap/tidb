@@ -844,7 +844,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	require.ErrorContains(t, err, "Table 'test1.t2' doesn't exist")
 	// refresh meta, validate infoschema store table t2 and schema version increase 1
 	oldSchemaVer := getSchemaVer(t, sctx)
-	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
 	newSchemaVer := getSchemaVer(t, sctx)
 	require.Equal(t, oldSchemaVer+1, newSchemaVer)
 	_, err = domain.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test1"), pmodel.NewCIStr("t2"))
@@ -868,7 +868,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
 	require.True(t, ok)
 	// after refresh meta, t3 table info should be not exists in infoschema
-	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
 	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
 	require.False(t, ok)
 	_, ok = domain.InfoSchema().PlacementBundleByPhysicalTableID(clonedTableInfo.ID)
@@ -892,7 +892,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
 	require.False(t, ok)
 	// refresh meta, t4 table info should be equal with kv table info
-	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
 	infoschemaTableInfo, ok := domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, kvTableInfo.ID, infoschemaTableInfo.Meta().ID)
@@ -919,7 +919,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
 	require.True(t, ok)
 	// refresh meta, t4 table info should be equal with kv table info
-	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0)
+	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0, clonedDBInfo.Name.O, model.InvolvingAll)
 	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
 	require.False(t, ok)
 
@@ -940,7 +940,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
 	require.False(t, ok)
 	// refresh meta, test2 db info should exists in infoschema
-	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0)
+	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0, clonedDBInfo.Name.O, model.InvolvingAll)
 	infoschemaDBInfo, ok := domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, kvDBInfo, infoschemaDBInfo)

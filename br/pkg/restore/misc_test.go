@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -394,7 +395,7 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	base := t.TempDir()
 	stg, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, []int64{1, 2, 3})
+	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, 0xFFFFFCCCFFFFF, []int64{1, 2, 3}, []int64{4})
 	require.NoError(t, err)
 	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
 	require.True(t, parsed)
@@ -404,18 +405,20 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	require.NoError(t, err)
 	data, err = stg.ReadFile(ctx, name)
 	require.NoError(t, err)
-	restoreCommitTs, snapshotBackupTs, tableIds, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(data)
+	blocklist, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(data)
 	require.NoError(t, err)
-	require.Equal(t, uint64(0xFFFFFCDEFFFFF), restoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFABCFFFF), snapshotBackupTs)
-	require.Equal(t, []int64{1, 2, 3}, tableIds)
+	require.Equal(t, uint64(0xFFFFFCDEFFFFF), blocklist.RestoreCommitTs)
+	require.Equal(t, uint64(0xFFFFFFABCFFFF), blocklist.SnapshotBackupTs)
+	require.Equal(t, uint64(0xFFFFFCCCFFFFF), blocklist.RewriteTs)
+	require.Equal(t, []int64{1, 2, 3}, blocklist.TableIds)
+	require.Equal(t, []int64{4}, blocklist.DbIds)
 }
 
 func writeBlocklistFile(
 	ctx context.Context, t *testing.T, s storage.ExternalStorage,
-	restoreCommitTs, snapshotBackupTs uint64, tableIds []int64,
+	restoreCommitTs, snapshotBackupTs, rewriteTs uint64, tableIds, dbIds []int64,
 ) {
-	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, tableIds)
+	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, rewriteTs, tableIds, dbIds)
 	require.NoError(t, err)
 	err = s.WriteFile(ctx, name, data)
 	require.NoError(t, err)
@@ -434,11 +437,14 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	base := t.TempDir()
 	stg, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	writeBlocklistFile(ctx, t, stg, 100, 10, []int64{100, 101, 102})
-	writeBlocklistFile(ctx, t, stg, 200, 20, []int64{200, 201, 202})
-	writeBlocklistFile(ctx, t, stg, 300, 30, []int64{300, 301, 302})
-	tableNameByTableID := func(tableID int64) string {
-		return fmt.Sprintf("table_%d", tableID)
+	writeBlocklistFile(ctx, t, stg, 100, 10, 50, []int64{100, 101, 102}, []int64{103})
+	writeBlocklistFile(ctx, t, stg, 200, 20, 60, []int64{200, 201, 202}, []int64{203})
+	writeBlocklistFile(ctx, t, stg, 300, 30, 70, []int64{300, 301, 302}, []int64{303})
+	tableNameByTableId := func(tableId int64) string {
+		return fmt.Sprintf("table_%d", tableId)
+	}
+	dbNameByDbId := func(dbId int64) string {
+		return fmt.Sprintf("db_%d", dbId)
 	}
 	checkTableIDLost := func(tableId int64) bool {
 		return false
@@ -446,26 +452,33 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	checkTableIDLost2 := func(tableId int64) bool {
 		return true
 	}
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300, tableNameByTableID, checkTableIDLost)
+	rewriteTss := make([]uint64, 0)
+	var mu sync.Mutex
+	cleanErr := func(rewriteTs uint64) {
+		mu.Lock()
+		rewriteTss = append(rewriteTss, rewriteTs)
+		mu.Unlock()
+	}
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300, tableNameByTableId, dbNameByDbId, checkTableIDLost, checkTableIDLost, cleanErr)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "table_300")
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300, tableNameByTableID, checkTableIDLost)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300, tableNameByTableId, dbNameByDbId, checkTableIDLost, checkTableIDLost, cleanErr)
 	require.NoError(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300, tableNameByTableID, checkTableIDLost2)
-	require.Error(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300, tableNameByTableID, checkTableIDLost)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300, tableNameByTableId, dbNameByDbId, checkTableIDLost2, checkTableIDLost2, cleanErr)
 	require.NoError(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300, tableNameByTableID, checkTableIDLost2)
-	require.Error(t, err)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300, tableNameByTableId, dbNameByDbId, checkTableIDLost, checkTableIDLost, cleanErr)
+	require.NoError(t, err)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300, tableNameByTableId, dbNameByDbId, checkTableIDLost2, checkTableIDLost2, cleanErr)
+	require.NoError(t, err)
 
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25, tableNameByTableID, checkTableIDLost)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25, tableNameByTableId, dbNameByDbId, checkTableIDLost, checkTableIDLost, cleanErr)
 	require.NoError(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25, tableNameByTableID, checkTableIDLost2)
-	require.Error(t, err)
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 1, 25, tableNameByTableID, checkTableIDLost)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25, tableNameByTableId, dbNameByDbId, checkTableIDLost2, checkTableIDLost2, cleanErr)
+	require.NoError(t, err)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 1, 25, tableNameByTableId, dbNameByDbId, checkTableIDLost, checkTableIDLost, cleanErr)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "table_200")
-	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 1, 25, tableNameByTableID, checkTableIDLost)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 1, 25, tableNameByTableId, dbNameByDbId, checkTableIDLost, checkTableIDLost, cleanErr)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "table_100")
 }
@@ -484,9 +497,9 @@ func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
 	base := t.TempDir()
 	stg, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	writeBlocklistFile(ctx, t, stg, 100, 10, []int64{100, 101, 102})
-	writeBlocklistFile(ctx, t, stg, 200, 20, []int64{200, 201, 202})
-	writeBlocklistFile(ctx, t, stg, 300, 30, []int64{300, 301, 302})
+	writeBlocklistFile(ctx, t, stg, 100, 10, 50, []int64{100, 101, 102}, []int64{103})
+	writeBlocklistFile(ctx, t, stg, 200, 20, 60, []int64{200, 201, 202}, []int64{203})
+	writeBlocklistFile(ctx, t, stg, 300, 30, 70, []int64{300, 301, 302}, []int64{303})
 
 	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 50)
 	require.NoError(t, err)

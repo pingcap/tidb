@@ -33,6 +33,7 @@ func main() {
 		NewRestoreCommand(),
 		NewStreamCommand(),
 		newOperatorCommand(),
+		NewAbortCommand(),
 	)
 	// Outputs cmd.Print to stdout.
 	rootCmd.SetOut(os.Stdout)

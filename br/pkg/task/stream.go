@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
@@ -60,7 +62,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -1332,6 +1336,9 @@ func RunStreamRestore(
 	// if not set by user, restore to the max TS available
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logInfo.logMaxTS
+		cfg.IsRestoredTSUserSpecified = false
+	} else {
+		cfg.IsRestoredTSUserSpecified = true
 	}
 	cfg.UpstreamClusterID = logInfo.clusterID
 
@@ -1363,6 +1370,7 @@ func RunStreamRestore(
 	}
 
 	// register task if needed
+	// will potentially override restoredTS
 	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
@@ -1515,7 +1523,19 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	client.BuildMigrations(migs.Migs)
-	defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+
+	skipCleanup := false
+	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
+		// Skip the cleanup - this keeps the read lock held
+		// and will cause lock conflicts for other restore operations
+		log.Info("Skipping migration read lock cleanup due to failpoint")
+		skipCleanup = true
+	})
+
+	if !skipCleanup {
+		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+	}
+
 	defer client.RestoreSSTStatisticFields(&extraFields)
 
 	ddlFiles := cfg.ddlFiles
@@ -1524,24 +1544,20 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.RewriteTS = currentTS
 
 	if err := client.SetCurrentTS(currentTS); err != nil {
 		return errors.Trace(err)
 	}
 
-	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	restoreSchedulersFunc, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Always run the post-work even on error, so we don't stuck in the import
-	// mode or emptied schedulers
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
-
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
-	restoreGCFunc, oldGCRatio, err := DisableGC(g, mgr.GetStorage())
-	if err != nil {
+	var restoreGCFunc RestoreGCFunc
+	var oldGCRatio string
+	if err := cfg.RestoreRegistry.OperationAfterWaitIDs(ctx, func() (err error) {
+		restoreGCFunc, oldGCRatio, err = DisableGC(g, mgr.GetStorage())
+		return errors.Trace(err)
+	}); err != nil {
 		return errors.Trace(err)
 	}
 	gcDisabledRestorable := false
@@ -1559,9 +1575,13 @@ func restoreStream(
 			oldGCRatio = utils.DefaultGcRatioVal
 		}
 		log.Info("start to restore gc", zap.String("ratio", oldGCRatio))
-		if err := restoreGCFunc(oldGCRatio); err != nil {
-			log.Error("failed to restore gc", zap.Error(err))
-		}
+		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
+			if err := restoreGCFunc(oldGCRatio); err != nil {
+				log.Error("failed to restore gc", zap.Error(err))
+				return errors.Trace(err)
+			}
+			return nil
+		})
 		log.Info("finish restoring gc")
 	}()
 
@@ -1589,6 +1609,39 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(),
+		cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	// set up scheduler pausing before meta kv restore starts
+	var restoreSchedulersFunc pdutil.UndoFunc
+
+	// use fine-grained scheduler pausing if we have specific tables to restore (not full restore)
+	if cfg.ExplicitFilter {
+		keyRanges := buildKeyRangesFromSchemasReplace(schemasReplace, cfg)
+		if len(keyRanges) > 0 {
+			log.Info("using fine-grained scheduler pausing for log restore",
+				zap.Int("key-ranges-count", len(keyRanges)))
+			restoreSchedulersFunc, _, err = restore.FineGrainedRestorePreWork(ctx, mgr,
+				importModeSwitcher, keyRanges, cfg.Online, false)
+		} else {
+			log.Info("no key ranges to pause, skipping scheduler pausing")
+			restoreSchedulersFunc = func(context.Context) error { return nil }
+		}
+	} else {
+		log.Info("using full scheduler pausing for log restore (full restore)")
+		restoreSchedulersFunc, _, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
+	}
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Failpoint for testing scheduler pausing behavior
+	failpoint.InjectCall("log-restore-scheduler-paused")
+
+	// Always run the post-work even on error, so we don't stuck in the import
+	// mode or emptied schedulers
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 
 	updateStats := func(kvCount uint64, size uint64) {
 		mu.Lock()
@@ -2188,6 +2241,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return nil
 	}
 
+	originalRestoreTS := cfg.RestoreTS
 	registrationInfo := registry.RegistrationInfo{
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
@@ -2198,11 +2252,22 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 	}
 
 	// get current registered (due to failure retry) or create new restore task id
-	restoreID, err := cfg.RestoreRegistry.ResumeOrCreateRegistration(ctx, registrationInfo)
+	restoreID, resolvedRestoreTS, err := cfg.RestoreRegistry.ResumeOrCreateRegistration(
+		ctx, registrationInfo, cfg.IsRestoredTSUserSpecified)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	cfg.RestoreID = restoreID
+
+	// the registry may have resolved a different RestoreTS from existing tasks
+	// if so, we need to apply it to the config for consistency
+	if resolvedRestoreTS != originalRestoreTS {
+		log.Info("registry resolved a different RestoreTS, updating config",
+			zap.Uint64("original_restored_ts", originalRestoreTS),
+			zap.Uint64("resolved_restored_ts", resolvedRestoreTS),
+			zap.Uint64("restore_id", restoreID))
+		cfg.RestoreTS = resolvedRestoreTS
+	}
 
 	log.Info("registered restore task",
 		zap.Uint64("restoreID", restoreID),
@@ -2211,4 +2276,141 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 	cfg.RestoreRegistry.StartHeartbeatManager(ctx, restoreID)
 
 	return nil
+}
+
+// isValidSnapshotRange checks if a snapshot range is valid for scheduler pausing
+// A valid range must be non-zero, have positive start ID, and end > start
+func isValidSnapshotRange(snapshotRange [2]int64) bool {
+	return snapshotRange != [2]int64{} && snapshotRange[0] > 0 && snapshotRange[1] > snapshotRange[0]
+}
+
+// buildKeyRangesFromSchemasReplace creates key ranges for fine-grained scheduler pausing
+// It analyzes the new table IDs from schemasReplace to determine ranges:
+// 1. Snapshot restore range: preallocated range stored in table mapping manager
+// 2. Log restore range: contiguous range allocated in one batch during log restore
+func buildKeyRangesFromSchemasReplace(schemasReplace *stream.SchemasReplace,
+	cfg *LogRestoreConfig) [][2]kv.Key {
+	var ranges [][2]int64
+
+	// get preallocated range from snapshot restore
+	// try table mapping manager first (memory read), then checkpoint if needed (database read)
+	var snapshotRange [2]int64
+
+	// first try table mapping manager (fast memory read)
+	snapshotRange = cfg.tableMappingManager.PreallocatedRange
+	if snapshotRange != [2]int64{} {
+		log.Info("using snapshot preallocated range from table mapping manager for scheduler pausing",
+			zap.Int64("start", snapshotRange[0]),
+			zap.Int64("end", snapshotRange[1]))
+	} else if cfg.snapshotCheckpointMetaManager != nil {
+		// fallback to checkpoint metadata if table mapping manager doesn't have the range
+		if snapshotMeta, err := cfg.snapshotCheckpointMetaManager.LoadCheckpointMetadata(context.Background()); err == nil && snapshotMeta.PreallocIDs != nil {
+			snapshotRange = [2]int64{snapshotMeta.PreallocIDs.Start, snapshotMeta.PreallocIDs.End}
+			log.Info("loaded snapshot preallocated range from checkpoint for scheduler pausing",
+				zap.Int64("start", snapshotRange[0]),
+				zap.Int64("end", snapshotRange[1]))
+		} else if err != nil {
+			log.Warn("failed to load snapshot checkpoint metadata for scheduler pausing", zap.Error(err))
+		}
+	}
+
+	if snapshotRange == [2]int64{} {
+		log.Info("no preallocated range found for scheduler pausing")
+	}
+
+	hasValidSnapshotRange := isValidSnapshotRange(snapshotRange)
+	if hasValidSnapshotRange {
+		ranges = append(ranges, snapshotRange)
+	}
+
+	// helper function to check if an ID is outside the snapshot range and needs a separate pause range
+	isOutsideSnapshotRange := func(id int64) bool {
+		if id == 0 {
+			return false
+		}
+		if hasValidSnapshotRange {
+			// check if this ID is outside the snapshot range (needs separate pausing)
+			return id < snapshotRange[0] || id >= snapshotRange[1]
+		}
+		return true
+	}
+
+	// collect table IDs by category
+	var schedulerPauseIDs []int64
+
+	for _, dbReplace := range schemasReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+
+			// collect table ID if it's outside snapshot range
+			if isOutsideSnapshotRange(tableReplace.TableID) {
+				schedulerPauseIDs = append(schedulerPauseIDs, tableReplace.TableID)
+			}
+
+			// also collect partition IDs for this table
+			for _, partitionID := range tableReplace.PartitionMap {
+				if isOutsideSnapshotRange(partitionID) {
+					schedulerPauseIDs = append(schedulerPauseIDs, partitionID)
+				}
+			}
+		}
+	}
+
+	// create range for scheduler pause IDs (should be contiguous since allocated in one batch)
+	if len(schedulerPauseIDs) > 0 {
+		sort.Slice(schedulerPauseIDs, func(i, j int) bool {
+			return schedulerPauseIDs[i] < schedulerPauseIDs[j]
+		})
+
+		minID := schedulerPauseIDs[0]
+		maxID := schedulerPauseIDs[len(schedulerPauseIDs)-1]
+		logRange := [2]int64{minID, maxID + 1}
+		ranges = append(ranges, logRange)
+
+		// only verify contiguity when we have a valid snapshot range
+		// (meaning schedulerPauseIDs contains only log restore tables, which should be contiguous)
+		if hasValidSnapshotRange {
+			contiguous := verifyContiguousIDs(schedulerPauseIDs)
+			log.Info("using log restore range for scheduler pausing",
+				zap.Int64("start", logRange[0]),
+				zap.Int64("end", logRange[1]),
+				zap.Int("table-count", len(schedulerPauseIDs)),
+				zap.Bool("contiguous", contiguous))
+
+			if !contiguous {
+				log.Warn("log restore table IDs are not contiguous, using broader range",
+					zap.Int64s("ids", schedulerPauseIDs))
+			}
+		} else {
+			log.Info("no valid snapshot range found, pausing scheduler for entire ID range found in log backup",
+				zap.Int64("start", logRange[0]),
+				zap.Int64("end", logRange[1]),
+				zap.Int("table-count", len(schedulerPauseIDs)))
+		}
+	}
+
+	// convert ID ranges to key ranges
+	keyRanges := make([][2]kv.Key, 0, len(ranges))
+	for _, idRange := range ranges {
+		startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(idRange[0]))
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(idRange[1]))
+		keyRanges = append(keyRanges, [2]kv.Key{startKey, endKey})
+	}
+
+	return keyRanges
+}
+
+// verifyContiguousIDs checks if the sorted table IDs are contiguous
+func verifyContiguousIDs(ids []int64) bool {
+	for i := 1; i < len(ids); i++ {
+		if ids[i] != ids[i-1]+1 {
+			return false
+		}
+	}
+	return true
 }
