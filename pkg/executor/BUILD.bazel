@@ -111,6 +111,7 @@ go_library(
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/importinto",
+        "//pkg/disttask/operator",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errctx",
