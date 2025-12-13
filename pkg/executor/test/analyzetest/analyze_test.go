@@ -2724,6 +2724,11 @@ PARTITION BY RANGE ( a ) (
 func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	bakRunAutoAnalyze := variable.RunAutoAnalyze.Load()
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze = %t", bakRunAutoAnalyze))
+	})
 	tk.MustExec("use test")
 	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
 	// We want to test that HandleAutoAnalyze is aware of setting @@global.tidb_enable_analyze_snapshot to 1 and reads data from snapshot.
