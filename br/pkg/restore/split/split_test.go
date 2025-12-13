@@ -910,20 +910,28 @@ func initKeys() [][]byte {
 func initRanges() []rtree.Range {
 	var ranges [4]rtree.Range
 	ranges[0] = rtree.Range{
-		StartKey: []byte("aaa"),
-		EndKey:   []byte("aae"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("aae"),
+		},
 	}
 	ranges[1] = rtree.Range{
-		StartKey: []byte("aae"),
-		EndKey:   []byte("aaz"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aae"),
+			EndKey:   []byte("aaz"),
+		},
 	}
 	ranges[2] = rtree.Range{
-		StartKey: []byte("ccd"),
-		EndKey:   []byte("ccf"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccd"),
+			EndKey:   []byte("ccf"),
+		},
 	}
 	ranges[3] = rtree.Range{
-		StartKey: []byte("ccf"),
-		EndKey:   []byte("ccj"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccf"),
+			EndKey:   []byte("ccj"),
+		},
 	}
 	return ranges[:]
 }

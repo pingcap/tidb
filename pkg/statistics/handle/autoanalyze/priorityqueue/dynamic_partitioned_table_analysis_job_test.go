@@ -137,8 +137,8 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 		SchemaName:    "example_schema",
 		GlobalTableID: tableInfo.Meta().ID,
 		PartitionIDs: map[int64]struct{}{
-			113: {},
-			114: {},
+			115: {},
+			116: {},
 		},
 		Weight: 2,
 	}

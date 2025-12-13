@@ -58,11 +58,6 @@ const (
 	MetaV2
 )
 
-// PitrIDMapsFilename is filename that used to save id maps in pitr.
-func PitrIDMapsFilename(clusterID, restoreTS uint64) string {
-	return fmt.Sprintf("%s/pitr_id_map.cluster_id:%d.restored_ts:%d", "pitr_id_maps", clusterID, restoreTS)
-}
-
 // Encrypt encrypts the content according to CipherInfo.
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
 	if len(content) == 0 || cipher == nil {
@@ -160,8 +155,7 @@ type Table struct {
 	Crc64Xor         uint64
 	TotalKvs         uint64
 	TotalBytes       uint64
-	Files            []*backuppb.File
-	TotalKvsMap      map[int64]uint64
+	FilesOfPhysicals map[int64][]*backuppb.File
 	TiFlashReplicas  int
 	Stats            *util.JSONTable
 	StatsFileIndexes []*backuppb.StatsFileIndex
@@ -239,6 +233,26 @@ func ArchiveSize(files []*backuppb.File) uint64 {
 	return total
 }
 
+// ArchiveTablesSize return the size of archive tables
+func ArchiveTablesSize(tables []*Table) uint64 {
+	totalSize := uint64(0)
+	for _, table := range tables {
+		totalSize += ArchiveTableSize(table)
+	}
+	return totalSize
+}
+
+// ArchiveTableSize return the size of archive table
+func ArchiveTableSize(table *Table) uint64 {
+	totalSize := uint64(0)
+	for _, files := range table.FilesOfPhysicals {
+		for _, file := range files {
+			totalSize += file.GetSize_()
+		}
+	}
+	return totalSize
+}
+
 type ChecksumStats struct {
 	Crc64Xor   uint64
 	TotalKvs   uint64
@@ -252,21 +266,15 @@ func (stats ChecksumStats) ChecksumExists() bool {
 	return true
 }
 
-func CalculateTotalKvsOnFiles(files []*backuppb.File) uint64 {
-	totalKvs := uint64(0)
-	for _, file := range files {
-		totalKvs += file.TotalKvs
-	}
-	return totalKvs
-}
-
 // CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
-func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
+func (table *Table) CalculateChecksumStatsOnFiles() ChecksumStats {
 	var stats ChecksumStats
-	for _, file := range files {
-		stats.Crc64Xor ^= file.Crc64Xor
-		stats.TotalKvs += file.TotalKvs
-		stats.TotalBytes += file.TotalBytes
+	for _, files := range table.FilesOfPhysicals {
+		for _, file := range files {
+			stats.Crc64Xor ^= file.Crc64Xor
+			stats.TotalKvs += file.TotalKvs
+			stats.TotalBytes += file.TotalBytes
+		}
 	}
 	return stats
 }
@@ -428,11 +436,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				if !ok {
 					break generateFileMapDone
 				}
-				tableID := tablecodec.DecodeTableID(file.GetStartKey())
-				if tableID == 0 {
+				physicalID := tablecodec.DecodeTableID(file.GetStartKey())
+				if physicalID == 0 {
 					log.Panic("tableID must not equal to 0", logutil.File(file))
 				}
-				fileMap[tableID] = append(fileMap[tableID], file)
+				fileMap[physicalID] = append(fileMap[physicalID], file)
 			}
 		}
 	}
@@ -444,16 +452,14 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			table := item.(*Table)
 			if table.Info != nil {
 				if fileMap != nil {
-					if files, ok := fileMap[table.Info.ID]; ok {
-						table.TotalKvsMap[table.Info.ID] = CalculateTotalKvsOnFiles(files)
-						table.Files = append(table.Files, files...)
+					if files, ok := fileMap[table.Info.ID]; ok && len(files) > 0 {
+						table.FilesOfPhysicals[table.Info.ID] = files
 					}
 					if table.Info.Partition != nil {
 						// Partition table can have many table IDs (partition IDs).
 						for _, p := range table.Info.Partition.Definitions {
-							if files, ok := fileMap[p.ID]; ok {
-								table.TotalKvsMap[p.ID] = CalculateTotalKvsOnFiles(files)
-								table.Files = append(table.Files, files...)
+							if files, ok := fileMap[p.ID]; ok && len(files) > 0 {
+								table.FilesOfPhysicals[p.ID] = files
 							}
 						}
 					}
@@ -509,7 +515,7 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 		Crc64Xor:         s.Crc64Xor,
 		TotalKvs:         s.TotalKvs,
 		TotalBytes:       s.TotalBytes,
-		TotalKvsMap:      make(map[int64]uint64),
+		FilesOfPhysicals: make(map[int64][]*backuppb.File),
 		TiFlashReplicas:  int(s.TiflashReplicas),
 		Stats:            stats,
 		StatsFileIndexes: statsFileIndexes,

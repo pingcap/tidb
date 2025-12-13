@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -48,6 +49,7 @@ func assertSameHints(t *testing.T, expected, actual []*ast.TableOptimizerHint) {
 }
 
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck", `return(true)`)
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

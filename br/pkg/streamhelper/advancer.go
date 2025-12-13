@@ -89,8 +89,8 @@ func (c *CheckpointAdvancer) HasTask() bool {
 	return c.task != nil
 }
 
-// HasSubscriber returns whether the advancer is associated with a subscriber.
-func (c *CheckpointAdvancer) HasSubscribion() bool {
+// HasSubscriptions returns whether the advancer is associated with a subscriber.
+func (c *CheckpointAdvancer) HasSubscriptions() bool {
 	c.subscriberMu.Lock()
 	defer c.subscriberMu.Unlock()
 
@@ -116,7 +116,7 @@ func newCheckpointWithTS(ts uint64) *checkpoint {
 	}
 }
 
-func NewCheckpointWithSpan(s spans.Valued) *checkpoint {
+func newCheckpointWithSpan(s spans.Valued) *checkpoint {
 	return &checkpoint{
 		StartKey:        s.Key.StartKey,
 		EndKey:          s.Key.EndKey,
@@ -270,11 +270,6 @@ func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
 	defer c.checkpointsMu.Unlock()
 
 	f(c.checkpoints)
-}
-
-// only used for test
-func (c *CheckpointAdvancer) NewCheckpoints(cps *spans.ValueSortedFull) {
-	c.checkpoints = cps
 }
 
 func (c *CheckpointAdvancer) fetchRegionHint(ctx context.Context, startKey []byte) string {
@@ -475,7 +470,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 }
 
 func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
-	cp := NewCheckpointWithSpan(s)
+	cp := newCheckpointWithSpan(s)
 	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
 			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
