@@ -33,6 +33,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/metrics"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/util/intest"
+>>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -141,6 +146,8 @@ type Engine struct {
 	largeBlockBufPool *membuf.Pool
 
 	memKVsAndBuffers memKVsAndBuffers
+	// totalLoadedKVsCount accumulates the total number of KVs loaded in LoadIngestData
+	totalLoadedKVsCount atomic.Int64
 
 	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
 	// if hotspot file is detected, we will use multiple readers to read data.
@@ -317,6 +324,25 @@ func (e *Engine) loadRangeBatch(ctx context.Context, jobKeys [][]byte, outCh cha
 	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
+<<<<<<< HEAD
+=======
+	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
+		kvs := make([]KVPair, 0)
+		kvs = append(kvs, KVPair{[]byte{}, []byte{}})
+		data := e.buildIngestData(kvs, nil)
+		data.IncRef()
+		select {
+		case <-ctx.Done():
+			failpoint.Return(ctx.Err())
+		case outCh <- engineapi.DataAndRanges{
+			Data: data,
+		}:
+			e.activeIngestDataFlags = append(e.activeIngestDataFlags, data.released)
+			failpoint.Return(nil)
+		}
+	})
+
+>>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
@@ -433,6 +459,9 @@ func (e *Engine) loadRangeBatch(ctx context.Context, jobKeys [][]byte, outCh cha
 		deduplicatedKVs,
 		e.memKVsAndBuffers.memKVBuffers,
 	)
+
+	// accumulate the total number of KVs loaded in LoadIngestData
+	e.totalLoadedKVsCount.Add(int64(len(deduplicatedKVs)))
 
 	// release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.kvs = nil
@@ -560,6 +589,11 @@ func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
+// GetTotalLoadedKVsCount returns the total number of KVs loaded in LoadIngestData.
+func (e *Engine) GetTotalLoadedKVsCount() int64 {
+	return e.totalLoadedKVsCount.Load()
+}
+
 // ConflictInfo implements common.Engine.
 func (e *Engine) ConflictInfo() common.ConflictInfo {
 	if e.recordedDupCnt == 0 {
@@ -574,6 +608,11 @@ func (e *Engine) ConflictInfo() common.ConflictInfo {
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return "external"
+}
+
+// GetOnDup returns the OnDuplicateKey action for this engine.
+func (e *Engine) GetOnDup() engineapi.OnDuplicateKey {
+	return e.onDup
 }
 
 // GetKeyRange implements common.Engine.
@@ -750,6 +789,8 @@ func (m *MemoryIngestData) GetTS() uint64 {
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
+	// Make sure data is not released.
+	intest.Assert(len(m.kvs) > 0)
 }
 
 // DecRef implements IngestData.DecRef.
