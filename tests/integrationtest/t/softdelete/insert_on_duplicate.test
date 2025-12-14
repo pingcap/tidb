@@ -67,3 +67,12 @@ select id, v, isnull(_tidb_softdelete_time) from t;
 # tk.MustExec(`update t2 set _tidb_softdelete_time = now() where id = 1`)
 # tk.MustExec(`insert into t2 (id, v) values (2, 12) on duplicate key update id = 1`)
 # tk.MustQuery(`select id, v from t2 where _tidb_softdelete_time is null`).Sort().Check(testkit.Rows("1 2"))
+
+
+create table t1 (id int primary key, v1 int unique, v2 int unique, v3 int unique) softdelete retention 7 day;
+insert into t1 (id, v1, v2, v3) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4);
+update t1 set _tidb_softdelete_time = now() where id in (1, 2);
+set @@tidb_translate_softdelete_sql = 0;
+select id, v1, v2, v3, isnull(_tidb_softdelete_time) from t1;
+insert into t1 (id, v1, v2, v3) values (1, 2, 3, 5) on duplicate key update v3 = 42;
+select id, v1, v2, v3, isnull(_tidb_softdelete_time) from t1;
