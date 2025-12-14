@@ -103,33 +103,29 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 		e.GetMeterRecorder().MergeObjStoreAccess(accessRec)
 	}()
 
-	stepMeta := &CollectConflictsStepMeta{}
-	if err = json.Unmarshal(subtask.Meta, stepMeta); err != nil {
+	stMeta := &CollectConflictsStepMeta{}
+	if err = json.Unmarshal(subtask.Meta, stMeta); err != nil {
 		return errors.Trace(err)
 	}
-	if stepMeta.ExternalPath != "" {
-		if err := stepMeta.ReadJSONFromExternalStorage(ctx, objStore, stepMeta); err != nil {
+	if stMeta.ExternalPath != "" {
+		if err := stMeta.ReadJSONFromExternalStorage(ctx, objStore, stMeta); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
 	e.resetForNewSubtask(subtask.ID)
 
-	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
+	for kvGroup, ci := range stMeta.Infos.ConflictInfos {
 		err := e.collectConflictsOfKVGroup(ctx, objStore, subtask.Concurrency, kvGroup, ci)
 		failpoint.InjectCall("afterCollectOneKVGroup", &err)
 		if err != nil {
 			return err
 		}
 	}
-	return e.onFinished(ctx, subtask)
+	return e.onFinished(ctx, subtask, stMeta)
 }
 
-func (e *collectConflictsStepExecutor) onFinished(_ context.Context, subtask *proto.Subtask) error {
-	subtaskMeta := &CollectConflictsStepMeta{}
-	if err := json.Unmarshal(subtask.Meta, subtaskMeta); err != nil {
-		return errors.Trace(err)
-	}
+func (e *collectConflictsStepExecutor) onFinished(_ context.Context, subtask *proto.Subtask, subtaskMeta *CollectConflictsStepMeta) error {
 	e.logger.Info("collected conflict row info", zap.Int64("count", e.result.RowCount),
 		zap.Stringer("checksum", e.result.Checksum),
 		zap.Strings("targetFiles", e.result.Filenames),
@@ -140,7 +136,7 @@ func (e *collectConflictsStepExecutor) onFinished(_ context.Context, subtask *pr
 	subtaskMeta.ConflictedRowCount = e.result.RowCount
 	subtaskMeta.ConflictedRowFilenames = e.result.Filenames
 	subtaskMeta.TooManyConflictsFromIndex = e.sharedHandleSet.BoundExceeded()
-	newMeta, err := json.Marshal(subtaskMeta)
+	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
