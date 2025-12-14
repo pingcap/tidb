@@ -186,17 +186,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	// Collect information for metadata lock.
-<<<<<<< HEAD
-	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
-	for id := range vars.StmtCtx.MDLRelatedTableIDs {
-=======
-	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
 	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
 	for id := range vars.StmtCtx.RelatedTableIDs {
->>>>>>> e0813f3a475 (planner: Fix bug in the plan cache when the metadata lock is disabled. (#64795))
 		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
