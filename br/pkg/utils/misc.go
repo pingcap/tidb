@@ -27,9 +27,13 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"go.uber.org/multierr"
@@ -56,16 +60,17 @@ const (
 // - target's flen and decimal should be bigger or equals to src's
 // - elements in target is superset of elements in src if they're enum or set type
 // - same charset and collate if they're string types
-func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
+func IsTypeCompatible(src types.FieldType, target types.FieldType) (typeEq, collateEq bool) {
+	collateEq = src.GetCollate() == target.GetCollate()
 	if mysql.HasNotNullFlag(src.GetFlag()) != mysql.HasNotNullFlag(target.GetFlag()) {
-		return false
+		return false, collateEq
 	}
 	if mysql.HasUnsignedFlag(src.GetFlag()) != mysql.HasUnsignedFlag(target.GetFlag()) {
-		return false
+		return false, collateEq
 	}
 	srcEType, dstEType := src.EvalType(), target.EvalType()
 	if srcEType != dstEType {
-		return false
+		return false, collateEq
 	}
 
 	getFLenAndDecimal := func(tp types.FieldType) (int, int) {
@@ -83,7 +88,7 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 	srcFLen, srcDecimal := getFLenAndDecimal(src)
 	targetFLen, targetDecimal := getFLenAndDecimal(target)
 	if srcFLen > targetFLen || srcDecimal > targetDecimal {
-		return false
+		return false, collateEq
 	}
 
 	// if they're not enum or set type, elems will be empty
@@ -92,7 +97,7 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 	srcElems := src.GetElems()
 	targetElems := target.GetElems()
 	if len(srcElems) > len(targetElems) {
-		return false
+		return false, collateEq
 	}
 	targetElemSet := make(map[string]struct{})
 	for _, item := range targetElems {
@@ -100,11 +105,10 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 	}
 	for _, item := range srcElems {
 		if _, ok := targetElemSet[item]; !ok {
-			return false
+			return false, collateEq
 		}
 	}
-	return src.GetCharset() == target.GetCharset() &&
-		src.GetCollate() == target.GetCollate()
+	return src.GetCharset() == target.GetCharset(), collateEq
 }
 
 func GRPCConn(ctx context.Context, storeAddr string, tlsConf *tls.Config, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
@@ -215,4 +219,51 @@ func StartExitSingleListener(ctx context.Context) (context.Context, context.Canc
 		os.Exit(1)
 	}()
 	return cx, cancel
+}
+
+func Values[K comparable, V any](m map[K]V) []V {
+	values := make([]V, 0, len(m))
+	for _, v := range m {
+		values = append(values, v)
+	}
+	return values
+}
+
+func FlattenValues[K comparable, V any](m map[K][]V) []V {
+	total := 0
+	for _, v := range m {
+		total += len(v)
+	}
+	result := make([]V, 0, total)
+	for _, v := range m {
+		result = append(result, v...)
+	}
+	return result
+}
+
+// GetPartitionByName gets the partition ID from the given tableInfo if its name matches
+func GetPartitionByName(tableInfo *model.TableInfo, name pmodel.CIStr) (int64, error) {
+	if tableInfo.Partition == nil {
+		return 0, errors.Errorf("the table %s[id=%d] does not have parition", tableInfo.Name.O, tableInfo.ID)
+	}
+	if partID := tableInfo.Partition.GetPartitionIDByName(name.L); partID > 0 {
+		return partID, nil
+	}
+	return 0, errors.Errorf("partition is not found in the table %s[id=%d]", tableInfo.Name.O, tableInfo.ID)
+}
+
+func SummaryFiles(files []*backuppb.File) (crc, kvs, bytes uint64) {
+	cfCount := make(map[string]int)
+	for _, f := range files {
+		cfCount[f.Cf] += 1
+		summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
+		summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+		crc ^= f.Crc64Xor
+		kvs += f.TotalKvs
+		bytes += f.TotalBytes
+	}
+	for cf, count := range cfCount {
+		summary.CollectInt(fmt.Sprintf("%s CF files", cf), count)
+	}
+	return crc, kvs, bytes
 }

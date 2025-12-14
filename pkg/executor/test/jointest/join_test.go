@@ -775,9 +775,15 @@ func TestIssue30211(t *testing.T) {
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
 		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
 	}()
-	tk.MustExec("insert into t1 values(1),(2);")
-	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
-	tk.MustExec("set @@tidb_mem_quota_query=8000;")
+
+	for i := 1; i <= 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d),(%d),(%d),(%d)", i, i, i, i))
+	}
+
+	for i := 1; i <= 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t2 values (%d),(%d),(%d),(%d)", i, i, i, i))
+	}
+	tk.MustExec("set @@tidb_mem_quota_query = 8000;")
 	tk.MustExec("set tidb_index_join_batch_size = 1;")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
@@ -941,4 +947,45 @@ func TestIssue11896(t *testing.T) {
 	tk.MustExec("insert into t1 value(18446744073709551615);")
 
 	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;").Check(nil)
+}
+
+func TestSingleTaskIncrementalIndexHashJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key)")
+	tk.MustExec("create table t2(b int not null, c varchar(100), index idx_b(b))")
+
+	sql1 := "insert into t1 values "
+	// insert 9 rows to t1, a is 2-10
+	for i := 2; i <= 10; i++ {
+		if i > 2 {
+			sql1 += ","
+		}
+		sql1 += fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec(sql1)
+
+	sql2 := "insert into t2 values "
+	// insert 9000 rows to t2, b is 1-9
+	for i := 1; i <= 9000; i++ {
+		if i > 1 {
+			sql2 += ","
+		}
+		sql2 += fmt.Sprintf("(%d, 'abc')", i/1000)
+	}
+	tk.MustExec(sql2)
+
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t1 inner join t2 on t1.a = t2.b")
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ count(*) from t1 inner join t2 on t1.a = t2.b").Check(testkit.Rows("7001"))
+
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.b")
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ count(*) from t1 left join t2 on t1.a = t2.b").Check(testkit.Rows("7002"))
+
+	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ * from t2 right join t1 on t1.a = t2.b")
+	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ count(*) from t2 right join t1 on t1.a = t2.b").Check(testkit.Rows("7002"))
+
+	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ * from t1 where t1.a not in (select t2.b from t2 where t2.b = t1.a)")
+	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ count(*) from t1 where t1.a not in (select t2.b from t2 where t2.b = t1.a)").Check(testkit.Rows("1"))
 }

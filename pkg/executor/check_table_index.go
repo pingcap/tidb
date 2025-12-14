@@ -473,6 +473,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 		currentOffset := 0
 
+		meetError = false
 		// Every checksum in table side should be the same as the index side.
 		i := 0
 		for i < len(tableChecksum) && i < len(indexChecksum) {

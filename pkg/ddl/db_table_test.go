@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -864,4 +865,43 @@ func TestCreateConstraintForTable(t *testing.T) {
 	rs, err := tk.Exec("SHOW TABLES FROM test2 LIKE 't1'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "t1")
+}
+
+func TestCreateTableWithBR(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tblInfo := &model.TableInfo{
+		ID:   42043,
+		Name: pmodel.NewCIStr("t1"),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      pmodel.NewCIStr("id"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+		},
+		State:     model.StatePublic,
+		AutoIncID: 1000,
+	}
+
+	involvingRef := []model.InvolvingSchemaInfo{{
+		Database: "test",
+		Table:    "t1",
+		Mode:     model.SharedInvolving,
+	}}
+
+	// Mock BR scenario, rebase should be called twice.
+	se := tk.Session()
+	se.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, dom.DDLExecutor().CreateTableWithInfo(
+		se, pmodel.NewCIStr("test"), tblInfo, involvingRef,
+		ddl.WithOnExist(ddl.OnExistError)))
+
+	rs := tk.MustQuery("show table test.t1 next_row_id").Rows()
+	require.Equal(t, "1000", rs[0][3])
 }

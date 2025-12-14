@@ -402,3 +402,10 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 		}
 	}
 }
+
+func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
+	require.Equal(t, time.Hour*100, variable.AdvancerCheckPointLagLimit.Load())
+}
