@@ -859,6 +859,55 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
+	// Validate scanResult: if scanResult favors a table path but that table path loses on at least 2 other
+	// metrics, invalidate the scanResult advantage. This prevents table scans from winning solely based
+	// on being a single scan when they're worse on multiple other dimensions.
+	if scanResult > 0 && lhs.path.IsTablePath() {
+		// LHS (table scan) wins on scanResult, check if it loses on at least 2 other metrics
+		losesCount := 0
+		if accessResult < 0 {
+			losesCount++
+		}
+		if matchResult < 0 {
+			losesCount++
+		}
+		if globalResult < 0 {
+			losesCount++
+		}
+		if riskResult < 0 {
+			losesCount++
+		}
+		if eqOrInResult < 0 {
+			losesCount++
+		}
+		if losesCount >= 2 {
+			// Table scan loses on at least 2 metrics, invalidate scanResult advantage
+			scanResult = 0
+		}
+	} else if scanResult < 0 && rhs.path.IsTablePath() {
+		// RHS (table scan) wins on scanResult, check if it loses on at least 2 other metrics
+		losesCount := 0
+		if accessResult > 0 {
+			losesCount++
+		}
+		if matchResult > 0 {
+			losesCount++
+		}
+		if globalResult > 0 {
+			losesCount++
+		}
+		if riskResult > 0 {
+			losesCount++
+		}
+		if eqOrInResult > 0 {
+			losesCount++
+		}
+		if losesCount >= 2 {
+			// Table scan loses on at least 2 metrics, invalidate scanResult advantage
+			scanResult = 0
+		}
+	}
+
 	// predicateResult is separated out. An index may "win" because it has a better
 	// accessResult - but that access has high risk.
 	// accessResult does not differentiate between range or equal/IN predicates.
