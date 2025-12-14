@@ -1,9 +1,11 @@
 drop database if exists test_aa;
+-- error 8200
 create database test_aa active_active = 'ON';
+create database test_aa;
 show create database test_aa;
-alter database test_aa active_active = 'OFF' softdelete = 'ON';
+alter database test_aa active_active = 'OFF' softdelete = retention 4 day;
 show create database test_aa;
-alter database test_aa active_active = 'ON' softdelete = 'ON';
+alter database test_aa active_active = 'ON' softdelete = retention 7 day;
 show create database test_aa;
 use test_aa;
 
@@ -12,15 +14,17 @@ show create table t1;
 alter database test_aa active_active = 'OFF' softdelete = 'OFF';
 show create database test_aa;
 
-create table t2 (id int primary key, name varchar(50)) active_active = 'ON' softdelete = 'on';
+create table t2 (id int primary key, name varchar(50)) active_active = 'ON' softdelete = retention 7 day;
 show create table t2;
 create table t3 (id int primary key, name varchar(50)) active_active = 'OFF';
 show create table t3;
+create table t4 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+show create table t4;
 
--- error 8274
-create table t4 (id int primary key, name varchar(50)) active_active = 'ON';
--- error 8274
-create table t4 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
+-- error 8200
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON';
+-- error 8200
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
 
 # Alter table should fail
 -- error 8200

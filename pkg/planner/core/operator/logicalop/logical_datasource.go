@@ -192,10 +192,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 
 		// For softdelete table, we need an extra isnull(_tidb_softdelete_time) filter to satisfy the softdelete
 		// semantics. So we can't prune the _tidb_softdelete_time column even if it's not used by parent operators.
-		// TODO: add system variable check
+
 		// We should have used ds.OutputNames() to check the ExtraSoftDeleteTimeName column here, but the current
 		// implementation doesn't correctly maintain the output names during optimizations, so use col.OrigName for now.
-		if ds.TableInfo.SoftdeleteInfo != nil && strings.HasSuffix(col.OrigName, model.ExtraSoftDeleteTimeName.L) {
+		if ds.TableInfo.SoftdeleteInfo != nil &&
+			strings.HasSuffix(col.OrigName, model.ExtraSoftDeleteTimeName.L) &&
+			ds.SCtx().GetSessionVars().SoftDeleteRewrite {
 			nonPrunableCols.Insert(i)
 			continue
 		}

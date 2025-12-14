@@ -1,4 +1,4 @@
-create table t (id int primary key clustered, v int) softdelete = 'on';
+create table t (id int primary key clustered, v int) softdelete retention 7 day;
 insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4);
 update t set _tidb_softdelete_time = now() where id in (1, 2);
 insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666;
@@ -41,7 +41,7 @@ id	v	isnull(_tidb_softdelete_time)
 3	3	1
 drop table t;
 # test again with nonclustered
-create table t (id int primary key nonclustered, v int) softdelete = 'on';
+create table t (id int primary key nonclustered, v int) softdelete retention 7 day;
 insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4);
 update t set _tidb_softdelete_time = now() where id in (1, 2);
 insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666;

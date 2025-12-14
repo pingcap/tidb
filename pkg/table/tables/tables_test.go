@@ -1363,9 +1363,7 @@ func TestActiveActiveTableSetCommitWaitUntilTSO(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, v int) softdelete = 'on', active_active = 'on'")
-	// TODO: remove this line when DDL is fixed
-	tk.MustExec("alter table t drop column _tidb_commit_ts")
+	tk.MustExec("create table t (id int primary key, v int) softdelete retention 7 day, active_active = 'on'")
 
 	resetStateclockDriftNone := func(t *testing.T, tk *testkit.TestKit) uint64 {
 		tk.MustExec("truncate table t")
@@ -1404,9 +1402,7 @@ func TestActiveActiveUpdateOriginTSColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, v int) softdelete = 'on', active_active = 'on'")
-	// TODO: remove this line when DDL is fixed
-	tk.MustExec("alter table t drop column _tidb_commit_ts")
+	tk.MustExec("create table t (id int primary key, v int) softdelete retention 7 day, active_active = 'on'")
 	tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205)")
 
 	// When duplicate key update involves multiple rows, the conflict rows should update their origin ts to <nil>
@@ -1428,9 +1424,7 @@ func TestActiveActiveUpdateOriginTSColumn(t *testing.T) {
 	// reset
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205)")
-	tk.MustExec("create table t1 (id int primary key, v int) softdelete = 'on', active_active = 'on'")
-	// TODO: remove this line when DDL is fixed
-	tk.MustExec("alter table t1 drop column _tidb_commit_ts")
+	tk.MustExec("create table t1 (id int primary key, v int) softdelete retention 7 day, active_active = 'on'")
 	tk.MustExec("insert into t1 (id, v) values (1, 101)")
 
 	// update join involve multiple tables, all _tidb_origin_ts should be updated

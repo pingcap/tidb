@@ -1051,6 +1051,7 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 		InsertValues:          ivs,
 		OnDuplicate:           append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 		replaceConflictIfExpr: v.ReplaceConflictIfExpr,
+		needExtraCommitTS:     v.NeedExtraCommitTS,
 	}
 	return insert
 }

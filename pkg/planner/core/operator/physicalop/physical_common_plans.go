@@ -81,6 +81,7 @@ type Insert struct {
 	Names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
 
 	ReplaceConflictIfExpr []expression.Expression
+	NeedExtraCommitTS     bool
 
 	GenCols InsertGeneratedColumns
 
@@ -315,6 +316,10 @@ type TblColPosInfo struct {
 	// IndexesRowLayout store the row layout of indexes. We need it if column pruning happens.
 	// If it's nil, means no column pruning happens.
 	IndexesRowLayout table.IndexesLayout
+
+	// ExtraOriginTSOffset stores the offset of _tidb_origin_ts column in the pruned row for active-active tables.
+	// -1 means the column is not present or not an active-active table.
+	ExtraOriginTSOffset table.ExtraOriginTSOffset
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -323,7 +328,7 @@ func (t *TblColPosInfo) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfInt64 + size.SizeOfInt*2
+	sum = size.SizeOfInt64 + size.SizeOfInt*3
 	if t.HandleCols != nil {
 		sum += t.HandleCols.MemoryUsage()
 	}

@@ -916,15 +916,11 @@ func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBit
 
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbInfo *model.DBInfo) error {
-	var ttlOptionsHandled bool
-	var softdeleteHandled bool
-	softdeleteInfo := getDefaultSoftDeleteInfo(dbInfo)
-
-	// Inherit active-active default from database
-	isActiveActive := false
-	if dbInfo != nil && dbInfo.IsActiveActive == "ON" {
-		isActiveActive = true
-	}
+	var (
+		ttlOptionsHandled bool
+		activeActive      *bool
+		softDeleteArg     = &model.SoftDeleteInfoArg{}
+	)
 
 	for _, op := range options {
 		switch op.Tp {
@@ -982,30 +978,26 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
 		case ast.TableOptionSoftDelete:
-			softdeleteInfo.Enable = op.BoolValue
-			softdeleteHandled = true
+			softDeleteArg.Enable = op.BoolValue
+			softDeleteArg.HasEnable = true
+			softDeleteArg.Handled = true
 		case ast.TableOptionSoftDeleteRetention:
-			softdeleteInfo.Retention = op.StrValue
-			softdeleteHandled = true
+			softDeleteArg.Retention = op.StrValue
+			softDeleteArg.RetentionUnit = op.TimeUnitValue.Unit
+			softDeleteArg.Handled = true
 		case ast.TableOptionSoftDeleteJobInterval:
-			softdeleteInfo.JobInterval = op.StrValue
-			softdeleteHandled = true
+			softDeleteArg.JobInterval = op.StrValue
+			softDeleteArg.Handled = true
 		case ast.TableOptionSoftDeleteJobEnable:
-			softdeleteInfo.JobEnable = op.BoolValue
-			softdeleteHandled = true
+			softDeleteArg.JobEnable = op.BoolValue
+			softDeleteArg.HasJobEnable = true
+			softDeleteArg.Handled = true
 		case ast.TableOptionActiveActive:
-			isActiveActive = op.BoolValue
+			v := op.BoolValue
+			activeActive = &v
 		case ast.TableOptionEngineAttribute:
 			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
-	}
-
-	// Set active-active (from database default or table option)
-	tbInfo.IsActiveActive = isActiveActive
-
-	// Set soft-delete info
-	if softdeleteHandled || softdeleteInfo.Enable {
-		tbInfo.SoftdeleteInfo = softdeleteInfo
 	}
 
 	shardingBits := shardingBits(tbInfo)
@@ -1013,19 +1005,17 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 		tbInfo.PreSplitRegions = shardingBits
 	}
 
-	if err := checkSoftDeleteAndActiveActive(tbInfo, true); err != nil {
+	var err error
+	tbInfo.SoftdeleteInfo, tbInfo.IsActiveActive, err = getSoftDeleteAndActiveActive(dbInfo.SoftdeleteInfo, softDeleteArg, dbInfo.IsActiveActive, activeActive)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkSoftDeleteAndActiveActive(tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
 	// Add extra hidden columns for active-active and soft-delete features
 	if tbInfo.IsActiveActive {
-		// Add _tidb_commit_ts hidden column
-		// virtual column has fixed ID
-		commitTSCol := model.NewExtraCommitTSColInfo()
-		commitTSCol.State = model.StatePublic
-		commitTSCol.Offset = len(tbInfo.Columns)
-		tbInfo.Columns = append(tbInfo.Columns, commitTSCol)
-
 		// Add _tidb_origin_ts hidden column
 		originTSCol := model.NewExtraOriginTSColInfo()
 		originTSCol.ID = AllocateColumnID(tbInfo)
@@ -1034,7 +1024,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 		tbInfo.Columns = append(tbInfo.Columns, originTSCol)
 	}
 
-	if tbInfo.SoftdeleteInfo != nil && tbInfo.SoftdeleteInfo.Enable {
+	if tbInfo.SoftdeleteInfo != nil {
 		// Add _tidb_softdelete_time hidden column
 		softDeleteCol := model.NewExtraSoftDeleteTimeColInfo()
 		softDeleteCol.ID = AllocateColumnID(tbInfo)

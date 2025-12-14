@@ -459,8 +459,6 @@ var (
 	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
 	// ErrUnsupportedPrimaryKeyTypeWithTTL returns when create or alter a table with TTL options but the primary key is not supported
 	ErrUnsupportedPrimaryKeyTypeWithTTL = ClassDDL.NewStd(mysql.ErrUnsupportedPrimaryKeyTypeWithTTL)
-	// ErrSetSoftDeleteOptionForNonSoftDeleteTable returns when soft delete options are set on a non-soft-delete table
-	ErrSetSoftDeleteOptionForNonSoftDeleteTable = ClassDDL.NewStd(mysql.ErrSetSoftDeleteOptionForNonSoftDeleteTable)
 
 	// ErrNotSupportedYet returns when tidb does not support this feature.
 	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)

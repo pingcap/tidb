@@ -1,4 +1,4 @@
-create table t (id int primary key clustered) softdelete = 'on';
+create table t (id int primary key clustered) softdelete retention 7 day;
 insert into t(id) values (1), (2);
 update t set _tidb_softdelete_time = now() where id = 1;
 insert into t(id) values (1), (2), (3);
@@ -20,7 +20,7 @@ id
 3
 drop table t;
 ## test again with nonclustered pk
-create table t (id int primary key nonclustered) softdelete = 'on';
+create table t (id int primary key nonclustered) softdelete retention 7 day;
 insert into t(id) values (1), (2);
 update t set _tidb_softdelete_time = now() where id = 1;
 insert into t(id) values (1), (2), (3);

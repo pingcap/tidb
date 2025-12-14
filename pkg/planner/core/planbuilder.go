@@ -4132,13 +4132,36 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, errors.Errorf("Can't get table %s", tableInfo.Name.O)
 	}
 
+	// check table info to see if it's active-active table
+	needExtraCommitTS := tableInfo.IsActiveActive
+
+	if needExtraCommitTS {
+		dbName := tnW.DBInfo.Name
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		commitTSCol := &expression.Column{
+			RetType:     tp,
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:          model.ExtraCommitTSID,
+			OrigName:    fmt.Sprintf("%v.%v.%v", dbName.L, tableInfo.Name, model.ExtraCommitTSName),
+			IsInvisible: true,
+		}
+		schema.Append(commitTSCol)
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     model.ExtraCommitTSName,
+			OrigColName: model.ExtraCommitTSName,
+		})
+	}
+
 	insertPlan := physicalop.Insert{
-		Table:         tableInPlan,
-		Columns:       insert.Columns,
-		TableSchema:   schema,
-		TableColNames: names,
-		IsReplace:     insert.IsReplace,
-		IgnoreErr:     insert.IgnoreErr,
+		Table:             tableInPlan,
+		Columns:           insert.Columns,
+		TableSchema:       schema,
+		TableColNames:     names,
+		IsReplace:         insert.IsReplace,
+		IgnoreErr:         insert.IgnoreErr,
+		NeedExtraCommitTS: needExtraCommitTS,
 	}.Init(b.ctx)
 
 	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
@@ -4244,7 +4267,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 // buildSoftDeleteReplaceExpr builds the ReplaceConflictIfExpr for soft delete enabled tables.
 // It creates an expression: NOT(ISNULL(_tidb_softdelete_time)) to check if a row is soft-deleted.
 func (b *PlanBuilder) buildSoftDeleteReplaceExpr(insertPlan *physicalop.Insert, tableInfo *model.TableInfo) {
-	if tableInfo.SoftdeleteInfo == nil || !tableInfo.SoftdeleteInfo.Enable {
+	if tableInfo.SoftdeleteInfo == nil ||
+		!insertPlan.SCtx().GetSessionVars().SoftDeleteRewrite {
 		return
 	}
 

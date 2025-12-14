@@ -1621,11 +1621,6 @@ error = '''
 Invalid storage class: %s
 '''
 
-["ddl:8274"]
-error = '''
-Cannot set %s on a table without SOFTDELETE config
-'''
-
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s

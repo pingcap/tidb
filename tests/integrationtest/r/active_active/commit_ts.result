@@ -64,3 +64,50 @@ TSO	2
 TSO	3
 # TODO
 # coprocessor is not supported yet
+drop table if exists t;
+create table t (a bigint primary key, b int, c int) softdelete retention 7 day active_active = 'on';
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
+select * from t;
+a	b	c
+TSO	1	1
+delete from t;
+insert into t (a,b,c,_tidb_softdelete_time) values (2,2,2, now()) on duplicate key update a = _tidb_commit_ts;
+explain format = 'brief' select * from t;
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Projection
+└─Projection	10.00	cop[tikv]		active_active__commit_ts.t.a, active_active__commit_ts.t.b, active_active__commit_ts.t.c
+  └─Selection	10.00	cop[tikv]		isnull(active_active__commit_ts.t._tidb_softdelete_time)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t;
+a	b	c
+explain format = 'brief' update t set b = 3;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─TableReader	10.00	root		data:Selection
+  └─Selection	10.00	cop[tikv]		isnull(active_active__commit_ts.t._tidb_softdelete_time)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+update t set b = 3;
+set @@tidb_translate_softdelete_sql = false;
+explain format = 'brief' select * from t;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t;
+a	b	c
+2	2	2
+select * from t where a = 2;
+a	b	c
+2	2	2
+explain format = 'brief' update t set b = 3;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+update t set b = 3;
+select * from t;
+a	b	c
+2	3	2
+delete from t where a > 1;
+select * from t;
+a	b	c
