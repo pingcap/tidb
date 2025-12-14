@@ -1004,9 +1004,11 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
+	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket or outside the histogram bucket range.
+	RiskRangeSkewRatio float64
+
 	// cpuFactor is the CPU cost of processing one expression for one row.
-	cpuFactor float64
-	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
+	cpuFactor    float64
 	copCPUFactor float64
 	// networkFactor is the network cost of transferring 1 byte data.
 	networkFactor float64
@@ -2251,6 +2253,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
+		RiskRangeSkewRatio:            DefTiDBOptRiskRangeSkewRatio,
 		CostModelVersion:              DefTiDBCostModelVer,
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,

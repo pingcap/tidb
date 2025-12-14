@@ -969,6 +969,9 @@ const (
 	// via the ordering index.
 	TiDBOptOrderingIdxSelRatio = "tidb_opt_ordering_index_selectivity_ratio"
 
+	// TiDBOptRiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket or outside the histogram bucket range.
+	TiDBOptRiskRangeSkewRatio = "tidb_opt_risk_range_skew_ratio"
+
 	// TiDBOptEnableMPPSharedCTEExecution indicates whether the optimizer try to build shared CTE scan during MPP execution.
 	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
@@ -1581,6 +1584,7 @@ const (
 	DefTiDBOptEnableLateMaterialization               = true
 	DefTiDBOptOrderingIdxSelThresh                    = 0.0
 	DefTiDBOptOrderingIdxSelRatio                     = -1
+	DefTiDBOptRiskRangeSkewRatio                      = 0.0
 	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
 	DefTiDBEnableRowLevelChecksum                     = false
