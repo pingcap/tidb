@@ -711,6 +711,45 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
 }
 
+<<<<<<< HEAD
+=======
+func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
+	lhsRiskRatio, rhsRiskRatio := 0.0, 0.0
+	// MaxCountAfterAccess tracks the worst case "CountAfterAccess", accounting for scenarios that could
+	// increase our row estimation, thus lhs/rhsRiskRatio represents the "risk" of the CountAfterAccess value.
+	// Lower value means less risk that the actual row count is higher than the estimated one.
+	if lhs.path.MaxCountAfterAccess > lhs.path.CountAfterAccess && lhs.path.CountAfterAccess > 0 {
+		lhsRiskRatio = lhs.path.MaxCountAfterAccess / lhs.path.CountAfterAccess
+	}
+	if rhs.path.MaxCountAfterAccess > rhs.path.CountAfterAccess && rhs.path.CountAfterAccess > 0 {
+		rhsRiskRatio = rhs.path.MaxCountAfterAccess / rhs.path.CountAfterAccess
+	}
+	sumLHS := lhs.path.CountAfterAccess + lhs.path.MaxCountAfterAccess
+	sumRHS := rhs.path.CountAfterAccess + rhs.path.MaxCountAfterAccess
+	// lhs has lower risk
+	if lhsRiskRatio < rhsRiskRatio {
+		if lhs.path.CountAfterAccess <= rhs.path.CountAfterAccess {
+			return 1, lhsRiskRatio
+		}
+		if sumLHS < sumRHS && lhs.path.MinCountAfterAccess > 0 &&
+			(lhs.path.MinCountAfterAccess <= rhs.path.MinCountAfterAccess || lhs.path.CountAfterIndex <= rhs.path.CountAfterIndex) {
+			return 1, lhsRiskRatio
+		}
+	}
+	// rhs has lower risk
+	if rhsRiskRatio < lhsRiskRatio {
+		if rhs.path.CountAfterAccess <= lhs.path.CountAfterAccess {
+			return -1, rhsRiskRatio
+		}
+		if sumRHS < sumLHS && rhs.path.MinCountAfterAccess > 0 &&
+			(rhs.path.MinCountAfterAccess <= lhs.path.MinCountAfterAccess || rhs.path.CountAfterIndex <= lhs.path.CountAfterIndex) {
+			return -1, rhsRiskRatio
+		}
+	}
+	return 0, 0
+}
+
+>>>>>>> 72a540b8042 (Planner: Add min/max for out of range (#63077))
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) { // Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
@@ -746,12 +785,15 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
+	// predicateResult is separated out. An index may "win" because it has a better
+	// accessResult - but that access has high risk.
+	// Summing these 3 metrics ensures that a "high risk" index wont win ONLY on
+	// accessResult. The high risk will negate that accessResult with erOrIn being the
+	// tiebreaker or equalizer.
+	predicateResult := accessResult + riskResult + eqOrInResult
+
 	// totalSum is the aggregate score of all comparison metrics
-	// riskResult is excluded because more work is required.
-	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
-	// consider what "type" of risk is being evaluated (eg. out of range, implied independence, data skew, whether a
-	// bound was applied, etc.)
-	totalSum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
+	totalSum := accessResult + scanResult + matchResult + globalResult
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
@@ -784,13 +826,28 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 	}
 
+	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
+	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 && !comparable2 {
+		// These aren't comparable - but compare risk and other metrics to see if we
+		// can determine a clear winner. Checking > 1 and < -1 means that the winner
+		// must win on at least 2 of the metrics below.
+		// This is to prevent a case where x wins on 1 metric but loses badly on another.
+		// Other checks in this logic only require > 0 or < 0 (1 metric is enough).
+		if riskResult > 0 && leftDidNotLose && totalSum > 1 {
+			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
+		}
+		if riskResult < 0 && rightDidNotLose && totalSum < -1 {
+			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+		}
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
+	// leftDidNotLose, but one of the metrics is a win
+	if leftDidNotLose && totalSum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && eqOrInResult <= 0 && totalSum < 0 {
+	// rightDidNotLose, but one of the metrics is a win
+	if rightDidNotLose && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
