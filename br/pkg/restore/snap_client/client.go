@@ -172,6 +172,7 @@ type SnapClient struct {
 	restoreUUID uuid.UUID
 
 	g glue.Glue
+	checkPrivilegeTableRowsCollateCompatiblity bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -276,6 +277,18 @@ func (rc *SnapClient) GetTLSConfig() *tls.Config {
 // GetSupportPolicy tells whether target tidb support placement policy.
 func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
+}
+
+// SetCheckPrivilegeTableRowsCollateCompatiblity set switch to check
+// privilege tables with different collate columns
+func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatiblity(v bool) {
+	rc.checkPrivilegeTableRowsCollateCompatiblity = v
+}
+
+// GetCheckPrivilegeTableRowsCollateCompatiblity get switch to check
+// privilege tables with different collate columns
+func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatiblity() bool {
+	return rc.checkPrivilegeTableRowsCollateCompatiblity
 }
 
 func (rc *SnapClient) updateConcurrency() {

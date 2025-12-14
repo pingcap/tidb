@@ -614,8 +614,8 @@ index_must_not_exist "test_snapshot_db_create.t_drop_primary_key" "PRIMARY"
 index_must_not_exist "test_log_db_create.t_drop_primary_key" "PRIMARY"
 
 # ActionAddForeignKey
-# foreign_key_must_exist "test_snapshot_db_create" "t_fk_child_add" "fk_added"
-# foreign_key_must_exist "test_log_db_create" "t_fk_child_add" "fk_added"
+foreign_key_must_exist "test_snapshot_db_create" "t_fk_child_add" "fk_added"
+foreign_key_must_exist "test_log_db_create" "t_fk_child_add" "fk_added"
 
 # ActionCreateView
 view_must_exist "test_log_db_create.v_view_created"

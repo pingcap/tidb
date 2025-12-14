@@ -43,10 +43,12 @@ alter table test_log_db_create.t_drop_index drop index i1;
 alter table test_log_db_create.t_drop_unique_key drop index i1;
 
 -- ActionAddForeignKey
--- alter table test_snapshot_db_create.t_fk_child_add add constraint fk_added foreign key (parent_id) references test_snapshot_db_create.t_fk_parent(id);
--- create table test_log_db_create.t_fk_parent (id int primary key, name varchar(50));
--- create table test_log_db_create.t_fk_child_add (id int primary key, parent_id int);
--- alter table test_log_db_create.t_fk_child_add add constraint fk_added foreign key (parent_id) references test_log_db_create.t_fk_parent(id);
+alter table test_snapshot_db_create.t_fk_child_add add constraint fk_added foreign key (parent_id) references test_snapshot_db_create.t_fk_parent(id);
+create table test_log_db_create.t_fk_parent (id int primary key, name varchar(50));
+create table test_log_db_create.t_fk_child_add (id int primary key, parent_id int);
+insert into test_log_db_create.t_fk_parent values (1, 'a'), (2, 'b');
+insert into test_log_db_create.t_fk_child_add values (1, 1), (2, 2);
+alter table test_log_db_create.t_fk_child_add add constraint fk_added foreign key (parent_id) references test_log_db_create.t_fk_parent(id);
 
 -- ActionTruncateTable
 truncate table test_snapshot_db_create.t_to_be_truncated;
