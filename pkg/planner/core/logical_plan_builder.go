@@ -5574,7 +5574,7 @@ func (b *PlanBuilder) buildDMLSelectPlan(
 }
 
 // buildUpdatePlan builds the Update physical plan from a select plan.
-// This is shared by buildUpdate and buildDeleteAsUpdate.
+// This is shared by buildUpdate and buildSoftdeleteAsUpdate.
 func (b *PlanBuilder) buildUpdatePlan(
 	ctx context.Context,
 	p base.LogicalPlan,
@@ -5901,9 +5901,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
 	localResolveCtx := resolve.NewContext()
-	// softDeleteTables collects tables that have soft delete enabled.
+	// softdeleteTables collects tables that have soft delete enabled.
 	// It's only used when SoftDeleteRewrite is enabled.
-	var softDeleteTables []*resolve.TableNameW
+	var softdeleteTables []*resolve.TableNameW
 	var tablesToDelete []*ast.TableName
 	// Collect visitInfo.
 	if ds.Tables != nil {
@@ -5955,7 +5955,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tnW.DBInfo.Name.L, tb.Name.L, "", authErr)
 			// Check for soft delete tables when SoftDeleteRewrite is enabled.
 			if sessionVars.SoftDeleteRewrite && tableInfo.SoftdeleteInfo != nil {
-				softDeleteTables = append(softDeleteTables, tnW)
+				softdeleteTables = append(softdeleteTables, tnW)
 			}
 		}
 	} else {
@@ -5983,18 +5983,18 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 			// Check for soft delete tables when SoftDeleteRewrite is enabled.
 			if sessionVars.SoftDeleteRewrite && tblW.TableInfo.SoftdeleteInfo != nil {
-				softDeleteTables = append(softDeleteTables, tblW)
+				softdeleteTables = append(softdeleteTables, tblW)
 			}
 		}
 	}
 
 	// If soft delete tables exist and SoftDeleteRewrite is enabled, rewrite DELETE as UPDATE.
-	if len(softDeleteTables) > 0 && sessionVars.SoftDeleteRewrite {
+	if len(softdeleteTables) > 0 && sessionVars.SoftDeleteRewrite {
 		// When SoftDeleteRewrite is enabled, if any table has soft delete, all tables must have soft delete.
-		if len(softDeleteTables) != len(tablesToDelete) {
+		if len(softdeleteTables) != len(tablesToDelete) {
 			return nil, errors.Errorf("cannot mix soft delete and non-soft delete tables in DELETE statement")
 		}
-		return b.buildDeleteAsUpdate(ctx, ds, softDeleteTables)
+		return b.buildSoftdeleteAsUpdate(ctx, ds, softdeleteTables)
 	}
 
 	b.pushSelectOffset(0)
@@ -6091,10 +6091,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	return del, err
 }
 
-// buildDeleteAsUpdate builds an UPDATE plan from a DELETE statement for soft delete tables.
+// buildSoftdeleteAsUpdate builds an UPDATE plan from a DELETE statement for soft delete tables.
 // This is called when SoftDeleteRewrite is enabled and all tables involved have soft delete enabled.
-// The DELETE is rewritten to: UPDATE ... SET _tidb_softdelete_time = NOW()
-func (b *PlanBuilder) buildDeleteAsUpdate(
+// The DELETE is rewritten to: UPDATE ... SET _tidb_softdelete_time = NOW(6)
+func (b *PlanBuilder) buildSoftdeleteAsUpdate(
 	ctx context.Context,
 	ds *ast.DeleteStmt,
 	softdeleteTables []*resolve.TableNameW) (base.Plan, error) {
