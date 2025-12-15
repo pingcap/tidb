@@ -746,6 +746,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
+	// predicateResult is separated out. An index may "win" because it has a better
+	// accessResult - but that access has high risk.
+	// accessResult does not differentiate between range or equal/IN predicates.
+	predicateResult := accessResult + eqOrInResult
+
 	// totalSum is the aggregate score of all comparison metrics
 	// riskResult is excluded because more work is required.
 	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
@@ -786,16 +791,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	if !comparable1 || !comparable2 {
 		// These aren't comparable - meaning that they have different combinations of columns in
 		// the access conditions or filters.
-		// One or more predicates could carry high risk - so we want to compare that risk and other
-		// metrics to see if we can determine a clear winner.
-		// The 2 key metrics here are riskResult and predicateResult.
-		// - riskResult tells us which candidate has lower risk
-		// - predicateResult already includes risk - we need ">1" or "<-1" to counteract the risk factor.
 		// "DidNotLose" and totalSum are also factored in to ensure that the winner is better overall."
-		if riskResult > 0 && leftDidNotLose && totalSum >= 0 && predicateResult > 1 {
+		if leftDidNotLose && totalSum >= 0 && predicateResult > 1 {
 			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 		}
-		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < -1 {
+		if rightDidNotLose && totalSum <= 0 && predicateResult < -1 {
 			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 		}
 		return 0, false // No winner (0). Do not return the pseudo result
