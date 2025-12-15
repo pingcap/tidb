@@ -288,6 +288,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
+	if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	if err = checkColumnReferencedByPartialCondition(tblInfo, args.Column.Name); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -749,21 +754,22 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 }
 
 func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	oldFt := &oldCol.FieldType
-	changingFt := &changingCol.FieldType
-
 	// Signed/unsigned change for integer types need index reorg.
-	if types.IsIntegerChange(oldFt, changingFt) {
+	if mysql.IsIntegerType(oldCol.GetType()) && mysql.IsIntegerType(changingCol.GetType()) {
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
 
-	intest.Assert(types.IsCharChange(oldFt, changingFt))
+	intest.Assert(types.IsCharChange(&oldCol.FieldType, &changingCol.FieldType))
 
-	// Check index key/value part, ref tablecodec.GenIndexKey/GenIndexValuePortal
+	// Check index key part, ref tablecodec.GenIndexKey
+	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
+		return true
+	}
+
+	// Check index value part, ref tablecodec.GenIndexValuePortal
 	// TODO(joechenrh): It's better to check each index here, because not all indexes need
 	// reorg even if the below condition is true.
-	return !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) ||
-		types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
+	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
 }
 
 func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {

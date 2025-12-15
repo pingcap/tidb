@@ -1491,6 +1491,10 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 			if origin.GetType() == mysql.TypeEnum {
 				typeVar = "enum"
 			}
+			if len(to.GetElems()) < len(origin.GetElems()) {
+				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.GetElems()))
+				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
 			for index, originElem := range origin.GetElems() {
 				toElem := to.GetElems()[index]
 				if originElem != toElem {
