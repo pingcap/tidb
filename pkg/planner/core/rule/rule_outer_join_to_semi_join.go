@@ -32,14 +32,19 @@ func (o *OuterJoinToSemiJoin) Optimize(_ context.Context, p base.LogicalPlan) (b
 
 func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	var isChanged bool
-	for _, child := range p.Children() {
+	for idx, child := range p.Children() {
 		if sel, ok := child.(*logicalop.LogicalSelection); ok {
 			join, ok := sel.Children()[0].(*logicalop.LogicalJoin)
 			if ok {
-				ok := join.CanConvertAntiJoin(sel.Conditions, sel.Schema())
+				proj, ok := join.CanConvertAntiJoin(sel.Conditions, sel.Schema())
 				if ok {
 					join.JoinType = base.AntiSemiJoin
-					p.SetChildren(join)
+					if proj != nil {
+						proj.SetChildren(join)
+						p.SetChild(idx, proj)
+					} else {
+						p.SetChild(idx, join)
+					}
 					isChanged = true
 				}
 			}

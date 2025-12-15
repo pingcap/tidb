@@ -266,47 +266,61 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 }
 
 // CanConvertAntiJoin is used in outer-join-to-semi-join rule.
-func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema) (canConvert bool) {
+func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema) (proj *LogicalProjection, selConditionColInOuter bool) {
 	if len(ret) != 1 || len(p.EqualConditions) == 0 {
-		return false
+		return nil, false
 	}
 	switch p.JoinType {
 	case base.LeftOuterJoin:
 		inner := p.children[0]
 		innerSch := inner.Schema()
-		outerSch := intset.NewFastIntSet()
-		expression.ExtractColumnsSetFromExpressions(&outerSch, func(c *expression.Column) bool {
-			return innerSch.Contains(c)
+		outerSchSet := intset.NewFastIntSet()
+		expression.ExtractColumnsSetFromExpressions(&outerSchSet, func(c *expression.Column) bool {
+			return !innerSch.Contains(c)
 		}, expression.Column2Exprs(p.Schema().Columns)...)
+		joinOuterKeySch := intset.NewFastIntSet()
+		expression.ExtractColumnsSetFromExpressions(&joinOuterKeySch, func(c *expression.Column) bool {
+			return outerSchSet.Has(int(c.UniqueID))
+		}, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+		expression.ExtractColumnsSetFromExpressions(&joinOuterKeySch, func(c *expression.Column) bool {
+			return outerSchSet.Has(int(c.UniqueID))
+		}, p.OtherConditions...)
+
 		var sf *expression.ScalarFunction
 		var ok bool
 		if sf, ok = ret[0].(*expression.ScalarFunction); !ok {
-			return false
+			return nil, false
 		}
 		if sf.FuncName.L != ast.IsNull {
-			return false
+			return nil, false
 		}
 		args := sf.GetArgs()
 		if len(args) == 1 {
 			// It is a Not expression. then we check whether it has a IsNull expression.
 			if isNullcol, ok := args[0].(*expression.Column); ok {
 				// column in IsNull expression is from the outer side columns.
-				selConditionColInOuter := outerSch.Has(int(isNullcol.UniqueID))
+				selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
 				// selection's schema doesn't contain the outer side columns.
-				selOutColNotInOuter := true
-				for _, c := range selectSch.Columns {
-					if outerSch.Has(int(c.UniqueID)) {
-						selOutColNotInOuter = false
+				selOutputColInOuter := slices.ContainsFunc(selectSch.Columns, func(column *expression.Column) bool {
+					return outerSchSet.Has(int(column.UniqueID))
+				})
+				if selConditionColInOuter && selOutputColInOuter {
+					projExprs := make([]expression.Expression, 0, len(selectSch.Columns))
+					for _, c := range selectSch.Columns {
+						if outerSchSet.Has(int(c.UniqueID)) {
+							projExprs = append(projExprs, expression.NewNull())
+						} else {
+							projExprs = append(projExprs, c)
+						}
 					}
-				}
-				if selConditionColInOuter && selOutColNotInOuter {
-					canConvert = true
+					proj = LogicalProjection{Exprs: projExprs}.Init(p.SCtx(), p.QueryBlockOffset())
+					proj.SetSchema(selectSch.Clone())
 				}
 			}
 		}
-		return canConvert
+		return proj, selConditionColInOuter
 	default:
-		return false
+		return nil, false
 	}
 }
 
