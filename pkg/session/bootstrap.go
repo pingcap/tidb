@@ -590,8 +590,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateGlobalTaskHistory is a table about history global task.
@@ -611,8 +612,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
@@ -795,8 +797,7 @@ func bootstrap(s sessiontypes.Session) {
 	startTime := time.Now()
 	err := InitMDLVariableForBootstrap(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock error",
-			zap.Error(err))
+		logutil.BgLogger().Fatal("init metadata lock failed during bootstrap", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
 	for {
@@ -1226,13 +1227,16 @@ const (
 	// Add last_stats_histograms_version to mysql.stats_meta.
 	version220 = 220
 
-	// version 221
 	// Update mysql.tidb_pitr_id_map to add restore_id as a primary key field
 	version221 = 221
 
 	// version 222
 	//   create `mysql.tidb_restore_registry` table
 	version222 = 222
+
+	// version 223
+	// add modify_params to tidb_global_task and tidb_global_task_history.
+	version223 = 223
 
 	// ...
 	// [version223, version238] is the version range reserved for patches of 8.5.x
@@ -1243,7 +1247,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version222
+var currentBootstrapVersion int64 = version223
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1421,6 +1425,7 @@ var (
 		upgradeToVer220,
 		upgradeToVer221,
 		upgradeToVer222,
+		upgradeToVer223,
 	}
 )
 
@@ -1517,7 +1522,7 @@ func upgrade(s sessiontypes.Session) {
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
+		logutil.BgLogger().Fatal("init metadata lock failed during upgrade", zap.Error(err))
 	}
 
 	var ver int64
@@ -3286,6 +3291,15 @@ func upgradeToVer222(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateRestoreRegistryTable)
+}
+
+func upgradeToVer223(s sessiontypes.Session, ver int64) {
+	if ver >= version223 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
