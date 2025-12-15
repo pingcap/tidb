@@ -34,6 +34,8 @@ wait_log_checkpoint_advance() {
 
         # check whether the checkpoint ts is a number
         if [ $checkpoint_ts -gt 0 ] 2>/dev/null; then
+            # jq only supports floating-point numbers, so the values ​​obtained are not accurate. Here use grep instead.
+            checkpoint_ts=$(echo "$log_backup_status" | head -n 1 | grep -Po '"checkpoint":[^,]*' | awk -F ':' '{print $2}')
             if [ $checkpoint_ts -gt $current_ts ]; then
                 echo "the checkpoint has advanced"
                 LATEST_CHECKPOINT_TS=$checkpoint_ts
