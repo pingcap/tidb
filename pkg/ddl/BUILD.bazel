@@ -55,7 +55,6 @@ go_library(
         "partition.go",
         "placement_policy.go",
         "reorg.go",
-        "reorg_util.go",
         "resource_group.go",
         "rollingback.go",
         "sanity_check.go",

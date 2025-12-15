@@ -22,7 +22,6 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -380,12 +379,12 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 
 // checkNeedAnalyze check if the job need analyze.
 func checkNeedAnalyze(job *model.Job, tblInfo *model.TableInfo) bool {
-	analyzeVer := vardef.DefTiDBAnalyzeVersion
-	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
+	analyzeVer := variable.DefTiDBAnalyzeVersion
+	if val, ok := job.GetSessionVars(variable.TiDBAnalyzeVersion); ok {
 		analyzeVer = variable.TidbOptInt(val, analyzeVer)
 	}
-	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
-	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
+	enableDDLAnalyze := variable.DefTiDBEnableStatsUpdateDuringDDL
+	if val, ok := job.GetSessionVars(variable.TiDBEnableStatsUpdateDuringDDL); ok {
 		enableDDLAnalyze = variable.TiDBOptOn(val)
 	}
 	hasPartition := tblInfo.GetPartitionInfo() != nil

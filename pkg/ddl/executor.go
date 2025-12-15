@@ -4953,7 +4953,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		}
 	case model.ActionModifyColumn:
 		setReorgParam()
-		if modifyColumnNeedReorg(job.CtxVars) {
+		if job.NeedReorg {
 			err := setDistTaskParam()
 			if err != nil {
 				return err
@@ -4974,7 +4974,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				}
 			case model.ActionModifyColumn:
 				setReorgParam()
-				if modifyColumnNeedReorg(sub.CtxVars) {
+				if job.NeedReorg {
 					err := setDistTaskParam()
 					if err != nil {
 						return err
