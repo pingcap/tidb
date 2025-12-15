@@ -746,6 +746,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
+	// predicateResult is separated out. An index may "win" because it has a better
+	// accessResult - but that access has high risk.
+	// Summing these 3 metrics ensures that a "high risk" index wont win ONLY on
+	// accessResult. The high risk will negate that accessResult with erOrIn being the
+	// tiebreaker or equalizer.
+	predicateResult := accessResult + eqOrInResult
+
 	// totalSum is the aggregate score of all comparison metrics
 	// riskResult is excluded because more work is required.
 	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
@@ -1303,11 +1310,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 				var unsignedIntHandle bool
-			    if c.path.IsIntHandlePath && ds.TableInfo.PKIsHandle {
-				    if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
-					    unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-				    }
-			    }
+				if c.path.IsIntHandlePath && ds.TableInfo.PKIsHandle {
+					if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
+						unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+					}
+				}
 				if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
