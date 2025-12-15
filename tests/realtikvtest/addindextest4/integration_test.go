@@ -360,16 +360,16 @@ func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 
 	// Index reorg.
 	checkFn("alter table t modify column a int unsigned", "a")
-	checkFn("alter table t add index i_a_2(a), add index i_b_2(b), modify column c char(5), modify column d char(5)", "a, b, c")
+	checkFn("alter table t add index i_a_2(a), add index i_b_2(b), modify column c char(5), modify column d char(5)", "all columns")
 	checkFn("alter table t modify column c int, modify column a char(5), add index i_d_1(d)", "all columns")
-	checkFn("alter table t modify column c char(5), modify column a int, modify column b int", "a, b, c")
-	checkFn("alter table t modify column a bigint, modify column c char(5), modify column b int unsigned", "a, b, c")
-	checkFn("alter table t modify column a char(5), modify column d char(5)", "a, b, c")
-	checkFn("alter table t modify column a int, modify column b int unsigned", "a, b, c")
+	checkFn("alter table t modify column c char(5), modify column a int, modify column b int", "all columns")
+	checkFn("alter table t modify column a bigint, modify column c char(5), modify column b int unsigned", "all columns")
+	checkFn("alter table t modify column a char(5), modify column d char(5)", "all columns")
+	checkFn("alter table t modify column a int, modify column b int unsigned", "all columns")
 
 	// No index reorg.
 	checkFn("alter table t modify column a int", "")
 	checkFn("alter table t modify column a bigint", "")
 	checkFn("alter table t modify column a int, modify column d char(5)", "")
-	checkFn("alter table t modify column a int, modify column d int unsigned", "")
+	checkFn("alter table t modify column a int, modify column d int", "")
 }
