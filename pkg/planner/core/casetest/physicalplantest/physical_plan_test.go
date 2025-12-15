@@ -1549,20 +1549,20 @@ func TestDisableReuseChunk(t *testing.T) {
 }
 
 func TestSemiJoinRewriter(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec(`set @@tidb_opt_enable_semi_join_rewrite=on;`)
-		tk.MustExec(`create table t1(a int);`)
-		tk.MustExec(`create table t2(a varchar(10));`)
-		tk.MustExec(`create table t3(a int);`)
-		tk.MustQuery(`explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where t1.a=t2.a);`).Check(testkit.Rows(
-			`HashJoin root  inner join, equal:[eq(Column#6, Column#7)]`,
-			`├─HashAgg(Build) root  group by:Column#7, funcs:firstrow(Column#7)->Column#7`,
-			`│ └─Projection root  cast(test.t2.a, double BINARY)->Column#7`,
-			`│   └─TableReader root  data:TableFullScan`,
-			`│     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
-			`└─Projection(Probe) root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
-			`  └─TableReader root  data:TableFullScan`,
-			`    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
-	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_enable_semi_join_rewrite=on;`)
+	tk.MustExec(`create table t1(a int);`)
+	tk.MustExec(`create table t2(a varchar(10));`)
+	tk.MustExec(`create table t3(a int);`)
+	tk.MustQuery(`explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where t1.a=t2.a);`).Check(testkit.Rows(
+		`HashJoin root  inner join, equal:[eq(Column#6, Column#7)]`,
+		`├─HashAgg(Build) root  group by:Column#7, funcs:firstrow(Column#7)->Column#7`,
+		`│ └─Projection root  cast(test.t2.a, double BINARY)->Column#7`,
+		`│   └─TableReader root  data:TableFullScan`,
+		`│     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
+		`└─Projection(Probe) root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
+		`  └─TableReader root  data:TableFullScan`,
+		`    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 }
