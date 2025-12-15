@@ -733,14 +733,59 @@ func TestKillBlockReadOnlyDDLTxn(t *testing.T) {
 	wg.Wait()
 }
 
-func TestErrInWaitingUncommittedTxn(t *testing.T) {
+func TestAlterSchemaReadOnlyDDLRollback(t *testing.T) {
 	enableReadOnlyDDLFp(t)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCheckUncommittedTxnError", "return")
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
-
-	tk1.MustExec("set global tidb_ddl_error_count_limit = 2")
+	tk1.MustExec("set global tidb_ddl_error_count_limit = 1")
 	tk1.MustExec("create database test_db")
 	tk1.MustExec("create table test_db.t(a int)")
-	tk1.MustGetErrMsg("alter schema test_db read only = 1", "[ddl:-1]DDL job rollback, error msg: mock error for check uncommitted txn")
+
+	// read write -> read only, StateNone -> StatePendingReadOnly error
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnlyStateNone", "return")
+	tk1.MustGetErrMsg("alter schema test_db read only = 1", "[ddl:-1]mock error at StateNone")
+	tk1.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk1.MustExec("insert into test_db.t values (1);")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnlyStateNone")
+	r := tk1.MustQuery("admin show ddl jobs where db_name = 'test_db' and job_type = 'modify schema read only'").Rows()
+	require.Equal(t, r[0][4], "none")
+	require.Equal(t, r[0][11], "rollback done")
+
+	// read only -> read write, StatePendingReadOnly -> StatePublic error
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnlyStatePendingReadOnly", "return")
+	tk1.MustGetErrMsg("alter schema test_db read only = 1", "[ddl:-1]mock error at StatePendingReadOnly")
+	tk1.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk1.MustExec("insert into test_db.t values (1);")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnlyStatePendingReadOnly")
+	require.Equal(t, r[0][4], "none")
+	require.Equal(t, r[0][11], "rollback done")
+
+	// read write -> read only,  error
+	tk1.MustExec("alter schema test_db read only = 1")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnly2ReadWrite", "return")
+	tk1.MustGetErrMsg("alter schema test_db read only = 0", "[ddl:-1]mock error at read only to read write")
+	tk1.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
+	tk1.MustGetErrMsg("insert into test_db.t values (1);", "[schema:3989]Schema 'test_db' is in read only mode.")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnlyStatePendingReadOnly")
+	require.Equal(t, r[0][4], "none")
+	require.Equal(t, r[0][11], "rollback done")
+}
+
+func TestTTLDeleteError(t *testing.T) {
+	enableReadOnlyDDLFp(t)
+	var ttlError error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ttl/ttlworker/getTTLDeleteError", func(err error) {
+		ttlError = err
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ttl_job_enable = off")
+	tk.MustExec("create database if not exists test; use test;drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(id BIGINT PRIMARY KEY, ts TIMESTAMP NOT NULL) TTL = `ts` + INTERVAL 1 SECOND  TTL_JOB_INTERVAL = '1m';")
+	tk.MustExec("insert into t values (1, now() - interval 10 second);")
+	tk.MustExec("alter schema test read only = 1")
+	tk.MustExec("set global tidb_ttl_job_enable = on")
+	require.Eventually(t, func() bool {
+		return ttlError != nil && strings.Contains(ttlError.Error(), "Schema 'test' is in read only mode")
+	}, 10*time.Second, 100*time.Millisecond)
 }

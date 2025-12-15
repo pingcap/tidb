@@ -182,7 +182,11 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
 			return ver, errors.Trace(err)
 		}
-		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+		ver, err = updateSchemaVersion(jobCtx, job)
+		failpoint.Inject("mockErrorOnModifySchemaReadOnly2ReadWrite", func() {
+			err = errors.New("mock error at read only to read write")
+		})
+		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
@@ -200,7 +204,11 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+		ver, err = updateSchemaVersion(jobCtx, job)
+		failpoint.Inject("mockErrorOnModifySchemaReadOnlyStateNone", func() {
+			err = errors.New("mock error at StateNone")
+		})
+		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StatePendingReadOnly
@@ -213,10 +221,8 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		session := sess.NewSession(sessCtx)
 		sampleLogger := logutil.SampleLoggerFactory(time.Second, 5, zap.String(logutil.LogFieldCategory, "ddl"))
 		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, session, dbInfo.ID, trxTableName, args.DDLStartTS)
-		failpoint.Inject("mockCheckUncommittedTxnError", func() {
-			if err == nil {
-				err = errors.New("mock error for check uncommitted txn")
-			}
+		failpoint.Inject("mockErrorOnModifySchemaReadOnlyStatePendingReadOnly", func() {
+			err = errors.New("mock error at StatePendingReadOnly")
 		})
 		if err != nil {
 			return ver, errors.Trace(err)
