@@ -1219,8 +1219,10 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	switch policy {
 	case vardef.IndexLookUpPushDownPolicyForce:
 	case vardef.IndexLookUpPushDownPolicyAffinityForce:
-		// TODO: when affinity is supported to set in the table, only to return false for non-affinity table.
-		return false
+		if tblInfo.Affinity == nil {
+			// No affinity info, should not auto push down the index look up.
+			return false
+		}
 	default:
 		return false
 	}

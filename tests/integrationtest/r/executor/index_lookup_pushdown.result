@@ -188,6 +188,20 @@ IndexLookUp_8	10.00	root
 │ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
 │ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+alter table t1 affinity = 'table';
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root		
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+alter table t1 affinity = 'none';
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root		
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@tidb_index_lookup_pushdown_policy='hint-only';
 select @@tidb_index_lookup_pushdown_policy;
 @@tidb_index_lookup_pushdown_policy
