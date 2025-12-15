@@ -1119,6 +1119,46 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp)
 	}
 
+	// signed2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte, oldColIdx, newColIdx int) {
+	// 	maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
+	// 	maxValOfNewCol := maxMinUnsignedVal[newColTp][0]
+	// 	tk.MustExec("drop table if exists t")
+	// 	tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
+
+	// 	// [minValOfOldCol, -1] fail
+	// 	failedValue([]string{
+	// 		"-1",
+	// 		fmt.Sprintf("%d", minValOfOldCol),
+	// 	}, newColTp)
+
+	// 	if oldColIdx < newColIdx {
+	// 		// [maxValOfNewCol+1, maxValOfOldCol] fail
+	// 		failedValue([]string{
+	// 			fmt.Sprintf("%d", maxValOfNewCol+1),
+	// 			fmt.Sprintf("%d", maxValOfOldCol),
+	// 		}, newColTp)
+	// 	}
+
+	// 	// [0, min(maxValOfOldCol, maxValOfNewCol)] pass
+	// 	successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp)
+	// }
+
+	// unsigned2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+	// 	maxValOfNewCol := maxMinSignedVal[newColTp][0]
+	// 	maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
+	// 	tk.MustExec("drop table if exists t")
+	// 	tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
+
+	// 	// [maxValOfNewCol+1, maxValOfOldCol] fail
+	// 	failedValue([]string{
+	// 		fmt.Sprintf("%d", uint64(maxValOfNewCol)+1),
+	// 		fmt.Sprintf("%d", maxValOfOldCol),
+	// 	}, newColTp)
+
+	// 	// [0, maxValOfNewCol] pass
+	// 	successValue(fmt.Sprintf("(%d), (1), (0)", maxValOfNewCol), newColTp)
+	// }
+
 	signedTp := []string{"bigint", "int", "mediumint", "smallint", "tinyint"}
 	unsignedTp := []string{"bigint unsigned", "int unsigned", "mediumint unsigned", "smallint unsigned", "tinyint unsigned"}
 	for oldColIdx := range signedTp {
@@ -1127,117 +1167,134 @@ func TestModifyIntegerColumn(t *testing.T) {
 		for newColIdx := oldColIdx + 1; newColIdx < len(signedTp); newColIdx++ {
 			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck)
 		}
+		// 2. signed -> unsigned
+		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; ...
+		// for newColIdx := range unsignedTp {
+		// 	signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
+		// }
 	}
 	for oldColIdx := range unsignedTp {
-		// 2. unsigned -> unsigned
+		// 3. unsigned -> unsigned
 		// bigint unsigned -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int unsigned -> mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(unsignedTp); newColIdx++ {
 			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck)
 		}
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
-			reorgType = tp
-		})
-		type testCase struct {
-			oldColTp        string
-			newColTp        string
-			insertVal       string
-			pass            bool
-			expectedReorgTp byte
-		}
-		noPaddingStrLen5 := strings.Repeat("a", 5)
-		noPaddingStrLen15 := strings.Repeat("a", 15)
-		paddingStrLen5 := strings.Repeat("a", 1) + strings.Repeat(" ", 4)
-		paddingStrLen15 := strings.Repeat("a", 1) + strings.Repeat(" ", 14)
+		// 4. unsigned -> signed
+		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint; int unsigned -> int, mediumint, smallint, tinyint; ...
+		// for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
+		// 	unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck)
+		// }
+	}
+}
 
-		cases := []testCase{
-			{
-				oldColTp:  "char(20)",
-				newColTp:  "char(10)",
-				insertVal: noPaddingStrLen15,
-			},
-			{
-				oldColTp:  "char(20)",
-				newColTp:  "char(10)",
-				insertVal: noPaddingStrLen5,
-				pass:      true,
-			},
-			{
-				oldColTp:  "varchar(20)",
-				newColTp:  "varchar(10)",
-				insertVal: noPaddingStrLen15,
-			},
-			{
-				oldColTp:  "varchar(20)",
-				newColTp:  "varchar(10)",
-				insertVal: noPaddingStrLen5,
-				pass:      true,
-			},
-			{
-				oldColTp:  "char(20)",
-				newColTp:  "varchar(10)",
-				insertVal: noPaddingStrLen15,
-			},
-			{
-				oldColTp:  "char(20)",
-				newColTp:  "varchar(10)",
-				insertVal: noPaddingStrLen5,
-				pass:      true,
-			},
-			{
-				oldColTp:        "varchar(10)",
-				newColTp:        "char(20)",
-				insertVal:       paddingStrLen5,
-				pass:            true,
-				expectedReorgTp: model.ModifyTypeReorg,
-			},
-			{
-				oldColTp:  "varchar(10)",
-				newColTp:  "char(20)",
-				insertVal: noPaddingStrLen5,
-				pass:      true,
-			},
-			{
-				oldColTp:        "varchar(20)",
-				newColTp:        "char(10)",
-				insertVal:       paddingStrLen5,
-				pass:            true,
-				expectedReorgTp: model.ModifyTypeReorg,
-			},
-			{
-				oldColTp:        "varchar(20)",
-				newColTp:        "char(10)",
-				insertVal:       paddingStrLen15,
-				pass:            true,
-				expectedReorgTp: model.ModifyTypeReorg,
-			},
-			{
-				oldColTp:  "varchar(20)",
-				newColTp:  "char(10)",
-				insertVal: noPaddingStrLen15,
-			},
-			{
-				oldColTp:  "varchar(20)",
-				newColTp:  "char(10)",
-				insertVal: noPaddingStrLen5,
-				pass:      true,
-			},
-		}
+func TestModifyStringColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	var reorgType byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+		reorgType = tp
+	})
+	type testCase struct {
+		oldColTp        string
+		newColTp        string
+		insertVal       string
+		pass            bool
+		expectedReorgTp byte
+	}
+	noPaddingStrLen5 := strings.Repeat("a", 5)
+	noPaddingStrLen15 := strings.Repeat("a", 15)
+	paddingStrLen5 := strings.Repeat("a", 1) + strings.Repeat(" ", 4)
+	paddingStrLen15 := strings.Repeat("a", 1) + strings.Repeat(" ", 14)
 
-		for _, tc := range cases {
-			tk.MustExec("drop table if exists t")
-			tk.MustExec(fmt.Sprintf("create table t(a %s)", tc.oldColTp))
-			tk.MustExec(fmt.Sprintf("insert into t values('%s')", tc.insertVal))
-			err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", tc.newColTp))
-			if tc.pass {
-				require.Nil(t, err)
-				expectedReorgTp := tc.expectedReorgTp
-				if tc.expectedReorgTp == model.ModifyTypeNone {
-					expectedReorgTp = model.ModifyTypeNoReorgWithCheck
-				}
-				require.Equal(t, expectedReorgTp, reorgType)
-			} else {
-				require.Contains(t, err.Error(), "Data truncated for column 'a'")
+	cases := []testCase{
+		{
+			oldColTp:  "char(20)",
+			newColTp:  "char(10)",
+			insertVal: noPaddingStrLen15,
+		},
+		{
+			oldColTp:  "char(20)",
+			newColTp:  "char(10)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+		{
+			oldColTp:  "varchar(20)",
+			newColTp:  "varchar(10)",
+			insertVal: noPaddingStrLen15,
+		},
+		{
+			oldColTp:  "varchar(20)",
+			newColTp:  "varchar(10)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+		{
+			oldColTp:  "char(20)",
+			newColTp:  "varchar(10)",
+			insertVal: noPaddingStrLen15,
+		},
+		{
+			oldColTp:  "char(20)",
+			newColTp:  "varchar(10)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+		{
+			oldColTp:        "varchar(10)",
+			newColTp:        "char(20)",
+			insertVal:       paddingStrLen5,
+			pass:            true,
+			expectedReorgTp: model.ModifyTypeReorg,
+		},
+		{
+			oldColTp:  "varchar(10)",
+			newColTp:  "char(20)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+		{
+			oldColTp:        "varchar(20)",
+			newColTp:        "char(10)",
+			insertVal:       paddingStrLen5,
+			pass:            true,
+			expectedReorgTp: model.ModifyTypeReorg,
+		},
+		{
+			oldColTp:        "varchar(20)",
+			newColTp:        "char(10)",
+			insertVal:       paddingStrLen15,
+			pass:            true,
+			expectedReorgTp: model.ModifyTypeReorg,
+		},
+		{
+			oldColTp:  "varchar(20)",
+			newColTp:  "char(10)",
+			insertVal: noPaddingStrLen15,
+		},
+		{
+			oldColTp:  "varchar(20)",
+			newColTp:  "char(10)",
+			insertVal: noPaddingStrLen5,
+			pass:      true,
+		},
+	}
+
+	for _, tc := range cases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", tc.oldColTp))
+		tk.MustExec(fmt.Sprintf("insert into t values('%s')", tc.insertVal))
+		err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", tc.newColTp))
+		if tc.pass {
+			require.Nil(t, err)
+			expectedReorgTp := tc.expectedReorgTp
+			if tc.expectedReorgTp == model.ModifyTypeNone {
+				expectedReorgTp = model.ModifyTypeNoReorgWithCheck
 			}
+			require.Equal(t, expectedReorgTp, reorgType)
+		} else {
+			require.Contains(t, err.Error(), "Data truncated for column 'a'")
 		}
 	}
 }
