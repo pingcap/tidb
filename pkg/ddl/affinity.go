@@ -118,7 +118,7 @@ func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo)
 
 // deleteTableAffinityGroupsInPD deletes affinity groups for a table in PD.
 // This is a best-effort cleanup operation. Failures are logged but the operation continues.
-// Used by: DROP TABLE, ALTER TABLE AFFINITY = '', TRUNCATE TABLE, TRUNCATE PARTITION.
+// Used by: DROP TABLE, ALTER TABLE AFFINITY = ”, TRUNCATE TABLE, TRUNCATE PARTITION.
 func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
 	if tblInfo == nil || tblInfo.Affinity == nil {
 		return nil
