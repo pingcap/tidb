@@ -5574,6 +5574,7 @@ func (b *PlanBuilder) buildDMLSelectPlan(
 }
 
 // buildUpdatePlan builds the Update physical plan from a select plan.
+// This is shared by buildUpdate and buildSoftdeleteAsUpdate.
 func (b *PlanBuilder) buildUpdatePlan(
 	ctx context.Context,
 	p base.LogicalPlan,
@@ -5900,12 +5901,17 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
 	localResolveCtx := resolve.NewContext()
+	// softdeleteTables collects tables that have soft delete enabled.
+	// It's only used when SoftDeleteRewrite is enabled.
+	var softdeleteTables []*resolve.TableNameW
+	var tablesToDelete []*ast.TableName
 	// Collect visitInfo.
 	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
 		updatableList := make(map[string]bool)
 		tbInfoList := make(map[string]*ast.TableName)
 		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
+		tablesToDelete = ds.Tables.Tables
 		for _, tn := range ds.Tables.Tables {
 			var canUpdate, foundMatch = false, false
 			name := tn.Name.L
@@ -5947,12 +5953,16 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tnW.DBInfo.Name.L, tb.Name.L, "", authErr)
+			// Check for soft delete tables when SoftDeleteRewrite is enabled.
+			if sessionVars.SoftDeleteRewrite && tableInfo.SoftdeleteInfo != nil {
+				softdeleteTables = append(softdeleteTables, tnW)
+			}
 		}
 	} else {
 		// Delete from a, b, c, d.
 		nodeW := resolve.NewNodeWWithCtx(ds.TableRefs.TableRefs, b.resolveCtx)
-		tableList := ExtractTableList(nodeW, false)
-		for _, v := range tableList {
+		tablesToDelete = ExtractTableList(nodeW, false)
+		for _, v := range tablesToDelete {
 			tblW := b.resolveCtx.GetTableName(v)
 			if isCTE(tblW) {
 				return nil, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
@@ -5971,7 +5981,20 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, v.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
+			// Check for soft delete tables when SoftDeleteRewrite is enabled.
+			if sessionVars.SoftDeleteRewrite && tblW.TableInfo.SoftdeleteInfo != nil {
+				softdeleteTables = append(softdeleteTables, tblW)
+			}
 		}
+	}
+
+	// If soft delete tables exist and SoftDeleteRewrite is enabled, rewrite DELETE as UPDATE.
+	if len(softdeleteTables) > 0 && sessionVars.SoftDeleteRewrite {
+		// When SoftDeleteRewrite is enabled, if any table has soft delete, all tables must have soft delete.
+		if len(softdeleteTables) != len(tablesToDelete) {
+			return nil, errors.Errorf("cannot mix soft delete and non-soft delete tables in DELETE statement")
+		}
+		return b.buildSoftdeleteAsUpdate(ctx, ds, softdeleteTables)
 	}
 
 	b.pushSelectOffset(0)
@@ -6066,6 +6089,59 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 
 	return del, err
+}
+
+// buildSoftdeleteAsUpdate builds an UPDATE plan from a DELETE statement for soft delete tables.
+// This is called when SoftDeleteRewrite is enabled and all tables involved have soft delete enabled.
+// The DELETE is rewritten to: UPDATE ... SET _tidb_softdelete_time = NOW(6)
+func (b *PlanBuilder) buildSoftdeleteAsUpdate(
+	ctx context.Context,
+	ds *ast.DeleteStmt,
+	softdeleteTables []*resolve.TableNameW) (base.Plan, error) {
+	b.pushSelectOffset(0)
+	b.pushTableHints(ds.TableHints, 0)
+	defer func() {
+		b.popSelectOffset()
+		b.popTableHints()
+	}()
+
+	p, oldSchemaLen, err := b.buildDMLSelectPlan(
+		ctx,
+		ds.With,
+		ds.TableRefs.TableRefs,
+		ds.Where,
+		ds.Order,
+		ds.Limit,
+		!ds.IsMultiTable,
+		true, // isUpdate (we're building an UPDATE plan)
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate assignment list for soft delete: SET _tidb_softdelete_time = NOW(6)
+	assignList := make([]*ast.Assignment, 0, len(softdeleteTables))
+	tableList := make([]*ast.TableName, 0, len(softdeleteTables))
+	for _, tbl := range softdeleteTables {
+		assignList = append(assignList, &ast.Assignment{
+			Column: &ast.ColumnName{
+				Schema: tbl.Schema,
+				Table:  tbl.Name,
+				Name:   model.ExtraSoftDeleteTimeName,
+			},
+			Expr: &ast.FuncCallExpr{
+				FnName: ast.NewCIStr(ast.Now),
+				Args: []ast.ExprNode{
+					&driver.ValueExpr{
+						Datum: types.NewIntDatum(6),
+					},
+				},
+			},
+		})
+		tableList = append(tableList, tbl.TableName)
+	}
+
+	return b.buildUpdatePlan(ctx, p, oldSchemaLen, tableList, assignList, ds.IgnoreErr)
 }
 
 func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]util.HandleCols, schema *expression.Schema) (map[int64][]util.HandleCols, error) {
