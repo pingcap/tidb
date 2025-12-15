@@ -79,11 +79,7 @@ func TestGetDDLInfo(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-<<<<<<< HEAD
-func addDDLJobs(sess sessiontypes.Session, txn kv.Transaction, job *model.Job) error {
-=======
-func addDDLJobs(sess sessionapi.Session, job *model.Job) error {
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
+func addDDLJobs(sess sessiontypes.Session, job *model.Job) error {
 	b, err := job.Encode(true)
 	if err != nil {
 		return err

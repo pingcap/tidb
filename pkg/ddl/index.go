@@ -1264,14 +1264,6 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 	}
 }
 
-<<<<<<< HEAD
-func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) (done bool, timedOut bool, failed bool) {
-	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
-	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
-		// If the job is a multi-schema-change job,
-		// we only analyze the table once after all schema changes are done.
-		return true, false, false
-=======
 // doAnalyzeWithoutReorg performs analyze for the table if needed without the logic of
 // reorg and and returns whether the table info is updated.
 func (w *worker) doAnalyzeWithoutReorg(job *model.Job, tblInfo *model.TableInfo) (finished bool) {
@@ -1291,7 +1283,6 @@ func (w *worker) doAnalyzeWithoutReorg(job *model.Job, tblInfo *model.TableInfo)
 		logutil.DDLLogger().Info("analyze skipped or finished for multi-schema change",
 			zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
 		return true
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 	}
 }
 

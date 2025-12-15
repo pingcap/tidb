@@ -112,11 +112,6 @@ type ColumnInfo struct {
 	Version uint64 `json:"version"`
 }
 
-// IsVirtualGenerated checks the column if it is virtual.
-func (c *ColumnInfo) IsVirtualGenerated() bool {
-	return c.IsGenerated() && !c.GeneratedStored
-}
-
 // Clone clones ColumnInfo.
 func (c *ColumnInfo) Clone() *ColumnInfo {
 	if c == nil {
@@ -221,8 +216,6 @@ func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
 }
 
-<<<<<<< HEAD
-=======
 // IsVirtualGenerated checks if the column is a virtual generated column.
 func (c *ColumnInfo) IsVirtualGenerated() bool {
 	return c.IsGenerated() && !c.GeneratedStored
@@ -253,7 +246,6 @@ func (c *ColumnInfo) GetChangingOriginName() string {
 	return columnName[:pos]
 }
 
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 // SetOriginDefaultValue sets the origin default value.
 // For mysql.TypeBit type, the default value storage format must be a string.
 // Other value such as int must convert to string format first.

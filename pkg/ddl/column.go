@@ -922,13 +922,8 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.IndexInfo) {
 	for i := range oldIdxs {
 		oldIdxName := oldIdxs[i].Name.O
-<<<<<<< HEAD
-		publicName := pmodel.NewCIStr(getRemovingObjOriginName(oldIdxName))
-		removingName := pmodel.NewCIStr(getRemovingObjName(oldIdxName))
-=======
-		publicName := ast.NewCIStr(oldIdxs[i].GetRemovingOriginName())
-		removingName := ast.NewCIStr(model.GenRemovingObjName(oldIdxName))
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
+		publicName := pmodel.NewCIStr(oldIdxs[i].GetRemovingOriginName())
+		removingName := pmodel.NewCIStr(model.GenRemovingObjName(oldIdxName))
 
 		changingIdxs[i].Name = publicName
 		oldIdxs[i].Name = removingName
@@ -939,11 +934,7 @@ func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.In
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName pmodel.CIStr) {
 	if oldCol.ID != changingCol.ID {
 		publicName := newColName
-<<<<<<< HEAD
-		removingName := pmodel.NewCIStr(getRemovingObjName(oldCol.Name.O))
-=======
-		removingName := ast.NewCIStr(model.GenRemovingObjName(oldCol.Name.O))
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
+		removingName := pmodel.NewCIStr(model.GenRemovingObjName(oldCol.Name.O))
 		renameColumnTo(oldCol, oldIdxs, removingName)
 		renameColumnTo(changingCol, changingIdxs, publicName)
 	}
@@ -1356,60 +1347,7 @@ func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
 	return ids
 }
 
-<<<<<<< HEAD
-func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) string {
-	// Check whether the new column name is used.
-	columnNameMap := make(map[string]bool, len(tblInfo.Columns))
-	for _, col := range tblInfo.Columns {
-		columnNameMap[col.Name.L] = true
-	}
-	suffix := 0
-	newColumnName := fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
-	for columnNameMap[strings.ToLower(newColumnName)] {
-		suffix++
-		newColumnName = fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
-	}
-	return newColumnName
-}
-
-func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
-	// Check whether the new index name is used.
-	indexNameMap := make(map[string]bool, len(tblInfo.Indices))
-	for _, idx := range tblInfo.Indices {
-		indexNameMap[idx.Name.L] = true
-	}
-	suffix := 0
-	newIndexName := fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
-	for indexNameMap[strings.ToLower(newIndexName)] {
-		suffix++
-		newIndexName = fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
-	}
-	return newIndexName
-}
-
-func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
-	idxName := strings.TrimPrefix(changingIdx.Name.O, changingIndexPrefix)
-	// Since the unique idxName may contain the suffix number (indexName_num), better trim the suffix.
-	var pos int
-	if pos = strings.LastIndex(idxName, "_"); pos == -1 {
-		return idxName
-	}
-	return idxName[:pos]
-}
-
-func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
-	columnName := strings.TrimPrefix(changingColumn.Name.O, changingColumnPrefix)
-	var pos int
-	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
-		return columnName
-	}
-	return columnName[:pos]
-}
-
 func getExpressionIndexOriginName(originalName pmodel.CIStr) string {
-=======
-func getExpressionIndexOriginName(originalName ast.CIStr) string {
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 	columnName := strings.TrimPrefix(originalName.O, expressionIndexPrefix+"_")
 	var pos int
 	if pos = strings.LastIndex(columnName, "_"); pos == -1 {

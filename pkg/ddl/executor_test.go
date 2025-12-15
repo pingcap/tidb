@@ -141,11 +141,7 @@ func TestIsJobRollbackable(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
-=======
-func enQueueDDLJobs(t *testing.T, sess sessionapi.Session, jobType model.ActionType, start, end int) {
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
+func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, jobType model.ActionType, start, end int) {
 	for i := start; i < end; i++ {
 		job := &model.Job{
 			ID:       int64(i),

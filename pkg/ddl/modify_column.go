@@ -42,11 +42,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -87,40 +83,8 @@ func getModifyColumnType(
 		return model.ModifyTypeNoReorgWithCheck
 	}
 
-<<<<<<< HEAD
 	// Temporarily disable lossy ddl optimization.
-	return ModifyTypeReorg
-=======
-	// For backward compatibility
-	if args.ModifyColumnType == mysql.TypeNull {
-		return model.ModifyTypeReorg
-	}
-
-	// FIXME(joechenrh): handle partition table case
-	if tblInfo.Partition != nil {
-		return model.ModifyTypeReorg
-	}
-
-	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			failpoint.Return(model.ModifyTypeReorg)
-		}
-	})
-
-	if !sqlMode.HasStrictMode() {
-		return model.ModifyTypeReorg
-	}
-
-	if needRowReorg(oldCol, args.Column) {
-		return model.ModifyTypeReorg
-	}
-
-	relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
-	if len(relatedIndexes) == 0 || !needIndexReorg(oldCol, args.Column) {
-		return model.ModifyTypeNoReorgWithCheck
-	}
-	return model.ModifyTypeIndexReorg
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
+	return model.ModifyTypeReorg
 }
 
 func getChangingCol(
@@ -131,11 +95,7 @@ func getChangingCol(
 	changingCol := args.ChangingColumn
 	if changingCol == nil {
 		changingCol = args.Column.Clone()
-<<<<<<< HEAD
-		changingCol.Name = pmodel.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
-=======
-		changingCol.Name = ast.NewCIStr(model.GenUniqueChangingColumnName(tblInfo, oldCol))
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
+		changingCol.Name = pmodel.NewCIStr(model.GenUniqueChangingColumnName(tblInfo, oldCol))
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 		InitAndAddColumnToTable(tblInfo, changingCol)
 
@@ -147,11 +107,7 @@ func getChangingCol(
 				// We create a temp index for each normal index.
 				tmpIdx := info.IndexInfo.Clone()
 				tmpIdx.ID = newIdxID
-<<<<<<< HEAD
-				tmpIdx.Name = pmodel.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
-=======
-				tmpIdx.Name = ast.NewCIStr(model.GenUniqueChangingIndexName(tblInfo, info.IndexInfo))
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
+				tmpIdx.Name = pmodel.NewCIStr(model.GenUniqueChangingIndexName(tblInfo, info.IndexInfo))
 				UpdateIndexCol(tmpIdx.Columns[info.Offset], changingCol)
 				tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 			} else {
@@ -202,11 +158,7 @@ func initializeChangingIndexes(
 			tmpIdx := info.IndexInfo.Clone()
 			tmpIdx.State = model.StateNone
 			tmpIdx.ID = newIdxID
-<<<<<<< HEAD
-			tmpIdx.Name = pmodel.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
-=======
-			tmpIdx.Name = ast.NewCIStr(model.GenUniqueChangingIndexName(tblInfo, info.IndexInfo))
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
+			tmpIdx.Name = pmodel.NewCIStr(model.GenUniqueChangingIndexName(tblInfo, info.IndexInfo))
 			tmpIdx.Columns[info.Offset].UseChangingType = true
 			UpdateIndexCol(tmpIdx.Columns[info.Offset], tmpCol)
 			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
@@ -1256,25 +1208,8 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 			}
 		case model.AnalyzeStateRunning:
-<<<<<<< HEAD
-			// after all old index data are reorged. re-analyze it.
-			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done || timedOut || failed {
-				if done {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
-				}
-				if timedOut {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
-				}
-				if failed {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
-				}
-				checkAndMarkNonRevertible(job)
-			}
-=======
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
@@ -1335,32 +1270,6 @@ func (w *worker) doModifyColumnIndexReorg(
 	return ver, errors.Trace(err)
 }
 
-<<<<<<< HEAD
-func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
-	analyzeVer := variable.DefTiDBAnalyzeVersion
-	if val, ok := job.GetSessionVars(variable.TiDBAnalyzeVersion); ok {
-		analyzeVer = variable.TidbOptInt(val, analyzeVer)
-	}
-	enableDDLAnalyze := variable.DefTiDBEnableStatsUpdateDuringDDL
-	if val, ok := job.GetSessionVars(variable.TiDBEnableStatsUpdateDuringDDL); ok {
-		enableDDLAnalyze = variable.TiDBOptOn(val)
-	}
-	hasPartition := tbl.GetPartitionInfo() != nil
-	hasChangingIdx := len(changingIdxes) > 0
-
-	if enableDDLAnalyze && hasChangingIdx && !hasPartition && analyzeVer == 2 {
-		return true
-	}
-	logutil.DDLLogger().Info("skip analyze",
-		zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
-		zap.Bool("is partitioned table", hasPartition),
-		zap.Int("affected indexes count", len(changingIdxes)),
-		zap.Int("tidb_analyze_version", analyzeVer))
-	return false
-}
-
-=======
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 // checkAndMarkNonRevertible should be called when the job is in the final revertible state before public.
 func checkAndMarkNonRevertible(job *model.Job) {
 	// previously, when reorg is done, and before we set the state to public, we need all other sub-task to

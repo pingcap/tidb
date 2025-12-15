@@ -15,13 +15,9 @@
 package model
 
 import (
-<<<<<<< HEAD
-=======
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser"
->>>>>>> 16a5fff9fec (ddl, model: fix unexpected missing analyze for multi schema change (#64337))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
