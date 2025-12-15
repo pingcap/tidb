@@ -409,12 +409,16 @@ func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
 	// SDK overwrite existing file.
 	ts := task.StateUpdateTime.Truncate(time.Minute).Unix()
 	item := metering.GetBaseMeterItem(task.ID, task.Keyspace, task.Type.String())
-	item["row_count"] = rows
+	item[metering.RowCountField] = rows
 	// add-index tasks don't have data kv size.
 	if dataKVSize > 0 {
-		item["data_kv_bytes"] = dataKVSize
+		item[metering.DataKVBytesField] = dataKVSize
 	}
-	item["index_kv_bytes"] = indexKVSize
+	item[metering.IndexKVBytesField] = indexKVSize
+	// below 3 fields are for better analysis of the cost of the task.
+	item[metering.ConcurrencyField] = task.Concurrency
+	item[metering.MaxNodeCountField] = task.MaxNodeCount
+	item[metering.DurationSecondsField] = int64(task.StateUpdateTime.Sub(task.CreateTime).Seconds())
 	// same as above reason, we use the task ID as the uuid, and we also need to
 	// send different file as the metering service itself to avoid overwrite.
 	if err := metering.WriteMeterData(ctx, ts, fmt.Sprintf("%s_%d", task.Type, task.ID), []map[string]any{item}); err != nil {
