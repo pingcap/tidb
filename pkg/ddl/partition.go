@@ -2626,18 +2626,23 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
 
-		var oldAffinityTable *model.TableInfo
+		// Create new affinity groups first (critical operation - must succeed)
+		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		// Delete old affinity groups (best-effort cleanup - ignore errors)
 		if tblInfo.Affinity != nil {
-			oldAffinityTable = &model.TableInfo{
+			oldAffinityTable := &model.TableInfo{
 				ID:        tblInfo.ID,
 				Name:      tblInfo.Name,
 				Affinity:  tblInfo.Affinity,
 				Partition: &model.PartitionInfo{Definitions: oldDefinitions},
 			}
-		}
-		if err = updateTableAffinityGroupInPD(jobCtx, tblInfo, oldAffinityTable, oldDefinitions); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			if err := deleteTableAffinityGroupsInPD(jobCtx, oldAffinityTable, oldDefinitions); err != nil {
+				logutil.DDLLogger().Error("failed to delete old partition affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
+			}
 		}
 
 		failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {

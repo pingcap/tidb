@@ -86,62 +86,58 @@ func collectAffinityGroupIDs(groups map[string][]pdhttp.AffinityGroupKeyRange) [
 	return ids
 }
 
-// updateTableAffinityGroupInPD updates affinity groups in PD for DDL operations.
-// It handles both creation and deletion of affinity groups:
-//   - newTblInfo: the new table info (for CREATE/ALTER/TRUNCATE), or nil (for DROP)
-//   - oldTblInfo: the old table info (for ALTER/TRUNCATE/DROP), or nil (for CREATE)
-//   - oldPartitionDefs: explicit old partition definitions (for TRUNCATE PARTITION where
-//     oldTblInfo.Partition.Definitions may already be updated), or nil to use oldTblInfo.Partition.Definitions
-//
-// Creation failures will fail the DDL (critical operation).
-// Deletion failures are logged but don't fail the DDL (best-effort cleanup).
-func updateTableAffinityGroupInPD(jobCtx *jobContext, newTblInfo *model.TableInfo, oldTblInfo *model.TableInfo, oldPartitionDefs []model.PartitionDefinition) error {
-	tableID := int64(0)
-	if newTblInfo != nil {
-		tableID = newTblInfo.ID
-	} else if oldTblInfo != nil {
-		tableID = oldTblInfo.ID
+// createTableAffinityGroupsInPD creates affinity groups for a table in PD.
+// This is a critical operation. If it fails, the DDL should fail.
+// Used by: CREATE TABLE, ALTER TABLE AFFINITY = 'xxx', TRUNCATE TABLE, TRUNCATE PARTITION.
+func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo) error {
+	if tblInfo == nil || tblInfo.Affinity == nil {
+		return nil
 	}
 
 	ctx := jobCtx.stepCtx
 	codec := jobCtx.store.GetCodec()
 
-	oldGroups, err := buildAffinityGroupDefinitions(codec, oldTblInfo, oldPartitionDefs)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newGroups, err := buildAffinityGroupDefinitions(codec, newTblInfo, nil)
+	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if len(oldGroups) == 0 && len(newGroups) == 0 {
+	if len(groups) == 0 {
 		return nil
 	}
 
-	// Create new affinity groups first (critical operation for: CREATE TABLE, ALTER TABLE AFFINITY = 'xxx', TRUNCATE)
-	// If this fails, the DDL should fail.
-	if len(newGroups) > 0 {
-		logutil.DDLLogger().Info("creating affinity groups in PD", zap.Int64("tableID", tableID), zap.Strings("groupIDs", collectAffinityGroupIDs(newGroups)))
-		if err := infosync.CreateAffinityGroupsIfNotExists(ctx, newGroups); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	// Delete old affinity groups (cleanup operation for: ALTER TABLE AFFINITY = '', TRUNCATE, DROP TABLE)
-	// If this fails, just log warning and continue. The orphan groups in PD won't cause correctness issues.
-	if len(oldGroups) > 0 {
-		ids := collectAffinityGroupIDs(oldGroups)
-		logutil.DDLLogger().Info("deleting old affinity groups in PD", zap.Int64("tableID", tableID), zap.Strings("groupIDs", ids))
-		if err := infosync.DeleteAffinityGroupsWithDefaultRetry(ctx, ids); err != nil {
-			logutil.DDLLogger().Warn("failed to delete old affinity groups, but operation will continue",
-				zap.Error(err),
-				zap.Int64("tableID", tableID),
-				zap.Strings("groupIDs", ids))
-		}
+	logutil.DDLLogger().Info("creating affinity groups in PD",
+		zap.Int64("tableID", tblInfo.ID),
+		zap.Strings("groupIDs", collectAffinityGroupIDs(groups)))
+	if err := infosync.CreateAffinityGroupsIfNotExists(ctx, groups); err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
+}
+
+// deleteTableAffinityGroupsInPD deletes affinity groups for a table in PD.
+// This is a best-effort cleanup operation. Failures are logged but the operation continues.
+// Used by: DROP TABLE, ALTER TABLE AFFINITY = '', TRUNCATE TABLE, TRUNCATE PARTITION.
+func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
+	if tblInfo == nil || tblInfo.Affinity == nil {
+		return nil
+	}
+
+	ctx := jobCtx.stepCtx
+	codec := jobCtx.store.GetCodec()
+
+	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(groups) == 0 {
+		return nil
+	}
+
+	ids := collectAffinityGroupIDs(groups)
+	return infosync.DeleteAffinityGroupsWithDefaultRetry(ctx, ids)
 }
 
 // batchDeleteTableAffinityGroups deletes affinity groups for multiple tables in PD.

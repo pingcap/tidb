@@ -270,7 +270,7 @@ func TestAffinityDropDatabase(t *testing.T) {
 	tk.MustExec("drop database test_affinity_db")
 
 	ctx := context.Background()
-	var groupIDs []string
+	groupIDs := make([]string, 0, 2+len(tp1Info.Meta().Partition.Definitions))
 	groupIDs = append(groupIDs, fmt.Sprintf("_tidb_t_%d", t1Info.Meta().ID))
 	groupIDs = append(groupIDs, fmt.Sprintf("_tidb_t_%d", t2Info.Meta().ID))
 	for _, def := range tp1Info.Meta().Partition.Definitions {
