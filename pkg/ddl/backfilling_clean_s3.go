@@ -58,7 +58,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 		logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
 		return err
 	}
-	prefix := strconv.Itoa(int(taskMeta.Job.ID))
+	prefix := strconv.Itoa(int(task.ID))
 	err = external.CleanUpFiles(ctx, extStore, prefix)
 	if err != nil {
 		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
