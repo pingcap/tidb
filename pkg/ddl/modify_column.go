@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -52,46 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
-
-// ModifyColumnType is used to indicate what type of modify column job it is.
-// Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
-// https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
-const (
-	ModifyTypeNone byte = iota
-	// modify column that guarantees no reorganization or check is needed.
-	ModifyTypeNoReorg
-
-	// modify column that don't need to reorg the data, but need to check the existing data.
-	ModifyTypeNoReorgWithCheck
-
-	// modify column that only needs to reorg the index
-	ModifyTypeIndexReorg
-
-	// modify column that needs to reorg both the row and index data.
-	ModifyTypeReorg
-
-	// A special type for varchar->char conversion with data precheck.
-	ModifyTypePrecheck
-)
-
-func typeToString(tp byte) string {
-	switch tp {
-	case ModifyTypeNone:
-		return "none"
-	case ModifyTypeNoReorg:
-		return "modify meta only"
-	case ModifyTypeNoReorgWithCheck:
-		return "modify meta only with range check"
-	case ModifyTypeIndexReorg:
-		return "reorg index only"
-	case ModifyTypeReorg:
-		return "reorg row and index"
-	case ModifyTypePrecheck:
-		return "prechecking"
-	}
-
-	return ""
-}
 
 func hasModifyFlag(col *model.ColumnInfo) bool {
 	return col.ChangingFieldType != nil || mysql.HasPreventNullInsertFlag(col.GetFlag())
@@ -119,40 +78,40 @@ func getModifyColumnType(
 	if noReorgDataStrict(tblInfo, oldCol, args.Column) {
 		// It's not NULL->NOTNULL change
 		if !isNullToNotNullChange(oldCol, newCol) {
-			return ModifyTypeNoReorg
+			return model.ModifyTypeNoReorg
 		}
-		return ModifyTypeNoReorgWithCheck
+		return model.ModifyTypeNoReorgWithCheck
 	}
 
 	// For backward compatibility
 	if args.ModifyColumnType == mysql.TypeNull {
-		return ModifyTypeReorg
+		return model.ModifyTypeReorg
 	}
 
 	// FIXME(joechenrh): handle partition table case
 	if tblInfo.Partition != nil {
-		return ModifyTypeReorg
+		return model.ModifyTypeReorg
 	}
 
 	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
-			failpoint.Return(ModifyTypeReorg)
+			failpoint.Return(model.ModifyTypeReorg)
 		}
 	})
 
 	if !sqlMode.HasStrictMode() {
-		return ModifyTypeReorg
+		return model.ModifyTypeReorg
 	}
 
 	if needRowReorg(oldCol, args.Column) {
-		return ModifyTypeReorg
+		return model.ModifyTypeReorg
 	}
 
 	relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
 	if len(relatedIndexes) == 0 || !needIndexReorg(oldCol, args.Column) {
-		return ModifyTypeNoReorgWithCheck
+		return model.ModifyTypeNoReorgWithCheck
 	}
-	return ModifyTypeIndexReorg
+	return model.ModifyTypeIndexReorg
 }
 
 func getChangingCol(
@@ -163,7 +122,7 @@ func getChangingCol(
 	changingCol := args.ChangingColumn
 	if changingCol == nil {
 		changingCol = args.Column.Clone()
-		changingCol.Name = ast.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
+		changingCol.Name = ast.NewCIStr(model.GenUniqueChangingColumnName(tblInfo, oldCol))
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 		InitAndAddColumnToTable(tblInfo, changingCol)
 
@@ -175,7 +134,7 @@ func getChangingCol(
 				// We create a temp index for each normal index.
 				tmpIdx := info.IndexInfo.Clone()
 				tmpIdx.ID = newIdxID
-				tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
+				tmpIdx.Name = ast.NewCIStr(model.GenUniqueChangingIndexName(tblInfo, info.IndexInfo))
 				UpdateIndexCol(tmpIdx.Columns[info.Offset], changingCol)
 				tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 			} else {
@@ -226,7 +185,7 @@ func initializeChangingIndexes(
 			tmpIdx := info.IndexInfo.Clone()
 			tmpIdx.State = model.StateNone
 			tmpIdx.ID = newIdxID
-			tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
+			tmpIdx.Name = ast.NewCIStr(model.GenUniqueChangingIndexName(tblInfo, info.IndexInfo))
 			tmpIdx.Columns[info.Offset].UseChangingType = true
 			UpdateIndexCol(tmpIdx.Columns[info.Offset], tmpCol)
 			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
@@ -276,7 +235,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	// For first time running this job, or the job from older version,
 	// we need to fill the ModifyColumnType.
-	if args.ModifyColumnType == ModifyTypeNone ||
+	if args.ModifyColumnType == model.ModifyTypeNone ||
 		args.ModifyColumnType == mysql.TypeNull {
 		// Check the modify types again, as the type may be changed by other no-reorg modify-column jobs.
 		// For example, there are two DDLs submitted in parallel:
@@ -296,25 +255,25 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
 			zap.Int64("oldColumnID", oldCol.ID),
-			zap.String("type", typeToString(args.ModifyColumnType)),
+			zap.String("type", model.ModifyTypeToString(args.ModifyColumnType)),
 		)
 		if oldCol.GetType() == mysql.TypeVarchar && args.Column.GetType() == mysql.TypeString &&
-			(args.ModifyColumnType == ModifyTypeNoReorgWithCheck ||
-				args.ModifyColumnType == ModifyTypeIndexReorg) {
+			(args.ModifyColumnType == model.ModifyTypeNoReorgWithCheck ||
+				args.ModifyColumnType == model.ModifyTypeIndexReorg) {
 			logutil.DDLLogger().Info("meet varchar to char modify column, change type to precheck")
-			args.ModifyColumnType = ModifyTypePrecheck
+			args.ModifyColumnType = model.ModifyTypePrecheck
 		}
 	}
 
 	if job.IsRollingback() {
 		switch args.ModifyColumnType {
-		case ModifyTypePrecheck, ModifyTypeNoReorg, ModifyTypeNoReorgWithCheck:
+		case model.ModifyTypePrecheck, model.ModifyTypeNoReorg, model.ModifyTypeNoReorgWithCheck:
 			// For those column-type-change jobs which don't need reorg, or checking.
 			return rollbackModifyColumnJob(jobCtx, tblInfo, job, args.Column, oldCol)
-		case ModifyTypeReorg:
+		case model.ModifyTypeReorg:
 			// For those column-type-change jobs which need reorg.
 			return rollbackModifyColumnJobWithReorg(jobCtx, tblInfo, job, oldCol, args)
-		case ModifyTypeIndexReorg:
+		case model.ModifyTypeIndexReorg:
 			// For those column-type-change jobs which reorg the index only.
 			return rollbackModifyColumnJobWithIndexReorg(jobCtx, tblInfo, job, oldCol, args)
 		}
@@ -345,11 +304,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	switch args.ModifyColumnType {
-	case ModifyTypePrecheck:
+	case model.ModifyTypePrecheck:
 		return w.precheckForVarcharToChar(jobCtx, job, args, dbInfo, tblInfo, oldCol)
-	case ModifyTypeNoReorgWithCheck:
+	case model.ModifyTypeNoReorgWithCheck:
 		return w.doModifyColumnWithCheck(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
-	case ModifyTypeNoReorg:
+	case model.ModifyTypeNoReorg:
 		return w.doModifyColumnNoCheck(jobCtx, job, tblInfo, args.Column, oldCol, args.Position)
 	}
 
@@ -377,7 +336,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	defer checkTableInfo(tblInfo)
 
-	if args.ModifyColumnType == ModifyTypeIndexReorg {
+	if args.ModifyColumnType == model.ModifyTypeIndexReorg {
 		if err := initializeChangingIndexes(args, tblInfo, oldCol); err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -516,7 +475,7 @@ func getModifyColumnInfo(
 	} else {
 		// Lower version TiDB doesn't persist the old column ID to job arguments.
 		// We have to use the old column name to locate the old column.
-		oldCol = model.FindColumnInfo(tblInfo.Columns, getRemovingObjName(args.OldColumnName.L))
+		oldCol = model.FindColumnInfo(tblInfo.Columns, model.GenRemovingObjName(args.OldColumnName.L))
 		if oldCol == nil {
 			// The old column maybe not in removing state.
 			oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
@@ -629,7 +588,7 @@ func (w *worker) precheckForVarcharToChar(
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
 			zap.Int64("oldColumnID", oldCol.ID),
-			zap.String("type", typeToString(args.ModifyColumnType)),
+			zap.String("type", model.ModifyTypeToString(args.ModifyColumnType)),
 		)
 		return ver, nil
 	}
@@ -651,7 +610,7 @@ func (w *worker) precheckForVarcharToChar(
 		zap.String("oldColumnName", args.OldColumnName.L),
 		zap.Int64("oldColumnID", oldCol.ID),
 	)
-	args.ModifyColumnType = ModifyTypeReorg
+	args.ModifyColumnType = model.ModifyTypeReorg
 	return ver, nil
 }
 
@@ -931,13 +890,13 @@ func reorderChangingIdx(oldIdxInfos []*model.IndexInfo, changingIdxInfos []*mode
 	for _, cIdx := range changingIdxInfos {
 		origName := cIdx.Name.O
 		if cIdx.State != model.StatePublic {
-			origName = getChangingIndexOriginName(cIdx)
+			origName = cIdx.GetChangingOriginName()
 		}
 		nameToChanging[origName] = cIdx
 	}
 
 	for i, oldIdx := range oldIdxInfos {
-		changingIdxInfos[i] = nameToChanging[getRemovingObjOriginName(oldIdx.Name.O)]
+		changingIdxInfos[i] = nameToChanging[oldIdx.GetRemovingOriginName()]
 	}
 }
 
@@ -1066,7 +1025,8 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
+				// For multi-schema change, analyze is done by parent job.
+				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				} else {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
@@ -1074,20 +1034,8 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 			}
 		case model.AnalyzeStateRunning:
-			// after all old index data are reorged. re-analyze it.
-			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done || timedOut || failed {
-				if done {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
-				}
-				if timedOut {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
-				}
-				if failed {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
-				}
-				checkAndMarkNonRevertible(job)
-			}
+			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
+			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
@@ -1181,7 +1129,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		// the second half is changingIdxInfos isn't true now, so we need to
 		// find the oldIdxInfos again.
 		for _, idx := range allIdxs {
-			if strings.HasPrefix(idx.Name.O, removingObjPrefix) {
+			if idx.IsRemoving() {
 				oldIdxInfos = append(oldIdxInfos, idx)
 			}
 		}
@@ -1285,7 +1233,8 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				if checkAnalyzeNecessary(job, changingIdxInfos, tblInfo) {
+				// For multi-schema change, analyze is done by parent job.
+				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				} else {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
@@ -1293,21 +1242,9 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 			}
 		case model.AnalyzeStateRunning:
-			// after all old index data are reorged. re-analyze it.
-			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done || timedOut || failed {
-				if done {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
-				}
-				if timedOut {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
-				}
-				if failed {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
-				}
-				checkAndMarkNonRevertible(job)
-			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout:
+			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
+			w.startAnalyzeAndWait(job, tblInfo)
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType
@@ -1365,29 +1302,6 @@ func (w *worker) doModifyColumnIndexReorg(
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", oldIdxInfos[0].State)
 	}
 	return ver, errors.Trace(err)
-}
-
-func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
-	analyzeVer := vardef.DefTiDBAnalyzeVersion
-	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
-		analyzeVer = variable.TidbOptInt(val, analyzeVer)
-	}
-	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
-	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
-		enableDDLAnalyze = variable.TiDBOptOn(val)
-	}
-	hasPartition := tbl.GetPartitionInfo() != nil
-	hasChangingIdx := len(changingIdxes) > 0
-
-	if enableDDLAnalyze && hasChangingIdx && !hasPartition && analyzeVer == 2 {
-		return true
-	}
-	logutil.DDLLogger().Info("skip analyze",
-		zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
-		zap.Bool("is partitioned table", hasPartition),
-		zap.Int("affected indexes count", len(changingIdxes)),
-		zap.Int("tidb_analyze_version", analyzeVer))
-	return false
 }
 
 // checkAndMarkNonRevertible should be called when the job is in the final revertible state before public.
@@ -1631,11 +1545,11 @@ func checkTableInfo(tblInfo *model.TableInfo) {
 			intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
 			depCol := tblInfo.Columns[offset]
 			switch {
-			case strings.HasPrefix(col.Name.O, changingColumnPrefix):
-				name := getChangingColumnOriginName(col)
+			case col.IsChanging():
+				name := col.GetChangingOriginName()
 				intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
-			case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
-				name := getRemovingObjOriginName(depCol.Name.O)
+			case depCol.IsRemoving():
+				name := depCol.GetRemovingOriginName()
 				intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
 			}
 		}
@@ -1835,7 +1749,7 @@ func GetModifiableColumnJob(
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		CtxVars:        []any{mayNeedChangeColData},
+		NeedReorg:      mayNeedChangeColData,
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),

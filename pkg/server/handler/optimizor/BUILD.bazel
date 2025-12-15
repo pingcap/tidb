@@ -38,12 +38,11 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
-        "optimize_trace_test.go",
         "plan_replayer_test.go",
         "statistics_handler_test.go",
     ],
     flaky = True,
-    shard_count = 10,
+    shard_count = 9,
     deps = [
         ":optimizor",
         "//pkg/config",

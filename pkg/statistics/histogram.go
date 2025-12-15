@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -504,19 +503,9 @@ func (hg *Histogram) ToString(idxCols int) string {
 // matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (hg *Histogram) EqualRowCount(sctx planctx.PlanContext, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Count", count, "Matched", matched)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
 	_, bucketIdx, inBucket, match := hg.LocateBucket(sctx, value)
 	if !inBucket {
 		return 0, false
-	}
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		DebugTraceBuckets(sctx, hg, []int{bucketIdx})
 	}
 	if match {
 		return float64(hg.Buckets[bucketIdx].Repeat), true
@@ -553,12 +542,7 @@ func (hg *Histogram) GreaterRowCount(value types.Datum) float64 {
 // locateBucket(val2): false, 2, false, false
 // locateBucket(val3): false, 2, true, false
 // locateBucket(val4): true, 3, false, false
-func (hg *Histogram) LocateBucket(sctx planctx.PlanContext, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		defer func() {
-			debugTraceLocateBucket(sctx, &value, exceed, bucketIdx, inBucket, matchLastValue)
-		}()
-	}
+func (hg *Histogram) LocateBucket(_ planctx.PlanContext, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	// Empty histogram
 	if hg == nil || hg.Bounds.NumRows() == 0 {
 		return true, 0, false, false
@@ -587,13 +571,6 @@ func (hg *Histogram) LocateBucket(sctx planctx.PlanContext, value types.Datum) (
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (hg *Histogram) LessRowCountWithBktIdx(sctx planctx.PlanContext, value types.Datum) (result float64, bucketIdx int) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Bucket idx", bucketIdx)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
 	// All the values are null.
 	if hg.Bounds.NumRows() == 0 {
 		return 0, 0
@@ -601,9 +578,6 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx planctx.PlanContext, value type
 	exceed, bucketIdx, inBucket, match := hg.LocateBucket(sctx, value)
 	if exceed {
 		return hg.NotNullCount(), hg.Len() - 1
-	}
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		DebugTraceBuckets(sctx, hg, []int{bucketIdx - 1, bucketIdx})
 	}
 	preCount := float64(0)
 	if bucketIdx > 0 {
@@ -1081,20 +1055,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	lDatum, rDatum *types.Datum,
 	realtimeRowCount, modifyCount, histNDV int64,
 ) (result RowEstimate) {
-	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
-	if debugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		debugtrace.RecordAnyValuesWithNames(sctx,
-			"lDatum", lDatum.String(),
-			"rDatum", rDatum.String(),
-			"modifyCount", modifyCount,
-			"realtimeRowCount", realtimeRowCount,
-		)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result.Est)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
 	if hg.Len() == 0 {
 		return DefaultRowEst(0)
 	}
@@ -1139,15 +1099,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
-	if debugTrace {
-		debugtrace.RecordAnyValuesWithNames(sctx,
-			"commonPrefix", commonPrefix,
-			"lScalar", l,
-			"rScalar", r,
-			"unsigned", unsigned,
-		)
-	}
-
 	// make sure l < r
 	if l >= r {
 		return DefaultRowEst(0)
@@ -1170,20 +1121,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundR := histR + histWidth
 
 	var leftPercent, rightPercent, avgRowCount float64
-	if debugTrace {
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx,
-				"histL", histL,
-				"histR", histR,
-				"boundL", boundL,
-				"boundR", boundR,
-				"lPercent", leftPercent,
-				"rPercent", rightPercent,
-				"avgRowCount", avgRowCount,
-			)
-		}()
-	}
-
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
 	actualR := r
