@@ -707,6 +707,23 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = nil
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = make([]*model.FKInfo, 0)
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
 	tableInfo = &model.TableInfo{
 		TempTableType: model.TempTableGlobal,
 		State:         model.StatePublic,
