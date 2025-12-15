@@ -1187,14 +1187,11 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	return true
 }
 
-<<<<<<< HEAD
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
-=======
 func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
 	policy := ctx.GetSessionVars().IndexLookUpPushDownPolicy
 	switch policy {
-	case vardef.IndexLookUpPushDownPolicyForce:
-	case vardef.IndexLookUpPushDownPolicyAffinityForce:
+	case variable.IndexLookUpPushDownPolicyForce:
+	case variable.IndexLookUpPushDownPolicyAffinityForce:
 		if tblInfo.Affinity == nil {
 			// No affinity info, should not auto push down the index look up.
 			return false
@@ -1205,8 +1202,7 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
->>>>>>> 69fb8dbc923 (*: support system variable `tidb_index_lookup_pushdown_policy` and hint `NO_INDEX_LOOKUP_PUSHDOWN` (#64932))
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1248,15 +1244,11 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	// tries to enable it.
 	forceNoIndexLookUpPushDown := false
 	if len(tableHints.NoIndexLookUpPushDown) > 0 {
-		for _, h := range tableHints.NoIndexLookUpPushDown {
-			if h.Match(&hint.HintedTable{
-				DBName:  dbName,
-				TblName: tblName,
-			}) {
-				h.Matched = true
-				forceNoIndexLookUpPushDown = true
-				break
-			}
+		if tableHints.IfNoIndexLookUpPushDown(&hint.HintedTable{
+			DBName:  dbName,
+			TblName: tblName,
+		}) {
+			forceNoIndexLookUpPushDown = true
 		}
 	}
 

@@ -1088,19 +1088,11 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		require.Equal(t, tableSchema.String(), r.Schema().String())
 		require.Equal(t, 10, lookup.QueryBlockOffset())
 	}
-<<<<<<< HEAD
 	reader := PhysicalIndexLookUpReader{
 		tablePlan: tablePlan,
 		indexPlan: indexPlan,
 		keepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
-=======
-	reader := physicalop.PhysicalIndexLookUpReader{
-		TablePlan: tablePlan,
-		IndexPlan: indexPlan,
-		KeepOrder: false,
 	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
->>>>>>> 69fb8dbc923 (*: support system variable `tidb_index_lookup_pushdown_policy` and hint `NO_INDEX_LOOKUP_PUSHDOWN` (#64932))
 	check(reader)
 	cloned, err := reader.Clone(ctx)
 	require.NoError(t, err)
@@ -1164,19 +1156,11 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		require.Equal(t, 10, lookup.QueryBlockOffset())
 	}
 
-<<<<<<< HEAD
 	reader = PhysicalIndexLookUpReader{
 		tablePlan: projectionPlan,
 		indexPlan: limitPlan,
 		keepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
-=======
-	reader = physicalop.PhysicalIndexLookUpReader{
-		TablePlan: projectionPlan,
-		IndexPlan: limitPlan,
-		KeepOrder: false,
 	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
->>>>>>> 69fb8dbc923 (*: support system variable `tidb_index_lookup_pushdown_policy` and hint `NO_INDEX_LOOKUP_PUSHDOWN` (#64932))
 	check(reader)
 	cloned, err = reader.Clone(ctx)
 	require.NoError(t, err)

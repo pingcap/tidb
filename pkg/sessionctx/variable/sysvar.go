@@ -3552,14 +3552,14 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
-		Name:  vardef.TiDBIndexLookUpPushDownPolicy,
-		Value: vardef.DefTiDBIndexLookUpPushDownPolicy,
-		Type:  vardef.TypeEnum,
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBIndexLookUpPushDownPolicy,
+		Value: DefTiDBIndexLookUpPushDownPolicy,
+		Type:  TypeEnum,
 		PossibleValues: []string{
-			vardef.IndexLookUpPushDownPolicyHintOnly,
-			vardef.IndexLookUpPushDownPolicyAffinityForce,
-			vardef.IndexLookUpPushDownPolicyForce,
+			IndexLookUpPushDownPolicyHintOnly,
+			IndexLookUpPushDownPolicyAffinityForce,
+			IndexLookUpPushDownPolicyForce,
 		},
 		IsHintUpdatableVerified: true,
 		SetSession: func(vars *SessionVars, s string) error {

@@ -2250,13 +2250,8 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
 			ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 		}
-<<<<<<< HEAD
 		cop.tablePlan = ts
-		cop.indexLookUpPushDown = candidate.path.IsIndexLookUpPushDown
-=======
-		cop.TablePlan = ts
-		cop.IndexLookUpPushDownBy = candidate.path.IndexLookUpPushDownBy
->>>>>>> 69fb8dbc923 (*: support system variable `tidb_index_lookup_pushdown_policy` and hint `NO_INDEX_LOOKUP_PUSHDOWN` (#64932))
+		cop.indexLookUpPushDownBy = candidate.path.IndexLookUpPushDownBy
 	}
 	task = cop
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {

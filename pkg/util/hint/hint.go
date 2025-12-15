@@ -530,41 +530,22 @@ type IndexJoinHints struct {
 // PlanHints are hints that are used to control the optimizer plan choices like 'use_index', 'hash_join'.
 // TODO: move ignore_plan_cache, straight_join, no_decorrelate here.
 type PlanHints struct {
-<<<<<<< HEAD
-	IndexJoin          IndexJoinHints // inlj_join, inlhj_join, inlmj_join
-	NoIndexJoin        IndexJoinHints // no_inlj_join, no_inlhj_join, no_inlmj_join
-	HashJoin           []HintedTable  // hash_join
-	NoHashJoin         []HintedTable  // no_hash_join
-	SortMergeJoin      []HintedTable  // merge_join
-	NoMergeJoin        []HintedTable  // no_merge_join
-	BroadcastJoin      []HintedTable  // bcj_join
-	ShuffleJoin        []HintedTable  // shuffle_join
-	IndexHintList      []HintedIndex  // use_index, ignore_index
-	IndexMergeHintList []HintedIndex  // use_index_merge
-	TiFlashTables      []HintedTable  // isolation_read_engines(xx=tiflash)
-	TiKVTables         []HintedTable  // isolation_read_engines(xx=tikv)
-	LeadingJoinOrder   []HintedTable  // leading
-	HJBuild            []HintedTable  // hash_join_build
-	HJProbe            []HintedTable  // hash_join_probe
-=======
-	IndexJoin             IndexJoinHints   // inlj_join, inlhj_join, inlmj_join
-	NoIndexJoin           IndexJoinHints   // no_inlj_join, no_inlhj_join, no_inlmj_join
-	HashJoin              []HintedTable    // hash_join
-	NoHashJoin            []HintedTable    // no_hash_join
-	SortMergeJoin         []HintedTable    // merge_join
-	NoMergeJoin           []HintedTable    // no_merge_join
-	BroadcastJoin         []HintedTable    // bcj_join
-	ShuffleJoin           []HintedTable    // shuffle_join
-	IndexHintList         []HintedIndex    // use_index, ignore_index
-	IndexMergeHintList    []HintedIndex    // use_index_merge
-	TiFlashTables         []HintedTable    // isolation_read_engines(xx=tiflash)
-	TiKVTables            []HintedTable    // isolation_read_engines(xx=tikv)
-	LeadingJoinOrder      []HintedTable    // leading
-	LeadingList           *ast.LeadingList // leading recursive
-	HJBuild               []HintedTable    // hash_join_build
-	HJProbe               []HintedTable    // hash_join_probe
-	NoIndexLookUpPushDown []HintedTable    // no_index_lookup_pushdown
->>>>>>> 69fb8dbc923 (*: support system variable `tidb_index_lookup_pushdown_policy` and hint `NO_INDEX_LOOKUP_PUSHDOWN` (#64932))
+	IndexJoin             IndexJoinHints // inlj_join, inlhj_join, inlmj_join
+	NoIndexJoin           IndexJoinHints // no_inlj_join, no_inlhj_join, no_inlmj_join
+	HashJoin              []HintedTable  // hash_join
+	NoHashJoin            []HintedTable  // no_hash_join
+	SortMergeJoin         []HintedTable  // merge_join
+	NoMergeJoin           []HintedTable  // no_merge_join
+	BroadcastJoin         []HintedTable  // bcj_join
+	ShuffleJoin           []HintedTable  // shuffle_join
+	IndexHintList         []HintedIndex  // use_index, ignore_index
+	IndexMergeHintList    []HintedIndex  // use_index_merge
+	TiFlashTables         []HintedTable  // isolation_read_engines(xx=tiflash)
+	TiKVTables            []HintedTable  // isolation_read_engines(xx=tikv)
+	LeadingJoinOrder      []HintedTable  // leading
+	HJBuild               []HintedTable  // hash_join_build
+	HJProbe               []HintedTable  // hash_join_probe
+	NoIndexLookUpPushDown []HintedTable  // no_index_lookup_pushdown
 
 	// Hints belows are not associated with any particular table.
 	PreferAggType    uint // hash_agg, merge_agg, agg_to_cop and so on
@@ -708,6 +689,11 @@ func (pHints *PlanHints) IfPreferNoIndexMergeJoin(tableNames ...*HintedTable) bo
 	return pHints.MatchTableName(tableNames, pHints.NoIndexJoin.INLMJTables)
 }
 
+// IfNoIndexLookUpPushDown checks whether to disable push down index lookup for the table.
+func (pHints *PlanHints) IfNoIndexLookUpPushDown(tableNames ...*HintedTable) bool {
+	return pHints.MatchTableName(tableNames, pHints.NoIndexLookUpPushDown)
+}
+
 // IfPreferTiFlash checks whether the hint hit the need of TiFlash.
 func (pHints *PlanHints) IfPreferTiFlash(tableName *HintedTable) *HintedTable {
 	return pHints.matchTiKVOrTiFlash(tableName, pHints.TiFlashTables)
@@ -849,7 +835,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = ast.NewCIStr(currentDB)
+				dbName = pmodel.NewCIStr(currentDB)
 			}
 			noIndexLookUpPushDownTables = append(noIndexLookUpPushDownTables, HintedTable{
 				DBName:  dbName,
@@ -955,28 +941,6 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		}
 	}
 	return &PlanHints{
-<<<<<<< HEAD
-		SortMergeJoin:      sortMergeTables,
-		BroadcastJoin:      bcTables,
-		ShuffleJoin:        shuffleJoinTables,
-		IndexJoin:          IndexJoinHints{INLJTables: inljTables, INLHJTables: inlhjTables, INLMJTables: inlmjTables},
-		NoIndexJoin:        IndexJoinHints{INLJTables: noIndexJoinTables, INLHJTables: noIndexHashJoinTables, INLMJTables: noIndexMergeJoinTables},
-		HashJoin:           hashJoinTables,
-		NoHashJoin:         noHashJoinTables,
-		NoMergeJoin:        noMergeJoinTables,
-		IndexHintList:      indexHintList,
-		TiFlashTables:      tiflashTables,
-		TiKVTables:         tikvTables,
-		PreferAggToCop:     preferAggToCop,
-		PreferAggType:      preferAggType,
-		IndexMergeHintList: indexMergeHintList,
-		TimeRangeHint:      timeRangeHint,
-		PreferLimitToCop:   preferLimitToCop,
-		CTEMerge:           cteMerge,
-		LeadingJoinOrder:   leadingJoinOrder,
-		HJBuild:            hjBuildTables,
-		HJProbe:            hjProbeTables,
-=======
 		SortMergeJoin:         sortMergeTables,
 		BroadcastJoin:         bcTables,
 		ShuffleJoin:           shuffleJoinTables,
@@ -995,11 +959,9 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		PreferLimitToCop:      preferLimitToCop,
 		CTEMerge:              cteMerge,
 		LeadingJoinOrder:      leadingJoinOrder,
-		LeadingList:           leadingList,
 		HJBuild:               hjBuildTables,
 		HJProbe:               hjProbeTables,
 		NoIndexLookUpPushDown: noIndexLookUpPushDownTables,
->>>>>>> 69fb8dbc923 (*: support system variable `tidb_index_lookup_pushdown_policy` and hint `NO_INDEX_LOOKUP_PUSHDOWN` (#64932))
 	}, subQueryHintFlags, nil
 }
 

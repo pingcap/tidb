@@ -224,26 +224,14 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 // CopTask is a task that runs in a distributed kv store.
 // TODO: In future, we should split copTask to indexTask and tableTask.
 type CopTask struct {
-<<<<<<< HEAD:pkg/planner/core/task_base.go
-	indexPlan           base.PhysicalPlan
-	tablePlan           base.PhysicalPlan
-	indexLookUpPushDown bool
+	indexPlan             base.PhysicalPlan
+	tablePlan             base.PhysicalPlan
+	indexLookUpPushDownBy util.IndexLookUpPushDownByType
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.
 	keepOrder bool
 	// needExtraProj means an extra prune is needed because
-=======
-	IndexPlan base.PhysicalPlan
-	TablePlan base.PhysicalPlan
-	// Whether tries to push down index lookup to TiKV and where this action comes
-	IndexLookUpPushDownBy util.IndexLookUpPushDownByType
-	// IndexPlanFinished means we have finished index plan.
-	IndexPlanFinished bool
-	// KeepOrder indicates if the plan scans data by order.
-	KeepOrder bool
-	// NeedExtraProj means an extra prune is needed because
->>>>>>> 69fb8dbc923 (*: support system variable `tidb_index_lookup_pushdown_policy` and hint `NO_INDEX_LOOKUP_PUSHDOWN` (#64932)):pkg/planner/core/operator/physicalop/task_base.go
 	// in double read / index merge cases, they may output one more column for handle(row id).
 	needExtraProj bool
 	// originSchema is the target schema to be projected to when needExtraProj is true.
