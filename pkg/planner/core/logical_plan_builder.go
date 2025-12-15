@@ -5579,7 +5579,6 @@ func (b *PlanBuilder) buildDMLSelectPlan(
 }
 
 // buildUpdatePlan builds the Update physical plan from a select plan.
-// This is shared by buildUpdate and buildDeleteAsUpdate.
 func (b *PlanBuilder) buildUpdatePlan(
 	ctx context.Context,
 	p base.LogicalPlan,
@@ -6074,59 +6073,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 
 	return del, err
-}
-
-// buildDeleteAsUpdate builds an UPDATE plan from a DELETE statement for soft delete tables.
-// This is called when SoftDeleteRewrite is enabled and all tables involved have soft delete enabled.
-// The DELETE is rewritten to: UPDATE ... SET _tidb_softdelete_time = NOW()
-func (b *PlanBuilder) buildDeleteAsUpdate(
-	ctx context.Context,
-	ds *ast.DeleteStmt,
-	softdeleteTables []*resolve.TableNameW) (base.Plan, error) {
-	b.pushSelectOffset(0)
-	b.pushTableHints(ds.TableHints, 0)
-	defer func() {
-		b.popSelectOffset()
-		b.popTableHints()
-	}()
-
-	p, oldSchemaLen, err := b.buildDMLSelectPlan(
-		ctx,
-		ds.With,
-		ds.TableRefs.TableRefs,
-		ds.Where,
-		ds.Order,
-		ds.Limit,
-		!ds.IsMultiTable,
-		true, // isUpdate (we're building an UPDATE plan)
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Generate assignment list for soft delete: SET _tidb_softdelete_time = NOW(6)
-	assignList := make([]*ast.Assignment, 0, len(softdeleteTables))
-	tableList := make([]*ast.TableName, 0, len(softdeleteTables))
-	for _, tbl := range softdeleteTables {
-		assignList = append(assignList, &ast.Assignment{
-			Column: &ast.ColumnName{
-				Schema: tbl.Schema,
-				Table:  tbl.Name,
-				Name:   model.ExtraSoftDeleteTimeName,
-			},
-			Expr: &ast.FuncCallExpr{
-				FnName: ast.NewCIStr(ast.Now),
-				Args: []ast.ExprNode{
-					&driver.ValueExpr{
-						Datum: types.NewIntDatum(6),
-					},
-				},
-			},
-		})
-		tableList = append(tableList, tbl.TableName)
-	}
-
-	return b.buildUpdatePlan(ctx, p, oldSchemaLen, tableList, assignList, ds.IgnoreErr)
 }
 
 func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]util.HandleCols, schema *expression.Schema) (map[int64][]util.HandleCols, error) {
