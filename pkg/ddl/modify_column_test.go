@@ -1070,18 +1070,18 @@ func TestModifyIntegerColumn(t *testing.T) {
 		for _, val := range insertVal {
 			tk.MustExec(fmt.Sprintf("insert into t values(%s)", val))
 			err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-			require.Contains(t, err.Error(), "Data truncated for column 'a'")
+			require.True(t, strings.Contains(err.Error(), "Data truncated for column 'a'") || strings.Contains(err.Error(), "overflow"))
 			tk.MustExec("delete from t")
 		}
 	}
 
-	successValue := func(insertVal string, newColTp string) {
+	successValue := func(insertVal string, newColTp string, expectReorgTp byte) {
 		tk.MustExec(fmt.Sprintf("insert into t values %s", insertVal))
 		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Equal(t, model.ModifyTypeNoReorgWithCheck, reorgType)
+		require.Equal(t, expectReorgTp, reorgType)
 	}
 
-	signed2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+	signed2Signed := func(oldColTp, newColTp string, expectReorgTp byte) {
 		maxValOfNewCol, minValOfNewCol := maxMinSignedVal[newColTp][0], maxMinSignedVal[newColTp][1]
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
 		tk.MustExec("drop table if exists t")
@@ -1100,10 +1100,10 @@ func TestModifyIntegerColumn(t *testing.T) {
 		}, newColTp)
 
 		// [maxValOfNewCol, minValOfNewCol] pass
-		successValue(fmt.Sprintf("(%d), (%d), (0)", maxValOfNewCol, minValOfNewCol), newColTp)
+		successValue(fmt.Sprintf("(%d), (%d), (0)", maxValOfNewCol, minValOfNewCol), newColTp, expectReorgTp)
 	}
 
-	unsigned2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+	unsigned2Unsigned := func(oldColTp, newColTp string, expectReorgTp byte) {
 		maxValOfNewCol, minValOfNewCol := maxMinUnsignedVal[newColTp][0], maxMinUnsignedVal[newColTp][1]
 		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1116,48 +1116,48 @@ func TestModifyIntegerColumn(t *testing.T) {
 		}, newColTp)
 
 		// [0, maxValOfNewCol] pass
-		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp)
+		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp, expectReorgTp)
 	}
 
-	// signed2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte, oldColIdx, newColIdx int) {
-	// 	maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
-	// 	maxValOfNewCol := maxMinUnsignedVal[newColTp][0]
-	// 	tk.MustExec("drop table if exists t")
-	// 	tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
+	signed2Unsigned := func(oldColTp, newColTp string, expectReorgTp byte, oldColIdx, newColIdx int) {
+		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
+		maxValOfNewCol := maxMinUnsignedVal[newColTp][0]
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
 
-	// 	// [minValOfOldCol, -1] fail
-	// 	failedValue([]string{
-	// 		"-1",
-	// 		fmt.Sprintf("%d", minValOfOldCol),
-	// 	}, newColTp)
+		// [minValOfOldCol, -1] fail
+		failedValue([]string{
+			"-1",
+			fmt.Sprintf("%d", minValOfOldCol),
+		}, newColTp)
 
-	// 	if oldColIdx < newColIdx {
-	// 		// [maxValOfNewCol+1, maxValOfOldCol] fail
-	// 		failedValue([]string{
-	// 			fmt.Sprintf("%d", maxValOfNewCol+1),
-	// 			fmt.Sprintf("%d", maxValOfOldCol),
-	// 		}, newColTp)
-	// 	}
+		if oldColIdx < newColIdx {
+			// [maxValOfNewCol+1, maxValOfOldCol] fail
+			failedValue([]string{
+				fmt.Sprintf("%d", maxValOfNewCol+1),
+				fmt.Sprintf("%d", maxValOfOldCol),
+			}, newColTp)
+		}
 
-	// 	// [0, min(maxValOfOldCol, maxValOfNewCol)] pass
-	// 	successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp)
-	// }
+		// [0, min(maxValOfOldCol, maxValOfNewCol)] pass
+		successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp, expectReorgTp)
+	}
 
-	// unsigned2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
-	// 	maxValOfNewCol := maxMinSignedVal[newColTp][0]
-	// 	maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
-	// 	tk.MustExec("drop table if exists t")
-	// 	tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
+	unsigned2Signed := func(oldColTp, newColTp string, expectReorgTp byte) {
+		maxValOfNewCol := maxMinSignedVal[newColTp][0]
+		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t(a %s)", oldColTp))
 
-	// 	// [maxValOfNewCol+1, maxValOfOldCol] fail
-	// 	failedValue([]string{
-	// 		fmt.Sprintf("%d", uint64(maxValOfNewCol)+1),
-	// 		fmt.Sprintf("%d", maxValOfOldCol),
-	// 	}, newColTp)
+		// [maxValOfNewCol+1, maxValOfOldCol] fail
+		failedValue([]string{
+			fmt.Sprintf("%d", uint64(maxValOfNewCol)+1),
+			fmt.Sprintf("%d", maxValOfOldCol),
+		}, newColTp)
 
-	// 	// [0, maxValOfNewCol] pass
-	// 	successValue(fmt.Sprintf("(%d), (1), (0)", maxValOfNewCol), newColTp)
-	// }
+		// [0, maxValOfNewCol] pass
+		successValue(fmt.Sprintf("(%d), (1), (0)", maxValOfNewCol), newColTp, expectReorgTp)
+	}
 
 	signedTp := []string{"bigint", "int", "mediumint", "smallint", "tinyint"}
 	unsignedTp := []string{"bigint unsigned", "int unsigned", "mediumint unsigned", "smallint unsigned", "tinyint unsigned"}
@@ -1165,25 +1165,25 @@ func TestModifyIntegerColumn(t *testing.T) {
 		// 1. signed -> signed
 		// bigint -> int, mediumint, smallint, tinyint; int -> mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(signedTp); newColIdx++ {
-			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck)
+			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], model.ModifyTypeNoReorgWithCheck)
 		}
 		// 2. signed -> unsigned
 		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; ...
-		// for newColIdx := range unsignedTp {
-		// 	signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
-		// }
+		for newColIdx := range unsignedTp {
+			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], model.ModifyTypeReorg, oldColIdx, newColIdx)
+		}
 	}
 	for oldColIdx := range unsignedTp {
 		// 3. unsigned -> unsigned
 		// bigint unsigned -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int unsigned -> mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(unsignedTp); newColIdx++ {
-			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck)
+			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], model.ModifyTypeNoReorgWithCheck)
 		}
 		// 4. unsigned -> signed
 		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint; int unsigned -> int, mediumint, smallint, tinyint; ...
-		// for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
-		// 	unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], t, model.ModifyTypeNoReorgWithCheck)
-		// }
+		for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
+			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], model.ModifyTypeReorg)
+		}
 	}
 }
 
@@ -1371,15 +1371,19 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 	}
 
 	type testCase struct {
-		caseName       string
-		createTableSQL string
-		queries        []query
+		caseName        string
+		createTableSQL  string
+		modifySQL       string
+		embeddedAnalyze bool
+		queries         []query
 	}
 
 	tcs := []testCase{
 		{
-			caseName:       "without index",
-			createTableSQL: "create table t (a bigint, b char(16) collate utf8mb4_bin)",
+			caseName:        "table without index,no row reorg",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin)",
+			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
+			embeddedAnalyze: true,
 			queries: []query{
 				{"a < 10", ""},
 				{"a <= 10", ""},
@@ -1396,20 +1400,42 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 			},
 		},
 		{
-			caseName:       "with index",
-			createTableSQL: "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
+			caseName:        "table with index,no row reorg",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
+			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
+			embeddedAnalyze: true,
 			queries: []query{
 				{"a < 10", "i1"},
-				{"a <= 10", "i1"},
+				{"a <= 10", ""},
 				{"a > 10", "i1"},
-				{"a >= 10", "i1"},
+				{"a >= 10", ""},
 				{"a = 10", "i1"},
-				{"a = -1", "i1"},
-				{"b < '10'", "i2"},
+				{"a = -1", ""},
+				{"b < '10'", ""},
 				{"b <= '10'", "i2"},
-				{"b > '10'", "i2"},
+				{"b > '10'", ""},
 				{"b >= '10'", "i2"},
-				{"b = '10'", "i2"},
+				{"b = '10'", ""},
+				{"b = 'non-exist'", "i2"},
+			},
+		},
+		{
+			caseName:        "table with index,row reorg",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
+			modifySQL:       "alter table t modify column a int unsigned, modify column b varchar(16) collate utf8mb4_general_ci",
+			embeddedAnalyze: false,
+			queries: []query{
+				{"a < 10", "i1"},
+				{"a <= 10", ""},
+				{"a > 10", "i1"},
+				{"a >= 10", ""},
+				{"a = 10", "i1"},
+				{"a = -1", ""},
+				{"b < '10'", ""},
+				{"b <= '10'", "i2"},
+				{"b > '10'", ""},
+				{"b >= '10'", "i2"},
+				{"b = '10'", ""},
 				{"b = 'non-exist'", "i2"},
 			},
 		},
@@ -1423,7 +1449,9 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.caseName, func(t *testing.T) {
 			tk.MustExec("drop table if exists t")
-			tk.MustExec("create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))")
+			tk.MustExec(tc.createTableSQL)
+			tk.MustExec(fmt.Sprintf("set @@tidb_stats_update_during_ddl = %t", tc.embeddedAnalyze))
+
 			for i := range 128 {
 				tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
 			}
@@ -1436,16 +1464,18 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 				oldRs = append(oldRs, rs[0][1].(string))
 			}
 
-			tk.MustExec("alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin")
+			tk.MustExec(tc.modifySQL)
 
-			newRs := make([]string, 0, len(tc.queries))
-			for _, q := range tc.queries {
+			for i, q := range tc.queries {
 				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
-				newRs = append(newRs, rs[0][1].(string))
-			}
-
-			for i := range oldRs {
-				require.Equal(t, oldRs[i], newRs[i], "predicate: %s", tc.queries[i].pred)
+				if tc.embeddedAnalyze {
+					require.Equal(t, oldRs[i], rs[0][1].(string), "predicate: %s", tc.queries[i].pred)
+				} else {
+					// For index selectivity, the stats is missing here.
+					if q.idx != "" {
+						require.Contains(t, rs[len(rs)-1][len(rs[0])-1], "missing")
+					}
+				}
 			}
 		})
 	}
