@@ -26,9 +26,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
@@ -62,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -219,6 +222,10 @@ type Plan struct {
 	// operation.
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
+
+	// Location is used to convert time type for parquet, see
+	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
+	Location *time.Location
 
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
@@ -428,6 +435,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		FieldNullDef:   []string{`\N`},
 		LineFieldsInfo: lineFieldsInfo,
 
+		Location:         userSctx.GetSessionVars().Location(),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
@@ -1047,6 +1055,34 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.
 	return s, nil
 }
 
+func estimateCompressionRatio(
+	ctx context.Context,
+	filePath string,
+	fileSize int64,
+	tp mydump.SourceType,
+	store storage.ExternalStorage,
+) (float64, error) {
+	if tp != mydump.SourceTypeParquet {
+		return 1.0, nil
+	}
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2.0, nil)
+		}
+	})
+	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	if err != nil {
+		return 1.0, err
+	}
+	// No row in the file, use 2.0 as default compression ratio.
+	if rowSize == 0 || rows == 0 {
+		return 2.0, nil
+	}
+
+	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
+	return compressionRatio, nil
+}
+
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
@@ -1097,7 +1133,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	s := e.dataStore
-	var totalSize int64
+	var (
+		totalSize        int64
+		compressionRatio = 1.0
+	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	// check glob pattern is present in filename.
 	idx := strings.IndexAny(fileNameKey, "*[")
@@ -1115,6 +1154,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
 		}
+		sourceType = e.getSourceType()
+		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
@@ -1123,6 +1167,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Type:        sourceType,
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1154,9 +1199,19 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		var err error
+		var once sync.Once
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				var err2 error
+				once.Do(func() {
+					sourceType = e.getSourceType()
+					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+				})
+				if err2 != nil {
+					return nil, err2
+				}
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1165,6 +1220,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 				}
 				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
@@ -1257,6 +1313,7 @@ func (e *LoadDataController) GetParser(
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {
@@ -1377,7 +1434,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.ThreadCnt,
+		WorkerConcurrency:      *atomic.NewInt32(int32(e.ThreadCnt)),
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),

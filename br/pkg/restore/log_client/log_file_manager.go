@@ -20,14 +20,14 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
-
-var TotalEntryCount int64
 
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*backuppb.Metadata]
@@ -85,6 +85,7 @@ type streamMetadataHelper interface {
 		encryptionInfo *encryptionpb.FileEncryptionInfo,
 	) ([]byte, error)
 	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
+	Close()
 }
 
 // LogFileManager is the manager for log files of a certain restoration,
@@ -104,11 +105,13 @@ type LogFileManager struct {
 	storage storage.ExternalStorage
 	helper  streamMetadataHelper
 
-	withMigraionBuilder *WithMigrationsBuilder
-	withMigrations      *WithMigrations
+	withMigrationBuilder *WithMigrationsBuilder
+	withMigrations       *WithMigrations
 
 	metadataDownloadBatchSize uint
 
+	// The output channel for statistics.
+	// This will be collected when reading the metadata.
 	Stats *logFilesStatistic
 }
 
@@ -133,12 +136,12 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		startTS:             init.StartTS,
-		restoreTS:           init.RestoreTS,
-		storage:             init.Storage,
-		helper:              stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
-		withMigraionBuilder: init.MigrationsBuilder,
-		withMigrations:      init.Migrations,
+		startTS:              init.StartTS,
+		restoreTS:            init.RestoreTS,
+		storage:              init.Storage,
+		helper:               stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
+		withMigrationBuilder: init.MigrationsBuilder,
+		withMigrations:       init.Migrations,
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
@@ -149,16 +152,16 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFil
 	return fm, nil
 }
 
-func (rc *LogFileManager) BuildMigrations(migs []*backuppb.Migration) {
-	w := rc.withMigraionBuilder.Build(migs)
-	rc.withMigrations = &w
+func (lm *LogFileManager) BuildMigrations(migs []*backuppb.Migration) {
+	w := lm.withMigrationBuilder.Build(migs)
+	lm.withMigrations = &w
 }
 
-func (rc *LogFileManager) ShiftTS() uint64 {
-	return rc.shiftStartTS
+func (lm *LogFileManager) ShiftTS() uint64 {
+	return lm.shiftStartTS
 }
 
-func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
+func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 	shiftTS := struct {
 		sync.Mutex
 		value  uint64
@@ -166,19 +169,19 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	}{}
 
 	err := stream.FastUnmarshalMetaData(ctx,
-		rc.storage,
+		lm.storage,
 		// use start ts to calculate shift start ts
-		rc.startTS,
-		rc.restoreTS,
-		rc.metadataDownloadBatchSize, func(path string, raw []byte) error {
-			m, err := rc.helper.ParseToMetadata(raw)
+		lm.startTS,
+		lm.restoreTS,
+		lm.metadataDownloadBatchSize, func(path string, raw []byte) error {
+			m, err := lm.helper.ParseToMetadata(raw)
 			if err != nil {
 				return err
 			}
 			log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
 				zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-			ts, ok := stream.UpdateShiftTS(m, rc.startTS, rc.restoreTS)
+			ts, ok := stream.UpdateShiftTS(m, lm.startTS, lm.restoreTS)
 			shiftTS.Lock()
 			if ok && (!shiftTS.exists || shiftTS.value > ts) {
 				shiftTS.value = ts
@@ -192,38 +195,38 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 		return err
 	}
 	if !shiftTS.exists {
-		rc.shiftStartTS = rc.startTS
-		rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
+		lm.shiftStartTS = lm.startTS
+		lm.withMigrationBuilder.SetShiftStartTS(lm.shiftStartTS)
 		return nil
 	}
-	rc.shiftStartTS = shiftTS.value
-	rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
+	lm.shiftStartTS = shiftTS.value
+	lm.withMigrationBuilder.SetShiftStartTS(lm.shiftStartTS)
 	return nil
 }
 
-func (rc *LogFileManager) streamingMeta(ctx context.Context) (MetaNameIter, error) {
-	return rc.streamingMetaByTS(ctx, rc.restoreTS)
+func (lm *LogFileManager) streamingMeta(ctx context.Context) (MetaNameIter, error) {
+	return lm.streamingMetaByTS(ctx, lm.restoreTS)
 }
 
-func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaNameIter, error) {
-	it, err := rc.createMetaIterOver(ctx, rc.storage)
+func (lm *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaNameIter, error) {
+	it, err := lm.createMetaIterOver(ctx, lm.storage)
 	if err != nil {
 		return nil, err
 	}
 	filtered := iter.FilterOut(it, func(metaname *MetaName) bool {
-		return restoreTS < metaname.meta.MinTs || metaname.meta.MaxTs < rc.shiftStartTS
+		return restoreTS < metaname.meta.MinTs || metaname.meta.MaxTs < lm.shiftStartTS
 	})
 	return filtered, nil
 }
 
-func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaNameIter, error) {
+func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaNameIter, error) {
 	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, ".meta") {
 			return nil
 		}
-		newPath := stream.FilterPathByTs(path, rc.shiftStartTS, rc.restoreTS)
+		newPath := stream.FilterPathByTs(path, lm.shiftStartTS, lm.restoreTS)
 		if len(newPath) > 0 {
 			names = append(names, newPath)
 		}
@@ -238,7 +241,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed during reading file %s", name)
 		}
-		meta, err := rc.helper.ParseToMetadata(f)
+		meta, err := lm.helper.ParseToMetadata(f)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to parse metadata of file %s", name)
 		}
@@ -247,12 +250,12 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 	// TODO: maybe we need to be able to adjust the concurrency to download files,
 	// which currently is the same as the chunk size
 	reader := iter.Transform(namesIter, readMeta,
-		iter.WithChunkSize(rc.metadataDownloadBatchSize), iter.WithConcurrency(rc.metadataDownloadBatchSize))
+		iter.WithChunkSize(lm.metadataDownloadBatchSize), iter.WithConcurrency(lm.metadataDownloadBatchSize))
 	return reader, nil
 }
 
-func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
-	ms := rc.withMigrations.Metas(m)
+func (lm *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
+	ms := lm.withMigrations.Metas(m)
 	return iter.FlatMap(ms, func(m *MetaWithMigrations) LogIter {
 		gs := m.Physicals(iter.Enumerate(iter.FromSlice(m.meta.FileGroups)))
 		return iter.FlatMap(gs, func(gim *PhysicalWithMigrations) LogIter {
@@ -263,7 +266,7 @@ func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
 					if m.meta.MetaVersion > backuppb.MetaVersion_V1 {
 						di.Item.Path = gim.physical.Item.Path
 					}
-					return di.Item.IsMeta || rc.ShouldFilterOut(di.Item)
+					return di.Item.IsMeta || lm.ShouldFilterOutByTs(di.Item)
 				})
 			return iter.Map(fs, func(di FileIndex) *LogDataFileInfo {
 				return &LogDataFileInfo{
@@ -282,14 +285,14 @@ func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
 	})
 }
 
-// ShouldFilterOut checks whether a file should be filtered out via the current client.
-func (rc *LogFileManager) ShouldFilterOut(d *backuppb.DataFileInfo) bool {
-	return d.MinTs > rc.restoreTS ||
-		(d.Cf == stream.WriteCF && d.MaxTs < rc.startTS) ||
-		(d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS)
+// ShouldFilterOutByTs checks whether a file should be filtered out via the current client.
+func (lm *LogFileManager) ShouldFilterOutByTs(d *backuppb.DataFileInfo) bool {
+	return d.MinTs > lm.restoreTS ||
+		(d.Cf == consts.WriteCF && d.MaxTs < lm.startTS) ||
+		(d.Cf == consts.DefaultCF && d.MaxTs < lm.shiftStartTS)
 }
 
-func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
+func (lm *LogFileManager) collectDDLFilesAndPrepareCache(
 	ctx context.Context,
 	files MetaGroupIter,
 ) ([]Log, error) {
@@ -303,52 +306,50 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 
 	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
 	for _, g := range fs.Item {
-		rc.helper.InitCacheEntry(g.Path, len(g.FileMetas))
+		lm.helper.InitCacheEntry(g.Path, len(g.FileMetas))
 		dataFileInfos = append(dataFileInfos, g.FileMetas...)
 	}
 
 	return dataFileInfos, nil
 }
 
-// LoadDDLFilesAndCountDMLFiles loads all DDL files needs to be restored in the restoration.
+// LoadDDLFiles loads all DDL files needs to be restored in the restoration.
 // This function returns all DDL files needing directly because we need sort all of them.
-func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context) ([]Log, error) {
-	m, err := rc.streamingMeta(ctx)
+func (lm *LogFileManager) LoadDDLFiles(ctx context.Context) ([]Log, error) {
+	m, err := lm.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
 	}
-	mg := rc.FilterMetaFiles(m)
+	mg := lm.FilterMetaFiles(m)
 
-	return rc.collectDDLFilesAndPrepareCache(ctx, mg)
+	return lm.collectDDLFilesAndPrepareCache(ctx, mg)
+}
+
+type loadDMLFilesConfig struct {
+	Statistic *logFilesStatistic
+}
+
+type loadDMLFilesOption func(*loadDMLFilesConfig)
+
+func lDOptWithStatistics(s *logFilesStatistic) loadDMLFilesOption {
+	return func(c *loadDMLFilesConfig) {
+		c.Statistic = s
+	}
 }
 
 // LoadDMLFiles loads all DML files needs to be restored in the restoration.
 // This function returns a stream, because there are usually many DML files need to be restored.
-func (rc *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
-	m, err := rc.streamingMeta(ctx)
+func (lm *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
+	m, err := lm.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	l := rc.FilterDataFiles(m)
+	l := lm.FilterDataFiles(m)
 	return l, nil
 }
 
-func (rc *LogFileManager) CountExtraSSTTotalKVs(ctx context.Context) (int64, error) {
-	count := int64(0)
-	ssts := rc.GetCompactionIter(ctx)
-	for err, ssts := range iter.AsSeq(ctx, ssts) {
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		for _, sst := range ssts.GetSSTs() {
-			count += int64(sst.TotalKvs)
-		}
-	}
-	return count, nil
-}
-
-func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
+func (lm *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 	return iter.FlatMap(ms, func(m *MetaName) MetaGroupIter {
 		return iter.Map(iter.FromSlice(m.meta.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
 			metas := iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d Log) bool {
@@ -356,15 +357,14 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 				if m.meta.MetaVersion > backuppb.MetaVersion_V1 {
 					d.Path = g.Path
 				}
-				if rc.ShouldFilterOut(d) {
+				if lm.ShouldFilterOutByTs(d) {
 					return true
 				}
 				// count the progress
-				// count the progress
-				if rc.Stats != nil {
-					atomic.AddInt64(&rc.Stats.NumEntries, d.NumberOfEntries)
-					atomic.AddUint64(&rc.Stats.NumFiles, 1)
-					atomic.AddUint64(&rc.Stats.Size, d.Length)
+				if lm.Stats != nil {
+					atomic.AddInt64(&lm.Stats.NumEntries, d.NumberOfEntries)
+					atomic.AddUint64(&lm.Stats.NumFiles, 1)
+					atomic.AddUint64(&lm.Stats.Size, d.Length)
 				}
 				return !d.IsMeta
 			})
@@ -377,14 +377,47 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 	})
 }
 
-// Fetch compactions that may contain file less than the TS.
-func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[SSTs] {
-	return iter.Map(rc.withMigrations.Compactions(ctx, rc.storage), func(c *backuppb.LogFileSubcompaction) SSTs {
+// GetCompactionIter fetches compactions that may contain file less than the TS.
+func (lm *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[SSTs] {
+	return iter.Map(lm.withMigrations.Compactions(ctx, lm.storage), func(c *backuppb.LogFileSubcompaction) SSTs {
 		return &CompactedSSTs{c}
 	})
 }
 
-// the kv entry with ts, the ts is decoded from entry.
+func (lm *LogFileManager) GetIngestedSSTs(ctx context.Context) iter.TryNextor[SSTs] {
+	return iter.FlatMap(lm.withMigrations.IngestedSSTs(ctx, lm.storage), func(c *backuppb.IngestedSSTs) iter.TryNextor[SSTs] {
+		remap := map[int64]int64{}
+		for _, r := range c.RewrittenTables {
+			remap[r.AncestorUpstream] = r.Upstream
+		}
+		return iter.TryMap(iter.FromSlice(c.Files), func(f *backuppb.File) (SSTs, error) {
+			sst := &CopiedSST{File: f}
+			if id, ok := remap[sst.TableID()]; ok && id != sst.TableID() {
+				sst.Rewritten = backuppb.RewrittenTableID{
+					AncestorUpstream: sst.TableID(),
+					Upstream:         id,
+				}
+			}
+			return sst, nil
+		})
+	})
+}
+
+func (lm *LogFileManager) CountExtraSSTTotalKVs(ctx context.Context) (int64, error) {
+	count := int64(0)
+	ssts := iter.ConcatAll(lm.GetCompactionIter(ctx), lm.GetIngestedSSTs(ctx))
+	for err, ssts := range iter.AsSeq(ctx, ssts) {
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		for _, sst := range ssts.GetSSTs() {
+			count += int64(sst.TotalKvs)
+		}
+	}
+	return count, nil
+}
+
+// KvEntryWithTS is kv entry with ts, the ts is decoded from entry.
 type KvEntryWithTS struct {
 	E  kv.Entry
 	Ts uint64
@@ -400,17 +433,17 @@ func getKeyTS(key []byte) (uint64, error) {
 	return ts, err
 }
 
-// ReadAllEntries loads content of a log file, with filtering out no needed entries.
-func (rc *LogFileManager) ReadAllEntries(
+// ReadFilteredEntriesFromFiles loads content of a log file from external storage, and filter out entries based on TS.
+func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 	ctx context.Context,
 	file Log,
 	filterTS uint64,
 ) ([]*KvEntryWithTS, []*KvEntryWithTS, error) {
 	kvEntries := make([]*KvEntryWithTS, 0)
-	nextKvEntries := make([]*KvEntryWithTS, 0)
+	filteredOutKvEntries := make([]*KvEntryWithTS, 0)
 
-	buff, err := rc.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType,
-		rc.storage, file.FileEncryptionInfo)
+	buff, err := lm.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType,
+		lm.storage, file.FileEncryptionInfo)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -429,7 +462,7 @@ func (rc *LogFileManager) ReadAllEntries(
 
 		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
 
-		if !stream.MaybeDBOrDDLJobHistoryKey(txnEntry.Key) {
+		if !utils.IsDBOrDDLJobHistoryKey(txnEntry.Key) {
 			// only restore mDB and mDDLHistory
 			continue
 		}
@@ -441,11 +474,11 @@ func (rc *LogFileManager) ReadAllEntries(
 
 		// The commitTs in write CF need be limited on [startTs, restoreTs].
 		// We can restore more key-value in default CF.
-		if ts > rc.restoreTS {
+		if ts > lm.restoreTS {
 			continue
-		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
+		} else if file.Cf == consts.WriteCF && ts < lm.startTS {
 			continue
-		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
+		} else if file.Cf == consts.DefaultCF && ts < lm.shiftStartTS {
 			continue
 		}
 
@@ -461,11 +494,17 @@ func (rc *LogFileManager) ReadAllEntries(
 		if ts < filterTS {
 			kvEntries = append(kvEntries, &KvEntryWithTS{E: txnEntry, Ts: ts})
 		} else {
-			nextKvEntries = append(nextKvEntries, &KvEntryWithTS{E: txnEntry, Ts: ts})
+			filteredOutKvEntries = append(filteredOutKvEntries, &KvEntryWithTS{E: txnEntry, Ts: ts})
 		}
 	}
 
-	return kvEntries, nextKvEntries, nil
+	return kvEntries, filteredOutKvEntries, nil
+}
+
+func (lm *LogFileManager) Close() {
+	if lm.helper != nil {
+		lm.helper.Close()
+	}
 }
 
 func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage, shiftStartTS, restoredTS uint64) SubCompactionIter {

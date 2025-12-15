@@ -754,7 +754,7 @@ func (job *Job) IsPausable() bool {
 // IsAlterable checks whether the job type can be altered.
 func (job *Job) IsAlterable() bool {
 	// Currently, only non-distributed add index reorg task can be altered
-	return job.Type == ActionAddIndex && !job.ReorgMeta.IsDistReorg ||
+	return job.Type == ActionAddIndex ||
 		job.Type == ActionModifyColumn ||
 		job.Type == ActionReorganizePartition
 }
@@ -1269,6 +1269,8 @@ type SchemaDiff struct {
 	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
 	// infoschema should read latest meta directly.
 	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
+	// IsRefreshMeta is set to true only when this diff is initiated by refreshMeta DDL that's only used by BR
+	IsRefreshMeta bool `json:"-"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }
@@ -1323,13 +1325,24 @@ func (h *HistoryInfo) Clean() {
 
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
-	Name     string `json:"name"`
-	Offset   int    `json:"offset"` // seconds east of UTC
+	Name   string `json:"name"`
+	Offset int    `json:"offset"` // seconds east of UTC
+	// indexIngestBaseWorker might access the location concurrently
 	location *time.Location
+	mu       sync.RWMutex
 }
 
 // GetLocation gets the timezone location.
 func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	tz.mu.RLock()
+	if tz.location != nil {
+		tz.mu.RUnlock()
+		return tz.location, nil
+	}
+	tz.mu.RUnlock()
+
+	tz.mu.Lock()
+	defer tz.mu.Unlock()
 	if tz.location != nil {
 		return tz.location, nil
 	}

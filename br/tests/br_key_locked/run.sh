@@ -26,14 +26,14 @@ go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_P
 
 row_count_ori=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 
-# put locks with TTL 10s, we assume a normal backup finishs within 10s, so it will meet locks.
+# put locks with TTL 10h, a normal backup will meet locks but ignore these locks due to new txn model.
 bin/locker \
     -tidb $TIDB_STATUS_ADDR \
     -pd $PD_ADDR \
     -ca "$TEST_DIR/certs/ca.pem" \
     -cert "$TEST_DIR/certs/br.pem" \
     -key "$TEST_DIR/certs/br.key" \
-    -db $DB -table $TABLE -lock-ttl "10s" -run-timeout "3s"
+    -db $DB -table $TABLE -lock-ttl "10h" -run-timeout "3s"
 
 # backup table
 echo "backup start..."

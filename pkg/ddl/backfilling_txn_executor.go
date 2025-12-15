@@ -46,8 +46,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// backfillScheduler is used to manage the lifetime of backfill workers.
-type backfillScheduler interface {
+// backfillExecutor is used to manage the lifetime of backfill workers.
+type backfillExecutor interface {
 	setupWorkers() error
 	close(force bool)
 
@@ -59,12 +59,12 @@ type backfillScheduler interface {
 }
 
 var (
-	_ backfillScheduler = &txnBackfillScheduler{}
+	_ backfillExecutor = &txnBackfillExecutor{}
 )
 
 const maxBackfillWorkerSize = 16
 
-type txnBackfillScheduler struct {
+type txnBackfillExecutor struct {
 	ctx          context.Context
 	reorgInfo    *reorgInfo
 	sessPool     *sess.Pool
@@ -81,15 +81,15 @@ type txnBackfillScheduler struct {
 	closed   bool
 }
 
-func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
+func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable,
-	jobCtx *ReorgContext) (backfillScheduler, error) {
+	jobCtx *ReorgContext) (backfillExecutor, error) {
 	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl)
 	if err != nil {
 		return nil, err
 	}
 	workerCnt := info.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-	return &txnBackfillScheduler{
+	return &txnBackfillExecutor{
 		ctx:          ctx,
 		reorgInfo:    info,
 		sessPool:     sessPool,
@@ -103,11 +103,11 @@ func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *ses
 	}, nil
 }
 
-func (b *txnBackfillScheduler) setupWorkers() error {
+func (b *txnBackfillExecutor) setupWorkers() error {
 	return b.adjustWorkerSize()
 }
 
-func (b *txnBackfillScheduler) sendTask(task *reorgBackfillTask) error {
+func (b *txnBackfillExecutor) sendTask(task *reorgBackfillTask) error {
 	select {
 	case <-b.ctx.Done():
 		return b.ctx.Err()
@@ -116,7 +116,7 @@ func (b *txnBackfillScheduler) sendTask(task *reorgBackfillTask) error {
 	}
 }
 
-func (b *txnBackfillScheduler) resultChan() <-chan *backfillResult {
+func (b *txnBackfillExecutor) resultChan() <-chan *backfillResult {
 	return b.resultCh
 }
 
@@ -247,16 +247,16 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	}
 }
 
-func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
+func (b *txnBackfillExecutor) expectedWorkerSize() (size int) {
 	workerCnt := b.reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	return min(workerCnt, maxBackfillWorkerSize)
 }
 
-func (b *txnBackfillScheduler) currentWorkerSize() int {
+func (b *txnBackfillExecutor) currentWorkerSize() int {
 	return len(b.workers)
 }
 
-func (b *txnBackfillScheduler) adjustWorkerSize() error {
+func (b *txnBackfillExecutor) adjustWorkerSize() error {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	jc := b.jobCtx
@@ -332,7 +332,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
 }
 
-func (b *txnBackfillScheduler) close(force bool) {
+func (b *txnBackfillExecutor) close(force bool) {
 	if b.closed {
 		return
 	}

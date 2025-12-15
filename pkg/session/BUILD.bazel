@@ -132,7 +132,6 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
-        "@io_etcd_go_etcd_client_v3//concurrency",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",

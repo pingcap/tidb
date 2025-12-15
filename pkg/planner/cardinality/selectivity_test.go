@@ -218,6 +218,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 func TestEstimationForUnknownValues(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
@@ -1609,4 +1610,21 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 		require.NoError(t, err)
 		require.InDelta(t, 109.99, idxOtherCount, 0.1, "Index other count should be approximately 109.99")
 	}
+}
+
+func TestUninitializedStats(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 'OFF';")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set names utf8mb4;")
+	tk.MustExec("create table t1(id int, c1 int, c2 varchar(100), primary key(id), key idx_expr ((cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin)));")
+	tk.MustExec(`insert into t1 values(1, 1, '{"foo": "bar"}'), (2, 1, '{"foo": "bar"}');`)
+	tk.MustExec("analyze table t1;")
+	// Trigger load stats of idx_expr.
+	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';")
+	tk.MustQuery("show stats_histograms").CheckNotContain("allEvicted")
+	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
 }

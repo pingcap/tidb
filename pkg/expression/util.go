@@ -16,6 +16,7 @@ package expression
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -125,6 +126,37 @@ func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 	result := make([]*Column, 0, 8)
 	return extractColumns(result, expr, nil)
+}
+
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr, filter)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
+}
+
+func extractColumnsSlices(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		if filter == nil || filter(v) {
+			result = append(result, v)
+		}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsSlices(result, arg, filter)
+		}
+	}
+	return result
 }
 
 // ExtractCorColumns extracts correlated column from given expression.

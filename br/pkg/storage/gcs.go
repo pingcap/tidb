@@ -117,6 +117,33 @@ type GCSStorage struct {
 	clientCancel context.CancelFunc
 }
 
+// CopyFrom implements Copier.
+func (s *GCSStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	es, ok := e.(*GCSStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "GCSStorage.CopyFrom supports only GCSStorage, get %T", e)
+	}
+	dstName := s.objectName(spec.To)
+	srcName := es.objectName(spec.From)
+	// A note here:
+	// https://cloud.google.com/storage/docs/json_api/v1/objects/rewrite
+	// It seems extra configuration is needed when doing cross-region copying.
+	copier := s.GetBucketHandle().Object(dstName).CopierFrom(es.GetBucketHandle().Object(srcName))
+	_, err := copier.Run(ctx)
+	if err != nil {
+		return errors.Annotatef(
+			err,
+			"failed to copy %s/%s to %s/%s",
+			es.gcs.Bucket,
+			srcName,
+			s.gcs.Bucket,
+			dstName,
+		)
+	}
+
+	return nil
+}
+
 func (s *GCSStorage) MarkStrongConsistency() {
 	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
 }
@@ -374,12 +401,12 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 					clientOps = append(clientOps, option.WithoutAuthentication())
 					goto skipHandleCred
 				}
-				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
+				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--%s'", gcsCredentialsFile, err)
 			}
 			if opts.SendCredentials {
 				if len(creds.JSON) <= 0 {
-					return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
-						"You should provide '--gcs.credentials_file' when '--send-credentials-to-tikv' is true")
+					return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig,
+						"You should provide '--%s' when '--send-credentials-to-tikv' is true", gcsCredentialsFile)
 				}
 				gcs.CredentialsBlob = string(creds.JSON)
 			}
@@ -570,8 +597,6 @@ type gcsObjectReader struct {
 
 	prefetchSize int
 	// reader context used for implement `io.Seek`
-	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
-	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx context.Context
 }
 

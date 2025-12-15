@@ -1344,7 +1344,8 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit,
+		&memoryusagealarm.TiDBConfigProvider{})
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
@@ -1581,9 +1582,9 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
-	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv := streamhelper.NewTiDBCheckpointAdvancer(env)
 	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
-	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickDuration)
+	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickTimeout())
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err

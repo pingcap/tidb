@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -61,8 +62,6 @@ var (
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 
 	mockDDLErrOnce = int64(0)
-	// TestNotifyBeginTxnCh is used for if the txn is beginning in runInTxn.
-	TestNotifyBeginTxnCh = make(chan struct{})
 )
 
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
@@ -576,7 +575,6 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 func (w *worker) transitOneJobStep(
 	jobCtx *jobContext,
 	jobW *model.JobW,
-	sysTblMgr systable.Manager,
 ) (int64, error) {
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	job := jobW.Job
@@ -590,7 +588,7 @@ func (w *worker) transitOneJobStep(
 	// time range of another concurrent job updates, such as 'cancel/pause' job
 	// or on owner change, overlap with us, we will report 'write conflict', but
 	// if they don't overlap, we query and check inside our txn to detect the conflict.
-	currBytes, err := sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
+	currBytes, err := jobCtx.sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
 	if err != nil {
 		// TODO maybe we can unify where to rollback, they are scatting around.
 		w.sess.Rollback()
@@ -717,21 +715,6 @@ func (w *ReorgContext) getResourceGroupTaggerForTopSQL() *kv.ResourceGroupTagBui
 
 func (w *ReorgContext) ddlJobSourceType() string {
 	return w.tp
-}
-
-func skipWriteBinlog(job *model.Job) bool {
-	switch job.Type {
-	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
-	// it's used to update table's TiFlash replica available status.
-	case model.ActionUpdateTiFlashReplicaStatus:
-		return true
-	// Don't sync 'alter table cache|nocache' to other tools.
-	// It's internal to the current cluster.
-	case model.ActionAlterCacheTable, model.ActionAlterNoCacheTable:
-		return true
-	}
-
-	return false
 }
 
 func chooseLeaseTime(t, maxv time.Duration) time.Duration {
@@ -898,7 +881,7 @@ func (w *worker) runOneJobStep(
 					case <-ticker.C:
 						failpoint.InjectCall("checkJobCancelled", job)
 						latestJob, err := jobCtx.sysTblMgr.GetJobByID(w.workCtx, job.ID)
-						if err == systable.ErrNotFound {
+						if goerrors.Is(err, systable.ErrNotFound) {
 							logutil.DDLLogger().Info(
 								"job not found, might already finished",
 								zap.Int64("job_id", job.ID))

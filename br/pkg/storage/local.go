@@ -131,13 +131,20 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 				// we should return nil to continue.
 				return nil
 			}
+			relativeToBase, err := filepath.Rel(base, path)
+			if err != nil {
+				log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
+					zap.String("path", path), zap.String("base", base), logutil.ShortError(err))
+			}
+			if !strings.HasPrefix(relativeToBase, opt.ObjPrefix) {
+				return nil
+			}
+
+			// Convert to relative path from l.base for consistency with cloud storage
 			path, err = filepath.Rel(l.base, path)
 			if err != nil {
 				log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
 					zap.String("path", path), zap.String("base", l.base), logutil.ShortError(err))
-			}
-			if !strings.HasPrefix(path, opt.ObjPrefix) {
-				return nil
 			}
 			// NOTE: This may cause a tombstone of the dir emit to the caller when
 			// call `Walk` in a non-exist dir.
