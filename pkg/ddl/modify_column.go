@@ -73,7 +73,7 @@ func getModifyColumnType(
 	args *model.ModifyColumnArgs,
 	tblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
-	_ mysql.SQLMode) byte {
+	sqlMode mysql.SQLMode) byte {
 	newCol := args.Column
 	if noReorgDataStrict(tblInfo, oldCol, args.Column) {
 		// It's not NULL->NOTNULL change
@@ -83,8 +83,35 @@ func getModifyColumnType(
 		return model.ModifyTypeNoReorgWithCheck
 	}
 
-	// Temporarily disable lossy ddl optimization.
-	return model.ModifyTypeReorg
+	// For backward compatibility
+	if args.ModifyColumnType == mysql.TypeNull {
+		return model.ModifyTypeReorg
+	}
+
+	// FIXME(joechenrh): handle partition table case
+	if tblInfo.Partition != nil {
+		return model.ModifyTypeReorg
+	}
+
+	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(model.ModifyTypeReorg)
+		}
+	})
+
+	if !sqlMode.HasStrictMode() {
+		return model.ModifyTypeReorg
+	}
+
+	if needRowReorg(oldCol, args.Column) {
+		return model.ModifyTypeReorg
+	}
+
+	relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
+	if len(relatedIndexes) == 0 || !needIndexReorg(oldCol, args.Column) {
+		return model.ModifyTypeNoReorgWithCheck
+	}
+	return model.ModifyTypeIndexReorg
 }
 
 func getChangingCol(
@@ -1696,7 +1723,7 @@ func GetModifiableColumnJob(
 
 // noReorgDataStrict is a strong check to decide whether we need to change the column data.
 // If it returns true, it means we don't need the reorg no matter what the data is.
-func noReorgDataStrict(_ *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
+func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
 	needTruncationOrToggleSign := func() bool {
@@ -1733,8 +1760,19 @@ func noReorgDataStrict(_ *model.TableInfo, oldCol, newCol *model.ColumnInfo) boo
 		return !needTruncationOrToggleSign()
 	}
 
-	if ConvertBetweenCharAndVarchar(oldCol.GetType(), newCol.GetType()) {
+	oldTp := oldCol.GetType()
+	newTp := newCol.GetType()
+	// VARCHAR->CHAR, may need reorg.
+	if types.IsTypeVarchar(oldTp) && newTp == mysql.TypeString {
 		return false
+	}
+	// CHAR->VARCHAR
+	if oldTp == mysql.TypeString && types.IsTypeVarchar(newTp) {
+		// If there are related index, the index may need reorg.
+		relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
+		if len(relatedIndexes) > 0 {
+			return false
+		}
 	}
 
 	// Deal with the different type.
