@@ -5461,9 +5461,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.popTableHints()
 	}()
 
-	// Determine if single table update
-	isSingleTable := update.TableRefs.TableRefs.Right == nil
-
 	p, oldSchemaLen, err := b.buildDMLSelectPlan(
 		ctx,
 		update.With,
@@ -5471,14 +5468,13 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		update.Where,
 		update.Order,
 		update.Limit,
-		isSingleTable,
-		true, // isUpdate
+		update.TableRefs.TableRefs.Right == nil,
+		true,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// Add SELECT privilege for tables
 	nodeW := resolve.NewNodeWWithCtx(update.TableRefs.TableRefs, b.resolveCtx)
 	tableList := ExtractTableList(nodeW, false)
 	for _, t := range tableList {
@@ -5492,7 +5488,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 
-	// Resolve updatable table list
 	utlr := &updatableTableListResolver{
 		resolveCtx: b.resolveCtx,
 	}
