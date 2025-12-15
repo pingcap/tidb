@@ -1556,13 +1556,13 @@ func TestSemiJoinRewriter(t *testing.T) {
 	tk.MustExec(`create table t1(a int);`)
 	tk.MustExec(`create table t2(a varchar(10));`)
 	tk.MustExec(`create table t3(a int);`)
-	tk.MustQuery(`explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where t1.a=t2.a);`).Check(testkit.Rows(
-		`HashJoin root  inner join, equal:[eq(Column#6, Column#7)]`,
-		`├─HashAgg(Build) root  group by:Column#7, funcs:firstrow(Column#7)->Column#7`,
-		`│ └─Projection root  cast(test.t2.a, double BINARY)->Column#7`,
-		`│   └─TableReader root  data:TableFullScan`,
-		`│     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
-		`└─Projection(Probe) root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
-		`  └─TableReader root  data:TableFullScan`,
-		`    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
+	tk.MustQuery(`explain format = 'brief' select * from t1 where exists(select 1 from t2 where t1.a=t2.a);`).Check(testkit.Rows(
+		`HashJoin 10000.00 root  inner join, equal:[eq(Column#6, Column#7)]`,
+		`├─HashAgg(Build) 8000.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#7`,
+		`│ └─Projection 10000.00 root  cast(test.t2.a, double BINARY)->Column#7`,
+		`│   └─TableReader 10000.00 root  data:TableFullScan`,
+		`│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+		`└─Projection(Probe) 10000.00 root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
+		`  └─TableReader 10000.00 root  data:TableFullScan`,
+		`    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 }
