@@ -98,7 +98,7 @@ func getModifyColumnType(
 	}
 
 	// FIXME(joechenrh): handle partition and TiFlash replica case
-	if tblInfo.Partition != nil || tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
+	if tblInfo.Partition != nil || (tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0) {
 		return model.ModifyTypeReorg
 	}
 
@@ -108,7 +108,7 @@ func getModifyColumnType(
 		}
 	})
 
-	// FIXME(joechenrh): remove this when resolve stats problem.
+	// FIXME(joechenrh): remove this when stats correctness is resolved.
 	if (isIntegerChange(oldCol, args.Column) && mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
 		(isCharChange(oldCol, args.Column) && !collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
 		return model.ModifyTypeReorg
