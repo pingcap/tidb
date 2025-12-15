@@ -640,6 +640,14 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
+.PHONY: bazel_bin
+bazel_bin: ## Build importer/tidb binary files with Bazel build system
+	mkdir -p bin; \
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --norun_validations ;\
+ 	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
+ 	cp -f ${IMPORTER_PATH} ./bin/ ;
+
 .PHONY: bazel_build
 bazel_build:
 	mkdir -p bin
