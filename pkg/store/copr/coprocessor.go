@@ -299,6 +299,10 @@ type copTask struct {
 	tikvClientReadTimeout uint64
 	// firstReadType is used to indicate the type of first read when retrying.
 	firstReadType string
+	// skipBuckets indicates this task was built without bucket-level splitting.
+	// If "Request range exceeds bound" error occurs on such a task, we fail fast
+	// instead of retrying, since buckets aren't the cause.
+	skipBuckets bool
 }
 
 type batchedCopTask struct {
@@ -344,6 +348,9 @@ type buildCopTaskOpt struct {
 	elapsed  *time.Duration
 	// ignoreTiKVClientReadTimeout is used to ignore tikv_client_read_timeout configuration, use default timeout instead.
 	ignoreTiKVClientReadTimeout bool
+	// skipBuckets skips bucket-level splitting, only splitting by region.
+	// Used when retrying after bucket-related errors.
+	skipBuckets bool
 }
 
 const (
@@ -519,7 +526,16 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	})
 
 	// TODO(youjiali1995): is there any request type that needn't be split by buckets?
-	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
+	var locs []*LocationKeyRanges
+	var err error
+	if opt.skipBuckets {
+		// Skip bucket splitting - only split by region.
+		// Used when retrying after "Request range exceeds bound" error,
+		// which may be caused by stale bucket metadata.
+		locs, err = cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit, false, false)
+	} else {
+		locs, err = cache.SplitKeyRangesByBuckets(bo, ranges)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -585,6 +601,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				requestSource: req.RequestSource,
 				RowCountHint:  hint,
 				busyThreshold: req.StoreBusyThreshold,
+				skipBuckets:   opt.skipBuckets,
 			}
 			if !opt.ignoreTiKVClientReadTimeout {
 				task.tikvClientReadTimeout = req.TiKVClientReadTimeout
@@ -1813,6 +1830,54 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.ByteString("lastRangeEndKey", lastRangeEndKey),
 			zap.String("storeAddr", task.storeAddr),
 			zap.String("error", otherErr))
+
+		// Handle "Request range exceeds bound" error from TiKV.
+		// This can happen when bucket metadata is stale and causes TiDB to send
+		// ranges outside the region boundary. Invalidate cache and retry.
+		if strings.Contains(otherErr, "Request range exceeds bound") {
+			// If this task was already built without bucket splitting and still got this error,
+			// the problem isn't stale bucket metadata - fail fast instead of retrying indefinitely.
+			// This likely indicates stale region metadata from PD.
+			if task.skipBuckets {
+				return nil, errors.Errorf(
+					"request range exceeds bound persists after bucket-less retry, "+
+						"region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s. "+
+						"This likely indicates stale region metadata from PD",
+					task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, otherErr)
+			}
+
+			logutil.Logger(bo.GetCtx()).Warn("Request range exceeds bound - invalidating cache and retrying without buckets",
+				zap.Uint64("regionID", task.region.GetID()),
+				zap.Uint64("bucketsVer", task.bucketsVer),
+				zap.Uint64("latestBucketsVer", resp.pbResp.GetLatestBucketsVersion()))
+
+			// Invalidate the cached region to force refresh from PD
+			worker.store.GetRegionCache().InvalidateCachedRegion(task.region)
+
+			// Backoff before retry
+			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
+				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, otherErr)
+			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			// Rebuild cop tasks with fresh region info, skipping bucket splitting
+			// since buckets are suspected to be the cause of this error.
+			// The new tasks will have skipBuckets=true set during construction.
+			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+				req:                         worker.req,
+				cache:                       worker.store.GetRegionCache(),
+				respChan:                    false,
+				eventCb:                     task.eventCb,
+				ignoreTiKVClientReadTimeout: true,
+				skipBuckets:                 true,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
+		}
+
 		if strings.Contains(err.Error(), "write conflict") {
 			return nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
 		}
