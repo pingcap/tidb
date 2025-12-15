@@ -485,7 +485,11 @@ func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
 	case proto.ImportStepWriteAndIngest:
-		return proto.ImportStepCollectConflicts
+		if kerneltype.IsClassic() {
+			// will support nextgen later.
+			return proto.ImportStepCollectConflicts
+		}
+		return proto.ImportStepPostProcess
 	case proto.ImportStepCollectConflicts:
 		return proto.ImportStepConflictResolution
 	case proto.ImportStepImport, proto.ImportStepConflictResolution:
