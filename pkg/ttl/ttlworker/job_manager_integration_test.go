@@ -1770,10 +1770,9 @@ func TestTTLSummaryForTimeoutJob(t *testing.T) {
 	sessionFactory := sessionFactory(t, dom)
 
 	tk := testkit.NewTestKit(t, store)
-	m := ttlworker.NewJobManager("test-job-manager", dom.AdvancedSysSessionPool(), store, nil, func() bool { return true })
+	m := ttlworker.NewJobManager("test-job-manager", dom.SysSessionPool(), store, nil, func() bool { return true })
 
-	se, closeSe := sessionFactory()
-	defer closeSe()
+	se := sessionFactory()
 
 	testTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
