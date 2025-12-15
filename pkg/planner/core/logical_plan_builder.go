@@ -5956,7 +5956,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	} else {
 		// Delete from a, b, c, d.
 		nodeW := resolve.NewNodeWWithCtx(ds.TableRefs.TableRefs, b.resolveCtx)
-		tableList = ExtractTableList(nodeW, false)
+		tableList := ExtractTableList(nodeW, false)
 		for _, v := range tableList {
 			tblW := b.resolveCtx.GetTableName(v)
 			if isCTE(tblW) {
