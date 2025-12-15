@@ -2562,7 +2562,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 	ctx := context.Background()
 	local := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 2,
+			WorkerConcurrency: *atomic.NewInt32(2),
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
 		splitCli: initTestSplitClient([][]byte{[]byte("a"), []byte("z")}, nil),
