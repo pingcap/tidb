@@ -29,16 +29,17 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
 // Unit tests for keyrange building
 
-var _ ddl.AffinityKeyRangeCodec = (*mockKeyspaceCodec)(nil)
+type mockCodec struct {
+	tikv.Codec
+}
 
-type mockKeyspaceCodec struct{}
-
-func (mockKeyspaceCodec) EncodeRegionRange(start, end []byte) ([]byte, []byte) {
+func (mockCodec) EncodeRegionRange(start, end []byte) ([]byte, []byte) {
 	return append([]byte("k:"), start...), append([]byte("k:"), end...)
 }
 
@@ -48,7 +49,7 @@ func TestAffinityBuildGroupDefinitionsTable(t *testing.T) {
 		Affinity: &model.TableAffinityInfo{Level: ast.TableAffinityLevelTable},
 	}
 
-	groups, err := ddl.BuildAffinityGroupDefinitionsForTest(&mockKeyspaceCodec{}, tbl, nil)
+	groups, err := ddl.BuildAffinityGroupDefinitionsForTest(&mockCodec{}, tbl, nil)
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
 
@@ -72,7 +73,7 @@ func TestAffinityBuildGroupDefinitionsPartition(t *testing.T) {
 		},
 	}
 
-	groups, err := ddl.BuildAffinityGroupDefinitionsForTest(&mockKeyspaceCodec{}, tbl, nil)
+	groups, err := ddl.BuildAffinityGroupDefinitionsForTest(&mockCodec{}, tbl, nil)
 	require.NoError(t, err)
 	require.Len(t, groups, 2)
 

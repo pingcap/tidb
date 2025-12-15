@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -24,16 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
-// AffinityKeyRangeCodec encodes start/end keys to match the storage layout (e.g. keyspace aware).
-type AffinityKeyRangeCodec interface {
-	EncodeRegionRange(start, end []byte) ([]byte, []byte)
-}
-
-func buildAffinityGroupKeyRange(codec AffinityKeyRangeCodec, physicalID int64) pdhttp.AffinityGroupKeyRange {
+func buildAffinityGroupKeyRange(codec tikv.Codec, physicalID int64) pdhttp.AffinityGroupKeyRange {
 	startKey := tablecodec.EncodeTablePrefix(physicalID)
 	endKey := tablecodec.EncodeTablePrefix(physicalID + 1)
 	if codec != nil {
@@ -49,7 +44,7 @@ func buildAffinityGroupKeyRange(codec AffinityKeyRangeCodec, physicalID int64) p
 // It generates affinity group IDs in two different formats depending on the affinity level:
 //   - Table-level affinity: "_tidb_t_{tableID}" - one group for the entire table
 //   - Partition-level affinity: "_tidb_pt_{tableID}_p{partitionID}" - one group per partition
-func buildAffinityGroupDefinitions(codec AffinityKeyRangeCodec, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) (map[string][]pdhttp.AffinityGroupKeyRange, error) {
+func buildAffinityGroupDefinitions(codec tikv.Codec, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) (map[string][]pdhttp.AffinityGroupKeyRange, error) {
 	if tblInfo == nil || tblInfo.Affinity == nil {
 		return nil, nil
 	}
@@ -108,18 +103,8 @@ func updateTableAffinityGroupInPD(jobCtx *jobContext, newTblInfo *model.TableInf
 		tableID = oldTblInfo.ID
 	}
 
-	ctx := context.Background()
-	var codec AffinityKeyRangeCodec
-	if jobCtx != nil {
-		if jobCtx.stepCtx != nil {
-			ctx = jobCtx.stepCtx
-		} else if jobCtx.ctx != nil {
-			ctx = jobCtx.ctx
-		}
-		if jobCtx.store != nil {
-			codec = jobCtx.store.GetCodec()
-		}
-	}
+	ctx := jobCtx.stepCtx
+	codec := jobCtx.store.GetCodec()
 
 	oldGroups, err := buildAffinityGroupDefinitions(codec, oldTblInfo, oldPartitionDefs)
 	if err != nil {
@@ -167,18 +152,8 @@ func batchDeleteTableAffinityGroups(jobCtx *jobContext, tables []*model.TableInf
 		return
 	}
 
-	ctx := context.Background()
-	var codec AffinityKeyRangeCodec
-	if jobCtx != nil {
-		if jobCtx.stepCtx != nil {
-			ctx = jobCtx.stepCtx
-		} else if jobCtx.ctx != nil {
-			ctx = jobCtx.ctx
-		}
-		if jobCtx.store != nil {
-			codec = jobCtx.store.GetCodec()
-		}
-	}
+	ctx := jobCtx.stepCtx
+	codec := jobCtx.store.GetCodec()
 
 	groupIDs := make(map[string]struct{})
 	for _, tblInfo := range tables {
@@ -212,7 +187,7 @@ func batchDeleteTableAffinityGroups(jobCtx *jobContext, tables []*model.TableInf
 
 // BuildAffinityGroupDefinitionsForTest is exported for testing.
 func BuildAffinityGroupDefinitionsForTest(
-	codec AffinityKeyRangeCodec,
+	codec tikv.Codec,
 	tblInfo *model.TableInfo,
 	partitionDefs []model.PartitionDefinition,
 ) (map[string][]pdhttp.AffinityGroupKeyRange, error) {

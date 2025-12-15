@@ -46,6 +46,7 @@ func (m *pdAffinityManager) CreateAffinityGroupsIfNotExists(ctx context.Context,
 		groupIDs = append(groupIDs, id)
 	}
 
+	// TODO: move check to PD
 	// Check which groups already exist
 	existingGroups, err := m.GetAffinityGroups(ctx, groupIDs)
 	if err != nil {
