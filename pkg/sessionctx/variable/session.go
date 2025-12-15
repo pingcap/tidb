@@ -1720,6 +1720,53 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+<<<<<<< HEAD
+=======
+
+	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
+	MemArbitrator struct {
+		WaitAverse    MemArbitratorWaitAverseMode
+		QueryReserved int64
+	}
+
+	// InPacketBytes records the total incoming packet bytes from clients for current session.
+	InPacketBytes atomic.Uint64
+
+	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
+	OutPacketBytes atomic.Uint64
+
+	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
+	IndexLookUpPushDownPolicy string
+}
+
+// ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
+func (s *SessionVars) ResetRelevantOptVarsAndFixes(record bool) {
+	s.RecordRelevantOptVarsAndFixes = record
+	s.RelevantOptVars = nil
+	s.RelevantOptFixes = nil
+}
+
+// RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptVar(varName string) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptVars == nil {
+		s.RelevantOptVars = make(map[string]struct{})
+	}
+	s.RelevantOptVars[varName] = struct{}{}
+}
+
+// RecordRelevantOptFix records the optimizer fix that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptFixes == nil {
+		s.RelevantOptFixes = make(map[uint64]struct{})
+	}
+	s.RelevantOptFixes[fixID] = struct{}{}
+>>>>>>> 69fb8dbc923 (*: support system variable `tidb_index_lookup_pushdown_policy` and hint `NO_INDEX_LOOKUP_PUSHDOWN` (#64932))
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2247,6 +2294,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
+<<<<<<< HEAD
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
@@ -2255,6 +2303,18 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+=======
+		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
+		EnableRedactLog:               vardef.DefTiDBRedactLog,
+		EnableWindowFunction:          vardef.DefEnableWindowFunction,
+		CostModelVersion:              vardef.DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
+		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
+		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
+		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
+		IndexLookUpPushDownPolicy:     vardef.DefTiDBIndexLookUpPushDownPolicy,
+>>>>>>> 69fb8dbc923 (*: support system variable `tidb_index_lookup_pushdown_policy` and hint `NO_INDEX_LOOKUP_PUSHDOWN` (#64932))
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
