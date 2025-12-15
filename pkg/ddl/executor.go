@@ -183,6 +183,16 @@ type executor struct {
 	sessPool    *sess.Pool
 	statsHandle *handle.Handle
 
+	// startMode stores the start mode of the ddl executor, it's used to indicate
+	// whether the executor is responsible for auto ID rebase.
+	// Since https://github.com/pingcap/tidb/pull/64356, we move rebase logic from
+	// executor into DDL job worker. So typically, the job worker is responsible for
+	// rebase. But sometimes we use higher version of BR to restore db to lower version
+	// of TiDB cluster, which may cause rebase is not executed on both executor(BR) and
+	// worker(downstream TiDB) side. So we use this mode to check if this is runned by BR.
+	// If so, the executor should handle auto ID rebase.
+	startMode StartMode
+
 	ctx        context.Context
 	uuid       string
 	store      kv.Storage
@@ -1188,6 +1198,9 @@ func (e *executor) CreateTableWithInfo(
 		}
 
 		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+		if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return errors.Trace(err)
 }
@@ -1284,6 +1297,9 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 	for _, tblArgs := range args.Tables {
 		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
+		if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
@@ -5622,10 +5638,17 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     schema.Name.O,
 		Type:           model.ActionAlterTableMode,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    table.Meta().Name.L,
+			},
+		},
 	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)
@@ -6624,6 +6647,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
+	e.checkInvolvingSchemaInfoInTest(job)
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	e.deliverJobTask(jobW)
@@ -6960,10 +6984,17 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     args.InvolvedDB,
 		Type:           model.ActionRefreshMeta,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: args.InvolvedDB,
+				Table:    args.InvolvedTable,
+			},
+		},
 	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)

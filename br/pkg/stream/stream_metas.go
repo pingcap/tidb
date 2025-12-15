@@ -1701,11 +1701,3 @@ func hashMetaEdit(metaEdit *pb.MetaEdit) uint64 {
 func nameOf(mig *pb.Migration, sn int) string {
 	return fmt.Sprintf("%08d_%016X.mgrt", sn, hashMigration(mig))
 }
-
-func isEmptyMigration(mig *pb.Migration) bool {
-	return len(mig.Compactions) == 0 &&
-		len(mig.EditMeta) == 0 &&
-		len(mig.IngestedSstPaths) == 0 &&
-		len(mig.DestructPrefix) == 0 &&
-		mig.TruncatedTo == 0
-}

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -59,8 +60,13 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 		failpoint.Return(errors.New("occur an error when sort chunk"))
 	})
 	failpoint.InjectCall("syncBeforeSortChunk")
-	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
+
+	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
+	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
+		Loc: sharedVars.TableImporter.Location,
+	}
+
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())
 	if sharedVars.TableImporter.IsLocalSort() {
 		if err := importer.ProcessChunk(

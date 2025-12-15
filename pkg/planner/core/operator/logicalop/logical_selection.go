@@ -61,8 +61,8 @@ func (p *LogicalSelection) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Conditions {
-		ruleutil.ResolveExprAndReplace(expr, replace)
+	for i, expr := range p.Conditions {
+		p.Conditions[i] = ruleutil.ResolveExprAndReplace(expr, replace)
 	}
 }
 

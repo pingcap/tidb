@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,7 +29,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/fatih/color"
-	"github.com/gogo/protobuf/proto"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -66,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -109,11 +108,14 @@ func NewLogRestoreManager(
 	}
 
 	if logCheckpointMetaManager != nil {
+		log.Info("starting checkpoint runner for log restore")
 		var err error
 		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, logCheckpointMetaManager)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	} else {
+		log.Info("log checkpoint meta manager is disabled, checkpoint runner not started")
 	}
 	return l, nil
 }
@@ -215,6 +217,7 @@ type LogClient struct {
 	currentTS uint64
 
 	upstreamClusterID uint64
+	restoreID         uint64
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -461,6 +464,10 @@ func (rc *LogClient) GetDomain() *domain.Domain {
 	return rc.dom
 }
 
+func (rc *LogClient) UnsafeSession() glue.Session {
+	return rc.unsafeSession
+}
+
 func (rc *LogClient) CleanUpKVFiles(
 	ctx context.Context,
 ) error {
@@ -589,8 +596,9 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	}
 	if exists {
 		// we need to load the checkpoint data for the following restore
-		_, err = sstCheckpointMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) {
+		_, err = sstCheckpointMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) error {
 			sstCheckpointSets[v.Name] = struct{}{}
+			return nil
 		})
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -622,6 +630,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	}
 	if exists {
 		// load the checkpoint since this is not the first time to restore
+		log.Info("loading existing log restore checkpoint")
 		meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return "", errors.Trace(err)
@@ -963,111 +972,6 @@ func (rc *LogClient) RestoreKVFiles(
 	return errors.Trace(err)
 }
 
-func (rc *LogClient) loadSchemasMap(
-	ctx context.Context,
-	restoreTS uint64,
-) ([]*backuppb.PitrDBMap, error) {
-	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
-	rows, _, errSQL := execCtx.ExecRestrictedSQL(
-		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		nil,
-		getPitrIDMapSQL,
-		restoreTS,
-		rc.upstreamClusterID,
-	)
-	if errSQL != nil {
-		return nil, errors.Annotatef(errSQL, "failed to get pitr id map from mysql.tidb_pitr_id_map")
-	}
-	if len(rows) == 0 {
-		log.Info("pitr id map does not exist", zap.Uint64("restored ts", restoreTS))
-		return nil, nil
-	}
-	metaData := make([]byte, 0, len(rows)*PITRIdMapBlockSize)
-	for i, row := range rows {
-		elementID := row.GetUint64(0)
-		if uint64(i) != elementID {
-			return nil, errors.Errorf("the part(segment_id = %d) of pitr id map is lost", i)
-		}
-		d := row.GetBytes(1)
-		if len(d) == 0 {
-			return nil, errors.Errorf("get the empty part(segment_id = %d) of pitr id map", i)
-		}
-		metaData = append(metaData, d...)
-	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err := backupMeta.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return backupMeta.GetDbMaps(), nil
-}
-
-func readFilteredFullBackupTables(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	piTRIdTracker *utils.PiTRIdTracker,
-	cipherInfo *backuppb.CipherInfo,
-) (map[int64]*metautil.Table, error) {
-	if piTRIdTracker == nil {
-		return nil, errors.Errorf("missing pitr table tracker information")
-	}
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	backupMetaBytes, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, cipherInfo)
-	if err != nil {
-		return nil, errors.Annotate(err, "decrypt failed with wrong key")
-	}
-
-	backupMeta := &backuppb.BackupMeta{}
-	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// read full backup databases to get map[table]table.Info
-	reader := metautil.NewMetaReader(backupMeta, s, cipherInfo)
-
-	databases, err := metautil.LoadBackupTables(ctx, reader, false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	tables := make(map[int64]*metautil.Table)
-	for _, db := range databases {
-		if !piTRIdTracker.ContainsDB(db.Info.ID) {
-			continue
-		}
-
-		tableAdded := false
-		for _, table := range db.Tables {
-			// check this db is empty.
-			if table.Info == nil {
-				tables[db.Info.ID] = table
-				tableAdded = true
-				continue
-			}
-			if !piTRIdTracker.ContainsTableId(db.Info.ID, table.Info.ID) {
-				continue
-			}
-			tables[table.Info.ID] = table
-			tableAdded = true
-		}
-		// all tables in this db are filtered out, but we still need to keep this db since it passed the filter check
-		// and tables might get created later during log backup, if not keeping this db, those tables will be mapped to
-		// a new db id and thus will become data corruption.
-		if !tableAdded {
-			tables[db.Info.ID] = &metautil.Table{
-				DB: db.Info,
-			}
-		}
-	}
-
-	return tables, nil
-}
-
 type FullBackupStorageConfig struct {
 	Backend *backuppb.StorageBackend
 	Opts    *storage.ExternalStorageOptions
@@ -1078,81 +982,20 @@ type GetIDMapConfig struct {
 	LoadSavedIDMap bool
 
 	// optional
-	FullBackupStorageConfig *FullBackupStorageConfig
-	CipherInfo              *backuppb.CipherInfo
-	// generated at full restore step that contains all the table ids that need to restore
-	PiTRTableTracker *utils.PiTRIdTracker
+	TableMappingManager *stream.TableMappingManager
 }
 
-const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
-
-// generateDBReplacesFromFullBackupStorage reads the full backup schema and creates the mapping from upstream table id
-// to downstream table id. The downstream tables have been created in the previous snapshot restore step, so we
-// can build the mapping by looking at the table names. The current table information is in domain.InfoSchema.
-func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
-	ctx context.Context,
-	cfg *GetIDMapConfig,
-) (map[stream.UpstreamID]*stream.DBReplace, error) {
-	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
-	if cfg.FullBackupStorageConfig == nil {
-		envVal, ok := os.LookupEnv(UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL)
-		if ok && len(envVal) > 0 {
-			log.Info(fmt.Sprintf("the environment variable %s is active, skip loading the base schemas.", UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL))
-			return dbReplaces, nil
-		}
-		return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
-	}
-	s, err := storage.New(ctx, cfg.FullBackupStorageConfig.Backend, cfg.FullBackupStorageConfig.Opts)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	filteredFullBackupTables, err := readFilteredFullBackupTables(ctx, s, cfg.PiTRTableTracker, cfg.CipherInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for _, t := range filteredFullBackupTables {
-		dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
-		newDBInfo, exist := rc.dom.InfoSchema().SchemaByName(dbName)
-		if !exist {
-			log.Info("db does not exist", zap.String("dbName", dbName.String()))
-			continue
-		}
-
-		dbReplace, exist := dbReplaces[t.DB.ID]
-		if !exist {
-			dbReplace = stream.NewDBReplace(t.DB.Name.O, newDBInfo.ID)
-			dbReplaces[t.DB.ID] = dbReplace
-		}
-
-		if t.Info == nil {
-			// If the db is empty, skip it.
-			continue
-		}
-		newTableInfo, err := restore.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
-		if err != nil {
-			log.Info("table doesn't exist", zap.String("tableName", dbName.String()+"."+t.Info.Name.String()))
-			continue
-		}
-
-		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
-			Name:         newTableInfo.Name.O,
-			TableID:      newTableInfo.ID,
-			PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
-			IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
-		}
-	}
-	return dbReplaces, nil
-}
-
-// GetBaseIDMap get the id map from following ways
+// GetBaseIDMapAndMerge get the id map from following ways
 // 1. from previously saved id map if the same task has been running and built/saved id map already but failed later
 // 2. from previous different task. A PiTR job might be split into multiple runs/tasks and each task only restores
 // a subset of the entire job.
-// 3. from full backup snapshot if specified.
-func (rc *LogClient) GetBaseIDMap(
+func (rc *LogClient) GetBaseIDMapAndMerge(
 	ctx context.Context,
-	cfg *GetIDMapConfig,
-) (map[stream.UpstreamID]*stream.DBReplace, error) {
+	hasFullBackupStorageConfig,
+	loadSavedIDMap bool,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	tableMappingManger *stream.TableMappingManager,
+) error {
 	var (
 		err        error
 		dbMaps     []*backuppb.PitrDBMap
@@ -1160,41 +1003,39 @@ func (rc *LogClient) GetBaseIDMap(
 	)
 
 	// this is a retry, id map saved last time, load it from external storage
-	if cfg.LoadSavedIDMap {
+	if loadSavedIDMap {
 		log.Info("try to load previously saved pitr id maps")
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.restoreTS)
+		dbMaps, err = rc.loadSchemasMap(ctx, rc.restoreTS, logCheckpointMetaManager)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(dbMaps) <= 0 && cfg.FullBackupStorageConfig == nil {
+	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS)
+		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		err := rc.validateNoTiFlashReplica()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 
-	if len(dbMaps) <= 0 {
-		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
-		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		dbReplaces = stream.FromDBMapProto(dbMaps)
+	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
+		log.Error("no id maps found")
+		return errors.New("no base id map found from saved id or last restored PiTR")
 	}
+	dbReplaces = stream.FromDBMapProto(dbMaps)
 
 	stream.LogDBReplaceMap("base db replace info", dbReplaces)
-
-	return dbReplaces, nil
+	if len(dbReplaces) != 0 {
+		tableMappingManger.MergeBaseDBReplace(dbReplaces)
+	}
+	return nil
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
@@ -1431,6 +1272,11 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 		} else if newEntry == nil {
 			continue
 		}
+		// sanity check key will never be nil, otherwise will write invalid format data to TiKV
+		if len(newEntry.Key) == 0 {
+			log.Error("invalid nil key during rewrite")
+			return 0, 0, errors.Trace(err)
+		}
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.E.Value)), zap.ByteString("new-key", newEntry.Key))
 
@@ -1475,22 +1321,7 @@ func (rc *LogClient) GenGlobalID(ctx context.Context) (int64, error) {
 
 // GenGlobalIDs generates several global ids by transaction way.
 func (rc *LogClient) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
-	ids := make([]int64, 0)
-	storage := rc.GetDomain().Store()
-
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	err := kv.RunInNewTxn(
-		ctx,
-		storage,
-		true,
-		func(ctx context.Context, txn kv.Transaction) error {
-			var e error
-			t := meta.NewMutator(txn)
-			ids, e = t.GenGlobalIDs(n)
-			return e
-		})
-
-	return ids, err
+	return utils.GenGlobalIDs(ctx, n, rc.GetDomain().Store())
 }
 
 // UpdateSchemaVersionFullReload updates schema version to trigger a full reload in transaction way.
@@ -1541,7 +1372,63 @@ func (rc *LogClient) UpdateSchemaVersionFullReload(ctx context.Context) error {
 	return nil
 }
 
-// WrapCompactedFilesIteratorWithSplit applies a splitting strategy to the compacted files iterator.
+// SetTableModeToNormal sets the table mode back to normal from restore mode if needed.
+func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *stream.SchemasReplace) error {
+	infoSchema := rc.dom.InfoSchema()
+
+	// collect all tables that need to be set to normal mode
+	for _, dbReplace := range schemaReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+
+		// verify schema exists in info schema
+		_, exists := infoSchema.SchemaByID(dbReplace.DbID)
+		if !exists {
+			log.Info("schema doesn't exist in info schema, skipping",
+				zap.Int64("schemaID", dbReplace.DbID), zap.String("schemaName", dbReplace.Name))
+			continue
+		}
+
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+
+			// verify table exists in info schema and is in restore mode
+			tbl, exist := infoSchema.TableByID(ctx, tableReplace.TableID)
+			if !exist || tbl.Meta().DBID != dbReplace.DbID {
+				log.Info("table doesn't exist in info schema, skipping",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.Int64("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name))
+				continue
+			}
+
+			// only set back tables that are in restore mode
+			if tbl.Meta().Mode != model.TableModeRestore {
+				log.Warn("table not in restore mode, skipping",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.Int64("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name),
+					zap.Any("tableMode", tbl.Meta().Mode))
+				continue
+			}
+
+			dbID := dbReplace.DbID
+			tableID := tableReplace.TableID
+			// TODO, use batch when available in DDL
+			log.Info("altering table mode", zap.Int64("schemaID", dbID), zap.Any("table id", tableID))
+			if err := rc.unsafeSession.AlterTableMode(ctx, dbID, tableID, model.TableModeNormal); err != nil {
+				return errors.Annotatef(err, "failed to alter table mode for table with schemaID=%d, tableID=%d",
+					dbID, tableID)
+			}
+		}
+	}
+	return nil
+}
+
+// WrapCompactedFilesIterWithSplitHelper applies a splitting strategy to the compacted files iterator.
 // It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
 func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	ctx context.Context,
@@ -1608,37 +1495,120 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 	return logIter, nil
 }
 
+// ResetTiflashReplicas set tiflash replicas by given sqls concurrently.
+func (rc *LogClient) ResetTiflashReplicas(ctx context.Context, sqls []string, g glue.Glue) error {
+	resetSessions, err := createSessions(ctx, g, rc.dom.Store(), 16)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		closeSessions(resetSessions)
+	}()
+	workerpool := tidbutil.NewWorkerPool(16, "repair ingest index")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, sql := range sqls {
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			resetSession := resetSessions[id%uint64(len(resetSessions))]
+			log.Info("reset tiflash replica", zap.Uint64("task id", id), zap.String("sql", sql))
+			var resetErr error
+			for range 5 {
+				resetErr = resetSession.ExecuteInternal(ectx, sql)
+				if resetErr == nil {
+					break
+				}
+				log.Warn("Failed to restore tiflash replica config", zap.Uint64("task id", id), zap.Error(resetErr))
+				if ectx.Err() != nil {
+					log.Warn("Stop retrying because context cancelled", zap.Error(ectx.Err()))
+					break
+				}
+			}
+			if resetErr != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(resetErr),
+					zap.String("sql", sql),
+				)
+			}
+			return nil
+		})
+	}
+	return eg.Wait()
+}
+
+func colsToStr(cols []pmodel.CIStr) string {
+	var str strings.Builder
+	for i, col := range cols {
+		if i != 0 {
+			str.WriteString(",")
+		}
+		str.WriteString(col.O)
+	}
+	return str.String()
+}
+
 const (
 	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
 	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
 	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
+	alterTableAddForeignKeyFormat  = "ALTER TABLE %%n.%%n ADD CONSTRAINT %%n FOREIGN KEY (%s) REFERENCES %%n.%%n (%s)"
+	alterTableDropForeignKeyFormat = "ALTER TABLE %n.%n DROP FOREIGN KEY %n"
 )
 
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
+) ([]checkpoint.CheckpointIngestIndexRepairSQL, []checkpoint.CheckpointForeignKeyUpdateSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
+	var fkSqls []checkpoint.CheckpointForeignKeyUpdateSQL
 	if rc.useCheckpoint {
 		exists, err := logCheckpointMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
 		if err != nil {
-			return sqls, false, errors.Trace(err)
+			return sqls, fkSqls, false, errors.Trace(err)
 		}
 		if exists {
 			checkpointSQLs, err := logCheckpointMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
 			if err != nil {
-				return sqls, false, errors.Trace(err)
+				return sqls, fkSqls, false, errors.Trace(err)
 			}
 			sqls = checkpointSQLs.SQLs
+			fkSqls = checkpointSQLs.FKSQLs
 			log.Info("load ingest index repair sqls from checkpoint", zap.String("category", "ingest"), zap.Reflect("sqls", sqls))
-			return sqls, true, nil
+			return sqls, fkSqls, true, nil
 		}
 	}
 
-	if err := ingestRecorder.UpdateIndexInfo(rc.dom.InfoSchema()); err != nil {
-		return sqls, false, errors.Trace(err)
+	if err := ingestRecorder.UpdateIndexInfo(ctx, rc.dom.InfoSchema()); err != nil {
+		return sqls, fkSqls, false, errors.Trace(err)
+	}
+	if err := ingestRecorder.IterateForeignKeys(func(fkRecord *ingestrec.ForeignKeyRecord) error {
+		var (
+			addSQL  strings.Builder
+			addArgs []any = make([]any, 0, 7+len(fkRecord.Cols)+len(fkRecord.RefCols))
+		)
+		childCols := colsToStr(fkRecord.Cols)
+		parentCols := colsToStr(fkRecord.RefCols)
+		addSQL.WriteString(fmt.Sprintf(alterTableAddForeignKeyFormat, childCols, parentCols))
+		addArgs = append(addArgs,
+			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.Name.O, fkRecord.RefSchema.O, fkRecord.RefTable.O,
+		)
+		if onDelete := pmodel.ReferOptionType(fkRecord.OnDelete); onDelete != pmodel.ReferOptionNoOption {
+			addSQL.WriteString(fmt.Sprintf(" ON DELETE %s", onDelete.String()))
+		}
+		if onUpdate := pmodel.ReferOptionType(fkRecord.OnUpdate); onUpdate != pmodel.ReferOptionNoOption {
+			addSQL.WriteString(fmt.Sprintf(" ON UPDATE %s", onUpdate.String()))
+		}
+		fkSqls = append(fkSqls, checkpoint.CheckpointForeignKeyUpdateSQL{
+			FKID:       fkRecord.ID,
+			SchemaName: fkRecord.ChildSchemaNameO,
+			TableName:  fkRecord.ChildTableNameO,
+			FKName:     fkRecord.Name.O,
+			AddSQL:     addSQL.String(),
+			AddArgs:    addArgs,
+		})
+		return nil
+	}); err != nil {
+		return sqls, fkSqls, false, errors.Trace(err)
 	}
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
@@ -1677,6 +1647,12 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(" VISIBLE")
 		}
 
+		if info.IndexInfo.Global {
+			addSQL.WriteString(" GLOBAL")
+		} else {
+			addSQL.WriteString(" LOCAL")
+		}
+
 		sqls = append(sqls, checkpoint.CheckpointIngestIndexRepairSQL{
 			IndexID:    indexID,
 			SchemaName: info.SchemaName,
@@ -1688,17 +1664,18 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 
 		return nil
 	}); err != nil {
-		return sqls, false, errors.Trace(err)
+		return sqls, fkSqls, false, errors.Trace(err)
 	}
 
 	if rc.useCheckpoint && len(sqls) > 0 {
 		if err := logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
-			SQLs: sqls,
+			SQLs:   sqls,
+			FKSQLs: fkSqls,
 		}); err != nil {
-			return sqls, false, errors.Trace(err)
+			return sqls, fkSqls, false, errors.Trace(err)
 		}
 	}
-	return sqls, false, nil
+	return sqls, fkSqls, false, nil
 }
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
@@ -1708,7 +1685,7 @@ func (rc *LogClient) RepairIngestIndex(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	g glue.Glue,
 ) error {
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
+	sqls, fkSqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1744,6 +1721,29 @@ func (rc *LogClient) RepairIngestIndex(
 			}
 		}
 	}
+	for i, sql := range fkSqls {
+		tableInfo, err := info.TableByName(ctx, pmodel.NewCIStr(sql.SchemaName), pmodel.NewCIStr(sql.TableName))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fkSqls[i].OldForeignKeyFound = false
+		fkSqls[i].ForeignKeyUpdated = false
+		if fromCheckpoint {
+			for _, fk := range tableInfo.Meta().ForeignKeys {
+				if fk.ID == sql.FKID {
+					// the original foreign key id is not dropped
+					fkSqls[i].OldForeignKeyFound = true
+					break
+				}
+				if fk.Name.O == sql.FKName {
+					// find the same name foreign key, but not the same foreign key id,
+					// which means the foreign key is updated and all the indexes are recreated
+					fkSqls[i].ForeignKeyUpdated = true
+					break
+				}
+			}
+		}
+	}
 
 	sessionCount := defaultRepairIndexSessionCount
 	indexSessions, err := createSessions(ctx, g, rc.dom.Store(), sessionCount)
@@ -1755,6 +1755,30 @@ func (rc *LogClient) RepairIngestIndex(
 	}()
 	workerpool := tidbutil.NewWorkerPool(sessionCount, "repair ingest index")
 	eg, ectx := errgroup.WithContext(ctx)
+	for _, fk := range fkSqls {
+		if fk.ForeignKeyUpdated {
+			continue
+		}
+		if fromCheckpoint && !fk.OldForeignKeyFound {
+			continue
+		}
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			indexSession := indexSessions[id%uint64(len(indexSessions))]
+			if err := indexSession.ExecuteInternal(ectx, alterTableDropForeignKeyFormat, fk.SchemaName, fk.TableName, fk.FKName); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	failpoint.Inject("failed-before-repair-ingest-index", func(v failpoint.Value) {
+		if v != nil && v.(bool) {
+			failpoint.Return(errors.New("failed before repair ingest index"))
+		}
+	})
+	eg, ectx = errgroup.WithContext(ctx)
 	mp := console.StartMultiProgress()
 	for _, sql := range sqls {
 		if sql.IndexRepaired {
@@ -1800,6 +1824,27 @@ func (rc *LogClient) RepairIngestIndex(
 	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
+	eg, ectx = errgroup.WithContext(ctx)
+	for _, fk := range fkSqls {
+		if fk.ForeignKeyUpdated {
+			continue
+		}
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			indexSession := indexSessions[id%uint64(len(indexSessions))]
+			if err := indexSession.ExecuteInternal(ectx, fk.AddSQL, fk.AddArgs...); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	failpoint.Inject("failed-after-repair-ingest-index", func(v failpoint.Value) {
+		if v != nil && v.(bool) {
+			failpoint.Return(errors.New("failed after repair ingest index"))
+		}
+	})
 
 	return nil
 }
@@ -1876,8 +1921,6 @@ func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
 	return rc.deleteRangeQuery
 }
 
-const PITRIdMapBlockSize int = 524288
-
 func (rc *LogClient) SaveIdMapWithFailPoints(
 	ctx context.Context,
 	manager *stream.TableMappingManager,
@@ -1894,46 +1937,6 @@ func (rc *LogClient) SaveIdMapWithFailPoints(
 	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
 	})
-	return nil
-}
-
-// saveIDMap saves the id mapping information.
-func (rc *LogClient) saveIDMap(
-	ctx context.Context,
-	manager *stream.TableMappingManager,
-	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) error {
-	backupmeta := &backuppb.BackupMeta{DbMaps: manager.ToProto()}
-	data, err := proto.Marshal(backupmeta)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// clean the dirty id map at first
-	err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?);"
-	for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
-		endIdx := startIdx + PITRIdMapBlockSize
-		if endIdx > len(data) {
-			endIdx = len(data)
-		}
-		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		startIdx = endIdx
-	}
-
-	if rc.useCheckpoint {
-		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
-		if err := logCheckpointMetaManager.SaveCheckpointProgress(ctx, &checkpoint.CheckpointProgress{
-			Progress: checkpoint.InLogRestoreAndIdMapPersisted,
-		}); err != nil {
-			return errors.Trace(err)
-		}
-	}
 	return nil
 }
 
@@ -2054,5 +2057,150 @@ func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key,
 	if err != nil {
 		return errors.Errorf("failed to put raw kv after retry")
 	}
+	return nil
+}
+
+// RefreshMetaForTables refreshes metadata for all tables in the schemasReplace map.
+// The ordering is critical for dependency management:
+// - DELETE operations: tables first, then databases
+// - ADD/UPDATE operations: databases first, then tables (to ensure parent exists)
+func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *stream.SchemasReplace) error {
+	deletedTablesMap := schemasReplace.GetDeletedTables()
+
+	// Step 1: Process DELETIONS in dependency-safe order (tables first, then databases)
+	deletedTableCount := 0
+
+	// First, delete all tables
+	for upstreamDBID, tableIDsSet := range deletedTablesMap {
+		if len(tableIDsSet) > 0 {
+			// handle table deletions
+			for upstreamTableID := range tableIDsSet {
+				dbReplace, ok := schemasReplace.DbReplaceMap[upstreamDBID]
+				if !ok {
+					return errors.Errorf("the database(upstream ID: %d) of deleted table has no record in replace map", upstreamDBID)
+				}
+				tableReplace, ok := dbReplace.TableMap[upstreamTableID]
+				if !ok {
+					return errors.Errorf("the deleted table(upstream ID: %d) has no record in replace map", upstreamTableID)
+				}
+
+				args := &model.RefreshMetaArgs{
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
+				}
+
+				log.Info("refreshing deleted table meta",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.String("dbName", dbReplace.Name),
+					zap.Any("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name))
+				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+					return errors.Annotatef(err,
+						"failed to refresh meta for deleted table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
+						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
+				}
+				deletedTableCount++
+			}
+		}
+	}
+
+	// Then, delete databases if needed
+	for upstreamDBID := range deletedTablesMap {
+		// Get database name for logging
+		dbReplace, ok := schemasReplace.DbReplaceMap[upstreamDBID]
+		if !ok {
+			return errors.Errorf("the deleted database(upstream ID: %d) has no record in replace map", upstreamDBID)
+		}
+		args := &model.RefreshMetaArgs{
+			SchemaID:      dbReplace.DbID,
+			TableID:       0, // 0 for database-only refresh
+			InvolvedDB:    dbReplace.Name,
+			InvolvedTable: model.InvolvingAll,
+		}
+
+		log.Info("refreshing potential deleted database meta",
+			zap.Int64("schemaID", dbReplace.DbID),
+			zap.String("dbName", dbReplace.Name))
+		if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+			return errors.Annotatef(err, "failed to refresh meta for deleted database with schemaID=%d, dbName=%s",
+				dbReplace.DbID, dbReplace.Name)
+		}
+	}
+
+	log.Info("refreshed metadata for deleted items",
+		zap.Int("deletedTableCount", deletedTableCount))
+
+	// Step 2: Process ADD/UPDATE operations in dependency-safe order (databases first, then tables)
+	regularCount := 0
+
+	// First, handle database-only operations
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+
+		// Skip if we already processed this database in delete section
+		if _, alreadyProcessed := deletedTablesMap[upstreamDBID]; alreadyProcessed {
+			continue
+		}
+
+		args := &model.RefreshMetaArgs{
+			SchemaID:      dbReplace.DbID,
+			TableID:       0, // tableID = 0 for database-only refresh
+			InvolvedDB:    dbReplace.Name,
+			InvolvedTable: model.InvolvingAll,
+		}
+		log.Info("refreshing database-only meta",
+			zap.Int64("schemaID", dbReplace.DbID),
+			zap.String("dbName", dbReplace.Name))
+		if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+			return errors.Annotatef(err, "failed to refresh meta for database with schemaID=%d, dbName=%s",
+				dbReplace.DbID, dbReplace.Name)
+		}
+	}
+
+	// Then, handle table operations
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+
+		if len(dbReplace.TableMap) > 0 {
+			for upstreamTableID, tableReplace := range dbReplace.TableMap {
+				if tableReplace.FilteredOut {
+					continue
+				}
+
+				// skip if this table is in the deleted list
+				if tableIDsSet, dbExists := deletedTablesMap[upstreamDBID]; dbExists {
+					if _, isDeleted := tableIDsSet[upstreamTableID]; isDeleted {
+						continue
+					}
+				}
+
+				args := &model.RefreshMetaArgs{
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
+				}
+				log.Info("refreshing regular table meta",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.String("dbName", dbReplace.Name),
+					zap.Any("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name))
+				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+					return errors.Annotatef(err, "failed to refresh meta for table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
+						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
+				}
+				regularCount++
+			}
+		}
+	}
+
+	log.Info("refreshed metadata for add/update operations",
+		zap.Int("regularTableCount", regularCount))
 	return nil
 }

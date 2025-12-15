@@ -17,6 +17,7 @@ package priorityqueue
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -34,7 +35,16 @@ import (
 )
 
 // HandleDDLEvent handles DDL events for the priority queue.
-func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) (err error) {
+func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+	// Check if auto analyze is enabled.
+	if !variable.RunAutoAnalyze.Load() {
+		// Close the priority queue if auto analyze is disabled.
+		// This ensures proper cleanup of the DDL notifier (mysql.tidb_ddl_notifier) and prevents the queue from remaining
+		// in an unknown state. When auto analyze is re-enabled, the priority queue can be properly re-initialized.
+		// NOTE: It is safe to call Close multiple times and it will get the lock internally.
+		pq.Close()
+		return nil
+	}
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	// If the priority queue is not initialized, we should retry later.
@@ -42,16 +52,7 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 		return notifier.ErrNotReadyRetryLater
 	}
 
-	defer func() {
-		if err != nil {
-			actionType := event.GetType().String()
-			statslogutil.StatsErrVerboseSampleLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
-				zap.Error(err),
-				zap.String("event", event.String()),
-			)
-		}
-	}()
-
+	var err error
 	switch event.GetType() {
 	case model.ActionAddIndex:
 		err = pq.handleAddIndexEvent(sctx, event)
@@ -76,8 +77,23 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 	default:
 		// Ignore other DDL events.
 	}
-
-	return err
+	if err != nil {
+		intest.Assert(
+			errors.ErrorEqual(err, context.Canceled) ||
+				strings.Contains(err.Error(), "mock handleTaskOnce error") ||
+				strings.Contains(err.Error(), "session pool closed"),
+			fmt.Sprintf("handle ddl event failed, err: %+v", err),
+		)
+		actionType := event.GetType().String()
+		statslogutil.StatsErrVerboseSampleLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
+			zap.Error(err),
+			zap.String("event", event.String()),
+		)
+	}
+	// Ideally, we shouldn't allow any errors to be ignored, but for now, there is no retry limit mechanism.
+	// So to avoid infinite retry, we just log the error and continue.
+	// See more at: https://github.com/pingcap/tidb/issues/59474
+	return nil
 }
 
 // getAndDeleteJob tries to get a job from the priority queue and delete it if it exists.

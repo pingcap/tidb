@@ -36,7 +36,7 @@ func NewLogSplitStrategy(
 	skipMap := NewLogFilesSkipMap()
 	if useCheckpoint {
 		t, err := logCheckpointMetaManager.LoadCheckpointData(
-			ctx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+			ctx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) error {
 				for tableID, foffs := range off.Foffs {
 					// filter out the checkpoint data of dropped table
 					if _, exists := downstreamIdset[tableID]; exists {
@@ -45,6 +45,7 @@ func NewLogSplitStrategy(
 						}
 					}
 				}
+				return nil
 			})
 
 		if err != nil {
@@ -62,25 +63,27 @@ func NewLogSplitStrategy(
 const splitFileThreshold = 1024 * 1024 // 1 MB
 
 func (ls *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
+	// skip accumulate file less than 1MB. to prevent too much split & scatter occurs
+	// and protect the performance of BTreeMap
 	if file.Length > splitFileThreshold {
 		ls.AccumulateCount += 1
-	}
-	splitHelper, exist := ls.TableSplitter[file.TableId]
-	if !exist {
-		splitHelper = split.NewSplitHelper()
-		ls.TableSplitter[file.TableId] = splitHelper
-	}
+		splitHelper, exist := ls.TableSplitter[file.TableId]
+		if !exist {
+			splitHelper = split.NewSplitHelper()
+			ls.TableSplitter[file.TableId] = splitHelper
+		}
 
-	splitHelper.Merge(split.Valued{
-		Key: split.Span{
-			StartKey: file.StartKey,
-			EndKey:   file.EndKey,
-		},
-		Value: split.Value{
-			Size:   file.Length,
-			Number: file.NumberOfEntries,
-		},
-	})
+		splitHelper.Merge(split.Valued{
+			Key: split.Span{
+				StartKey: file.StartKey,
+				EndKey:   file.EndKey,
+			},
+			Value: split.Value{
+				Size:   file.Length,
+				Number: file.NumberOfEntries,
+			},
+		})
+	}
 }
 
 func (ls *LogSplitStrategy) ShouldSplit() bool {

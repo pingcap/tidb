@@ -15,6 +15,7 @@
 package snapclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -24,24 +25,33 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
+func getSortedPhysicalTables(createdTables []*restoreutils.CreatedTable) []*PhysicalTable {
 	physicalTables := make([]*PhysicalTable, 0, len(createdTables))
 	for _, createdTable := range createdTables {
 		physicalTables = append(physicalTables, &PhysicalTable{
 			NewPhysicalID: createdTable.Table.ID,
 			OldPhysicalID: createdTable.OldTable.Info.ID,
 			RewriteRules:  createdTable.RewriteRule,
+			Files:         createdTable.OldTable.FilesOfPhysicals[createdTable.OldTable.Info.ID],
 		})
 
 		partitionIDMap := restoreutils.GetPartitionIDMap(createdTable.Table, createdTable.OldTable.Info)
@@ -50,6 +60,7 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 				NewPhysicalID: newID,
 				OldPhysicalID: oldID,
 				RewriteRules:  createdTable.RewriteRule,
+				Files:         createdTable.OldTable.FilesOfPhysicals[oldID],
 			})
 		}
 	}
@@ -58,35 +69,6 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 		return physicalTables[a].NewPhysicalID < physicalTables[b].NewPhysicalID
 	})
 	return physicalTables
-}
-
-// mapTableToFiles makes a map that mapping table ID to its backup files.
-// aware that one file can and only can hold one table.
-func mapTableToFiles(files []*backuppb.File) (map[int64][]*backuppb.File, int) {
-	result := map[int64][]*backuppb.File{}
-	// count the write cf file that hint for split key slice size
-	maxSplitKeyCount := 0
-	for _, file := range files {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
-		if tableID != tableEndID {
-			log.Panic("key range spread between many files.",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		if tableID == 0 {
-			log.Panic("invalid table key of file",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		result[tableID] = append(result[tableID], file)
-		if file.Cf == restoreutils.WriteCFName {
-			maxSplitKeyCount += 1
-		}
-	}
-	return result, maxSplitKeyCount
 }
 
 // filterOutFiles filters out files that exist in the checkpoint set.
@@ -122,25 +104,22 @@ const MergedRangeCountThreshold = 1536
 
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
 func SortAndValidateFileRanges(
-	createdTables []*CreatedTable,
-	allFiles []*backuppb.File,
+	createdTables []*restoreutils.CreatedTable,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
 ) ([][]byte, []restore.BatchBackupFileSet, error) {
 	sortedPhysicalTables := getSortedPhysicalTables(createdTables)
-	// mapping table ID to its backup files
-	fileOfTable, hintSplitKeyCount := mapTableToFiles(allFiles)
 	// sort, merge, and validate files in each tables, and generate split keys by the way
 	var (
 		// to generate region split keys, merge the small ranges over the adjacent tables
-		sortedSplitKeys        = make([][]byte, 0, hintSplitKeyCount)
+		sortedSplitKeys        = make([][]byte, 0)
 		groupSize              = uint64(0)
 		groupCount             = uint64(0)
 		lastKey         []byte = nil
 
 		// group the files by the generated split keys
-		tableIDWithFilesGroup                            = make([]restore.BatchBackupFileSet, 0, hintSplitKeyCount)
+		tableIDWithFilesGroup                            = make([]restore.BatchBackupFileSet, 0)
 		lastFilesGroup        restore.BatchBackupFileSet = nil
 
 		// statistic
@@ -151,7 +130,7 @@ func SortAndValidateFileRanges(
 
 	log.Info("start to merge ranges", zap.Uint64("kv size threshold", splitSizeBytes), zap.Uint64("kv count threshold", splitKeyCount))
 	for _, table := range sortedPhysicalTables {
-		files := fileOfTable[table.OldPhysicalID]
+		files := table.Files
 		for _, file := range files {
 			if err := restoreutils.ValidateFileRewriteRule(file, table.RewriteRules); err != nil {
 				return nil, nil, errors.Trace(err)
@@ -290,10 +269,11 @@ type RestoreTablesContext struct {
 	Online         bool
 
 	// data
-	CreatedTables            []*CreatedTable
-	AllFiles                 []*backuppb.File
+	CreatedTables            []*restoreutils.CreatedTable
 	CheckpointSetWithTableID map[int64]map[string]struct{}
 
+	CompactProtectStartKey []byte
+	CompactProtectEndKey   []byte
 	// tool client
 	Glue glue.Glue
 }
@@ -315,7 +295,7 @@ func (rc *SnapClient) RestoreTables(ctx context.Context, rtCtx RestoreTablesCont
 
 	start := time.Now()
 	sortedSplitKeys, tableIDWithFilesGroup, err :=
-		SortAndValidateFileRanges(rtCtx.CreatedTables, rtCtx.AllFiles, rtCtx.CheckpointSetWithTableID, rtCtx.SplitSizeBytes, rtCtx.SplitKeyCount, rtCtx.SplitOnTable)
+		SortAndValidateFileRanges(rtCtx.CreatedTables, rtCtx.CheckpointSetWithTableID, rtCtx.SplitSizeBytes, rtCtx.SplitKeyCount, rtCtx.SplitOnTable)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -324,13 +304,35 @@ func (rc *SnapClient) RestoreTables(ctx context.Context, rtCtx RestoreTablesCont
 	log.Info("Restore Stage Duration", zap.String("stage", "merge ranges"), zap.Duration("take", elapsed))
 
 	if err := glue.WithProgress(ctx, rtCtx.Glue, "Split&Scatter Regions", int64(len(sortedSplitKeys)), !rtCtx.LogProgress, func(updateCh glue.Progress) error {
-		return rc.SplitPoints(ctx, sortedSplitKeys, updateCh.IncBy, false)
+		if err := rc.SplitPoints(ctx, sortedSplitKeys, updateCh.IncBy, false); err != nil {
+			return errors.Trace(err)
+		}
+		if bytes.Compare(rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey) >= 0 {
+			log.Warn("start key must be smaller than end key, so skip sending add partition range request", logutil.Key("start key", rtCtx.CompactProtectStartKey), logutil.Key("end key", rtCtx.CompactProtectEndKey))
+			return nil
+		}
+		log.Info("start to check and compact the restore range")
+		if err := rc.compactAndCheckSSTRange(ctx, rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
 	}); err != nil {
 		return errors.Trace(err)
 	}
 
 	if err := glue.WithProgress(ctx, rtCtx.Glue, "Download&Ingest SST", int64(len(tableIDWithFilesGroup)), !rtCtx.LogProgress, func(updateCh glue.Progress) error {
-		return rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh.IncBy)
+		if err := rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh.IncBy); err != nil {
+			return errors.Trace(err)
+		}
+		if bytes.Compare(rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey) >= 0 {
+			log.Warn("start key must be smaller than end key, so skip sending remove partition range request", logutil.Key("start key", rtCtx.CompactProtectStartKey), logutil.Key("end key", rtCtx.CompactProtectEndKey))
+			return nil
+		}
+		log.Info("start to remove the force partition restore range")
+		if err := rc.removeForcePartitionRange(ctx, rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
 	}); err != nil {
 		return errors.Trace(err)
 	}
@@ -386,6 +388,71 @@ func getFileRangeKey(f string) string {
 	}
 
 	return f[:idx]
+}
+
+func (rc *SnapClient) sendRequestToStore(
+	ctx context.Context,
+	sendFn func(ectx context.Context, client importclient.ImporterClient, storeId uint64) error,
+) error {
+	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	eg, ectx := errgroup.WithContext(ctx)
+	pool := tidbutil.NewWorkerPool(uint(len(stores)), "check and compact")
+	for _, store := range stores {
+		if store.StatusAddress == "" || store.State != metapb.StoreState_Up {
+			continue
+		}
+		storeId := store.GetId()
+		pool.ApplyOnErrorGroup(eg, func() error {
+			return sendFn(ectx, rc.importer.importClient, storeId)
+		})
+	}
+	return eg.Wait()
+}
+
+func (rc *SnapClient) compactAndCheckSSTRange(ctx context.Context, startKey, endKey []byte) error {
+	checkReq := &import_sstpb.AddPartitionRangeRequest{
+		Range: &import_sstpb.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+		TtlSeconds: 7200,
+	}
+	return rc.sendRequestToStore(ctx, func(ectx context.Context, client importclient.ImporterClient, storeId uint64) error {
+		if err := client.AddForcePartitionRange(ectx, storeId, checkReq); err != nil {
+			if s, ok := status.FromError(err); ok {
+				if s.Code() == codes.Unimplemented {
+					log.Warn("tikv node doesn't support check and compact.", zap.Uint64("store id", storeId))
+					return nil
+				}
+			}
+			return errors.Trace(err)
+		}
+		return nil
+	})
+}
+
+func (rc *SnapClient) removeForcePartitionRange(ctx context.Context, startKey, endKey []byte) error {
+	removeReq := &import_sstpb.RemovePartitionRangeRequest{
+		Range: &import_sstpb.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+	}
+	return rc.sendRequestToStore(ctx, func(ectx context.Context, client importclient.ImporterClient, storeId uint64) error {
+		if err := client.RemoveForcePartitionRange(ectx, storeId, removeReq); err != nil {
+			if s, ok := status.FromError(err); ok {
+				if s.Code() == codes.Unimplemented {
+					log.Warn("tikv node doesn't support remove force partition range.", zap.Uint64("store id", storeId))
+					return nil
+				}
+			}
+			return errors.Trace(err)
+		}
+		return nil
+	})
 }
 
 // RestoreSSTFiles tries to do something prepare work, such as set speed limit, and restore the files.

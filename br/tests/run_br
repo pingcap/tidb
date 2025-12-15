@@ -5,8 +5,11 @@
 set -eux
 
 main() {
-    # Call the original run.sh script
-    "$UTILS_DIR/run_br" "$@" $ENCRYPTION_ARGS
+    # Add checksum argument
+    CHECKSUM_ARGS="--checksum=true"
+    
+    # Call the original run.sh script with checksum args first so it can be overridden
+    "$UTILS_DIR/run_br" $CHECKSUM_ARGS "$@" $ENCRYPTION_ARGS
 
     # Check if encryption validation is enabled
     if [ "${ENABLE_ENCRYPTION_CHECK:-false}" != "true" ]; then
