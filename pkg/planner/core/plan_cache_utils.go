@@ -338,7 +338,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, hack.Slice(strconv.FormatBool(vardef.VarTiDBSuperReadOnly.Load()))...)
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
-	for _, tbl := range stmt.tables {
+	for _, tbl := range stmt.tbls {
 		if tbl.Meta().SoftdeleteInfo != nil {
 			// tidb_translate_softdelete_sql affects the semantics of the queries that involves softdelete tables, so
 			// we need to consider it in plan cache.
