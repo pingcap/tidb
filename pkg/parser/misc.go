@@ -162,6 +162,7 @@ var tokenMap = map[string]int{
 	"ADDDATE":                  addDate,
 	"ADMIN":                    admin,
 	"ADVISE":                   advise,
+	"AFFINITY":                 affinity,
 	"AFTER":                    after,
 	"AGAINST":                  against,
 	"AGO":                      ago,
