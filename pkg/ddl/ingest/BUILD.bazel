@@ -77,7 +77,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 26,
+    shard_count = 27,
     deps = [
         ":ingest",
         "//pkg/config",
