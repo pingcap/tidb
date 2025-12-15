@@ -2626,6 +2626,20 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
 
+		var oldAffinityTable *model.TableInfo
+		if tblInfo.Affinity != nil {
+			oldAffinityTable = &model.TableInfo{
+				ID:        tblInfo.ID,
+				Name:      tblInfo.Name,
+				Affinity:  tblInfo.Affinity,
+				Partition: &model.PartitionInfo{Definitions: oldDefinitions},
+			}
+		}
+		if err = updateTableAffinityGroupInPD(jobCtx, tblInfo, oldAffinityTable, oldDefinitions); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
 		failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2

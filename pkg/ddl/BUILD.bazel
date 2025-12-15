@@ -12,6 +12,7 @@ go_library(
     name = "ddl",
     srcs = [
         "add_column.go",
+        "affinity.go",
         "backfilling.go",
         "backfilling_clean_s3.go",
         "backfilling_dist_executor.go",
@@ -229,6 +230,7 @@ go_test(
     name = "ddl_test",
     timeout = "moderate",
     srcs = [
+        "affinity_test.go",
         "attributes_sql_test.go",
         "backfilling_dist_scheduler_test.go",
         "backfilling_test.go",

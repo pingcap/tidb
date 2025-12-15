@@ -130,6 +130,8 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			}
 		}
 
+		_ = updateTableAffinityGroupInPD(jobCtx, nil, tblInfo, nil)
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
@@ -582,6 +584,15 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		scatterScope = val
 	}
 	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
+
+	var oldPartitions []model.PartitionDefinition
+	if pi := oldTblInfo.GetPartitionInfo(); pi != nil {
+		oldPartitions = pi.Definitions
+	}
+	if err = updateTableAffinityGroupInPD(jobCtx, tblInfo, oldTblInfo, oldPartitions); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -1739,6 +1750,7 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	oldTblInfo := tblInfo.Clone()
 
 	if err = validateTableAffinity(tblInfo, args.Affinity); err != nil {
 		job.State = model.JobStateCancelled
@@ -1746,32 +1758,16 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	}
 	tblInfo.Affinity = args.Affinity
 
+	if err = updateTableAffinityGroupInPD(jobCtx, tblInfo, oldTblInfo, nil); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	if err = updateTableAffinityGroupInPD(tblInfo); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
-}
-
-func updateTableAffinityGroupInPD(tblInfo *model.TableInfo) error {
-	affinityLevel := ""
-	if tblInfo.Affinity != nil {
-		affinityLevel = tblInfo.Affinity.Level
-	}
-
-	// TODO: implement it
-	logutil.DDLLogger().Warn(
-		"updateTableAffinityGroupInPD is skipped because it has not been implemented yet",
-		zap.Int64("tableID", tblInfo.ID),
-		zap.String("tableName", tblInfo.Name.O),
-		zap.String("affinity", affinityLevel),
-	)
-	return nil
 }

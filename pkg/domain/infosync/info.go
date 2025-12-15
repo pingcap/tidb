@@ -75,8 +75,8 @@ const (
 	TablePrometheusCacheExpiry = 10 * time.Second
 	// RequestRetryInterval is the sleep time before next retry for http request
 	RequestRetryInterval = 200 * time.Millisecond
-	// SyncBundlesMaxRetry is the max retry times for sync placement bundles
-	SyncBundlesMaxRetry = 3
+	// RequestPDMaxRetry is the max retry times for sync placement bundles
+	RequestPDMaxRetry = 3
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
@@ -105,6 +105,7 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
+	affinityManager       AffinityManager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
 	tikvCodec             tikv.Codec
@@ -177,6 +178,7 @@ func GlobalInfoSyncerInit(
 	is.initPlacementManager()
 	is.initScheduleManager()
 	is.initTiFlashReplicaManager(codec)
+	is.initAffinityManager()
 	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -277,6 +279,14 @@ func (is *InfoSyncer) initScheduleManager() {
 		return
 	}
 	is.scheduleManager = &PDScheduleManager{is.pdHTTPCli}
+}
+
+func (is *InfoSyncer) initAffinityManager() {
+	if is.pdHTTPCli == nil {
+		is.affinityManager = &mockAffinityManager{}
+		return
+	}
+	is.affinityManager = &pdAffinityManager{is.pdHTTPCli}
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash
@@ -539,7 +549,7 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 
 // PutRuleBundlesWithDefaultRetry will retry for default times
 func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bundle) (err error) {
-	return PutRuleBundlesWithRetry(ctx, bundles, SyncBundlesMaxRetry, RequestRetryInterval)
+	return PutRuleBundlesWithRetry(ctx, bundles, RequestPDMaxRetry, RequestRetryInterval)
 }
 
 // GetMinStartTS get min start timestamp.
