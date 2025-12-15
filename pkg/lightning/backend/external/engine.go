@@ -548,6 +548,7 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 func (e *Engine) buildIngestData(kvs []KVPair, buf []*membuf.Buffer) *MemoryIngestData {
 	return &MemoryIngestData{
 		kvs:             kvs,
+		empty:           len(kvs) == 0,
 		ts:              e.ts,
 		memBuf:          buf,
 		refCnt:          atomic.NewInt64(0),
@@ -647,6 +648,8 @@ type MemoryIngestData struct {
 	kvs []KVPair
 	ts  uint64
 
+	// empty indicates whether the data is empty.
+	empty           bool
 	memBuf          []*membuf.Buffer
 	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
@@ -767,7 +770,9 @@ func (m *MemoryIngestData) GetTS() uint64 {
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
 	// Make sure data is not released.
-	intest.Assert(len(m.kvs) > 0)
+	if !m.empty {
+		intest.Assert(len(m.kvs) > 0)
+	}
 }
 
 // DecRef implements IngestData.DecRef.
