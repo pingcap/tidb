@@ -62,10 +62,9 @@ func TestConstantPropagation(t *testing.T) {
 	tk.MustExec(`CREATE TABLE a2 (a int PRIMARY KEY, b int);`)
 	for range 20 {
 		tk.MustQuery(`EXPLAIN FORMAT='plan_tree' SELECT STRAIGHT_JOIN * FROM a1 LEFT JOIN a2 ON a1.a = a2.a WHERE a1.a IN(a2.a, a2.b);`).Check(testkit.Rows(
-			`MergeJoin root  inner join, left key:test.a1.a, right key:test.a2.a, other cond:in(test.a1.a, test.a2.a, test.a2.b)`,
-			`├─TableReader(Build) root  data:Selection`,
-			`│ └─Selection cop[tikv]  in(test.a2.a, test.a2.a, test.a2.b)`,
-			`│   └─TableFullScan cop[tikv] table:a2 keep order:true, stats:pseudo`,
+			`MergeJoin root  inner join, left key:test.a1.a, right key:test.a2.a`,
+			`├─TableReader(Build) root  data:TableFullScan`,
+			`│ └─TableFullScan cop[tikv] table:a2 keep order:true, stats:pseudo`,
 			`└─TableReader(Probe) root  data:TableFullScan`,
 			`  └─TableFullScan cop[tikv] table:a1 keep order:true, stats:pseudo`))
 	}

@@ -926,6 +926,10 @@ func TestNextGenMetering(t *testing.T) {
 		}
 	})
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
+	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+		rowAndSizeMeterItems.Store(&items)
+	})
 	tk.MustExec("alter table t add index idx(c);")
 	taskManager, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
@@ -945,21 +949,29 @@ func TestNextGenMetering(t *testing.T) {
 	// the length may vary, we just use regexp to match here.
 	require.Regexp(t, `obj_store{r: 1.\d+KiB, w: \d.\d+KiB}`, gotMeterData.Load())
 
-	sum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepReadIndex)
-	require.EqualValues(t, 1, sum.GetReqCnt.Load())
-	require.EqualValues(t, 3, sum.PutReqCnt.Load())
-	require.Greater(t, sum.ReadBytes.Load(), int64(0))
-	require.Greater(t, sum.Bytes.Load(), int64(0))
-	sum = getStepSummary(t, taskManager, task.ID, proto.BackfillStepMergeSort)
-	require.EqualValues(t, 3, sum.GetReqCnt.Load())
-	require.EqualValues(t, 3, sum.PutReqCnt.Load())
-	require.EqualValues(t, 0, sum.ReadBytes.Load())
-	require.EqualValues(t, 0, sum.Bytes.Load())
-	sum = getStepSummary(t, taskManager, task.ID, proto.BackfillStepWriteAndIngest)
-	require.EqualValues(t, 3, sum.GetReqCnt.Load())
-	require.EqualValues(t, 0, sum.PutReqCnt.Load())
-	require.EqualValues(t, 0, sum.ReadBytes.Load())
-	require.EqualValues(t, 0, sum.Bytes.Load())
+	readIndexSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepReadIndex)
+	mergeSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepMergeSort)
+	ingestSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepWriteAndIngest)
+	require.EqualValues(t, 1, readIndexSum.GetReqCnt.Load())
+	require.EqualValues(t, 3, readIndexSum.PutReqCnt.Load())
+	require.Greater(t, readIndexSum.ReadBytes.Load(), int64(0))
+	require.EqualValues(t, 153, readIndexSum.Bytes.Load())
+	require.EqualValues(t, 3, readIndexSum.RowCnt.Load())
+
+	require.EqualValues(t, 3, mergeSum.GetReqCnt.Load())
+	require.EqualValues(t, 3, mergeSum.PutReqCnt.Load())
+	require.EqualValues(t, 0, mergeSum.ReadBytes.Load())
+	require.EqualValues(t, 0, mergeSum.Bytes.Load())
+
+	require.EqualValues(t, 3, ingestSum.GetReqCnt.Load())
+	require.EqualValues(t, 0, ingestSum.PutReqCnt.Load())
+	require.EqualValues(t, 0, ingestSum.ReadBytes.Load())
+	require.EqualValues(t, 0, ingestSum.Bytes.Load())
+
+	require.Eventually(t, func() bool {
+		items := *rowAndSizeMeterItems.Load()
+		return items != nil && items["row_count"].(int64) == 3 && items["index_kv_bytes"].(int64) == 153
+	}, 30*time.Second, 100*time.Millisecond)
 }
 
 func getStepSummary(t *testing.T, taskMgr *diststorage.TaskManager, taskID int64, step proto.Step) *execute.SubtaskSummary {

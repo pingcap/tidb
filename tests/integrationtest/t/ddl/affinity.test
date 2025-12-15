@@ -1,0 +1,141 @@
+# test create affinity success
+drop table if exists t1, t2, t3, t4, tp1, tp2, tp3, v1;
+create table t1(a int) affinity = 'table';
+show create table t1;
+create table t2(a int) AFFINITY 'TABLE';
+show create table t2;
+drop table t2;
+create table t2(a int) /*T![affinity] AFFINITY='table' */;
+show create table t2;
+create table tp1(a int) affinity = 'partition' partition by hash(a) partitions 4;
+show create table tp1;
+create table tp2(a int) /*T![affinity] AFFINITY='partition' */ partition by hash(a) partitions 4;
+show create table tp2;
+
+# test create like
+drop table if exists t2, tp2;
+create table t2 like t1;
+show create table t2;
+create table tp2 like tp1;
+show create table tp2;
+
+# test rename
+create table t3 like t2;
+show create table t3;
+drop table t3;
+
+# test create a table with affinity 'none' or '' will skip affinity
+create table t3(a int) affinity = 'none';
+show create table t3;
+create table t4(a int) affinity = '';
+show create table t4;
+create table tp3(a int) affinity = 'none' partition by hash(a) partitions 4;
+show create table tp3;
+
+# test information_schema.tables
+create view v1 as select 1;
+select TABLE_NAME, TABLE_TYPE, TIDB_AFFINITY from information_schema.tables where TABLE_SCHEMA = database() and TABLE_NAME in ('t1', 't2', 't3', 't4', 'tp1', 'tp2', 'tp3', 'v1') order by TABLE_NAME;
+
+# test information_schema.partitions
+select TABLE_NAME, PARTITION_METHOD, PARTITION_NAME, TIDB_AFFINITY from information_schema.partitions where TABLE_SCHEMA = database() and TABLE_NAME in ('t1', 't2', 't3', 't4', 'tp1', 'tp2', 'tp3', 'v1') order by TABLE_NAME, PARTITION_NAME;
+
+# test alter with the same affinity
+alter table t1 affinity = 'TABLE';
+show create table t1;
+alter table tp1 affinity = 'PARTITION';
+show create table tp1;
+
+# test alter with the empty affinity or 'none'
+alter table t1 affinity = '';
+show create table t1;
+alter table t2 affinity = 'none';
+show create table t2;
+alter table tp1 affinity = '';
+show create table tp1;
+
+# test alter from empty affinity to specified affinity
+alter table t1 affinity = 'table';
+show create table t1;
+alter table tp1 affinity = 'partition';
+show create table tp1;
+alter table t3 /*T![affinity] AFFINITY='table' */;
+show create table t3;
+alter table tp2 /*T![affinity] AFFINITY='partition' */;
+show create table tp2;
+
+# test error cases
+-- error 8266
+create table tx(a int) affinity = 'invalid_affinity';
+show tables like 'tx';
+-- error 8266
+alter table t1 affinity = 'partition';
+show create table t1;
+-- error 8266
+alter table tp1 affinity = 'table';
+show create table tp1;
+-- error 8266
+alter table t1 affinity = 'invalid_affinity';
+show create table t1;
+
+# temporary table does not support affinity
+drop table if exists temp1;
+-- error 8266
+create temporary table temp1(a int) affinity = 'table';
+show tables like 'temp1';
+create temporary table temp1 like t1;
+show create table temp1;
+-- error 8200
+alter table temp1 affinity = 'table';
+show create table temp1;
+drop table temp1;
+-- error 8266
+create global temporary table temp1 (a int) affinity = 'table' on commit delete rows;
+show tables like 'temp1';
+create global temporary table temp1 like t1 on commit delete rows;
+-- error 8266
+alter table temp1 affinity = 'table';
+show create table temp1;
+
+# view does not support affinity
+-- error 1347
+alter table v1 affinity = 'table';
+
+# test some DDLs are disallowed for partitioned table with affinity
+drop table if exists tp1;
+create table tp1(a int) affinity = 'partition' partition by range(a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20)
+);
+-- error 8200
+alter table tp1 add partition (PARTITION p2 VALUES LESS THAN (30));
+-- error 8200
+alter table tp1 drop partition p1;
+-- error 8200
+alter table tp1 reorganize partition p0, p1 into (PARTITION p01 VALUES LESS THAN (20));
+-- error 8200
+alter table tp1 remove partitioning;
+-- error 8200
+alter table tp1 coalesce partition 1;
+drop table if exists t1;
+create table t1(a int) affinity = 'table';
+-- error 8200
+alter table t1 partition by hash(a) partitions 4;
+show create table tp1;
+show create table t1;
+
+## test exchange partition not allowed if one table has affinity
+drop table if exists t1, tp1;
+create table tp1(a int) affinity = 'partition' partition by range(a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20)
+);
+create table t1(a int);
+-- error 8200
+alter table tp1 exchange partition p0 with table t1;
+alter table tp1 affinity = '';
+alter table t1 affinity = 'table';
+-- error 8200
+alter table tp1 exchange partition p0 with table t1;
+
+# clear
+drop table if exists t1, t2, t3, t4, tp1, tp2, tp3, v1, temp1;

@@ -313,6 +313,7 @@ import (
 	action                     "ACTION"
 	addColumnarReplicaOnDemand "ADD_COLUMNAR_REPLICA_ON_DEMAND"
 	advise                     "ADVISE"
+	affinity                    "AFFINITY"
 	after                      "AFTER"
 	against                    "AGAINST"
 	ago                        "AGO"
@@ -323,6 +324,7 @@ import (
 	ascii                      "ASCII"
 	attribute                  "ATTRIBUTE"
 	attributes                 "ATTRIBUTES"
+	autoextendSize             "AUTOEXTEND_SIZE"
 	autoIdCache                "AUTO_ID_CACHE"
 	autoIncrement              "AUTO_INCREMENT"
 	autoRandom                 "AUTO_RANDOM"
@@ -456,6 +458,7 @@ import (
 	hour                       "HOUR"
 	hypo                       "HYPO"
 	identified                 "IDENTIFIED"
+	ietfQuotes                 "IETF_QUOTES"
 	ignoreStats                "IGNORE_STATS"
 	importKwd                  "IMPORT"
 	imports                    "IMPORTS"
@@ -533,6 +536,9 @@ import (
 	optional                   "OPTIONAL"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
+	pageChecksum               "PAGE_CHECKSUM"
+	pageCompressed             "PAGE_COMPRESSED"
+	pageCompressionLevel       "PAGE_COMPRESSION_LEVEL"
 	parser                     "PARSER"
 	partial                    "PARTIAL"
 	partitioning               "PARTITIONING"
@@ -669,6 +675,7 @@ import (
 	trace                      "TRACE"
 	traditional                "TRADITIONAL"
 	transaction                "TRANSACTION"
+	transactional              "TRANSACTIONAL"
 	triggers                   "TRIGGERS"
 	truncate                   "TRUNCATE"
 	tsoType                    "TSO"
@@ -6974,6 +6981,7 @@ UnReservedKeyword:
 |	"STATS_COL_LIST"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
+|   "AFFINITY"
 |	"AFTER"
 |	"ALWAYS"
 |	"AVG"
@@ -7349,6 +7357,12 @@ UnReservedKeyword:
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEYFILE"
+|	"AUTOEXTEND_SIZE"
+|	"PAGE_CHECKSUM"
+|	"PAGE_COMPRESSED"
+|	"PAGE_COMPRESSION_LEVEL"
+|	"TRANSACTIONAL"
+|	"IETF_QUOTES"
 
 TiDBKeyword:
 	"ADMIN"
@@ -12862,6 +12876,8 @@ TableOption:
 |	"PASSWORD" EqOpt stringLit
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3}
+		yylex.AppendError(yylex.Errorf("The PASSWORD option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 |	"COMPRESSION" EqOpt stringLit
 	{
@@ -12992,6 +13008,8 @@ TableOption:
 	{
 		// Parse it but will ignore it
 		$$ = &ast.TableOption{Tp: ast.TableOptionEncryption, StrValue: $3}
+		yylex.AppendError(yylex.Errorf("The ENCRYPTION option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 |	"TTL" EqOpt Identifier '+' "INTERVAL" Literal TimeUnit
 	{
@@ -13022,6 +13040,62 @@ TableOption:
 			return 1
 		}
 		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
+	}
+|	"AUTOEXTEND_SIZE" EqOpt StringName
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionAutoextendSize, StrValue: $3}
+		yylex.AppendError(yylex.Errorf("The AUTOEXTEND_SIZE option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"AFFINITY" EqOpt StringName
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionAffinity, StrValue: $3}
+	}
+/* MariaDB specific options
+ * - https://mariadb.com/docs/server/reference/sql-statements/data-definition/create/create-table
+ */
+|	"PAGE_CHECKSUM" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionPageChecksum, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The PAGE_CHECKSUM option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"PAGE_COMPRESSED" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionPageCompressed, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The PAGE_COMPRESSED option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"PAGE_COMPRESSION_LEVEL" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionPageCompressionLevel, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The PAGE_COMPRESSION_LEVEL option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"TRANSACTIONAL" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionTransactional, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The TRANSACTIONAL option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+|	"SEQUENCE" EqOpt LengthNum
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionSequence, UintValue: $3.(uint64)}
+		yylex.AppendError(yylex.Errorf("The SEQUENCE option is parsed but ignored by all storage engines. Use CREATE SEQUENCE instead."))
+		parser.lastErrorAsWarn()
+	}
+|	"IETF_QUOTES" EqOpt StringName
+	{
+		// Parse it but will ignore it
+		$$ = &ast.TableOption{Tp: ast.TableOptionIetfQuotes, StrValue: $3}
+		yylex.AppendError(yylex.Errorf("The IETF_QUOTES option is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
 	}
 
 ForceOpt:

@@ -99,6 +99,39 @@ insert into test_log_db_rename_2.t_renames_b values (2);
 insert into test_log_db_rename_1.t_renames_c values (3);
 rename table test_log_db_rename_1.t_renames_a to test_log_db_rename_2.t_renames_aa, test_log_db_rename_2.t_renames_b to test_log_db_rename_1.t_renames_a, test_log_db_rename_1.t_renames_c to test_log_db_rename_2.t_renames_c;
 
+-- ActionRenameTable back
+SET GLOBAL tidb_enable_foreign_key = ON;
+rename table test_snapshot_db_rename_3.t_child_filtered_in to test_snapshot_db_rename_4.t_child_filtered_in;
+rename table test_snapshot_db_rename_3.t_child_filtered_out to filtered_out_test_snapshot_db_rename.t_child_filtered_out;
+rename table test_snapshot_db_rename_4.t_child_filtered_in to test_snapshot_db_rename_3.t_child_filtered_in;
+rename table filtered_out_test_snapshot_db_rename.t_child_filtered_out to test_snapshot_db_rename_3.t_child_filtered_out;
+rename table test_snapshot_db_rename_3.t_parts_filtered_in to test_snapshot_db_rename_4.t_parts_filtered_in;
+rename table test_snapshot_db_rename_3.t_parts_filtered_out to filtered_out_test_snapshot_db_rename.t_parts_filtered_out;
+rename table test_snapshot_db_rename_4.t_parts_filtered_in to test_snapshot_db_rename_3.t_parts_filtered_in;
+rename table filtered_out_test_snapshot_db_rename.t_parts_filtered_out to test_snapshot_db_rename_3.t_parts_filtered_out;
+create database test_log_db_rename_3;
+create database test_log_db_rename_4;
+create database filtered_out_test_log_db_rename;
+create table test_log_db_rename_3.t_parent (id int primary key, name varchar(50));
+create table test_log_db_rename_3.t_child_filtered_in (id int primary key, parent_id int, constraint fk_preserve_child foreign key (parent_id) references test_log_db_rename_3.t_parent(id));
+create table test_log_db_rename_3.t_child_filtered_out (id int primary key, parent_id int, constraint fk_preserve_child foreign key (parent_id) references test_log_db_rename_3.t_parent(id));
+create table test_log_db_rename_3.t_parts_filtered_in (id int primary key, name_id int) partition by range (id) (partition p0 values less than (100), partition p1 values less than (1000));
+create table test_log_db_rename_3.t_parts_filtered_out (id int primary key, name_id int) partition by range (id) (partition p0 values less than (100), partition p1 values less than (1000));
+insert into test_log_db_rename_3.t_parent values (10, 'aa'), (20, 'bb');
+insert into test_log_db_rename_3.t_child_filtered_in values (10, 10), (20, 20);
+insert into test_log_db_rename_3.t_child_filtered_out values (10, 10), (20, 20);
+insert into test_log_db_rename_3.t_parts_filtered_in values (10, 10), (210, 210);
+insert into test_log_db_rename_3.t_parts_filtered_out values (10, 10), (210, 210);
+rename table test_log_db_rename_3.t_child_filtered_in to test_log_db_rename_4.t_child_filtered_in;
+rename table test_log_db_rename_3.t_child_filtered_out to filtered_out_test_log_db_rename.t_child_filtered_out;
+rename table test_log_db_rename_4.t_child_filtered_in to test_log_db_rename_3.t_child_filtered_in;
+rename table filtered_out_test_log_db_rename.t_child_filtered_out to test_log_db_rename_3.t_child_filtered_out;
+rename table test_log_db_rename_3.t_parts_filtered_in to test_log_db_rename_4.t_parts_filtered_in;
+rename table test_log_db_rename_3.t_parts_filtered_out to filtered_out_test_log_db_rename.t_parts_filtered_out;
+rename table test_log_db_rename_4.t_parts_filtered_in to test_log_db_rename_3.t_parts_filtered_in;
+rename table filtered_out_test_log_db_rename.t_parts_filtered_out to test_log_db_rename_3.t_parts_filtered_out;
+SET GLOBAL tidb_enable_foreign_key = OFF;
+
 -- ActionSetDefaultValue
 alter table test_snapshot_db_create.t_set_default alter column status set default 'active';
 create table test_log_db_create.t_set_default (id int, status varchar(20));
@@ -256,6 +289,20 @@ insert into test_log_db_exchange_partition_1.t_exchange_partition (id) values (1
 create table test_log_db_exchange_partition_2.t_non_partitioned_table (id int);
 insert into test_log_db_exchange_partition_2.t_non_partitioned_table (id) values (115);
 alter table test_log_db_exchange_partition_1.t_exchange_partition exchange partition p_to_be_exchanged with table test_log_db_exchange_partition_2.t_non_partitioned_table;
+
+-- ActionExchangeTablePartition back
+alter table test_snapshot_db_exchange_partition_3.t_exchange_partition exchange partition p_to_be_exchanged with table test_snapshot_db_exchange_partition_3.t_non_partitioned_table;
+alter table test_snapshot_db_exchange_partition_3.t_exchange_partition exchange partition p_to_be_exchanged with table test_snapshot_db_exchange_partition_3.t_non_partitioned_table;
+create database test_log_db_exchange_partition_3;
+create table test_log_db_exchange_partition_3.t_exchange_partition (id int) partition by range (id) (
+    partition p0 values less than (100),
+    partition p_to_be_exchanged values less than (200)
+);
+insert into test_log_db_exchange_partition_3.t_exchange_partition (id) values (105);
+create table test_log_db_exchange_partition_3.t_non_partitioned_table (id int);
+insert into test_log_db_exchange_partition_3.t_non_partitioned_table (id) values (115);
+alter table test_log_db_exchange_partition_3.t_exchange_partition exchange partition p_to_be_exchanged with table test_log_db_exchange_partition_3.t_non_partitioned_table;
+alter table test_log_db_exchange_partition_3.t_exchange_partition exchange partition p_to_be_exchanged with table test_log_db_exchange_partition_3.t_non_partitioned_table;
 
 -- ActionAlterTableAttributes
 alter table test_snapshot_db_create.t_alter_table_attributes attributes "merge_option=allow";

@@ -3852,6 +3852,22 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(vardef.GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
+	{
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:  vardef.TiDBIndexLookUpPushDownPolicy,
+		Value: vardef.DefTiDBIndexLookUpPushDownPolicy,
+		Type:  vardef.TypeEnum,
+		PossibleValues: []string{
+			vardef.IndexLookUpPushDownPolicyHintOnly,
+			vardef.IndexLookUpPushDownPolicyAffinityForce,
+			vardef.IndexLookUpPushDownPolicyForce,
+		},
+		IsHintUpdatableVerified: true,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IndexLookUpPushDownPolicy = s
+			return nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

@@ -299,7 +299,6 @@ func (b *WriterBuilder) Build(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		memSizeLimit:   b.memSizeLimit,
 		store:          store,
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
@@ -433,8 +432,6 @@ type Writer struct {
 	rnd            *rand.Rand
 
 	rc *rangePropertiesCollector
-
-	memSizeLimit uint64
 
 	kvBuffer    *membuf.Buffer
 	kvLocations []membuf.SliceLocation

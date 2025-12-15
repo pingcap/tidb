@@ -386,6 +386,16 @@ func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string
 			// It's also possible to be index range scan if the index has condition.
 			// TODO: if the planner eliminates the range in the index scan, we can remove the `IndexRangeScan` check.
 			isIndexScan = true
+		} else if strings.Contains(op, "PointGet") || strings.Contains(op, "BatchPointGet") {
+			if row.Len() > 3 {
+				accessObject := row.GetString(3)
+				// accessObject is a normalized string with components separated by ", ".
+				// Match ", index:" to identify non-clustered index paths and avoid
+				// treating ", clustered index:" (PRIMARY/handle path) as index access.
+				if strings.Contains(accessObject, ", index:") {
+					isIndexScan = true
+				}
+			}
 		}
 	}
 

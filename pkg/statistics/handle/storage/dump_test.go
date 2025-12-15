@@ -283,7 +283,7 @@ func TestLoadPredicateColumns(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
 	require.NoError(t, h.DumpColStatsUsageToKV())
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t predicate columns")
 
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
