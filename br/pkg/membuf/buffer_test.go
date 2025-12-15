@@ -256,7 +256,7 @@ func BenchmarkSortLocation(b *testing.B) {
 				rnd.Read(buf)
 			}
 			slices.SortFunc(data, func(a, b SliceLocation) int {
-				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
+				return bytes.Compare(bytesBuf.GetSlice(&a), bytesBuf.GetSlice(&b))
 			})
 		}()
 	}
@@ -305,7 +305,7 @@ func BenchmarkSortLocationWithGC(b *testing.B) {
 			}
 			runtime.GC()
 			slices.SortFunc(data, func(a, b SliceLocation) int {
-				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
+				return bytes.Compare(bytesBuf.GetSlice(&a), bytesBuf.GetSlice(&b))
 			})
 		}()
 	}

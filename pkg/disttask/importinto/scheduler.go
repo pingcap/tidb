@@ -122,8 +122,9 @@ func (t *taskInfo) close(ctx context.Context) {
 	}
 }
 
-// ImportSchedulerExt is an extension of ImportScheduler, exported for test.
-type ImportSchedulerExt struct {
+type importScheduler struct {
+	*scheduler.BaseScheduler
+
 	GlobalSort bool
 	mu         sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
@@ -142,10 +143,55 @@ type ImportSchedulerExt struct {
 	storeWithPD kv.StorageWithPD
 }
 
-var _ scheduler.Extension = (*ImportSchedulerExt)(nil)
+var _ scheduler.Extension = (*importScheduler)(nil)
+
+// NewImportScheduler creates a new import scheduler.
+func NewImportScheduler(
+	ctx context.Context,
+	task *proto.Task,
+	param scheduler.Param,
+	storeWithPD kv.StorageWithPD,
+) scheduler.Scheduler {
+	metrics := metricsManager.getOrCreateMetrics(task.ID)
+	subCtx := metric.WithCommonMetric(ctx, metrics)
+	sch := &importScheduler{
+		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
+		storeWithPD:   storeWithPD,
+	}
+	return sch
+}
+
+// NewImportSchedulerForTest creates a new import scheduler for test.
+func NewImportSchedulerForTest(globalSort bool) scheduler.Scheduler {
+	return &importScheduler{
+		GlobalSort: globalSort,
+	}
+}
+
+func (sch *importScheduler) Init() (err error) {
+	defer func() {
+		if err != nil {
+			// if init failed, close is not called, so we need to unregister here.
+			metricsManager.unregister(sch.GetTask().ID)
+		}
+	}()
+	taskMeta := &TaskMeta{}
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
+		return errors.Annotate(err, "unmarshal task meta failed")
+	}
+
+	sch.GlobalSort = taskMeta.Plan.CloudStorageURI != ""
+	sch.BaseScheduler.Extension = sch
+	return sch.BaseScheduler.Init()
+}
+
+func (sch *importScheduler) Close() {
+	metricsManager.unregister(sch.GetTask().ID)
+	sch.BaseScheduler.Close()
+}
 
 // OnTick implements scheduler.Extension interface.
-func (sch *ImportSchedulerExt) OnTick(ctx context.Context, task *proto.Task) {
+func (sch *importScheduler) OnTick(ctx context.Context, task *proto.Task) {
 	// only switch TiKV mode or register task when task is running
 	if task.State != proto.TaskStateRunning {
 		return
@@ -154,11 +200,11 @@ func (sch *ImportSchedulerExt) OnTick(ctx context.Context, task *proto.Task) {
 	sch.registerTask(ctx, task)
 }
 
-func (*ImportSchedulerExt) isImporting2TiKV(task *proto.Task) bool {
+func (*importScheduler) isImporting2TiKV(task *proto.Task) bool {
 	return task.Step == proto.ImportStepImport || task.Step == proto.ImportStepWriteAndIngest
 }
 
-func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.Task) {
+func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task) {
 	sch.updateCurrentTask(task)
 	// only import step need to switch to IMPORT mode,
 	// If TiKV is in IMPORT mode during checksum, coprocessor will time out.
@@ -194,13 +240,13 @@ func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.T
 	sch.lastSwitchTime.Store(time.Now())
 }
 
-func (sch *ImportSchedulerExt) registerTask(ctx context.Context, task *proto.Task) {
+func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
 	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{taskID: task.ID})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
 
-func (sch *ImportSchedulerExt) unregisterTask(ctx context.Context, task *proto.Task) {
+func (sch *importScheduler) unregisterTask(ctx context.Context, task *proto.Task) {
 	if val, loaded := sch.taskInfoMap.LoadAndDelete(task.ID); loaded {
 		info := val.(*taskInfo)
 		info.close(ctx)
@@ -208,7 +254,7 @@ func (sch *ImportSchedulerExt) unregisterTask(ctx context.Context, task *proto.T
 }
 
 // OnNextSubtasksBatch generate batch of next stage's plan.
-func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
+func (sch *importScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle storage.TaskHandle,
 	task *proto.Task,
@@ -267,6 +313,25 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
+	case proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution:
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		if err != nil {
+			return nil, err
+		}
+		mergeSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepMergeSort)
+		if err != nil {
+			return nil, err
+		}
+		ingestMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepWriteAndIngest)
+		if err != nil {
+			return nil, err
+		}
+		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
+		previousSubtaskMetas[proto.ImportStepWriteAndIngest] = ingestMetas
+		if err = job2Step(ctx, logger, taskMeta, importer.JobStepResolvingConflicts); err != nil {
+			return nil, err
+		}
 	case proto.ImportStepPostProcess:
 		sch.switchTiKV2NormalMode(ctx, task, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
@@ -287,7 +352,12 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
+		conflictResMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepCollectConflicts)
+		if err != nil {
+			return nil, err
+		}
 		previousSubtaskMetas[step] = metas
+		previousSubtaskMetas[proto.ImportStepCollectConflicts] = conflictResMetas
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
 	case proto.StepDone:
 		return nil, nil
@@ -322,7 +392,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 }
 
 // OnDone implements scheduler.Extension interface.
-func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle storage.TaskHandle, task *proto.Task) error {
+func (sch *importScheduler) OnDone(ctx context.Context, handle storage.TaskHandle, task *proto.Task) error {
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
@@ -344,7 +414,7 @@ func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle storage.TaskHa
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
-func (*ImportSchedulerExt) GetEligibleInstances(_ context.Context, task *proto.Task) ([]string, error) {
+func (*importScheduler) GetEligibleInstances(_ context.Context, task *proto.Task) ([]string, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
@@ -358,12 +428,12 @@ func (*ImportSchedulerExt) GetEligibleInstances(_ context.Context, task *proto.T
 }
 
 // IsRetryableErr implements scheduler.Extension interface.
-func (*ImportSchedulerExt) IsRetryableErr(err error) bool {
+func (*importScheduler) IsRetryableErr(err error) bool {
 	return common.IsRetryableError(err)
 }
 
 // GetNextStep implements scheduler.Extension interface.
-func (sch *ImportSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
+func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		if sch.GlobalSort {
@@ -374,7 +444,11 @@ func (sch *ImportSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
 		return proto.ImportStepMergeSort
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
-	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
+	case proto.ImportStepWriteAndIngest:
+		return proto.ImportStepCollectConflicts
+	case proto.ImportStepCollectConflicts:
+		return proto.ImportStepConflictResolution
+	case proto.ImportStepImport, proto.ImportStepConflictResolution:
 		return proto.ImportStepPostProcess
 	default:
 		// current step must be ImportStepPostProcess
@@ -382,7 +456,7 @@ func (sch *ImportSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
-func (sch *ImportSchedulerExt) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
+func (sch *importScheduler) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
 	sch.updateCurrentTask(task)
 	if sch.disableTiKVImportMode.Load() {
 		return
@@ -410,7 +484,7 @@ func (sch *ImportSchedulerExt) switchTiKV2NormalMode(ctx context.Context, task *
 	sch.lastSwitchTime.Store(time.Time{})
 }
 
-func (sch *ImportSchedulerExt) updateCurrentTask(task *proto.Task) {
+func (sch *importScheduler) updateCurrentTask(task *proto.Task) {
 	if sch.currTaskID.Swap(task.ID) != task.ID {
 		taskMeta := &TaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
@@ -420,49 +494,9 @@ func (sch *ImportSchedulerExt) updateCurrentTask(task *proto.Task) {
 	}
 }
 
-type importScheduler struct {
-	*scheduler.BaseScheduler
-	storeWithPD kv.StorageWithPD
-}
-
-// NewImportScheduler creates a new import scheduler.
-func NewImportScheduler(
-	ctx context.Context,
-	task *proto.Task,
-	param scheduler.Param,
-	storeWithPD kv.StorageWithPD,
-) scheduler.Scheduler {
-	metrics := metricsManager.getOrCreateMetrics(task.ID)
-	subCtx := metric.WithCommonMetric(ctx, metrics)
-	sch := importScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
-		storeWithPD:   storeWithPD,
-	}
-	return &sch
-}
-
-func (sch *importScheduler) Init() (err error) {
-	defer func() {
-		if err != nil {
-			// if init failed, close is not called, so we need to unregister here.
-			metricsManager.unregister(sch.GetTask().ID)
-		}
-	}()
-	taskMeta := &TaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
-		return errors.Annotate(err, "unmarshal task meta failed")
-	}
-
-	sch.BaseScheduler.Extension = &ImportSchedulerExt{
-		GlobalSort:  taskMeta.Plan.CloudStorageURI != "",
-		storeWithPD: sch.storeWithPD,
-	}
-	return sch.BaseScheduler.Init()
-}
-
-func (sch *importScheduler) Close() {
-	metricsManager.unregister(sch.GetTask().ID)
-	sch.BaseScheduler.Close()
+// ModifyMeta implements scheduler.Extension interface.
+func (*importScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
+	return oldMeta, nil
 }
 
 // nolint:deadcode
@@ -582,7 +616,7 @@ func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMet
 	}
 
 	if globalSort {
-		taskMeta.Result.LoadedRowCnt, err = getLoadedRowCountOnGlobalSort(handle, task)
+		taskMeta.Result.LoadedRowCnt, taskMeta.Result.ConflictedRowCnt, err = getLoadedRowCountOnGlobalSort(handle, task)
 		if err != nil {
 			return err
 		}
@@ -591,21 +625,40 @@ func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMet
 	return updateMeta(task, taskMeta)
 }
 
-func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) (uint64, error) {
+func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) (
+	loadedRowCount, conflictRowCount uint64, err error) {
 	metas, err := handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepWriteAndIngest)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
-	var loadedRowCount uint64
 	for _, bs := range metas {
 		var subtaskMeta WriteIngestStepMeta
 		if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return 0, errors.Trace(err)
+			return 0, 0, errors.Trace(err)
 		}
 		loadedRowCount += subtaskMeta.Result.LoadedRowCnt
 	}
-	return loadedRowCount, nil
+	metas, err = handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepCollectConflicts)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, bs := range metas {
+		var subtaskMeta CollectConflictsStepMeta
+		if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+		if subtaskMeta.TooManyConflictsFromIndex {
+			// in this case, we can't get the exact conflicted row count, so we
+			// keep the original.
+			continue
+		}
+		// 'left row count' = 'ingested data KV count' - 'conflicted row count due to index conflict only'
+		//                  = 'ingested data KV count' - ('total conflicted row count' - 'recorded data KV conflicts')
+		loadedRowCount -= uint64(subtaskMeta.ConflictedRowCount) - uint64(subtaskMeta.RecordedDataKVConflicts)
+		conflictRowCount += uint64(subtaskMeta.ConflictedRowCount)
+	}
+	return loadedRowCount, conflictRowCount, nil
 }
 
 func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
@@ -646,11 +699,14 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	)
 }
 
-func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger,
+func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	taskHandle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
 	// we have already switch import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
-	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
+	summary := &importer.JobSummary{
+		ImportedRows:   taskMeta.Result.LoadedRowCnt,
+		ConflictedRows: taskMeta.Result.ConflictedRowCnt,
+	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
@@ -668,7 +724,7 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 	)
 }
 
-func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
+func (sch *importScheduler) failJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
@@ -684,7 +740,7 @@ func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle storage.T
 	)
 }
 
-func (sch *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
+func (sch *importScheduler) cancelJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	meta *TaskMeta, logger *zap.Logger) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)

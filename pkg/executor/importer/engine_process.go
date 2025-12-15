@@ -76,7 +76,7 @@ func ProcessChunkWithWriter(
 	logger *zap.Logger,
 	groupChecksum *verification.KVGroupChecksum,
 ) error {
-	encoder, err := tableImporter.getKVEncoder(chunk)
+	encoder, err := tableImporter.GetKVEncoder(chunk)
 	if err != nil {
 		return err
 	}

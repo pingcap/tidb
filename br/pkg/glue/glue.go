@@ -60,6 +60,8 @@ type Session interface {
 	Close()
 	GetGlobalVariable(name string) (string, error)
 	GetSessionCtx() sessionctx.Context
+	AlterTableMode(ctx context.Context, schemaID int64, tableID int64, tableMode model.TableMode) error
+	RefreshMeta(ctx context.Context, args *model.RefreshMetaArgs) error
 }
 
 // BatchCreateTableSession is an interface to batch create table parallelly
@@ -81,4 +83,18 @@ type Progress interface {
 	// Close marks the progress as 100% complete and that Inc() can no longer be
 	// called.
 	Close()
+}
+
+// WithProgress execute some logic with the progress, and close it once the execution done.
+func WithProgress(
+	ctx context.Context,
+	g Glue,
+	cmdName string,
+	total int64,
+	redirectLog bool,
+	cc func(p Progress) error,
+) error {
+	p := g.StartProgress(ctx, cmdName, total, redirectLog)
+	defer p.Close()
+	return cc(p)
 }

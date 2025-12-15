@@ -309,6 +309,7 @@ type StatementContext struct {
 	// hint /* +ResourceGroup(name) */ can change the statement group name
 	ResourceGroupName   string
 	RunawayChecker      resourcegroup.RunawayChecker
+	IsTiKV              atomic2.Bool
 	IsTiFlash           atomic2.Bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
