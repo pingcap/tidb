@@ -61,6 +61,14 @@ func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
 }
 
+func isIntegerChange(from, to *model.ColumnInfo) bool {
+	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
+}
+
+func isCharChange(from, to *model.ColumnInfo) bool {
+	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
+}
+
 // getModifyColumnType gets the modify column type.
 //  1. ModifyTypeNoReorg: The range of new type is a superset of the old type
 //  2. ModifyTypeNoReorgWithCheck: The range of new type is a subset of the old type, but we are running in strict SQL mode.
@@ -98,10 +106,8 @@ func getModifyColumnType(
 	}
 
 	// FIXME(joechenrh): remove this when resolve stats problem.
-	if (types.IsIntegerChange(&oldCol.FieldType, &args.Column.FieldType) &&
-		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
-		(types.IsCharChange(&oldCol.FieldType, &args.Column.FieldType) &&
-			!collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
+	if (isIntegerChange(oldCol, args.Column) && mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
+		(isCharChange(oldCol, args.Column) && !collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
 		return model.ModifyTypeReorg
 	}
 
@@ -755,11 +761,11 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 
 func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 	// Signed/unsigned change for integer types need index reorg.
-	if mysql.IsIntegerType(oldCol.GetType()) && mysql.IsIntegerType(changingCol.GetType()) {
+	if isIntegerChange(oldCol, changingCol) {
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
 
-	intest.Assert(types.IsCharChange(&oldCol.FieldType, &changingCol.FieldType))
+	intest.Assert(isCharChange(oldCol, changingCol))
 
 	// Check index key part, ref tablecodec.GenIndexKey
 	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
@@ -779,24 +785,21 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 		}
 	})
 
-	oldFt := &oldCol.FieldType
-	changingFt := &changingCol.FieldType
-
 	// Integer are guaranteed to not need row reorg.
-	if types.IsIntegerChange(oldFt, changingFt) {
+	if isIntegerChange(oldCol, changingCol) {
 		return false
 	}
 
 	// Other changes except char changes need row reorg.
-	if !types.IsCharChange(oldFt, changingFt) {
+	if !isCharChange(oldCol, changingCol) {
 		return true
 	}
 
 	// We have checked charset before, so only need to check binary string here.
-	if types.IsBinaryStr(oldFt) && types.IsBinaryStr(changingFt) {
+	if types.IsBinaryStr(&oldCol.FieldType) && types.IsBinaryStr(&changingCol.FieldType) {
 		return oldCol.GetFlen() != changingCol.GetFlen()
 	}
-	return types.IsBinaryStr(oldFt) || types.IsBinaryStr(changingFt)
+	return types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType)
 }
 
 // checkModifyColumnData checks the values of the old column data

@@ -1468,16 +1468,6 @@ func SetBinChsClnFlag(ft *FieldType) {
 // VarStorageLen indicates this column is a variable length column.
 const VarStorageLen = ast.VarStorageLen
 
-// IsIntegerChange checks whether it's a change between two integer types.
-func IsIntegerChange(from, to *FieldType) bool {
-	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
-}
-
-// IsCharChange checks whether it's a change between CHAR/VARCHAR.
-func IsCharChange(from, to *FieldType) bool {
-	return IsTypeChar(from.GetType()) && IsTypeChar(to.GetType())
-}
-
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible and can be changed.
 // If types are compatible and can be directly changed, nil err will be returned; otherwise the types are incompatible.
 // There are two cases when types incompatible:
