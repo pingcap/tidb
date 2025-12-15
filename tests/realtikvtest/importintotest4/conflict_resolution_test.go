@@ -17,12 +17,14 @@ package importintotest
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/disttask/importinto/conflictedkv"
@@ -96,7 +98,11 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 		testutils.RemoveAllObjects(s.T(), s.server, "sorted")
 	})
 
-	s.prepareAndUseDB("conflicts")
+	// most test use the table name 't', if some task failed, we switch its table
+	// mode at cleanup stage, but we mostly won't wait for cleanup, so the t might
+	// still in Import mode and cause case flaky, so we use a random schema name
+	// here.
+	s.prepareAndUseDB(fmt.Sprintf("conflicts%d", rand.Int()))
 	s.tk.MustExec(tblSQL)
 
 	sortStorageURI := fmt.Sprintf("gs://sorted?endpoint=%s", gcsEndpoint)
@@ -137,6 +143,9 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("nextgen need more work to support conflict resolution")
+	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -440,6 +449,9 @@ abc,10,11,11,11,11
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("nextgen need more work to support conflict resolution")
+	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -562,6 +574,9 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("nextgen need more work to support conflict resolution")
+	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -603,6 +618,9 @@ func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("nextgen need more work to support conflict resolution")
+	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -640,6 +658,9 @@ func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictedRowsExceedMaxFileSize() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("nextgen need more work to support conflict resolution")
+	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceHandleConflictsBySingleThread", "return(true)")
@@ -678,12 +699,15 @@ func (s *mockGCSSuite) TestGlobalSortConflictedRowsExceedMaxFileSize() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("nextgen need more work to support conflict resolution")
+	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceHandleConflictsBySingleThread", "return(true)")
 	var fpEntered atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/conflictedkv/trySaveHandledRowFromIndex", func(limitP *int64) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/conflictedkv/mockHandleSetSizeLimit", func(limitP *int64) {
 		*limitP = 0
 		fpEntered.CompareAndSwap(0, 1)
 	})
