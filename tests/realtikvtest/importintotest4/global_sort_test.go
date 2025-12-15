@@ -502,7 +502,7 @@ func TestNextGenMetering(t *testing.T) {
 	s.EqualValues(6, sum.GetReqCnt.Load())
 	s.EqualValues(0, sum.PutReqCnt.Load())
 
-	require.Eventually(t, func() bool {
+	s.Eventually(func() bool {
 		items := *rowAndSizeMeterItems.Load()
 		return items != nil && items[metering.RowCountField].(int64) == 3 &&
 			items[metering.DataKVBytesField].(int64) == 114 && items[metering.IndexKVBytesField].(int64) == 174 &&
