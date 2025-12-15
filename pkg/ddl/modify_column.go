@@ -104,7 +104,7 @@ func getModifyColumnType(
 
 	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
-			failpoint.Return(true)
+			failpoint.Return(model.ModifyTypeReorg)
 		}
 	})
 
