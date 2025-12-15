@@ -5905,14 +5905,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
 	localResolveCtx := resolve.NewContext()
-	var tablesToDelete []*ast.TableName
 	// Collect visitInfo.
 	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
 		updatableList := make(map[string]bool)
 		tbInfoList := make(map[string]*ast.TableName)
 		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
-		tablesToDelete = ds.Tables.Tables
 		for _, tn := range ds.Tables.Tables {
 			var canUpdate, foundMatch = false, false
 			name := tn.Name.L
@@ -5958,8 +5956,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	} else {
 		// Delete from a, b, c, d.
 		nodeW := resolve.NewNodeWWithCtx(ds.TableRefs.TableRefs, b.resolveCtx)
-		tablesToDelete = ExtractTableList(nodeW, false)
-		for _, v := range tablesToDelete {
+		tableList = ExtractTableList(nodeW, false)
+		for _, v := range tableList {
 			tblW := b.resolveCtx.GetTableName(v)
 			if isCTE(tblW) {
 				return nil, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
