@@ -327,7 +327,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-	require.Equal(t, 400, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 392, int(unsafe.Sizeof(Job{})), msg)
 	require.Equal(t, 144, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
