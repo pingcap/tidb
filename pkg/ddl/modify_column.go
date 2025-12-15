@@ -247,7 +247,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
 		// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
 		// we must check the type again here as utf8mb4->utf8 is an invalid change.
-		if err = checkModifyTypes(oldCol, args.Column); err != nil {
+		if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -1660,7 +1660,7 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(col.ColumnInfo, newCol.ColumnInfo); err != nil {
+	if err = checkModifyTypes(col.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		return nil, errors.Trace(err)
 	}
 	mayNeedChangeColData := !noReorgDataStrict(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
@@ -1789,8 +1789,6 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || (toUnsigned != originUnsigned)
 	}
 
-	incompatibleCollation := !collate.CompatibleCollate(oldCol.GetCollate(), newCol.GetCollate())
-
 	// Deal with the same type.
 	if oldCol.GetType() == newCol.GetType() {
 		switch oldCol.GetType() {
@@ -1811,7 +1809,7 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 			return !(newCol.GetFlen() != types.UnspecifiedLength && oldCol.GetFlen() != newCol.GetFlen())
 		}
 
-		return !needTruncationOrToggleSign() && !incompatibleCollation
+		return !needTruncationOrToggleSign()
 	}
 
 	oldTp := oldCol.GetType()
@@ -1823,7 +1821,8 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 	// CHAR->VARCHAR
 	if oldTp == mysql.TypeString && types.IsTypeVarchar(newTp) {
 		// If there are related index, the index may need reorg.
-		if len(getRelatedIndexIDs(tblInfo, oldCol.ID, false)) > 0 {
+		relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
+		if len(relatedIndexes) > 0 {
 			return false
 		}
 	}
@@ -1833,7 +1832,7 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch newCol.GetType() {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return !needTruncationOrToggleSign() && !incompatibleCollation
+			return !needTruncationOrToggleSign()
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch newCol.GetType() {
@@ -1995,7 +1994,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.I
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
 // or change by reorg. It returns error if the two types are incompatible and correlated change are not
 // supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
-func checkModifyTypes(from, to *model.ColumnInfo) error {
+func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool) error {
 	fromFt := &from.FieldType
 	toFt := &to.FieldType
 	canReorg, err := types.CheckModifyTypeCompatible(fromFt, toFt)
@@ -2009,37 +2008,23 @@ func checkModifyTypes(from, to *model.ColumnInfo) error {
 		}
 	}
 
-	toCharset := toFt.GetCharset()
-	toCollate := toFt.GetCollate()
-	origCharset := fromFt.GetCharset()
-	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
-		return dbterror.ErrUnknownCharacterSet.GenWithStack(
-			"Unknown character set: '%s', collation: '%s'", toCharset, toCollate)
-	}
+	err = checkModifyCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate(), fromFt.GetCharset(), fromFt.GetCollate(), needRewriteCollationData)
 
-	// Here we just check the charset.
-	if origCharset == toCharset ||
-		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
-		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
-		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
-		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4) {
-		// TiDB only allow utf8/latin1 to be changed to utf8mb4, or changing the collation when the charset is utf8/utf8mb4/latin1.
-		return nil
-	}
+	if err != nil {
+		if toFt.GetCharset() == charset.CharsetGBK || fromFt.GetCharset() == charset.CharsetGBK {
+			return errors.Trace(err)
+		}
+		if strings.Contains(err.Error(), "Unsupported modifying collation") {
+			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
+			err = dbterror.ErrUnsupportedModifyCollation.GenWithStack(colErrMsg, from.Name.L, from.GetCollate(), to.GetCollate())
+		}
 
-	// TODO(joechenrh): I don't know why we disallow GBK charset modification here.
-	if origCharset == charset.CharsetGBK || toCharset == charset.CharsetGBK {
-		msg := fmt.Sprintf("charset from %s to %s", origCharset, toCharset)
-		return dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs(msg)
+		// column type change can handle the charset change between these two types in the process of the reorg.
+		if dbterror.ErrUnsupportedModifyCharset.Equal(err) && canReorg {
+			return nil
+		}
 	}
-
-	// column type change can handle the charset change between these two types in the process of the reorg.
-	if canReorg {
-		return nil
-	}
-
-	return dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs(
-		fmt.Sprintf("charset from %s to %s", origCharset, toCharset))
+	return errors.Trace(err)
 }
 
 // ProcessModifyColumnOptions process column options.

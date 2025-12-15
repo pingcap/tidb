@@ -1484,26 +1484,23 @@ func IsCharChange(from, to *FieldType) bool {
 // 1. returned canReorg == true: types can be changed by reorg
 // 2. returned canReorg == false: type change not supported yet
 func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool, err error) {
-	fromType := origin.GetType()
-	toType := to.GetType()
-
 	// Deal with the same type.
-	if fromType == toType {
-		if fromType == mysql.TypeEnum || fromType == mysql.TypeSet {
-			if len(to.GetElems()) < len(origin.GetElems()) {
-				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", ast.TypeStr(fromType), len(origin.GetElems()))
-				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	if origin.GetType() == to.GetType() {
+		if origin.GetType() == mysql.TypeEnum || origin.GetType() == mysql.TypeSet {
+			typeVar := "set"
+			if origin.GetType() == mysql.TypeEnum {
+				typeVar = "enum"
 			}
 			for index, originElem := range origin.GetElems() {
 				toElem := to.GetElems()[index]
 				if originElem != toElem {
-					msg := fmt.Sprintf("cannot modify %s column value %s to %s", ast.TypeStr(fromType), originElem, toElem)
+					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
 					return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
 		}
 
-		if fromType == mysql.TypeNewDecimal {
+		if origin.GetType() == mysql.TypeNewDecimal {
 			// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
 			// negative values from being stored in the column. Unlike the integer types, the upper range of column values
 			// remains the same.
@@ -1528,7 +1525,7 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 
 	// Check if different type can directly convert and no need to reorg.
 	stringToString := IsString(origin.GetType()) && IsString(to.GetType())
-	integerToInteger := IsIntegerChange(origin, to)
+	integerToInteger := mysql.IsIntegerType(origin.GetType()) && mysql.IsIntegerType(to.GetType())
 	if stringToString || integerToInteger {
 		needReorg, reason := needReorgToChange(origin, to)
 		if !needReorg {
@@ -1545,8 +1542,8 @@ func needReorgToChange(origin *FieldType, to *FieldType) (needReorg bool, reason
 	toFlen := to.GetFlen()
 	originFlen := origin.GetFlen()
 	if mysql.IsIntegerType(to.GetType()) && mysql.IsIntegerType(origin.GetType()) {
-		// For integers, we should ignore the potential display length represented by flen,
-		// and use the default flen of the type instead.
+		// For integers, we should ignore the potential display length represented by flen, using
+		// the default flen of the type.
 		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.GetType())
 		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.GetType())
 	}
