@@ -2007,6 +2007,21 @@ oct("aaaa")	oct("-1.9")	oct("-9999999999999999999999999")	oct("99999999999999999
 select oct(-1.9), oct(1.9), oct(-1), oct(1), oct(-9999999999999999999999999), oct(9999999999999999999999999);
 oct(-1.9)	oct(1.9)	oct(-1)	oct(1)	oct(-9999999999999999999999999)	oct(9999999999999999999999999)
 1777777777777777777777	1	1777777777777777777777	1	1777777777777777777777	1777777777777777777777
+select oct(""), oct(" "), oct(NULL);
+oct("")	oct(" ")	oct(NULL)
+NULL	0	NULL
+drop table if exists t_oct;
+CREATE TABLE t_oct (a VARCHAR(20));
+INSERT INTO t_oct VALUES (''), (' '), (NULL), ('123'), ('abc'), ('0'), ('255');
+SELECT oct(CONCAT(a, '')) FROM t_oct;
+oct(CONCAT(a, ''))
+NULL
+0
+NULL
+173
+0
+0
+377
 select find_in_set("", ""), find_in_set("", ","), find_in_set("中文", "字符串,中文"), find_in_set("b,", "a,b,c,d");
 find_in_set("", "")	find_in_set("", ",")	find_in_set("中文", "字符串,中文")	find_in_set("b,", "a,b,c,d")
 0	1	2	0
@@ -2088,9 +2103,7 @@ format(NULL, 4)	format(12332.2, NULL)
 NULL	NULL
 select format(12332.2, 2,'es_EC');
 format(12332.2, 2,'es_EC')
-12,332.20
-Level	Code	Message
-Warning	1649	Unknown locale: 'es_EC'
+12.332,20
 select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);
 field(1, 2, 1)	field(1, 0, NULL)	field(1, NULL, 2, 1)	field(NULL, 1, 2, NULL)
 2	0	3	0

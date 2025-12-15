@@ -19,7 +19,6 @@ import (
 	"math"
 	"math/bits"
 	"math/rand"
-	"reflect"
 	"time"
 	"unsafe"
 
@@ -400,7 +399,7 @@ var (
 func (c *Column) resize(n, typeSize int, isNull bool) {
 	sizeData := n * typeSize
 	if cap(c.data) >= sizeData {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = sizeData
+		c.data = c.data[:sizeData]
 	} else {
 		c.data = make([]byte, sizeData)
 	}
@@ -413,7 +412,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 	newNulls := false
 	sizeNulls := (n + 7) >> 3
 	if cap(c.nullBitmap) >= sizeNulls {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = sizeNulls
+		c.nullBitmap = c.nullBitmap[:sizeNulls]
 	} else {
 		c.nullBitmap = make([]byte, sizeNulls)
 		newNulls = true
@@ -440,7 +439,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 	}
 
 	if cap(c.elemBuf) >= typeSize {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.elemBuf)).Len = typeSize
+		c.elemBuf = c.elemBuf[:typeSize]
 	} else {
 		c.elemBuf = make([]byte, typeSize)
 	}
@@ -583,60 +582,61 @@ func (c *Column) ReserveEnum(n int) {
 	c.reserve(n, 8)
 }
 
-func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
-	header.Data = (*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Data
-	header.Len = c.length
-	header.Cap = cap(c.data) / typeSize
-}
-
 // Int64s returns an int64 slice stored in this Column.
 func (c *Column) Int64s() []int64 {
-	var res []int64
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeInt64)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*int64)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Uint64s returns a uint64 slice stored in this Column.
 func (c *Column) Uint64s() []uint64 {
-	var res []uint64
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeUint64)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*uint64)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Float32s returns a float32 slice stored in this Column.
 func (c *Column) Float32s() []float32 {
-	var res []float32
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat32)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*float32)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Float64s returns a float64 slice stored in this Column.
 func (c *Column) Float64s() []float64 {
-	var res []float64
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat64)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*float64)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // GoDurations returns a Golang time.Duration slice stored in this Column.
 // Different from the Row.GetDuration method, the argument Fsp is ignored, so the user should handle it outside.
 func (c *Column) GoDurations() []time.Duration {
-	var res []time.Duration
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeGoDuration)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*time.Duration)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Decimals returns a MyDecimal slice stored in this Column.
 func (c *Column) Decimals() []types.MyDecimal {
-	var res []types.MyDecimal
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeMyDecimal)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*types.MyDecimal)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Times returns a Time slice stored in this Column.
 func (c *Column) Times() []types.Time {
-	var res []types.Time
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeTime)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*types.Time)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // GetInt64 returns the int64 in the specific row.
@@ -733,6 +733,14 @@ func (c *Column) GetRaw(rowID int) []byte {
 		data = c.data[c.offsets[rowID]:c.offsets[rowID+1]]
 	}
 	return data
+}
+
+// GetRawLength returns the length of the raw
+func (c *Column) GetRawLength(rowID int) int {
+	if c.isFixed() {
+		return len(c.elemBuf)
+	}
+	return int(c.offsets[rowID+1] - c.offsets[rowID])
 }
 
 // SetRaw sets the raw bytes for the rowIdx-th element.

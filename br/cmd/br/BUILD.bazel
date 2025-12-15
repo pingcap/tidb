@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 go_library(
     name = "br_lib",
     srcs = [
+        "abort.go",
         "backup.go",
         "cmd.go",
         "debug.go",
@@ -64,6 +65,7 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":br_lib"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

@@ -18,24 +18,24 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/docker/go-units"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/tikv/client-go/v2/oracle"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
@@ -512,8 +512,6 @@ func TestTimeBoundedStalenessTxn(t *testing.T) {
 	}
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		tk.MustExec(testcase.sql)
@@ -527,7 +525,6 @@ func TestTimeBoundedStalenessTxn(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }
 
 func TestStalenessTransactionSchemaVer(t *testing.T) {
@@ -1360,7 +1357,7 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 	// issue #31550
 	stmtID1, _, _, err := se.PrepareStmt("select * from t1 as of timestamp @a where id=1")
 	require.NoError(t, err)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -1369,7 +1366,7 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 	// issue #33814
 	stmtID2, _, _, err := se.PrepareStmt("select * from t1 where id=1")
 	require.NoError(t, err)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID2, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 100"))
@@ -1393,8 +1390,8 @@ func TestStalePrepare(t *testing.T) {
 	require.Nil(t, err)
 	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 100000 microsecond order by id asc\"")
 
-	var expected [][]any
-	for i := 0; i < 20; i++ {
+	expected := make([][]any, 0, 20)
+	for i := range 20 {
 		tk.MustExec("insert into t values(?)", i)
 		time.Sleep(200 * time.Millisecond) // sleep 200ms to ensure staleread_ts > commit_ts.
 
@@ -1496,6 +1493,7 @@ func TestStaleReadAllCombinations(t *testing.T) {
 	defer config.RestoreFunc()()
 
 	tk := testkit.NewTestKit(t, store)
+	oracleClient := tk.Session().GetStore().GetOracle()
 
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20160102-15:04:05 -0700"
@@ -1511,20 +1509,24 @@ func TestStaleReadAllCombinations(t *testing.T) {
 
 	// Insert row #1
 	tk.MustExec("insert into t values (1, 10)")
-	time.Sleep(1000 * time.Millisecond)
-	firstTime := time.Now().Add(-500 * time.Millisecond)
-	// Retrieve current TSO from store's Oracle instead of @@tidb_current_ts.
-	externalTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-	if err != nil {
-		t.Fatalf("failed to get TSO: %v", err)
-	}
+	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s for better timing separation
+	ts, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	firstTime := oracle.GetTimeFromTS(ts).Add(-1500 * time.Millisecond)
 
-	time.Sleep(1000 * time.Millisecond)
+	externalTS, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
+	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s
 	// Insert row #2
 	tk.MustExec("insert into t values (2, 20)")
-	row2CreatedTime := time.Now()
-	time.Sleep(1000 * time.Millisecond)
-	secondTime := time.Now().Add(-500 * time.Millisecond)
+	row2CreatedTS, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	row2CreatedTime := oracle.GetTimeFromTS(row2CreatedTS)
+	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s
+	ts, err = oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	secondTime := oracle.GetTimeFromTS(ts).Add(-1500 * time.Millisecond)
 
 	staleReadMethods := []struct {
 		name   string
@@ -1536,8 +1538,13 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		{
 			name: "tidb_read_staleness",
 			setup: func() {
-				row2CreatedElapsed := int(time.Since(row2CreatedTime).Seconds())
-				staleness := row2CreatedElapsed + 1 // The time `now - staleness(second)` is between row1 and row2.
+				ts, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+				require.NoError(t, err)
+				elapsed := oracle.GetTimeFromTS(ts).Sub(row2CreatedTime)
+				row2CreatedElapsed := int(elapsed.Seconds())
+				// Ensure sufficient buffer: with 3s sleep intervals, elapsed should be ~3s
+				// Adding 2s buffer ensures stale read is safely before row2 insertion
+				staleness := row2CreatedElapsed + 2
 				tk.MustExec(fmt.Sprintf("set @@tidb_read_staleness='-%d'", staleness))
 			},
 			query: "select * from t",
@@ -1644,6 +1651,9 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		},
 	}
 
+	tidbReadStalenessMethod := staleReadMethods[0]
+	otherStaleReadMethods := staleReadMethods[1:]
+
 	replicaReadSettings := []string{
 		"leader",
 		"follower",
@@ -1696,30 +1706,45 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		*/
 	}
 
-	// Test all combinations
+	// Run tidb_read_staleness combinations first to minimize elapsed time from setup.
 	for _, label := range labelSettings {
-		t.Run(label.name, func(t *testing.T) {
-			// Update global config with current label setting
+		t.Run(label.name+"/tidb_read_staleness", func(t *testing.T) {
 			conf := *config.GetGlobalConfig()
 			conf.Labels = label.labels
 			config.StoreGlobalConfig(&conf)
 
 			for _, replicaRead := range replicaReadSettings {
 				t.Run(replicaRead, func(t *testing.T) {
-					// Set replica read mode
+					tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
+					method := tidbReadStalenessMethod
+					t.Run(method.name, func(t *testing.T) {
+						defer method.clean()
+						method.setup()
+						result := tk.MustQuery(method.query)
+						result.Check(testkit.Rows(method.expect...))
+					})
+				})
+			}
+		})
+	}
+
+	// Run remaining stale read methods and transaction mode combinations afterwards.
+	for _, label := range labelSettings {
+		t.Run(label.name+"/others", func(t *testing.T) {
+			conf := *config.GetGlobalConfig()
+			conf.Labels = label.labels
+			config.StoreGlobalConfig(&conf)
+
+			for _, replicaRead := range replicaReadSettings {
+				t.Run(replicaRead, func(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
 
-					for _, method := range staleReadMethods {
+					for _, method := range otherStaleReadMethods {
 						t.Run(method.name, func(t *testing.T) {
-							// Setup stale read method
 							defer method.clean()
 							method.setup()
-
-							// Execute query and verify results
 							result := tk.MustQuery(method.query)
 							result.Check(testkit.Rows(method.expect...))
-
-							// Cleanup
 						})
 					}
 

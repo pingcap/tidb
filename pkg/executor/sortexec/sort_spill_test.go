@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
@@ -91,9 +92,9 @@ func (r *resultChecker) getSavedChunksRowNumber() int {
 func (r *resultChecker) initRowPtrs() {
 	r.rowPtrs = make([]chunk.RowPtr, 0, r.getSavedChunksRowNumber())
 	chunkNum := len(r.savedChunks)
-	for chkIdx := 0; chkIdx < chunkNum; chkIdx++ {
+	for chkIdx := range chunkNum {
 		chk := r.savedChunks[chkIdx]
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+		for rowIdx := range chk.NumRows() {
 			r.rowPtrs = append(r.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
@@ -131,7 +132,7 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count i
 
 	for _, chk := range resultChunks {
 		rowNum := chk.NumRows()
-		for i := 0; i < rowNum; i++ {
+		for i := range rowNum {
 			resRow := chk.GetRow(i)
 			res := resRow.ToString(fieldTypes)
 
@@ -161,9 +162,10 @@ func buildDataSource(sortCase *testutil.SortCase, schema *expression.Schema) *te
 func buildSortExec(sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) *sortexec.SortExec {
 	dataSource.PrepareChunks()
 	exe := &sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(sortCase.Ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(sortCase.OrderByIdx)),
-		ExecSchema:   dataSource.Schema(),
+		BaseExecutor:          exec.NewBaseExecutor(sortCase.Ctx, dataSource.Schema(), 0, dataSource),
+		ByItems:               make([]*plannerutil.ByItems, 0, len(sortCase.OrderByIdx)),
+		ExecSchema:            dataSource.Schema(),
+		FileNamePrefixForTest: sortCase.FileNamePrefixForTest,
 	}
 
 	for _, idx := range sortCase.OrderByIdx {
@@ -305,7 +307,7 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 		require.Greater(t, sortPartitionNum, 1)
 
 		// Ensure all partitions are spilled
-		for i := 0; i < sortPartitionNum; i++ {
+		for i := range sortPartitionNum {
 			// The last partition may not be spilled.
 			if i < sortPartitionNum-1 {
 				require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
@@ -346,23 +348,28 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 }
 
 func TestUnparallelSortSpillDisk(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
 
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
 		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
 		multiPartitionCase(t, ctx, sortCase, false)
 		multiPartitionCase(t, ctx, sortCase, true)
 		inMemoryThenSpillCase(t, ctx, sortCase)
 	}
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestFallBackAction(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	hardLimitBytesNum := int64(1000000)
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -375,7 +382,7 @@ func TestFallBackAction(t *testing.T) {
 	ctx.GetSessionVars().MemTracker.Consume(int64(float64(hardLimitBytesNum) * 0.99999))
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
@@ -388,4 +395,5 @@ func TestFallBackAction(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
+	util.CheckNoLeakFiles(t, testFuncName)
 }

@@ -50,8 +50,7 @@ func readAllData(
 	)
 	defer func() {
 		if err != nil {
-			output.keysPerFile = nil
-			output.valuesPerFile = nil
+			output.kvsPerFile = nil
 			for _, b := range output.memKVBuffers {
 				b.Destroy()
 			}
@@ -81,7 +80,7 @@ func readAllData(
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
-	for readIdx := 0; readIdx < readConn; readIdx++ {
+	for readIdx := range readConn {
 		eg.Go(func() error {
 			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
 			output.memKVBuffers[readIdx+readConn] = largeBlockBufPool.NewBuffer()
@@ -142,11 +141,13 @@ func readOneFile(
 
 	ts := time.Now()
 
-	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024)
+	rd, err := NewKVReader(ctx, dataFile, storage, startOffset, 64*1024)
 	if err != nil {
 		return err
 	}
-	defer rd.Close()
+	defer func() {
+		rd.Close()
+	}()
 	if concurrency > 1 {
 		rd.byteReader.enableConcurrentRead(
 			storage,
@@ -161,13 +162,12 @@ func readOneFile(
 		}
 	}
 
-	keys := make([][]byte, 0, 1024)
-	values := make([][]byte, 0, 1024)
+	kvs := make([]KVPair, 0, 1024)
 	size := 0
 	droppedSize := 0
 
 	for {
-		k, v, err := rd.nextKV()
+		k, v, err := rd.NextKV()
 		if err != nil {
 			if goerrors.Is(err, io.EOF) {
 				break
@@ -183,16 +183,59 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		keys = append(keys, smallBlockBuf.AddBytes(k))
-		values = append(values, smallBlockBuf.AddBytes(v))
+		kvs = append(kvs, KVPair{Key: smallBlockBuf.AddBytes(k), Value: smallBlockBuf.AddBytes(v)})
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
-	output.keysPerFile = append(output.keysPerFile, keys)
-	output.valuesPerFile = append(output.valuesPerFile, values)
+	output.kvsPerFile = append(output.kvsPerFile, kvs)
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
+	return nil
+}
+
+// ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
+// to the returned channel, the channel will be closed when finish read.
+func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
+	store storage.ExternalStorage, files []string) chan *KVPair {
+	pairCh := make(chan *KVPair)
+	eg.Go(func() error {
+		defer close(pairCh)
+		for _, file := range files {
+			if err := readOneKVFile2Ch(ctx, store, file, pairCh); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
+	return pairCh
+}
+
+func readOneKVFile2Ch(ctx context.Context, store storage.ExternalStorage, file string, outCh chan *KVPair) error {
+	reader, err := NewKVReader(ctx, file, store, 0, 3*DefaultReadBufferSize)
+	if err != nil {
+		return err
+	}
+	// if we successfully read all data, it's ok to ignore the error of Close
+	//nolint: errcheck
+	defer reader.Close()
+	for {
+		key, val, err := reader.NextKV()
+		if err != nil {
+			if goerrors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- &KVPair{
+			Key:   bytes.Clone(key),
+			Value: bytes.Clone(val),
+		}:
+		}
+	}
 	return nil
 }

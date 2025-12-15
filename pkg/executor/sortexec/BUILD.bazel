@@ -20,7 +20,7 @@ go_library(
     deps = [
         "//pkg/executor/internal/exec",
         "//pkg/expression",
-        "//pkg/planner/core",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/util",
         "//pkg/sessionctx/vardef",
         "//pkg/types",
@@ -40,23 +40,6 @@ go_library(
 )
 
 go_test(
-    name = "sort_exec_test",
-    timeout = "short",
-    srcs = ["sort_test.go"],
-    flaky = True,
-    shard_count = 18,
-    deps = [
-        "//pkg/config",
-        "//pkg/sessionctx/vardef",
-        "//pkg/sessionctx/variable",
-        "//pkg/testkit",
-        "//pkg/util",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-    ],
-)
-
-go_test(
     name = "sortexec_test",
     timeout = "short",
     srcs = [
@@ -70,20 +53,22 @@ go_test(
     ],
     embed = [":sortexec"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 19,
     deps = [
         "//pkg/config",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
+        "//pkg/executor/internal/util",
         "//pkg/expression",
         "//pkg/expression/exprstatic",
         "//pkg/parser/mysql",
-        "//pkg/planner/core",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/util",
+        "//pkg/session/sessmgr",
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/types",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/memory",

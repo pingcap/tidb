@@ -140,6 +140,8 @@ func dumpType(tp byte) byte {
 	case mysql.TypeTiDBVectorFloat32:
 		// When passing Vector column to the SQL Client, pretend to be a non-binary String.
 		return mysql.TypeLongBlob
+	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return mysql.TypeBlob
 	default:
 		return tp
 	}
@@ -230,7 +232,7 @@ func DumpBinaryRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncod
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
 	numBytes4Null := (len(columns) + 7 + 2) / 8
-	for i := 0; i < numBytes4Null; i++ {
+	for range numBytes4Null {
 		buffer = append(buffer, 0)
 	}
 	for i := range columns {

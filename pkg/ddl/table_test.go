@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -505,7 +506,7 @@ func TestCreateTables(t *testing.T) {
 	args := &model.BatchCreateTableArgs{
 		Tables: make([]*model.CreateTableArgs, 0, 3),
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		args.Tables = append(args.Tables, &model.CreateTableArgs{
 			TableInfo: &model.TableInfo{
 				ID:   genIDs[i],
@@ -835,4 +836,132 @@ func TestIssue59238(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, index idx(b))")
 	tk.MustExec("alter table t exchange partition p1 with table t1")
 	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
+}
+
+// TestRefreshMetaBasic tests few scenarios of meta kv inconsistent with infoschema.
+func TestRefreshMetaBasic(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	de := domain.DDLExecutor()
+	tk := testkit.NewTestKit(t, store)
+	sctx := testkit.NewTestKit(t, store).Session()
+
+	// get t1 table info
+	tk.MustExec("create placement policy p1 followers=1")
+	tk.MustExec("create placement policy p2 followers=2")
+	tk.MustExec("create database test1 placement policy p1")
+	tk.MustExec("use test1")
+	tk.MustExec("create table t1(id int)")
+	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test1"))
+	require.True(t, ok)
+	clonedTableInfo := getClonedTableInfoFromDomain(t, "test1", "t1", domain)
+	// update t1 table name to t2 by txn
+	clonedTableInfo.Name = ast.NewCIStr("t2")
+	updateTableMeta(t, store, dbInfo.ID, clonedTableInfo)
+	t2TableInfo := testutil.GetTableInfoByTxn(t, store, dbInfo.ID, clonedTableInfo.ID)
+	require.Equal(t, clonedTableInfo, t2TableInfo)
+	// validate infoschema doesn't conatain t2 table info
+	_, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
+	require.ErrorContains(t, err, "Table 'test1.t2' doesn't exist")
+	// refresh meta, validate infoschema store table t2 and schema version increase 1
+	oldSchemaVer := getSchemaVer(t, sctx)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
+	newSchemaVer := getSchemaVer(t, sctx)
+	require.Equal(t, oldSchemaVer+1, newSchemaVer)
+	_, err = domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	// table not exists in kv, exists in infoschema
+	tk.MustExec("create table t3(id int) placement policy p2")
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	clonedTableInfo = getClonedTableInfoFromDomain(t, "test1", "t3", domain)
+	// drop table t3 by txn
+	err = meta.NewMutator(txn).DropTableOrView(dbInfo.ID, clonedTableInfo.ID)
+	require.NoError(t, err)
+	txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	kvTableInfo, err := meta.NewMutator(txn).GetTable(dbInfo.ID, clonedTableInfo.ID)
+	require.NoError(t, err)
+	require.Nil(t, kvTableInfo)
+	// t3 table info exists in infoschema
+	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
+	require.True(t, ok)
+	// after refresh meta, t3 table info should be not exists in infoschema
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
+	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
+	require.False(t, ok)
+	_, ok = domain.InfoSchema().PlacementBundleByPhysicalTableID(clonedTableInfo.ID)
+	require.False(t, ok)
+
+	// table exists in kv, not exists in infoschema
+	clonedTableInfo.Name = ast.NewCIStr("t4")
+	clonedTableInfo.ID = 40000
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	// create table t4 by txn
+	err = meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, clonedTableInfo)
+	require.NoError(t, err)
+	txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	kvTableInfo, err = meta.NewMutator(txn).GetTable(dbInfo.ID, clonedTableInfo.ID)
+	require.NoError(t, err)
+	require.Equal(t, clonedTableInfo, kvTableInfo)
+	// t4 table info not exists in infoschema
+	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
+	require.False(t, ok)
+	// refresh meta, t4 table info should be equal with kv table info
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
+	infoschemaTableInfo, ok := domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, kvTableInfo.ID, infoschemaTableInfo.Meta().ID)
+	require.Equal(t, kvTableInfo.Name, infoschemaTableInfo.Meta().Name)
+	require.Equal(t, kvTableInfo.PlacementPolicyRef, infoschemaTableInfo.Meta().PlacementPolicyRef)
+	_, ok = domain.InfoSchema().PlacementBundleByPhysicalTableID(clonedTableInfo.ID)
+	require.True(t, ok)
+
+	// schema not exists in kv, exists in infoschema
+	clonedDBInfo, ok := getClonedDatabase(domain, "test1")
+	require.True(t, ok)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	// create table t4 by txn
+	err = meta.NewMutator(txn).DropDatabase(clonedDBInfo.ID)
+	require.NoError(t, err)
+	txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	kvDBInfo, err := meta.NewMutator(txn).GetDatabase(clonedDBInfo.ID)
+	require.NoError(t, err)
+	require.Nil(t, kvDBInfo)
+	// test db info exists in infoschema
+	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
+	require.True(t, ok)
+	// refresh meta, t4 table info should be equal with kv table info
+	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0, clonedDBInfo.Name.O, model.InvolvingAll)
+	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
+	require.False(t, ok)
+
+	// schema exists in kv, not exists in infoschema
+	clonedDBInfo.Name = ast.NewCIStr("test2")
+	clonedDBInfo.ID = 20000
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	// create database test2 by txn
+	err = meta.NewMutator(txn).CreateDatabase(clonedDBInfo)
+	require.NoError(t, err)
+	txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	kvDBInfo, err = meta.NewMutator(txn).GetDatabase(clonedDBInfo.ID)
+	require.NoError(t, err)
+	// test2 db info not exists in infoschema
+	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
+	require.False(t, ok)
+	// refresh meta, test2 db info should exists in infoschema
+	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0, clonedDBInfo.Name.O, model.InvolvingAll)
+	infoschemaDBInfo, ok := domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, kvDBInfo, infoschemaDBInfo)
 }

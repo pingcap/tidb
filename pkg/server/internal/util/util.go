@@ -40,6 +40,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -178,7 +179,7 @@ func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 		plusPos := bytes.IndexByte(valStr, '+')
 		if plusPos > 0 {
 			plusPosInOut := len(in) + plusPos
-			out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
+			out = slices.Delete(out, plusPosInOut, plusPosInOut+1)
 		}
 		// remove extra '0'
 		ePos := bytes.IndexByte(valStr, 'e')

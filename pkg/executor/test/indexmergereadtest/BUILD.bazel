@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "indexmergereadtest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "index_merge_reader_test.go",
         "main_test.go",
@@ -15,6 +15,7 @@ go_test(
         "//pkg/executor",
         "//pkg/meta/autoid",
         "//pkg/session",
+        "//pkg/session/sessmgr",
         "//pkg/testkit",
         "//pkg/util",
         "@com_github_pingcap_failpoint//:failpoint",

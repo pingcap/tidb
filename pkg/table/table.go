@@ -146,6 +146,7 @@ func (opt *commonMutateOpt) PessimisticLazyDupKeyCheck() PessimisticLazyDupKeyCh
 type AddRecordOpt struct {
 	commonMutateOpt
 	isUpdate      bool
+	genRecordID   bool
 	reserveAutoID int
 }
 
@@ -161,6 +162,12 @@ func NewAddRecordOpt(opts ...AddRecordOption) *AddRecordOpt {
 // IsUpdate indicates whether the `AddRecord` operation is in an update statement.
 func (opt *AddRecordOpt) IsUpdate() bool {
 	return opt.isUpdate
+}
+
+// GenerateRecordID indicates whether the `AddRecord` operation should generate new _tidb_rowid.
+// Used in normal Update.
+func (opt *AddRecordOpt) GenerateRecordID() bool {
+	return opt.genRecordID
 }
 
 // ReserveAutoID indicates the auto id count that should be reserved.
@@ -201,6 +208,11 @@ func (opt *UpdateRecordOpt) SkipWriteUntouchedIndices() bool {
 
 // GetAddRecordOpt creates a AddRecordOpt.
 func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true, genRecordID: true}
+}
+
+// GetAddRecordOptKeepRecordID creates a AddRecordOpt.
+func (opt *UpdateRecordOpt) GetAddRecordOptKeepRecordID() *AddRecordOpt {
 	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true}
 }
 
@@ -309,6 +321,7 @@ type isUpdate struct{}
 
 func (i isUpdate) applyAddRecordOpt(opt *AddRecordOpt) {
 	opt.isUpdate = true
+	opt.genRecordID = true
 }
 
 // skipWriteUntouchedIndices implements UpdateRecordOption.
@@ -543,9 +556,15 @@ type CachedTable interface {
 }
 
 // CheckRowConstraint verify row check constraints.
-func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowToCheck chunk.Row) error {
+func CheckRowConstraint(expCtx exprctx.BuildContext, constraints []*Constraint,
+	rowToCheck chunk.Row, tbl *model.TableInfo) error {
+	evalCtx := expCtx.GetEvalCtx()
 	for _, constraint := range constraints {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
+		c, err := BuildConstraintExprWithCtx(expCtx, constraint.ConstraintInfo, tbl, evalCtx.CurrentDB())
+		if err != nil {
+			return err
+		}
+		ok, isNull, err := c.EvalInt(evalCtx, rowToCheck)
 		if err != nil {
 			return err
 		}
@@ -558,9 +577,10 @@ func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowT
 
 // CheckRowConstraintWithDatum verify row check constraints.
 // It is the same with `CheckRowConstraint` but receives a slice of `types.Datum` instead of `chunk.Row`.
-func CheckRowConstraintWithDatum(ctx exprctx.EvalContext, constraints []*Constraint, row []types.Datum) error {
+func CheckRowConstraintWithDatum(exprCtx exprctx.BuildContext, constraints []*Constraint,
+	row []types.Datum, tbl *model.TableInfo) error {
 	if len(constraints) == 0 {
 		return nil
 	}
-	return CheckRowConstraint(ctx, constraints, chunk.MutRowFromDatums(row).ToRow())
+	return CheckRowConstraint(exprCtx, constraints, chunk.MutRowFromDatums(row).ToRow(), tbl)
 }

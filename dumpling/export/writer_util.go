@@ -421,10 +421,7 @@ func write(tctx *tcontext.Context, writer storage.ExternalFileWriter, str string
 	_, err := writer.Write(tctx, []byte(str))
 	if err != nil {
 		// str might be very long, only output the first 200 chars
-		outputLength := len(str)
-		if outputLength >= 200 {
-			outputLength = 200
-		}
+		outputLength := min(len(str), 200)
 		tctx.L().Warn("fail to write",
 			zap.String("heading 200 characters", str[:outputLength]),
 			zap.Error(err))
@@ -436,10 +433,7 @@ func writeBytes(tctx *tcontext.Context, writer storage.ExternalFileWriter, p []b
 	_, err := writer.Write(tctx, p)
 	if err != nil {
 		// str might be very long, only output the first 200 chars
-		outputLength := len(p)
-		if outputLength >= 200 {
-			outputLength = 200
-		}
+		outputLength := min(len(p), 200)
 		tctx.L().Warn("fail to write",
 			zap.ByteString("heading 200 characters", p[:outputLength]),
 			zap.Error(err))

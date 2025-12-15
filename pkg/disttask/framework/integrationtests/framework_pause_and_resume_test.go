@@ -60,7 +60,8 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 			}
 		}
 	})
-	task1 := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
+	scope := handle.GetTargetScope()
+	task1 := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 1)
 	require.Equal(t, proto.TaskStatePaused, task1.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask"))
 	// 4 subtask scheduled.
@@ -85,7 +86,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 			}
 		}
 	})
-	task2 := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", "", 1)
+	task2 := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", scope, 1)
 	require.Equal(t, proto.TaskStatePaused, task2.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask"))
 	// 4 subtask scheduled.

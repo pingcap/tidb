@@ -23,13 +23,13 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -135,7 +136,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 }
 
 // NewCMSketchAndTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
-func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (*CMSketch, *TopN, uint64, uint64) {
+func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (c *CMSketch, t *TopN, estimateNDV, scaleRatio uint64) {
 	if rowCount == 0 || len(sample) == 0 {
 		return nil, nil, 0, 0
 	}
@@ -143,9 +144,9 @@ func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uin
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
 	rowCount = max(rowCount, uint64(len(sample)))
-	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
+	estimateNDV, scaleRatio = calculateEstimateNDV(helper, rowCount)
 	defaultVal := calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
-	c, t := buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
+	c, t = buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
 	return c, t, estimateNDV, scaleRatio
 }
 
@@ -154,7 +155,7 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
 		t = NewTopN(int(helper.actualNumTop))
-		for i := uint32(0); i < helper.actualNumTop; i++ {
+		for i := range helper.actualNumTop {
 			data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
 			t.AppendTopN(data, cnt*scaleRatio)
 		}
@@ -215,28 +216,6 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
 }
 
-// setValue sets the count for value that hashed into (h1, h2), and update defaultValue if necessary.
-func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
-	oriCount := c.queryHashValue(nil, h1, h2)
-	if c.considerDefVal(oriCount) {
-		// We should update c.defaultValue if we used c.defaultValue when getting the estimate count.
-		// This should make estimation better, remove this line if it does not work as expected.
-		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05)
-		if c.defaultValue == 0 {
-			// c.defaultValue never guess 0 since we are using a sampled data.
-			c.defaultValue = 1
-		}
-	}
-
-	c.count += count - oriCount
-	// let it overflow naturally
-	deltaCount := uint32(count) - uint32(oriCount)
-	for i := range c.table {
-		j := (h1 + h2*uint64(i)) % uint64(c.width)
-		c.table[i][j] = c.table[i][j] + deltaCount
-	}
-}
-
 // SubValue remove a value from the CMSketch.
 func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 	c.count -= count
@@ -278,23 +257,10 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 }
 
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (result uint64) {
+func (c *CMSketch) queryHashValue(_ planctx.PlanContext, h1, h2 uint64) (result uint64) {
 	vals := make([]uint32, c.depth)
 	originVals := make([]uint32, c.depth)
 	minValue := uint32(math.MaxUint32)
-	useDefaultValue := false
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx,
-				"Origin Values", originVals,
-				"Values", vals,
-				"Use default value", useDefaultValue,
-				"Result", result,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
 	// We want that when res is 0 before the noise is eliminated, the default value is not used.
 	// So we need a temp value to distinguish before and after eliminating noise.
 	temp := uint32(1)
@@ -314,16 +280,12 @@ func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (resu
 		}
 	}
 	slices.Sort(vals)
-	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
-	if res > minValue+temp {
-		res = minValue + temp
-	}
+	res := min(vals[(c.depth-1)/2]+(vals[c.depth/2]-vals[(c.depth-1)/2])/2, minValue+temp)
 	if res == 0 {
 		return uint64(0)
 	}
 	res = res - temp
 	if c.considerDefVal(uint64(res)) {
-		useDefaultValue = true
 		return c.defaultValue
 	}
 	return uint64(res)
@@ -523,13 +485,11 @@ func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
-}
 
-// Scale scales the TopN by the given factor.
-func (c *TopN) Scale(scaleFactor float64) {
-	for i := range c.TopN {
-		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
-	}
+	totalCount uint64
+	minCount   uint64
+	// minCount and totalCount are initialized only once.
+	once sync.Once
 }
 
 // AppendTopN appends a topn into the TopN struct.
@@ -547,7 +507,7 @@ func (c *TopN) String() string {
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
-	for i := 0; i < len(c.TopN); i++ {
+	for i := range c.TopN {
 		fmt.Fprintf(builder, "(%v, %v)", c.TopN[i].Encoded, c.TopN[i].Count)
 		if i+1 != len(c.TopN) {
 			fmt.Fprint(builder, ", ")
@@ -577,7 +537,7 @@ func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, e
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
 	var tmpDatum types.Datum
-	for i := 0; i < len(c.TopN); i++ {
+	for i := range c.TopN {
 		tmpDatum.SetBytes(c.TopN[i].Encoded)
 		valStr, err := ValueToString(ctx.GetSessionVars(), &tmpDatum, len(colTypes), colTypes)
 		if err != nil {
@@ -614,12 +574,38 @@ func (c *TopN) MinCount() uint64 {
 	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	// Initialize to the first value in TopN
-	minCount := c.TopN[0].Count
+	c.calculateMinCountAndCount()
+	return c.minCount
+}
+
+func (c *TopN) calculateMinCountAndCount() {
+	if intest.InTest {
+		// In test, After the sync.Once is called, topN will not be modified anymore.
+		minCount, totalCount := c.calculateMinCountAndCountInternal()
+		c.onceCalculateMinCountAndCount()
+		intest.Assert(minCount == c.minCount, "minCount should be equal to the calculated minCount")
+		intest.Assert(totalCount == c.totalCount, "totalCount should be equal to the calculated totalCount")
+		return
+	}
+	c.onceCalculateMinCountAndCount()
+}
+
+func (c *TopN) onceCalculateMinCountAndCount() {
+	c.once.Do(func() {
+		// Initialize to the first value in TopN
+		minCount, total := c.calculateMinCountAndCountInternal()
+		c.minCount = minCount
+		c.totalCount = total
+	})
+}
+
+func (c *TopN) calculateMinCountAndCountInternal() (minCount, total uint64) {
+	minCount = c.TopN[0].Count
 	for _, t := range c.TopN {
 		minCount = min(minCount, t.Count)
+		total += t.Count
 	}
-	return minCount
+	return minCount, total
 }
 
 // TopNMeta stores the unit of the TopN.
@@ -630,21 +616,11 @@ type TopNMeta struct {
 
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *TopN) QueryTopN(sctx planctx.PlanContext, d []byte) (result uint64, found bool) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Found", found)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+func (c *TopN) QueryTopN(_ planctx.PlanContext, d []byte) (result uint64, found bool) {
 	if c == nil {
 		return 0, false
 	}
 	idx := c.FindTopN(d)
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.RecordAnyValuesWithNames(sctx, "FindTopN idx", idx)
-	}
 	if idx < 0 {
 		return 0, false
 	}
@@ -694,14 +670,7 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 
 // BetweenCount estimates the row count for interval [l, r).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint64) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+func (c *TopN) BetweenCount(_ planctx.PlanContext, l, r []byte) (result uint64) {
 	if c == nil {
 		return 0
 	}
@@ -710,9 +679,6 @@ func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint6
 	ret := uint64(0)
 	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count
-	}
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugTraceTopNRange(sctx, c, lIdx, rIdx)
 	}
 	return ret
 }
@@ -729,14 +695,11 @@ func (c *TopN) Sort() {
 
 // TotalCount returns how many data is stored in TopN.
 func (c *TopN) TotalCount() uint64 {
-	if c == nil {
+	if c == nil || len(c.TopN) == 0 {
 		return 0
 	}
-	total := uint64(0)
-	for _, t := range c.TopN {
-		total += t.Count
-	}
-	return total
+	c.calculateMinCountAndCount()
+	return c.totalCount
 }
 
 // Equal checks whether the two TopN are equal.
@@ -760,18 +723,6 @@ func (c *TopN) Equal(cc *TopN) bool {
 	return true
 }
 
-// RemoveVal remove the val from TopN if it exists.
-func (c *TopN) RemoveVal(val []byte) {
-	if c == nil {
-		return
-	}
-	pos := c.FindTopN(val)
-	if pos == -1 {
-		return
-	}
-	c.TopN = append(c.TopN[:pos], c.TopN[pos+1:]...)
-}
-
 // MemoryUsage returns the total memory usage of a topn.
 func (c *TopN) MemoryUsage() (sum int64) {
 	if c == nil {
@@ -782,24 +733,6 @@ func (c *TopN) MemoryUsage() (sum int64) {
 		sum += 32 + int64(cap(meta.Encoded)) // 32 is size of byte array (24) + size of uint64 (8)
 	}
 	return
-}
-
-// queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
-// If such elements does not in topn elements, nothing will happen and false will be returned.
-func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
-	if c == nil || c.TopN == nil {
-		return false
-	}
-	idx := c.FindTopN(d)
-	if idx >= 0 {
-		if increase {
-			c.TopN[idx].Count += delta
-		} else {
-			c.TopN[idx].Count -= delta
-		}
-		return true
-	}
-	return false
 }
 
 // NewTopN creates the new TopN struct by the given size.

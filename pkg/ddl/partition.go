@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -114,6 +115,10 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	switch job.SchemaState {
 	case model.StateNone:
+		if tblInfo.Affinity != nil {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of a table with AFFINITY option")
+		}
 		// job.SchemaState == model.StateNone means the job is in the initial state of add partition.
 		// Here should use partInfo from job directly and do some check action.
 		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
@@ -216,8 +221,11 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
-
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions)
+		var scatterScope string
+		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
+			scatterScope = val
+		}
+		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions, scatterScope)
 
 		tblInfo.Partition.DDLState = model.StateNone
 		tblInfo.Partition.DDLAction = model.ActionNone
@@ -382,7 +390,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 				return errors.Trace(err)
 			}
 
-			for i := 0; i < len(newDefs); i++ {
+			for i := range newDefs {
 				ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
 				if ifMaxvalue && i == len(newDefs)-1 {
 					return nil
@@ -640,6 +648,10 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 					return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
 				}
 			}
+		}
+
+		if index.HasCondition() {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("partial index is not supported on partitioned table")
 		}
 	}
 	if tbInfo.PKIsHandle {
@@ -1261,13 +1273,11 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 			return err
 		}
 	}
-	var partDefs []*ast.PartitionDefinition
-	if len(partitionOptions.Definitions) != 0 {
-		partDefs = partitionOptions.Definitions
-	} else {
+	partDefs := partitionOptions.Definitions
+	if len(partDefs) == 0 {
 		partDefs = make([]*ast.PartitionDefinition, 0, 1)
 	}
-	for i := 0; i < mysql.PartitionCountLimit; i++ {
+	for i := range mysql.PartitionCountLimit {
 		if i == 0 {
 			currExpr = startExpr
 			// TODO: adjust the startExpr and have an offset for interval to handle
@@ -1440,7 +1450,7 @@ func buildHashPartitionDefinitions(defs []*ast.PartitionDefinition, tbInfo *mode
 
 	definitions := make([]model.PartitionDefinition, numParts)
 	oldParts := uint64(len(tbInfo.Partition.Definitions))
-	for i := uint64(0); i < numParts; i++ {
+	for i := range numParts {
 		if i < oldParts {
 			// Use the existing definitions
 			def := tbInfo.Partition.Definitions[i]
@@ -1841,7 +1851,7 @@ func checkRangePartitionValue(ctx expression.BuildContext, tblInfo *model.TableI
 	}
 	isUnsigned := isPartExprUnsigned(ctx.GetEvalCtx(), tblInfo)
 	var prevRangeValue any
-	for i := 0; i < len(defs); i++ {
+	for i := range defs {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(dbterror.ErrPartitionMaxvalue)
 		}
@@ -2013,6 +2023,10 @@ func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 		return dbterror.ErrOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
 	}
 
+	if meta.Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("DROP PARTITION of a table with AFFINITY option")
+	}
+
 	// To be error compatible with MySQL, we need to do this first!
 	// see https://github.com/pingcap/tidb/issues/31681#issuecomment-1015536214
 	oldDefs := pi.Definitions
@@ -2048,13 +2062,7 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 
 	// consider using a map to probe partLowerNames if too many partLowerNames
 	for i := range oldDefs {
-		found := false
-		for _, partName := range partLowerNames {
-			if oldDefs[i].Name.L == partName {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(partLowerNames, oldDefs[i].Name.L)
 		if found {
 			droppingDefs = append(droppingDefs, oldDefs[i])
 		} else {
@@ -2068,7 +2076,7 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 
 func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
 	defs := tblInfo.Partition.Definitions
-	for i := 0; i < len(defs); i++ {
+	for i := range defs {
 		if strings.EqualFold(defs[i].Name.L, strings.ToLower(partName)) {
 			return i, &(defs[i]), nil
 		}
@@ -2372,9 +2380,9 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 	tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 }
 
-func replaceTruncatePartitions(job *model.Job, t *meta.Mutator, tblInfo *model.TableInfo, oldIDs, newIDs []int64) ([]model.PartitionDefinition, []model.PartitionDefinition, error) {
-	oldDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
-	newDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
+func replaceTruncatePartitions(job *model.Job, t *meta.Mutator, tblInfo *model.TableInfo, oldIDs, newIDs []int64) (oldDefinitions, newDefinitions []model.PartitionDefinition, err error) {
+	oldDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
+	newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
 	pi := tblInfo.Partition
 	for i, id := range oldIDs {
 		for defIdx := range pi.Definitions {
@@ -2436,7 +2444,7 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 		// and then run the reorg next time.
 		return false, errors.Trace(err)
 	}
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
+	err = w.runReorgJob(jobCtx, reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 			func() {
 				dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -2558,7 +2566,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
+		var scatterScope string
+		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
+			scatterScope = val
+		}
+		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
 		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
@@ -3157,6 +3169,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 	metaMut := jobCtx.metaMut
 	switch job.SchemaState {
 	case model.StateNone:
+		if tblInfo.Affinity != nil {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REORGANIZE PARTITION of a table with AFFINITY option")
+		}
+
 		// job.SchemaState == model.StateNone means the job is in the initial state of reorg partition.
 		// Here should use partInfo from job directly and do some check action.
 		// In case there was a race for queueing different schema changes on the same
@@ -3715,7 +3732,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, partTbl, physTblIDs, elements)
-	err = w.runReorgJob(reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
+	err = w.runReorgJob(jobCtx, reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
@@ -3755,15 +3772,10 @@ type reorgPartitionWorker struct {
 	writeColOffsetMap map[int64]int
 	maxOffset         int
 	reorgedTbl        table.PartitionedTable
-	// Only used for non-clustered tables, since we need to re-generate _tidb_rowid,
-	// and check if the old _tidb_rowid was already written or not.
-	// If the old _tidb_rowid already exists, then the row is already backfilled (double written)
-	// and can be skipped. Otherwise, we will insert it and generate index entries.
-	oldKeys []kv.Key
 }
 
 func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*reorgPartitionWorker, error) {
-	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblReorgPartitionRate, false, false)
+	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblReorgPartitionRate, false)
 	if err != nil {
 		return nil, err
 	}
@@ -3799,7 +3811,7 @@ func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int6
 	}, nil
 }
 
-func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -3826,46 +3838,88 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		// i.e. concurrently written by StateWriteOnly or StateWriteReorganization.
 		// and if so, skip it.
 		var found map[string][]byte
-		if len(w.oldKeys) > 0 {
+		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
+		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
+		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
+			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
-			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
-			found, err = txn.BatchGet(ctx, w.oldKeys)
+
+			// TODO: test how to use PresumeKeyNotExists/NeedConstraintCheckInPrewrite/DO_CONSTRAINT_CHECK
+			// to delay the check until commit.
+			// And handle commit errors and fall back to this method of checking all keys to see if we need to skip any.
+			newKeys := make([]kv.Key, 0, len(w.rowRecords))
+			for i := range w.rowRecords {
+				newKeys = append(newKeys, w.rowRecords[i].key)
+			}
+			found, err = txn.BatchGet(ctx, newKeys)
 			if err != nil {
 				return errors.Trace(err)
 			}
-		}
 
-		for i, prr := range w.rowRecords {
+			// TODO: Add test that kills (like `kill -9`) the currently running
+			// ddl owner, to see how it handles re-running this backfill when some batches has
+			// committed and reorgInfo has not been updated, so it needs to redo some batches.
+		}
+		tmpRow := make([]types.Datum, len(w.reorgedTbl.Cols()))
+
+		for _, prr := range w.rowRecords {
 			taskCtx.scanCount++
 			key := prr.key
+			lockKey = lockKey[:tablecodec.TableSplitKeyLen]
+			lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
+			// Lock the *old* key, since there can still be concurrent update happening on
+			// the rows from fetchRowColVals(). If we cannot lock the keys in this
+			// transaction and succeed when committing, then another transaction did update
+			// the same key, and we will fail and retry. When retrying, this key would be found
+			// through BatchGet and skipped.
+			// TODO: would it help to accumulate the keys in a slice and then only call this once?
+			err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-			// w.oldKeys is only set for non-clustered tables, in w.fetchRowColVals().
-			if len(w.oldKeys) > 0 {
-				if _, ok := found[string(w.oldKeys[i])]; ok {
-					// Already filled, i.e. double written earlier by concurrent DML
+			if vals, ok := found[string(key)]; ok {
+				if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
+					// Already backfilled or double written earlier by concurrent DML
 					continue
 				}
-
-				// Check if we can lock the old key, since there can still be concurrent update
-				// happening on the rows from fetchRowColVals(), if we cannot lock the keys in this
-				// transaction and succeed when committing, then another transaction did update
-				// the same key, and we will fail and retry. When retrying, this key would be found
-				// through BatchGet and skipped.
-				err = txn.LockKeys(context.Background(), new(kv.LockCtx), w.oldKeys[i])
+				// Not same row, due to earlier EXCHANGE PARTITION.
+				// Update the current read row by Remove it and Add it back (which will give it a new _tidb_rowid)
+				// which then also will be used as unique id in the new partition.
+				var h kv.Handle
+				var currPartID int64
+				currPartID, h, err = tablecodec.DecodeRecordKey(lockKey)
 				if err != nil {
 					return errors.Trace(err)
 				}
-
-				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
-				// Generate new _tidb_rowid.
-				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
+				_, err = w.rowDecoder.DecodeTheExistedColumnMap(w.exprCtx, h, prr.vals, w.loc, w.rowMap)
 				if err != nil {
 					return errors.Trace(err)
 				}
-
-				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
-				key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
+				for _, col := range w.table.WritableCols() {
+					d, ok := w.rowMap[col.ID]
+					if !ok {
+						return dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+					}
+					tmpRow[col.Offset] = d
+				}
+				// Use RemoveRecord/AddRecord to keep the indexes in-sync!
+				pt := w.table.GetPartitionedTable().GetPartition(currPartID)
+				err = pt.RemoveRecord(w.tblCtx, txn, h, tmpRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				h, err = pt.AddRecord(w.tblCtx, txn, tmpRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				w.cleanRowMap()
+				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2 ("_r")
+				key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], h)
+				// OK to only do txn.Set() for the new partition, and defer creating the indexes,
+				// since any DML changes the record it will also update or create the indexes,
+				// by doing RemoveRecord+UpdateRecord
 			}
 			err = txn.Set(key, prr.vals)
 			if err != nil {
@@ -3882,8 +3936,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
-	isClustered := w.reorgedTbl.Meta().IsCommonHandle || w.reorgedTbl.Meta().PKIsHandle
-	w.oldKeys = w.oldKeys[:0]
 	startTime := time.Now()
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
@@ -3925,12 +3977,6 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			newKey := tablecodec.EncodeTablePrefix(p.GetPhysicalID())
 			newKey = append(newKey, recordKey[tablecodec.TableSplitKeyLen:]...)
 			w.rowRecords = append(w.rowRecords, &rowRecord{key: newKey, vals: rawRow})
-
-			if !isClustered {
-				oldKey := newKey[:tablecodec.TableSplitKeyLen]
-				oldKey = append(oldKey, recordKey[tablecodec.TableSplitKeyLen:]...)
-				w.oldKeys = append(w.oldKeys, oldKey)
-			}
 
 			w.cleanRowMap()
 			lastAccessedHandle = recordKey
@@ -4381,7 +4427,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 	// Lower bound check (for all partitions except first)
 	if hasLowerBound {
 		currVals := pi.Definitions[index-1].LessThan
-		for i := 0; i < len(pi.Columns); i++ {
+		for i := range pi.Columns {
 			nextIsMax := false
 			if i < (len(pi.Columns)-1) && strings.EqualFold(currVals[i+1], partitionMaxValue) {
 				nextIsMax = true
@@ -4392,7 +4438,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 			if i > 0 {
 				buf.WriteString("(")
 				// All previous columns must be equal and non-NULL
-				for j := 0; j < i; j++ {
+				for j := range i {
 					if j > 0 {
 						buf.WriteString(" AND ")
 					}
@@ -4419,7 +4465,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 
 	currVals := pi.Definitions[index].LessThan
 	// Upper bound check (for all partitions)
-	for i := 0; i < len(pi.Columns); i++ {
+	for i := range pi.Columns {
 		if strings.EqualFold(currVals[i], partitionMaxValue) {
 			break
 		}
@@ -4429,7 +4475,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 		if i > 0 {
 			buf.WriteString("(")
 			// All previous columns must be equal
-			for j := 0; j < i; j++ {
+			for j := range i {
 				if j > 0 {
 					buf.WriteString(" AND ")
 				}
@@ -4699,7 +4745,7 @@ type stringSlice interface {
 
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
-	for i := 0; i < partCols.Len(); i++ {
+	for i := range partCols.Len() {
 		partCol := partCols.At(i)
 		_, idxCol := model.FindIndexColumnByName(idxCols, partCol)
 		if idxCol == nil {
@@ -4874,8 +4920,8 @@ func checkPartitionExprArgs(_ expression.BuildContext, tblInfo *model.TableInfo,
 			return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
 		}
 	case ast.DateDiff:
-		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(i int) bool {
-			return hasDateArgs(argsType[i])
+		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(arg byte) bool {
+			return hasDateArgs(arg)
 		})))
 
 	case ast.Abs, ast.Ceiling, ast.Floor, ast.Mod:
@@ -4905,26 +4951,24 @@ func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, e
 }
 
 func hasDateArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDate || argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDate || t == mysql.TypeDatetime
 	})
 }
 
 func hasTimeArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDuration || argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDuration || t == mysql.TypeDatetime
 	})
 }
 
 func hasTimestampArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeTimestamp
-	})
+	return slices.Contains(argsType, mysql.TypeTimestamp)
 }
 
 func hasDatetimeArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDatetime
 	})
 }
 
@@ -5126,7 +5170,7 @@ func generatePartValuesWithTp(partVal types.Datum, tp types.FieldType) (string, 
 	case types.ETString:
 		// The `partVal` can be an invalid utf8 string if it's converted to BINARY, then the content will be lost after
 		// marshaling and storing in the schema. In this case, we use a hex literal to work around this issue.
-		if tp.GetCharset() == charset.CharsetBin {
+		if tp.GetCharset() == charset.CharsetBin && len(s) != 0 {
 			return fmt.Sprintf("_binary 0x%x", s), nil
 		}
 		return driver.WrapInSingleQuotes(s), nil
@@ -5211,7 +5255,7 @@ func checkTwoRangeColumns(ctx expression.BuildContext, curr, prev *model.Partiti
 	if len(curr.LessThan) != len(pi.Columns) {
 		return false, errors.Trace(ast.ErrPartitionColumnList)
 	}
-	for i := 0; i < len(pi.Columns); i++ {
+	for i := range pi.Columns {
 		// Special handling for MAXVALUE.
 		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) && !strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
 			// If current is maxvalue, it certainly >= previous.

@@ -6,10 +6,11 @@ go_test(
     srcs = ["oom_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "//pkg/util/memory",
         "//pkg/util/set",
         "//pkg/util/syncutil",
         "@com_github_pingcap_failpoint//:failpoint",

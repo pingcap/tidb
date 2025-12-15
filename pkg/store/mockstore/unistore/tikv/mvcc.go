@@ -536,14 +536,7 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 			action = kvrpcpb.Action_MinCommitTSPushed
 			// We *must* guarantee the invariance lock.minCommitTS >= callerStartTS + 1
 			if lock.MinCommitTS < req.CallerStartTs+1 {
-				lock.MinCommitTS = req.CallerStartTs + 1
-
-				// Remove this condition should not affect correctness.
-				// We do it because pushing forward minCommitTS as far as possible could avoid
-				// the lock been pushed again several times, and thus reduce write operations.
-				if lock.MinCommitTS < req.CurrentTs {
-					lock.MinCommitTS = req.CurrentTs
-				}
+				lock.MinCommitTS = max(req.CallerStartTs+1, req.CurrentTs)
 				batch.PessimisticLock(req.PrimaryKey, lock)
 				if err = store.dbWriter.Write(batch); err != nil {
 					return TxnStatus{0, action, nil}, err
@@ -1202,8 +1195,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 				return nil, err
 			}
 
-			lock.Value = make([]byte, len(reqCtx.buf))
-			copy(lock.Value, reqCtx.buf)
+			lock.Value = slices.Clone(reqCtx.buf)
 		}
 	}
 
@@ -1598,8 +1590,8 @@ func (store *MVCCStore) Cleanup(reqCtx *requestCtx, key []byte, startTS, current
 
 func (store *MVCCStore) appendScannedLock(locks []*kvrpcpb.LockInfo, it *lockstore.Iterator, maxTS uint64) []*kvrpcpb.LockInfo {
 	lock := mvcc.DecodeLock(it.Value())
-	if lock.StartTS < maxTS {
-		locks = append(locks, lock.ToLockInfo(append([]byte{}, it.Key()...)))
+	if lock.StartTS <= maxTS {
+		locks = append(locks, lock.ToLockInfo(slices.Clone(it.Key())))
 	}
 	return locks
 }
@@ -1614,7 +1606,7 @@ func (store *MVCCStore) scanPessimisticLocks(reqCtx *requestCtx, startTS uint64,
 		}
 		lock := mvcc.DecodeLock(it.Value())
 		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) && lock.StartTS == startTS && lock.ForUpdateTS <= forUpdateTS {
-			locks = append(locks, lock.ToLockInfo(append([]byte{}, it.Key()...)))
+			locks = append(locks, lock.ToLockInfo(slices.Clone(it.Key())))
 		}
 	}
 	return locks, nil
@@ -1759,7 +1751,7 @@ func (store *MVCCStore) MvccGetByKey(reqCtx *requestCtx, key []byte) (*kvrpcpb.M
 		return cmp.Compare(j.CommitTs, i.CommitTs)
 	})
 	mvccInfo.Values = make([]*kvrpcpb.MvccValue, len(mvccInfo.Writes))
-	for i := 0; i < len(mvccInfo.Writes); i++ {
+	for i := range mvccInfo.Writes {
 		write := mvccInfo.Writes[i]
 		mvccInfo.Values[i] = &kvrpcpb.MvccValue{
 			StartTs: write.StartTs,
@@ -1926,12 +1918,7 @@ func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte
 }
 
 func inTSSet(startTS uint64, tsSet []uint64) bool {
-	for _, v := range tsSet {
-		if startTS == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tsSet, startTS)
 }
 
 type kvScanProcessor struct {

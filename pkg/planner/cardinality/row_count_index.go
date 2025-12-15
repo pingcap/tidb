@@ -16,94 +16,62 @@ package cardinality
 
 import (
 	"bytes"
-	"math"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, corrResult float64, err error) {
-	var name string
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		debugTraceGetRowCountInput(sctx, idxID, indexRanges)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+// idxCols used when index statistics are invalid, because coll may not have index info, can be nil whenever index statistics are valid.
+func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range, idxCols []*expression.Column) (result statistics.RowEstimate, err error) {
+	var count, maxCount float64
 	sc := sctx.GetSessionVars().StmtCtx
 	idx := coll.GetIdx(idxID)
-	colNames := make([]string, 0, 8)
-	if idx != nil {
-		if idx.Info != nil {
-			name = idx.Info.Name.O
-			for _, col := range idx.Info.Columns {
-				colNames = append(colNames, col.Name.O)
-			}
-		}
-	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
-		colsLen := -1
-		if idx != nil && idx.Info.Unique {
-			colsLen = len(idx.Info.Columns)
+		if hasColumnStats(sctx, coll, idxCols) {
+			count, maxCount, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
+			result = statistics.RowEstimate{Est: count, MinEst: count, MaxEst: maxCount}
+		} else {
+			colsLen := -1
+			if idx != nil && idx.Info.Unique {
+				colsLen = len(idx.Info.Columns)
+			}
+			count, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
+			result = statistics.DefaultRowEst(count)
 		}
-		result, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
-		if err == nil && sc.EnableOptimizerCETrace && idx != nil {
-			ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
-		}
-		return result, 0, err
+		return result, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.RecordAnyValuesWithNames(sctx,
-			"Histogram NotNull Count", idx.Histogram.NotNullCount(),
-			"TopN total count", idx.TopN.TotalCount(),
-			"Increase Factor", idx.GetIncreaseFactor(realtimeCnt),
-		)
-	}
-	corrResult = float64(0)
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
-		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
+		count, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
+		result = statistics.DefaultRowEst(count)
 	} else {
-		result, corrResult, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
+		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
 	}
-	if sc.EnableOptimizerCETrace {
-		ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
-	}
-	return result, corrResult, errors.Trace(err)
+	return result, errors.Trace(err)
 }
 
 func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	debugTrace := sc.EnableOptimizerDebugTrace
-	if debugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
 	idx := coll.GetIdx(idxID)
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
-		if debugTrace {
-			debugTraceStartEstimateRange(sctx, ran, nil, nil, totalCount)
-		}
 		rangePosition := getOrdinalOfRangeCond(sc, ran)
 		var rangeVals []types.Datum
 		// Try to enum the last range values.
@@ -118,12 +86,10 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
-			count, _, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
+			rowEstimate, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
+			count := rowEstimate.Est
 			if err != nil {
 				return 0, errors.Trace(err)
-			}
-			if debugTrace {
-				debugTraceEndEstimateRange(sctx, count, debugTraceRange)
 			}
 			totalCount += count
 			continue
@@ -182,9 +148,13 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 			// prefer index stats over column stats
 			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colUniqueID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
-				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
+				var tempResult statistics.RowEstimate
+				tempResult, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang}, nil)
+				count = tempResult.Est
 			} else {
-				count, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
+				var countEst statistics.RowEstimate
+				countEst, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang}, false)
+				count = countEst.Est
 			}
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -192,9 +162,6 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 			selectivity = selectivity * count / idx.TotalRowCount()
 		}
 		count := selectivity * idx.TotalRowCount()
-		if debugTrace {
-			debugTraceEndEstimateRange(sctx, count, debugTraceRange)
-		}
 		totalCount += count
 	}
 	if totalCount > idx.TotalRowCount() {
@@ -216,62 +183,42 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 }
 
 // It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
-func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (totalCount float64, corrCount float64, err error) {
+func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (totalCount statistics.RowEstimate, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	debugTrace := sc.EnableOptimizerDebugTrace
-	if debugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
 	isSingleColIdx := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
-		var count float64
+		var count statistics.RowEstimate
 		var lb, rb []byte
 		lb, err = codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
 		err = sc.HandleError(err)
 		if err != nil {
-			return 0, 0, err
+			return statistics.DefaultRowEst(0), err
 		}
 		rb, err = codec.EncodeKey(sc.TimeZone(), nil, indexRange.HighVal...)
 		err = sc.HandleError(err)
 		if err != nil {
-			return 0, 0, err
-		}
-		if debugTrace {
-			debugTraceStartEstimateRange(sctx, indexRange, lb, rb, totalCount)
+			return statistics.DefaultRowEst(0), err
 		}
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if bytes.Equal(lb, rb) {
 			// case 1: it's a point
 			if indexRange.LowExclude || indexRange.HighExclude {
-				if debugTrace {
-					debugTraceEndEstimateRange(sctx, 0, debugTraceImpossible)
-				}
 				continue
 			}
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
 					if !indexRange.IsOnlyNull() {
-						totalCount++
-						if debugTrace {
-							debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
-						}
+						totalCount.AddAll(1)
 						continue
 					}
-					totalCount = float64(idx.NullCount)
-					if debugTrace {
-						debugTraceEndEstimateRange(sctx, float64(idx.NullCount), debugTraceUniquePoint)
-					}
+					totalCount = statistics.DefaultRowEst(float64(idx.NullCount))
 					continue
 				}
 				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
-				count *= idx.GetIncreaseFactor(realtimeRowCount)
-				if debugTrace {
-					debugTraceEndEstimateRange(sctx, count, debugTracePoint)
-				}
-				totalCount += count
+				count.MultiplyAll(idx.GetIncreaseFactor(realtimeRowCount))
+				totalCount.Add(count)
 				continue
 			}
 		}
@@ -288,29 +235,26 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		r := types.NewBytesDatum(rb)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if isSingleColIdx && lowIsNull {
-			count += float64(idx.Histogram.NullCount)
+			count.AddAll(float64(idx.Histogram.NullCount))
 		}
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
 		if rangePosition := getOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= statistics.Version2 && coll != nil {
-			var expBackoffSel, corrSel float64
-			expBackoffSel, corrSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange)
+			var expBackoffSel, minSel, maxSel float64
+			expBackoffSel, minSel, maxSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange)
 			if err != nil {
-				return 0, 0, err
+				return statistics.DefaultRowEst(0), err
 			}
 			if expBackoffSuccess {
-				expBackoffCnt := expBackoffSel * idx.TotalRowCount()
-				corrCnt := corrSel * idx.TotalRowCount()
+				expBackoffResult := statistics.RowEstimate{Est: expBackoffSel, MinEst: minSel, MaxEst: maxSel}
+				expBackoffResult.MultiplyAll(idx.TotalRowCount())
 
-				upperLimit := expBackoffCnt
+				upperLimit := expBackoffResult.Est
 				// Use the multi-column stats to calculate the max possible row count of [l, r)
 				if idx.Histogram.Len() > 0 {
 					_, lowerBkt, _, _ := idx.Histogram.LocateBucket(sctx, l)
 					_, upperBkt, _, _ := idx.Histogram.LocateBucket(sctx, r)
-					if debugTrace {
-						statistics.DebugTraceBuckets(sctx, &idx.Histogram, []int{lowerBkt - 1, upperBkt})
-					}
 					// Use Count of the Bucket before l as the lower bound.
 					preCount := float64(0)
 					if lowerBkt > 0 {
@@ -324,127 +268,176 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 				// If the result of exponential backoff strategy is larger than the result from multi-column stats,
 				// 	use the upper limit from multi-column histogram instead.
-				if expBackoffCnt > upperLimit {
-					expBackoffCnt = upperLimit
+				if expBackoffResult.Est > upperLimit {
+					expBackoffResult.Est = upperLimit
 				}
-				count += expBackoffCnt
-				corrCount += corrCnt
+				count.Add(expBackoffResult)
 			}
 		}
 		if !expBackoffSuccess {
-			count += betweenRowCountOnIndex(sctx, idx, l, r)
+			count.Add(betweenRowCountOnIndex(sctx, idx, l, r))
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
-		count *= increaseFactor
-		corrCount *= increaseFactor
+		count.MultiplyAll(increaseFactor)
 
 		// handling the out-of-range part
 		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
-				c := coll.GetCol(idx.Histogram.ID)
-				// If this is single column of a multi-column index - use the column's NDV rather than index NDV
+				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
+				// Retrieve column statistics for the 1st index column
+				c := coll.GetCol(colIDs[0])
+				// If this is single column predicate - use the column's information rather than index.
+				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
-				if isSingleColRange && !isSingleColIdx && c != nil && c.Histogram.NDV > 0 {
+				if isSingleColRange && c != nil && c.Histogram.NDV > 0 && c.Histogram.Len() > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
+					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV))
 				} else {
+					// TODO: Extend original datatype out-of-range estimation to multi-column
 					histNDV -= int64(idx.TopN.Num())
+					count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV))
 				}
+			} else {
+				count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV))
 			}
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
 		}
 
-		if debugTrace {
-			debugTraceEndEstimateRange(sctx, count, debugTraceRange)
-		}
-		totalCount += count
+		totalCount.Add(count)
 	}
 	allowZeroEst := fixcontrol.GetBoolWithDefault(
 		sctx.GetSessionVars().GetOptimizerFixControlMap(),
 		fixcontrol.Fix47400,
 		false,
 	)
+	minCount := float64(1)
 	if allowZeroEst {
-		totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
-	} else {
-		// Don't allow the final result to go below 1 row
-		totalCount = mathutil.Clamp(totalCount, 1, float64(realtimeRowCount))
+		minCount = 0
 	}
-	return totalCount, corrCount, nil
+	totalCount.Clamp(minCount, float64(realtimeRowCount))
+	return totalCount, nil
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
-func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
+// StatsProvider defines the interface for statistics that can provide the necessary
+// information for row count estimation with uniform distribution.
+type StatsProvider interface {
+	// GetHistogram returns the histogram for this stats object
+	GetHistogram() *statistics.Histogram
+	// GetTopN returns the TopN for this stats object
+	GetTopN() *statistics.TopN
+	// TotalRowCount returns the total row count
+	TotalRowCount() float64
+	// GetIncreaseFactor returns the increase factor for the given realtime row count
+	GetIncreaseFactor(realtimeRowCount int64) float64
+}
+
+// estimateRowCountWithUniformDistribution estimates row count using uniform distribution assumption
+// for values not covered by TopN or histograms. This function handles the common logic used by
+// both equalRowCountOnIndex and equalRowCountOnColumn.
+func estimateRowCountWithUniformDistribution(
+	sctx planctx.PlanContext,
+	stats StatsProvider,
+	realtimeRowCount int64,
+	modifyCount int64,
+) statistics.RowEstimate {
+	if stats == nil {
+		// Return a default estimate when stats are nil
+		return statistics.DefaultRowEst(1)
 	}
+	histogram := stats.GetHistogram()
+	topN := stats.GetTopN()
+	// Calculate histNDV excluding TopN from NDV
+	histNDV := float64(histogram.NDV - int64(topN.Num()))
+	totalRowCount := stats.TotalRowCount()
+	increaseFactor := stats.GetIncreaseFactor(realtimeRowCount)
+	notNullCount := histogram.NotNullCount()
+
+	var avgRowEstimate float64
+	if histNDV <= 0 || notNullCount == 0 { // Branch 1: all NDV's are in TopN, and no histograms.
+		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
+		// This can happen when sampling collects fewer than all NDV.
+		if histNDV > 0 && modifyCount == 0 {
+			return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
+		}
+		// All values are in TopN (and TopN NDV is accurate).
+		// We need to derive a RowCount because the histogram is empty.
+		if notNullCount <= 0 {
+			notNullCount = totalRowCount - float64(histogram.NullCount)
+		}
+		avgRowEstimate = outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+	} else { // Branch 2: some NDV's are in histograms
+		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+		avgRowEstimate = notNullCount / histNDV
+	}
+
+	// skewRatio determines how much of the potential skew should be considered
+	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
+	if skewRatio > 0 {
+		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+		skewEstimate := notNullCount - (histNDV - 1)
+		minTopN := topN.MinCount()
+		if minTopN > 0 {
+			// The skewEstimate should not be larger than the minimum TopN value.
+			skewEstimate = min(skewEstimate, float64(minTopN))
+		}
+		return statistics.CalculateSkewRatioCounts(avgRowEstimate, skewEstimate, skewRatio)
+	}
+
+	return statistics.DefaultRowEst(avgRowEstimate)
+}
+
+// equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
+func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate) {
 	if len(idx.Info.Columns) == 1 {
 		if bytes.Equal(b, nullKeyBytes) {
-			return float64(idx.Histogram.NullCount)
+			return statistics.DefaultRowEst(float64(idx.Histogram.NullCount))
 		}
 	}
 	val := types.NewBytesDatum(b)
 	if idx.StatsVer < statistics.Version2 {
 		if idx.Histogram.NDV > 0 && outOfRangeOnIndex(idx, val) {
-			return outOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
+			outOfRangeCnt := outOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
+			return statistics.DefaultRowEst(outOfRangeCnt)
 		}
 		if idx.CMSketch != nil {
-			return float64(idx.QueryBytes(sctx, b))
+			return statistics.DefaultRowEst(float64(idx.QueryBytes(sctx, b)))
 		}
 		histRowCount, _ := idx.Histogram.EqualRowCount(sctx, val, false)
-		return histRowCount
+		return statistics.DefaultRowEst(histRowCount)
 	}
 	// stats version == 2
 	// 1. try to find this value in TopN
 	if idx.TopN != nil {
 		count, found := idx.TopN.QueryTopN(sctx, b)
 		if found {
-			return float64(count)
+			return statistics.DefaultRowEst(float64(count))
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
 	histCnt, matched := idx.Histogram.EqualRowCount(sctx, val, true)
-	if matched {
-		return histCnt
+	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
+	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
+	// also check if this last bucket end value is underrepresented
+	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
+		return statistics.DefaultRowEst(histCnt)
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
-	if histNDV <= 0 {
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
-		// The histogram wont have a NotNullCount - so it needs to be derived.
-		notNullCount := idx.Histogram.NotNullCount()
-		if notNullCount <= 0 {
-			notNullCount = idx.TotalRowCount() - float64(idx.Histogram.NullCount)
-		}
-		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
-		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
-	}
-	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	return idx.Histogram.NotNullCount() / histNDV
+	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
+	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
+	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
+	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
+	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount)
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
-func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range) (sel float64, corrSel float64, success bool, err error) {
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx,
-				"Result", sel,
-				"Success", success,
-				"error", err,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range) (sel float64, minSel float64, maxSel float64, success bool, err error) {
 	tmpRan := []*ranger.Range{
 		{
 			LowVal:    make([]types.Datum, 1),
@@ -454,12 +447,13 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	}
 	colsIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
 	singleColumnEstResults := make([]float64, 0, len(indexRange.LowVal))
+	minSel, maxSel = 1.0, 1.0
 	// The following codes uses Exponential Backoff to reduce the impact of independent assumption. It works like:
 	//   1. Calc the selectivity of each column.
 	//   2. Sort them and choose the first 4 most selective filter and the corresponding selectivity is sel_1, sel_2, sel_3, sel_4 where i < j => sel_i < sel_j.
 	//   3. The final selectivity would be sel_1 * sel_2^{1/2} * sel_3^{1/4} * sel_4^{1/8}.
 	// This calculation reduced the independence assumption and can work well better than it.
-	for i := 0; i < len(indexRange.LowVal); i++ {
+	for i := range indexRange.LowVal {
 		tmpRan[0].LowVal[0] = indexRange.LowVal[i]
 		tmpRan[0].HighVal[0] = indexRange.HighVal[i]
 		tmpRan[0].Collators[0] = indexRange.Collators[0]
@@ -467,17 +461,26 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			tmpRan[0].LowExclude = indexRange.LowExclude
 			tmpRan[0].HighExclude = indexRange.HighExclude
 		}
+		// Safety check to prevent panic when accessing colsIDs[i]
+		if colsIDs == nil || i >= len(colsIDs) {
+			continue
+		}
 		colID := colsIDs[i]
 		var (
 			count       float64
 			selectivity float64
-			err         error
 			foundStats  bool
 		)
 		if !statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
 			foundStats = true
-			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			var countEst statistics.RowEstimate
+			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan, false)
+			if err != nil {
+				return 0, 0, 0, false, err
+			}
+			count = countEst.Est
 			selectivity = count / float64(coll.RealtimeCount)
+			maxSel = min(maxSel, countEst.MaxEst/float64(coll.RealtimeCount))
 		}
 		if idxIDs, ok := coll.ColUniqueID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
 			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
@@ -489,23 +492,22 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 					continue
 				}
 				foundStats = true
-				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
+				countResult, err := GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan, nil)
 				if err == nil {
 					break
 				}
 				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
-				selectivity = count / float64(realtimeCnt)
+				selectivity = countResult.Est / float64(realtimeCnt)
+				maxSel = min(maxSel, countResult.MaxEst/float64(coll.RealtimeCount))
 			}
 		}
 		if !foundStats {
 			continue
 		}
-		if err != nil {
-			return 0, 0, false, err
-		}
 		singleColumnEstResults = append(singleColumnEstResults, selectivity)
+		minSel *= selectivity
 	}
-	// Sort them.
+	// Sort selectivities ascending (most selective first) for exponential backoff
 	slices.Sort(singleColumnEstResults)
 	l := len(singleColumnEstResults)
 	failpoint.Inject("cleanEstResults", func() {
@@ -513,9 +515,9 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		l = 0
 	})
 	if l == 1 {
-		return singleColumnEstResults[0], singleColumnEstResults[0], true, nil
+		return singleColumnEstResults[0], singleColumnEstResults[0], singleColumnEstResults[0], true, nil
 	} else if l == 0 {
-		return 0, 0, false, nil
+		return 0, 0, 0, false, nil
 	}
 	// Do not allow the exponential backoff to go below the available index bound. If the number of predicates
 	// is less than the number of index columns - use 90% of the bound to differentiate a subset from full index match.
@@ -525,24 +527,26 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		histNDV = idx.NDV
 	}
 	idxLowBound := 1 / float64(min(histNDV, coll.RealtimeCount))
+	minBound := idxLowBound
+	// Adjust idxLowBound upwards if we have not used all index columns.
 	if l < len(idx.Info.Columns) {
 		idxLowBound /= 0.9
 	}
-	// corrSel is the selectivity of the most filtering column
-	corrSel = max(idxLowBound, singleColumnEstResults[0])
-	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
-	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
-	if l == 2 {
-		return max(minTwoCol, multTwoCol), corrSel, true, nil
+	// maxSel is the "best" selectivity from all maximum of single column selectivities.
+	maxSel = max(idxLowBound, maxSel)
+	// minSel assumes independence between columns, so is the product of all single column selectivities.
+	minSel = max(minBound, minSel)
+
+	// Calculate minimum bound: take minimum of all selectivities (up to limit) and index bound
+	maxCols := min(MaxExponentialBackoffCols, l)
+	for i := range maxCols {
+		minBound = min(minBound, singleColumnEstResults[i])
 	}
-	minThreeCol := min(minTwoCol, singleColumnEstResults[2])
-	multThreeCol := multTwoCol * math.Sqrt(math.Sqrt(singleColumnEstResults[2]))
-	if l == 3 {
-		return max(minThreeCol, multThreeCol), corrSel, true, nil
-	}
-	minFourCol := min(minThreeCol, singleColumnEstResults[3])
-	multFourCol := multThreeCol * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3])))
-	return max(minFourCol, multFourCol), corrSel, true, nil
+
+	// Apply exponential backoff to pre-sorted selectivities
+	multResult := ApplyExponentialBackoff(singleColumnEstResults, minBound, 1.0)
+
+	return multResult, minSel, maxSel, true, nil
 }
 
 // outOfRangeOnIndex checks if the datum is out of the range.
@@ -566,13 +570,15 @@ func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
 }
 
 // betweenRowCountOnIndex estimates the row count for interval [l, r).
-// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func betweenRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, l, r types.Datum) float64 {
-	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
+// The input sctx is required for stats version 2. For version 1, it is just for debug trace, you can pass nil safely.
+func betweenRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, l, r types.Datum) statistics.RowEstimate {
+	histBetweenResult := idx.Histogram.BetweenRowCount(sctx, l, r)
 	if idx.StatsVer == statistics.Version1 {
-		return histBetweenCnt
+		return histBetweenResult
 	}
-	return float64(idx.TopN.BetweenCount(sctx, l.GetBytes(), r.GetBytes())) + histBetweenCnt
+	topNCnt := float64(idx.TopN.BetweenCount(sctx, l.GetBytes(), r.GetBytes()))
+	histBetweenResult.AddAll(topNCnt)
+	return histBetweenResult
 }
 
 // getOrdinalOfRangeCond gets the ordinal of the position range condition,
@@ -589,4 +595,17 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+// hasColumnStats checks if we have collected stats on any of the given columns.
+func hasColumnStats(sctx planctx.PlanContext, coll *statistics.HistColl, idxCols []*expression.Column) bool {
+	if idxCols == nil {
+		return false
+	}
+	for i := range idxCols {
+		if !statistics.ColumnStatsIsInvalid(coll.GetCol(idxCols[i].UniqueID), sctx, coll, idxCols[i].UniqueID) {
+			return true
+		}
+	}
+	return false
 }

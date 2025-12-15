@@ -56,7 +56,7 @@ func (*encodingBin) IsValid(_ []byte) bool {
 
 // Foreach implements Encoding interface.
 func (*encodingBin) Foreach(src []byte, _ Op, fn func(from, to []byte, ok bool) bool) {
-	for i := 0; i < len(src); i++ {
+	for i := range src {
 		if !fn(src[i:i+1], src[i:i+1], true) {
 			return
 		}

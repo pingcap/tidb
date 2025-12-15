@@ -75,7 +75,7 @@ func genShallowRef4LogicalOps(x any) ([]byte, error) {
 	c.write("}")
 
 	// For each field tagged with shallow-ref, generate a XXXShallowRef function.
-	for i := 0; i < vType.NumField(); i++ {
+	for i := range vType.NumField() {
 		f := vType.Field(i)
 		if !isShallowRefField(f) {
 			continue

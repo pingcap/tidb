@@ -15,9 +15,7 @@
 package core
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -27,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
@@ -40,25 +37,23 @@ type MaxMinEliminator struct {
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (a *MaxMinEliminator) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (a *MaxMinEliminator) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return a.eliminateMaxMin(p, opt), planChanged, nil
+	return a.eliminateMaxMin(p), planChanged, nil
 }
 
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.
-func (*MaxMinEliminator) composeAggsByInnerJoin(originAgg *logicalop.LogicalAggregation, aggs []*logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (plan base.LogicalPlan) {
+func (*MaxMinEliminator) composeAggsByInnerJoin(aggs []*logicalop.LogicalAggregation) (plan base.LogicalPlan) {
 	plan = aggs[0]
 	sctx := plan.SCtx()
 	joins := make([]*logicalop.LogicalJoin, 0)
 	for i := 1; i < len(aggs); i++ {
-		join := logicalop.LogicalJoin{JoinType: logicalop.InnerJoin}.Init(sctx, plan.QueryBlockOffset())
+		join := logicalop.LogicalJoin{JoinType: base.InnerJoin}.Init(sctx, plan.QueryBlockOffset())
 		join.SetChildren(plan, aggs[i])
-		join.SetSchema(logicalop.BuildLogicalJoinSchema(logicalop.InnerJoin, join))
-		join.CartesianJoin = true
+		join.SetSchema(logicalop.BuildLogicalJoinSchema(base.InnerJoin, join))
 		plan = join
 		joins = append(joins, join)
 	}
-	appendEliminateMultiMinMaxTraceStep(originAgg, aggs, joins, opt)
 	return
 }
 
@@ -145,7 +140,7 @@ func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 // `select max(a) from t` + `select min(a) from t` + `select max(b) from t`.
 // Then we check whether `a` and `b` have indices. If any of the used column has no index, we cannot eliminate
 // this aggregation.
-func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (aggs []*logicalop.LogicalAggregation, canEliminate bool) {
+func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *logicalop.LogicalAggregation) (aggs []*logicalop.LogicalAggregation, canEliminate bool) {
 	for _, f := range agg.AggFuncs {
 		// We must make sure the args of max/min is a simple single column.
 		col, ok := f.Args[0].(*expression.Column)
@@ -167,7 +162,7 @@ func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *logicalop.LogicalAgg
 			p   base.LogicalPlan
 			err error
 		)
-		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.Schema().Columns[0]}, opt); err != nil {
+		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.Schema().Columns[0]}); err != nil {
 			return nil, false
 		}
 		newAgg = p.(*logicalop.LogicalAggregation)
@@ -177,7 +172,7 @@ func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *logicalop.LogicalAgg
 }
 
 // eliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
-func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *logicalop.LogicalAggregation {
+func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation) *logicalop.LogicalAggregation {
 	f := agg.AggFuncs[0]
 	child := agg.Children()[0]
 	ctx := agg.SCtx()
@@ -213,19 +208,18 @@ func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation
 	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
 	// Since now there would be at most one row returned, the remained agg operator is not expensive anymore.
 	agg.SetChildren(li)
-	appendEliminateSingleMaxMinTrace(agg, sel, sort, li, opt)
 	return agg
 }
 
 // eliminateMaxMin tries to convert max/min to Limit+Sort operators.
-func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan) base.LogicalPlan {
 	// CTE's logical optimization is indenpent.
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p
 	}
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChildren = append(newChildren, a.eliminateMaxMin(child, opt))
+		newChildren = append(newChildren, a.eliminateMaxMin(child))
 	}
 	p.SetChildren(newChildren...)
 	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
@@ -248,18 +242,18 @@ func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrac
 		if len(agg.AggFuncs) == 1 {
 			// If there is only one aggFunc, we don't need to guarantee that the child of it is a data
 			// source, or whether the sort can be eliminated. This transformation won't be worse than previous.
-			return a.eliminateSingleMaxMin(agg, opt)
+			return a.eliminateSingleMaxMin(agg)
 		}
 		// If we have more than one aggFunc, we can eliminate this agg only if all of the aggFuncs can benefit from
 		// their column's index.
-		aggs, canEliminate := a.splitAggFuncAndCheckIndices(agg, opt)
+		aggs, canEliminate := a.splitAggFuncAndCheckIndices(agg)
 		if !canEliminate {
 			return agg
 		}
 		for i := range aggs {
-			aggs[i] = a.eliminateSingleMaxMin(aggs[i], opt)
+			aggs[i] = a.eliminateSingleMaxMin(aggs[i])
 		}
-		return a.composeAggsByInnerJoin(agg, aggs, opt)
+		return a.composeAggsByInnerJoin(aggs)
 	}
 	return p
 }
@@ -267,62 +261,4 @@ func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrac
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*MaxMinEliminator) Name() string {
 	return "max_min_eliminate"
-}
-
-func appendEliminateSingleMaxMinTrace(agg *logicalop.LogicalAggregation, sel *logicalop.LogicalSelection, sort *logicalop.LogicalSort, limit *logicalop.LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		buffer := bytes.NewBufferString("")
-		if sel != nil {
-			fmt.Fprintf(buffer, "add %v_%v,", sel.TP(), sel.ID())
-		}
-		if sort != nil {
-			fmt.Fprintf(buffer, "add %v_%v,", sort.TP(), sort.ID())
-		}
-		fmt.Fprintf(buffer, "add %v_%v during eliminating %v_%v %s function", limit.TP(), limit.ID(), agg.TP(), agg.ID(), agg.AggFuncs[0].Name)
-		return buffer.String()
-	}
-	reason := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v has only one function[%s] without group by", agg.TP(), agg.ID(), agg.AggFuncs[0].Name))
-		if sel != nil {
-			fmt.Fprintf(buffer, ", the columns in %v_%v shouldn't be NULL and needs NULL to be filtered out", agg.TP(), agg.ID())
-		}
-		if sort != nil {
-			fmt.Fprintf(buffer, ", the columns in %v_%v should be sorted", agg.TP(), agg.ID())
-		}
-		return buffer.String()
-	}
-	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
-}
-
-func appendEliminateMultiMinMaxTraceStep(originAgg *logicalop.LogicalAggregation, aggs []*logicalop.LogicalAggregation, joins []*logicalop.LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v splited into [", originAgg.TP(), originAgg.ID()))
-		for i, agg := range aggs {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			fmt.Fprintf(buffer, "%v_%v", agg.TP(), agg.ID())
-		}
-		buffer.WriteString("], and add [")
-		for i, join := range joins {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			fmt.Fprintf(buffer, "%v_%v", join.TP(), join.ID())
-		}
-		fmt.Fprintf(buffer, "] to connect them during eliminating %v_%v multi min/max functions", originAgg.TP(), originAgg.ID())
-		return buffer.String()
-	}
-	reason := func() string {
-		buffer := bytes.NewBufferString("each column is sorted and can benefit from index/primary key in [")
-		for i, agg := range aggs {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			fmt.Fprintf(buffer, "%v_%v", agg.TP(), agg.ID())
-		}
-		buffer.WriteString("] and none of them has group by clause")
-		return buffer.String()
-	}
-	opt.AppendStepToCurrent(originAgg.ID(), originAgg.TP(), reason, action)
 }

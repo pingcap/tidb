@@ -53,6 +53,15 @@ func key(b *testing.B, collator Collator, length int) {
 	}
 }
 
+func immutableKey(b *testing.B, collator Collator, length int) {
+	s := generateData(length)
+
+	b.ResetTimer()
+	for range b.N {
+		collator.ImmutableKey(s)
+	}
+}
+
 func BenchmarkUtf8mb4Bin_CompareShort(b *testing.B) {
 	compare(b, &binPaddingCollator{}, short)
 }
@@ -117,58 +126,118 @@ func BenchmarkUtf8mb4Bin_KeyShort(b *testing.B) {
 	key(b, &binPaddingCollator{}, short)
 }
 
+func BenchmarkUtf8mb4Bin_ImmutableKeyShort(b *testing.B) {
+	immutableKey(b, &binPaddingCollator{}, short)
+}
+
 func BenchmarkUtf8mb4GeneralCI_KeyShort(b *testing.B) {
 	key(b, &generalCICollator{}, short)
+}
+
+func BenchmarkUtf8mb4GeneralCI_ImmutableKeyShort(b *testing.B) {
+	immutableKey(b, &generalCICollator{}, short)
 }
 
 func BenchmarkUtf8mb4UnicodeCI_KeyShort(b *testing.B) {
 	key(b, &unicodeCICollator{}, short)
 }
 
+func BenchmarkUtf8mb4UnicodeCI_ImmutableKeyShort(b *testing.B) {
+	immutableKey(b, &unicodeCICollator{}, short)
+}
+
 func BenchmarkUtf8mb40900AICI_KeyShort(b *testing.B) {
 	key(b, &unicode0900AICICollator{}, short)
+}
+
+func BenchmarkUtf8mb40900AICI_ImmutableKeyShort(b *testing.B) {
+	immutableKey(b, &unicode0900AICICollator{}, short)
 }
 
 func BenchmarkUtf8mb40900Bin_KeyShort(b *testing.B) {
 	key(b, &derivedBinCollator{}, short)
 }
 
+func BenchmarkUtf8mb40900Bin_ImmutableKeyShort(b *testing.B) {
+	immutableKey(b, &derivedBinCollator{}, short)
+}
+
 func BenchmarkUtf8mb4Bin_KeyMid(b *testing.B) {
 	key(b, &binPaddingCollator{}, middle)
+}
+
+func BenchmarkUtf8mb4Bin_ImmutableKeyMid(b *testing.B) {
+	immutableKey(b, &binPaddingCollator{}, middle)
 }
 
 func BenchmarkUtf8mb4GeneralCI_KeyMid(b *testing.B) {
 	key(b, &generalCICollator{}, middle)
 }
 
+func BenchmarkUtf8mb4GeneralCI_ImmutableKeyMid(b *testing.B) {
+	immutableKey(b, &generalCICollator{}, middle)
+}
+
 func BenchmarkUtf8mb4UnicodeCI_KeyMid(b *testing.B) {
 	key(b, &unicodeCICollator{}, middle)
+}
+
+func BenchmarkUtf8mb4UnicodeCI_ImmutableKeyMid(b *testing.B) {
+	immutableKey(b, &unicodeCICollator{}, middle)
 }
 
 func BenchmarkUtf8mb40900AICI_KeyMid(b *testing.B) {
 	key(b, &unicode0900AICICollator{}, middle)
 }
 
+func BenchmarkUtf8mb40900AICI_ImmutableKeyMid(b *testing.B) {
+	immutableKey(b, &unicode0900AICICollator{}, middle)
+}
+
 func BenchmarkUtf8mb40900Bin_KeyMid(b *testing.B) {
 	key(b, &derivedBinCollator{}, middle)
+}
+
+func BenchmarkUtf8mb40900Bin_ImmutableKeyMid(b *testing.B) {
+	immutableKey(b, &derivedBinCollator{}, middle)
 }
 
 func BenchmarkUtf8mb4Bin_KeyLong(b *testing.B) {
 	key(b, &binPaddingCollator{}, long)
 }
 
+func BenchmarkUtf8mb4Bin_ImmutableKeyLong(b *testing.B) {
+	immutableKey(b, &binPaddingCollator{}, long)
+}
+
 func BenchmarkUtf8mb4GeneralCI_KeyLong(b *testing.B) {
 	key(b, &generalCICollator{}, long)
+}
+
+func BenchmarkUtf8mb4GeneralCI_ImmutableKeyLong(b *testing.B) {
+	immutableKey(b, &generalCICollator{}, long)
 }
 
 func BenchmarkUtf8mb4UnicodeCI_KeyLong(b *testing.B) {
 	key(b, &unicodeCICollator{}, long)
 }
 
+func BenchmarkUtf8mb4UnicodeCI_ImmutableKeyLong(b *testing.B) {
+	immutableKey(b, &unicodeCICollator{}, long)
+}
+
 func BenchmarkUtf8mb40900AICI_KeyLong(b *testing.B) {
 	key(b, &unicode0900AICICollator{}, long)
 }
 
+func BenchmarkUtf8mb40900AICI_ImmutableKeyLong(b *testing.B) {
+	immutableKey(b, &unicode0900AICICollator{}, long)
+}
+
 func BenchmarkUtf8mb40900Bin_KeyLong(b *testing.B) {
 	key(b, &derivedBinCollator{}, long)
+}
+
+func BenchmarkUtf8mb40900Bin_ImmutableKeyLong(b *testing.B) {
+	immutableKey(b, &derivedBinCollator{}, long)
 }

@@ -287,7 +287,7 @@ func TestEvalExpr(t *testing.T) {
 	ctx := createContext(t)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for i := 0; i < len(tNames); i++ {
+	for i := range tNames {
 		ft := eType2FieldType(eTypes[i])
 		colExpr := &Column{Index: 0, RetType: ft}
 		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
@@ -300,7 +300,7 @@ func TestEvalExpr(t *testing.T) {
 		require.NoError(t, err)
 		err = EvalExpr(ctx, true, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf2)
 		require.NoError(t, err)
-		for j := 0; j < 1024; j++ {
+		for j := range 1024 {
 			isNull := colBuf.IsNull(j)
 			isNull2 := colBuf2.IsNull(j)
 			require.Equal(t, isNull2, isNull)

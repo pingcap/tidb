@@ -109,7 +109,7 @@ type methodLookup interface {
 func typIsNotAllowed(typ methodLookup) bool {
 	implString := false
 	implStringWithCtx := false
-	for i := 0; i < typ.NumMethods(); i++ {
+	for i := range typ.NumMethods() {
 		method := typ.Method(i)
 		name := method.Name()
 		if name == "String" {

@@ -218,13 +218,13 @@ create table t1(a bigint primary key, b bigint);
 create table t2(a bigint primary key, b bigint);
 insert into t1 values(1, 100), (2, 100), (3, 100), (4, 100), (5, 100);
 insert into t2 select a*100, b*100 from t1;
-explain format = 'brief' select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
-id	estRows	task	access object	operator info
-MergeJoin	10000.00	root		left outer join, left side:TableReader, left key:executor__jointest__join.t1.a, right key:executor__jointest__join.t2.a, left cond:ne(executor__jointest__join.t1.a, 3)
-├─TableReader(Build)	6666.67	root		data:TableRangeScan
-│ └─TableRangeScan	6666.67	cop[tikv]	table:t2	range:[-inf,3), (3,+inf], keep order:true, stats:pseudo
-└─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+explain format = 'plan_tree' select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
+id	task	access object	operator info
+MergeJoin	root		left outer join, left side:TableReader, left key:executor__jointest__join.t1.a, right key:executor__jointest__join.t2.a, left cond:ne(executor__jointest__join.t1.a, 3)
+├─TableReader(Build)	root		data:TableRangeScan
+│ └─TableRangeScan	cop[tikv]	table:t2	range:[-inf,3), (3,+inf], keep order:true, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
 set @@tidb_init_chunk_size=1;
 select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
 a	b	a	b
@@ -717,58 +717,58 @@ create table t1 (a int, b int);
 create table t2 (a int, c int);
 insert t1 values (1,2), (10,20), (0,0);
 insert t2 values (1,3), (100,200), (0,0);
-explain format = 'brief' select * from t1 natural join t2;
-id	estRows	task	access object	operator info
-HashJoin	12487.50	root		inner join, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t2.a))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	9990.00	root		data:Selection
-  └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t1.a))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 natural join t2;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(executor__jointest__join.t2.a))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(executor__jointest__join.t1.a))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 natural join t2;
 a	b	c
 0	0	0
 1	2	3
-explain format = 'brief' select * from t1 natural left join t2 order by a;
-id	estRows	task	access object	operator info
-Sort	12487.50	root		executor__jointest__join.t1.a
-└─HashJoin	12487.50	root		left outer join, left side:TableReader, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
-  ├─TableReader(Build)	9990.00	root		data:Selection
-  │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t2.a))
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 natural left join t2 order by a;
+id	task	access object	operator info
+Sort	root		executor__jointest__join.t1.a
+└─HashJoin	root		left outer join, left side:TableReader, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(executor__jointest__join.t2.a))
+  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 natural left join t2 order by a;
 a	b	c
 0	0	0
 1	2	3
 10	20	NULL
-explain format = 'brief' select * from t1 natural right join t2 order by a;
-id	estRows	task	access object	operator info
-Sort	12487.50	root		executor__jointest__join.t2.a
-└─Projection	12487.50	root		executor__jointest__join.t2.a, executor__jointest__join.t2.c, executor__jointest__join.t1.b
-  └─HashJoin	12487.50	root		right outer join, left side:TableReader, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
-    ├─TableReader(Build)	9990.00	root		data:Selection
-    │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t1.a))
-    │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t1 natural right join t2 order by a;
+id	task	access object	operator info
+Sort	root		executor__jointest__join.t2.a
+└─Projection	root		executor__jointest__join.t2.a, executor__jointest__join.t2.c, executor__jointest__join.t1.b
+  └─HashJoin	root		right outer join, left side:TableReader, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(executor__jointest__join.t1.a))
+    │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 natural right join t2 order by a;
 a	c	b
 0	0	0
 1	3	2
 100	200	NULL
-explain format = 'brief' SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
-id	estRows	task	access object	operator info
-Projection	9990.00	root		executor__jointest__join.t1.a, executor__jointest__join.t1.b, executor__jointest__join.t2.c
-└─Selection	9990.00	root		not(nulleq(executor__jointest__join.t1.a, executor__jointest__join.t2.a))
-  └─HashJoin	12487.50	root		left outer join, left side:TableReader, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
-    ├─TableReader(Build)	9990.00	root		data:Selection
-    │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t2.a))
-    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
+id	task	access object	operator info
+Projection	root		executor__jointest__join.t1.a, executor__jointest__join.t1.b, executor__jointest__join.t2.c
+└─Selection	root		not(nulleq(executor__jointest__join.t1.a, executor__jointest__join.t2.a))
+  └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(executor__jointest__join.t2.a))
+    │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
 a	b	c
 10	20	NULL

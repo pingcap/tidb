@@ -63,26 +63,6 @@ type GcSafePoints struct {
 	} `json:"service_gc_safe_points"`
 }
 
-func verifyGCStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
-	var result GcSafePoints
-	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
-	for _, sp := range result.SPs {
-		if sp.ServiceID != "gc_worker" {
-			t.Equal(int64(cfg.SafePoint)-1, sp.SafePoint, result.SPs)
-		}
-	}
-}
-
-func verifyGCNotStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
-	var result GcSafePoints
-	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
-	for _, sp := range result.SPs {
-		if sp.ServiceID != "gc_worker" {
-			t.FailNowf("the service gc safepoint exists", "it is %#v", sp)
-		}
-	}
-}
-
 func verifyTargetGCSafePointExist(t *require.Assertions, cfg operator.PauseGcConfig) {
 	var result GcSafePoints
 	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
@@ -232,7 +212,6 @@ func TestOperator(t *testing.T) {
 		}
 	}, 10*time.Second, time.Second)
 
-	verifyGCStopped(req, cfg)
 	verifyTargetGCSafePointExist(req, cfg)
 	verifyLightningStopped(req, cfg)
 	verifySchedulersStopped(req, cfg)

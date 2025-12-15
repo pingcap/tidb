@@ -9,9 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 14,
+    shard_count = 16,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/statistics",

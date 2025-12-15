@@ -20,16 +20,19 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
 func TestCleanUpRoutine(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -42,11 +45,13 @@ func TestCleanUpRoutine(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
 	mockCleanupRoutine := mock.NewMockCleanUpRoutine(ctrl)
 
-	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
+	targetScope := handle.GetTargetScope()
+	sch, mgr := MockSchedulerManager(store, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", targetScope))
 	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	sch.Start()
 	defer sch.Stop()
-	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, "", 0, proto.ExtraParams{}, nil)
+	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, store.GetKeyspace(), 1, targetScope, 1, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 
 	checkTaskRunningCnt := func() []*proto.Task {

@@ -13,6 +13,7 @@ import (
 	reflect "reflect"
 
 	planner "github.com/pingcap/tidb/pkg/disttask/framework/planner"
+	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -56,6 +57,20 @@ func (m *MockLogicalPlan) FromTaskMeta(arg0 []byte) error {
 func (mr *MockLogicalPlanMockRecorder) FromTaskMeta(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FromTaskMeta", reflect.TypeOf((*MockLogicalPlan)(nil).FromTaskMeta), arg0)
+}
+
+// GetTaskExtraParams mocks base method.
+func (m *MockLogicalPlan) GetTaskExtraParams() proto.ExtraParams {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskExtraParams")
+	ret0, _ := ret[0].(proto.ExtraParams)
+	return ret0
+}
+
+// GetTaskExtraParams indicates an expected call of GetTaskExtraParams.
+func (mr *MockLogicalPlanMockRecorder) GetTaskExtraParams() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskExtraParams", reflect.TypeOf((*MockLogicalPlan)(nil).GetTaskExtraParams))
 }
 
 // ToPhysicalPlan mocks base method.

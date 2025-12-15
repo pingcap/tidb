@@ -15,6 +15,7 @@
 
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
+NEXT_GEN=$NEXT_GEN
 
 build=1
 mysql_tester="./mysql_tester"
@@ -26,9 +27,10 @@ record=0
 record_case=""
 stats="s"
 collation_opt=2
+runs_on_port=0
 
 set -eu
-trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
+trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -40,7 +42,7 @@ function help_message()
 
     -d <y|Y|n|N|b|B>: \"y\" or \"Y\" for only enabling the new collation during test.
                       \"n\" or \"N\" for only disabling the new collation during test.
-                      \"b\" or \"B\" for tests the prefix is `collation`, enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
+                      \"b\" or \"B\" for tests the prefix is 'collation', enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
                       Enable/Disable the new collation during the integration test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
@@ -57,6 +59,8 @@ function help_message()
     -t <test-name>: Run tests in file \"t/<test-name>.test\".
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
+
+    -P <port>: Use tidb-server running on <port> for testing.
 
 "
 }
@@ -100,13 +104,13 @@ function find_multiple_available_ports() {
 
 function build_tidb_server()
 {
-    tidb_server="./integrationtest_tidb-server"
+    tidb_server="$(pwd)/integrationtest_tidb-server"
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
+        make -C ../.. server SERVER_OUT=$tidb_server
     else
-        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
+        make -C ../.. server SERVER_OUT=$tidb_server RACE_FLAG="-race"
     fi
 }
 
@@ -114,7 +118,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@0d83955ea569706e5296cd3e2f54efb7f1206d0b
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@12f37562a884a2d680d5ca619df80c8d0a080aff
     mv src mysql_tester
 }
 
@@ -125,8 +129,13 @@ function extract_stats()
     unzip -qq s.zip
 }
 
-while getopts "t:s:r:b:d:c:i:h" opt; do
+while getopts "t:s:r:b:d:c:i:P:h" opt; do
     case $opt in
+        P)
+            runs_on_port="$OPTARG"
+            port="$OPTARG"
+            build=0
+            ;;
         t)
             tests="$OPTARG"
             ;;
@@ -189,7 +198,7 @@ if [ $build -eq 1 ]; then
     fi
     build_mysql_tester
 else
-    if [ -z "$tidb_server" ]; then
+    if [ -z "$tidb_server" ] && [ "$runs_on_port" -eq 0 ]; then
         tidb_server="./integrationtest_tidb-server"
         if [[ ! -f "$tidb_server" ]]; then
             build_tidb_server
@@ -209,9 +218,12 @@ fi
 
 rm -rf $mysql_tester_log
 
-ports=($(find_multiple_available_ports 4000 2))
-port=${ports[0]}
-status=${ports[1]}
+if [ "$runs_on_port" -eq 0 ]
+then
+    ports=($(find_multiple_available_ports 4000 2))
+    port=${ports[0]}
+    status=${ports[1]}
+fi
 
 function start_tidb_server()
 {
@@ -219,14 +231,22 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
-    echo "start tidb-server, log file: $mysql_tester_log"
+
+    start_options="-P $port -status $status -config $config_file"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
-        SERVER_PID=$!
+        start_options="$start_options -store tikv -path ${TIKV_PATH}"
     else
-        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $mysql_tester_log 2>&1 &
-        SERVER_PID=$!
+        start_options="$start_options -store unistore -path ''"
     fi
+
+    if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
+        start_options="$start_options -keyspace-name SYSTEM --tidb-service-scope dxf_service"
+    fi
+
+    echo "start tidb-server, log file: $mysql_tester_log"
+    $tidb_server -V
+    $tidb_server $start_options > $mysql_tester_log 2>&1 &
+    SERVER_PID=$!
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 
@@ -304,23 +324,35 @@ function check_case_name() {
 check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
-    start_tidb_server
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        start_tidb_server
+    fi
     run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        kill -15 $SERVER_PID
+        while ps -p $SERVER_PID > /dev/null; do
+            sleep 1
+        done
+    fi
     check_data_race
 fi
 
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
-    start_tidb_server
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        start_tidb_server
+    fi
     run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        kill -15 $SERVER_PID
+        while ps -p $SERVER_PID > /dev/null; do
+            sleep 1
+        done
+    fi
     check_data_race
 fi
 

@@ -17,6 +17,7 @@ package priorityqueue
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -35,7 +36,16 @@ import (
 )
 
 // HandleDDLEvent handles DDL events for the priority queue.
-func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) (err error) {
+func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+	// Check if auto analyze is enabled.
+	if !vardef.RunAutoAnalyze.Load() {
+		// Close the priority queue if auto analyze is disabled.
+		// This ensures proper cleanup of the DDL notifier (mysql.tidb_ddl_notifier) and prevents the queue from remaining
+		// in an unknown state. When auto analyze is re-enabled, the priority queue can be properly re-initialized.
+		// NOTE: It is safe to call Close multiple times and it will get the lock internally.
+		pq.Close()
+		return nil
+	}
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	// If the priority queue is not initialized, we should retry later.
@@ -43,16 +53,7 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 		return notifier.ErrNotReadyRetryLater
 	}
 
-	defer func() {
-		if err != nil {
-			actionType := event.GetType().String()
-			statslogutil.StatsLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
-				zap.Error(err),
-				zap.String("event", event.String()),
-			)
-		}
-	}()
-
+	var err error
 	switch event.GetType() {
 	case model.ActionAddIndex:
 		err = pq.handleAddIndexEvent(sctx, event)
@@ -77,15 +78,30 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 	default:
 		// Ignore other DDL events.
 	}
-
-	return err
+	if err != nil {
+		intest.Assert(
+			errors.ErrorEqual(err, context.Canceled) ||
+				strings.Contains(err.Error(), "mock handleTaskOnce error") ||
+				strings.Contains(err.Error(), "session pool closed"),
+			fmt.Sprintf("handle ddl event failed, err: %+v", err),
+		)
+		actionType := event.GetType().String()
+		statslogutil.StatsErrVerboseSampleLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
+			zap.Error(err),
+			zap.String("event", event.String()),
+		)
+	}
+	// Ideally, we shouldn't allow any errors to be ignored, but for now, there is no retry limit mechanism.
+	// So to avoid infinite retry, we just log the error and continue.
+	// See more at: https://github.com/pingcap/tidb/issues/59474
+	return nil
 }
 
 // getAndDeleteJob tries to get a job from the priority queue and delete it if it exists.
 func (pq *AnalysisPriorityQueue) getAndDeleteJob(tableID int64) error {
 	job, ok, err := pq.syncFields.inner.getByKey(tableID)
 	if err != nil {
-		statslogutil.StatsLogger().Error(
+		statslogutil.StatsErrVerboseSampleLogger().Error(
 			"Failed to get the job from priority queue",
 			zap.Error(err),
 			zap.Int64("tableID", tableID),
@@ -95,7 +111,7 @@ func (pq *AnalysisPriorityQueue) getAndDeleteJob(tableID int64) error {
 	if ok {
 		err := pq.syncFields.inner.delete(job)
 		if err != nil {
-			statslogutil.StatsLogger().Error(
+			statslogutil.StatsErrVerboseSampleLogger().Error(
 				"Failed to delete table from priority queue",
 				zap.Error(err),
 				zap.Int64("tableID", tableID),
@@ -121,7 +137,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
 }
@@ -140,7 +156,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 	// For static partitioned tables, we need to recreate the job for each partition.
 	if partitionInfo != nil && pruneMode == variable.Static {
 		for _, def := range partitionInfo.Definitions {
-			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, def.ID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+			if !found {
+				return nil
+			}
 			err := pq.recreateAndPushJob(sctx, lockedTables, pruneMode, partitionStats)
 			if err != nil {
 				return err
@@ -148,7 +167,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 		}
 		return nil
 	}
-	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	return pq.recreateAndPushJob(sctx, lockedTables, pruneMode, stats)
 }
 
@@ -156,12 +178,16 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
-	tableInfo, idxes := event.GetAddIndexInfo()
+	tableInfo, idxes, analyzed := event.GetAddIndexInfo()
+	if analyzed {
+		// if an added index is already analyzed in ddl, skip it here.
+		return nil
+	}
 
 	intest.AssertFunc(func() bool {
 		// Columnar index has a separate job type. We should not see columnar index here.
 		for _, idx := range idxes {
-			if idx.IsTiFlashLocalIndex() {
+			if idx.IsColumnarIndex() {
 				return false
 			}
 		}
@@ -176,7 +202,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	partitionInfo := tableInfo.GetPartitionInfo()
 	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
@@ -187,15 +213,23 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		// For static partitioned tables, we need to recreate the job for each partition.
 		for _, def := range partitionInfo.Definitions {
 			partitionID := def.ID
-			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, partitionID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(partitionID)
+			if !found {
+				return nil
+			}
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
-			return pq.pushWithoutLock(job)
+			if err := pq.pushWithoutLock(job); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
 
 	// For normal tables and dynamic partitioned tables, we only need to recreate the job for the table.
-	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	// Directly create a new job for the newly added index.
 	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
@@ -329,7 +363,7 @@ func (pq *AnalysisPriorityQueue) handleExchangeTablePartitionEvent(
 	}
 
 	// For non-partitioned tables.
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	// Get the new table info after the exchange.
 	// Note: We should use the ID of the partitioned table to get the new table info after the exchange.
 	tblInfo, ok := pq.statsHandle.TableInfoByID(is, partInfo.Definitions[0].ID)
@@ -417,7 +451,7 @@ func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, eve
 		for _, partition := range tbl.Partitions {
 			if err := pq.getAndDeleteJob(partition.ID); err != nil {
 				// Try best to delete as many tables as possible.
-				statslogutil.StatsLogger().Error(
+				statslogutil.StatsErrVerboseSampleLogger().Error(
 					"Failed to delete table from priority queue",
 					zap.Error(err),
 					zap.String("db", miniDBInfo.Name.O),
@@ -431,7 +465,7 @@ func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, eve
 		// For non-partitioned tables or dynamic partitioned tables.
 		if err := pq.getAndDeleteJob(tbl.ID); err != nil {
 			// Try best to delete as many tables as possible.
-			statslogutil.StatsLogger().Error(
+			statslogutil.StatsErrVerboseSampleLogger().Error(
 				"Failed to delete table from priority queue",
 				zap.Error(err),
 				zap.String("db", miniDBInfo.Name.O),

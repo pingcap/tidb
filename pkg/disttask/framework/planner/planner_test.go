@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -55,7 +56,12 @@ func TestPlanner(t *testing.T) {
 	}
 	mockLogicalPlan := mock.NewMockLogicalPlan(ctrl)
 	mockLogicalPlan.EXPECT().ToTaskMeta().Return([]byte("mock"), nil)
-	taskID, err := p.Run(pCtx, mockLogicalPlan)
+	mockLogicalPlan.EXPECT().GetTaskExtraParams().Return(proto.ExtraParams{ManualRecovery: true})
+	taskID, err := p.Run(pCtx, mockLogicalPlan, mgr)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), taskID)
+	task, err := mgr.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, task.Concurrency)
+	require.EqualValues(t, "example", task.Type)
+	require.True(t, task.ManualRecovery)
 }

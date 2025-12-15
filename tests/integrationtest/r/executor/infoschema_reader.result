@@ -332,32 +332,32 @@ table_rows	avg_row_length	data_length	index_length
 3	18	54	6
 drop table if exists test.t;
 select * from information_schema.tidb_indexes where table_name = 't';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
-executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
-executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL	PREDICATE
+executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0	NULL
+executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0	NULL
 select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
-executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
-executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
-executor__infoschema_reader	t_common	0	PRIMARY	1	a	NULL		NULL	1	YES	YES	0
-executor__infoschema_reader	t_implicit	0	PRIMARY	1	a	NULL		NULL	1	YES	NO	0
-executor__infoschema_reader	t_int	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL	PREDICATE
+executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0	NULL
+executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0	NULL
+executor__infoschema_reader	t_common	0	PRIMARY	1	a	NULL		NULL	1	YES	YES	0	NULL
+executor__infoschema_reader	t_implicit	0	PRIMARY	1	a	NULL		NULL	1	YES	NO	0	NULL
+executor__infoschema_reader	t_int	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0	NULL
 select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and table_name = 't';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
-executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
-executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL	PREDICATE
+executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0	NULL
+executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0	NULL
 select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' or table_name = 't';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
-executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
-executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
-executor__infoschema_reader	t_common	0	PRIMARY	1	a	NULL		NULL	1	YES	YES	0
-executor__infoschema_reader	t_implicit	0	PRIMARY	1	a	NULL		NULL	1	YES	NO	0
-executor__infoschema_reader	t_int	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL	PREDICATE
+executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0	NULL
+executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0	NULL
+executor__infoschema_reader	t_common	0	PRIMARY	1	a	NULL		NULL	1	YES	YES	0	NULL
+executor__infoschema_reader	t_implicit	0	PRIMARY	1	a	NULL		NULL	1	YES	NO	0	NULL
+executor__infoschema_reader	t_int	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0	NULL
 select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and column_name = 'c';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
-executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL	PREDICATE
+executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0	NULL
 select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL	PREDICATE
 select * from information_schema.views where table_name = 'v1';
 TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	VIEW_DEFINITION	CHECK_OPTION	IS_UPDATABLE	DEFINER	SECURITY_TYPE	CHARACTER_SET_CLIENT	COLLATION_CONNECTION
 def	executor__infoschema_reader	v1	SELECT 1 AS `1`	CASCADED	NO	root@localhost	DEFINER	utf8mb4	utf8mb4_general_ci
@@ -428,10 +428,10 @@ t	executor__infoschema_reader
 select table_name from information_schema.tables where table_name = 't';
 table_name
 t
-explain format='brief' select table_name, table_schema from information_schema.tables;
-id	estRows	task	access object	operator info
-Projection	10000.00	root		Column#3, Column#2
-└─MemTableScan	10000.00	root	table:TABLES	
+explain format='plan_tree' select table_name, table_schema from information_schema.tables;
+id	task	access object	operator info
+Projection	root		Column#3, Column#2
+└─MemTableScan	root	table:TABLES	
 select count(*) from information_schema.tables where table_name = 't';
 count(*)
 1
@@ -464,3 +464,106 @@ select table_name from information_schema.referential_constraints where table_na
 table_name
 select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';
 table_name
+drop database if exists test1;
+create database test1;
+use test1;
+create table t10(id int);
+create table t11 like t10;
+create table t12 like t10;
+create table t13 like t10;
+create table t14 like t10;
+create table t15 like t10;
+create table t16 like t10;
+create table t17 like t10;
+create table t18 like t10;
+create table t19 like t10;
+drop database if exists test2;
+create database test2;
+use test2;
+create table t20(id int);
+create table t21 like t20;
+create table t22 like t20;
+create table t23 like t20;
+create table t24 like t20;
+create table t25 like t20;
+create table t26 like t20;
+create table t27 like t20;
+create table t28 like t20;
+create table t29 like t20;
+SELECT table_schema, table_name,data_length FROM information_schema.TABLES
+WHERE (TABLE_NAME IN ('t10','t11','t12','t13','t14','t15','t16','t17','t18','t19','t20','t21','t22','t23','t24','t25','t26','t27','t28','t29'));
+table_schema	table_name	data_length
+test1	t10	0
+test1	t11	0
+test1	t12	0
+test1	t13	0
+test1	t14	0
+test1	t15	0
+test1	t16	0
+test1	t17	0
+test1	t18	0
+test1	t19	0
+test2	t20	0
+test2	t21	0
+test2	t22	0
+test2	t23	0
+test2	t24	0
+test2	t25	0
+test2	t26	0
+test2	t27	0
+test2	t28	0
+test2	t29	0
+drop database test1;
+drop database test2;
+drop database if exists executor__infoschema_reader_2;
+create database executor__infoschema_reader_2;
+use executor__infoschema_reader_2;
+create table t1 (a int);
+create table t2 (a int);
+create table t3 (a int);
+insert into t1 values (1);
+insert into t2 values (1), (2);
+insert into t3 values (1), (2), (3);
+analyze table t1;
+analyze table t2;
+analyze table t3;
+select TABLE_NAME, TABLE_ROWS from information_schema.tables where table_schema = 'executor__infoschema_reader_2';
+TABLE_NAME	TABLE_ROWS
+t1	1
+t2	2
+t3	3
+drop table t1;
+drop table t2;
+drop table t3;
+create table pt1 (a int primary key, b int) partition by hash (a) partitions 4;
+create table pt2 (a int primary key, b int) partition by hash (a) partitions 4;
+create table pt3 (a int primary key, b int) partition by hash (a) partitions 4;
+insert into pt1 values (1, 1);
+insert into pt2 values (1, 1), (2, 2);
+insert into pt3 values (1, 1), (2, 2), (3, 3);
+analyze table pt1;
+analyze table pt2;
+analyze table pt3;
+select TABLE_NAME, TABLE_ROWS from information_schema.partitions where table_schema = 'executor__infoschema_reader_2';
+TABLE_NAME	TABLE_ROWS
+pt1	0
+pt1	1
+pt1	0
+pt1	0
+pt2	0
+pt2	1
+pt2	1
+pt2	0
+pt3	0
+pt3	1
+pt3	1
+pt3	1
+drop table pt1;
+drop table pt2;
+drop table pt3;
+use executor__infoschema_reader;
+drop table if exists t;
+create table t (col1 int primary key, col2 int, key idx(col2) where col1 > 100);
+select TABLE_SCHEMA,TABLE_NAME,PREDICATE from information_schema.tidb_indexes where predicate is not null;
+TABLE_SCHEMA	TABLE_NAME	PREDICATE
+executor__infoschema_reader	t	`col1` > 100

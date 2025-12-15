@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -24,7 +25,8 @@ const importMetricSubsystem = "import"
 
 // GetRegisteredImportMetrics returns the registered import metrics.
 func GetRegisteredImportMetrics(factory promutil.Factory, constLabels prometheus.Labels) *metric.Common {
-	metrics := metric.NewCommon(factory, TiDB, importMetricSubsystem, constLabels)
+	mergedCstLabels := metricscommon.GetMergedConstLabels(constLabels)
+	metrics := metric.NewCommon(factory, TiDB, importMetricSubsystem, mergedCstLabels)
 	metrics.RegisterTo(prometheus.DefaultRegisterer)
 	return metrics
 }

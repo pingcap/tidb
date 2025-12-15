@@ -94,7 +94,7 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	// start the advisor
 	indexes, allCandidates, err := adviseIndexes(querySet, indexableColSet, opt, option)
 	if err != nil {
-		advisorLogger().Error("advise indexes failed", zap.Error(err))
+		advisorLogger().Warn("advise indexes failed", zap.Error(err))
 		return nil, err
 	}
 
@@ -272,10 +272,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			return impacts[i].Improvement > impacts[j].Improvement
 		})
 
-		topN := 3
-		if topN > len(impacts) {
-			topN = len(impacts)
-		}
+		topN := min(3, len(impacts))
 		indexResult.TopImpactedQueries = impacts[:topN]
 		if workloadCostBefore == 0 { // avoid NaN
 			workloadCostBefore += 0.1
@@ -315,7 +312,7 @@ func gracefulIndexName(opt Optimizer, schema, tableName string, cols []string) s
 	if ok, _ := opt.IndexNameExist(schema, tableName, strings.ToLower(indexName)); !ok {
 		return indexName
 	}
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		indexName = fmt.Sprintf("idx_%v_%v", cols[0], i)
 		if len(indexName) > 64 {
 			indexName = indexName[:64]

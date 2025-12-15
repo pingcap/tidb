@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
 // BindingOperator is used to operate (create/drop/update/GC) bindings.
@@ -54,6 +56,9 @@ func newBindingOperator(sPool util.DestroyableSessionPool, cache BindingCacheUpd
 	}
 }
 
+// TestTimeLagInLoadingBinding is used for test only.
+var TestTimeLagInLoadingBinding stringutil.StringerStr = "TestTimeLagInLoadingBinding"
+
 // CreateBinding creates a Bindings to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
 func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
@@ -68,6 +73,11 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 		}
 	}()
 
+	var mockTimeLag time.Duration // mock time lag between different TiDB instances for test, see #64250.
+	if intest.InTest && sctx.Value(TestTimeLagInLoadingBinding) != nil {
+		mockTimeLag = sctx.Value(TestTimeLagInLoadingBinding).(time.Duration)
+	}
+
 	return callWithSCtx(op.sPool, true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
@@ -75,7 +85,10 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 		}
 
 		for i, binding := range bindings {
-			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6)
+			if intest.InTest && mockTimeLag != 0 {
+				now = types.NewTime(types.FromGoTime(time.Now().Add(-mockTimeLag)), mysql.TypeTimestamp, 6)
+			}
 
 			updateTs := now.String()
 			_, err = exec(
@@ -97,9 +110,18 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 			// overflow directly.
 
 			// Insert the Bindings to the storage.
+			var sqlDigest, planDigest any // null by default
+			if binding.SQLDigest != "" {
+				sqlDigest = binding.SQLDigest
+			}
+			if binding.PlanDigest != "" {
+				planDigest = binding.PlanDigest
+			}
 			_, err = exec(
 				sctx,
-				`INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+				`INSERT INTO mysql.bind_info(
+ original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest
+) VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 				binding.OriginalSQL,
 				binding.BindSQL,
 				strings.ToLower(binding.Db),
@@ -109,8 +131,8 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 				binding.Charset,
 				binding.Collation,
 				binding.Source,
-				binding.SQLDigest,
-				binding.PlanDigest,
+				sqlDigest,
+				planDigest,
 			)
 			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
 				n := val.(int)
@@ -152,7 +174,7 @@ func (op *bindingOperator) DropBinding(sqlDigests []string) (deletedRows uint64,
 		}
 
 		for _, sqlDigest := range sqlDigests {
-			updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
+			updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6).String()
 			_, err = exec(
 				sctx,
 				`UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status != %?`,
@@ -204,11 +226,12 @@ func (op *bindingOperator) SetBindingStatus(newStatus, sqlDigest string) (ok boo
 			return err
 		}
 
-		updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+		updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6)
 		updateTsStr := updateTs.String()
 
 		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status IN (%?, %?)`,
 			newStatus, updateTsStr, sqlDigest, updateTsStr, oldStatus0, oldStatus1)
+		ok = sctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 		return err
 	})
 	return
@@ -225,7 +248,7 @@ func (op *bindingOperator) GCBinding() (err error) {
 		// To make sure that all the deleted bind records have been acknowledged to all tidb,
 		// we only garbage collect those records with update_time before 10 leases.
 		updateTime := time.Now().Add(-(10 * Lease))
-		updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
+		updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 6).String()
 		_, err = exec(sctx, `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
 		return err
 	})

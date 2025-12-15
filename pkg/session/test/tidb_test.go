@@ -15,18 +15,20 @@
 package test
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
 
 func TestParseErrorWarn(t *testing.T) {
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -43,6 +45,8 @@ func TestKeysNeedLock(t *testing.T) {
 	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
 	uniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
 	nonUniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 2, []byte{1})
+	tempIndexKey := tablecodec.EncodeIndexSeekKey(1, 3, []byte{1})
+	tablecodec.IndexKey2TempIndexKey(tempIndexKey)
 	uniqueValue := make([]byte, 8)
 	uniqueUntouched := append(uniqueValue, '1')
 	nonUniqueVal := []byte{'0'}
@@ -71,5 +75,25 @@ func TestKeysNeedLock(t *testing.T) {
 		need = session.KeyNeedToLock(test.key, test.val, flag)
 		require.True(t, flag.HasPresumeKeyNotExists())
 		require.True(t, need)
+
+		if bytes.Equal(test.key, nonUniqueIndexKey) && bytes.Equal(test.val, nonUniqueVal) {
+			flag = kv.ApplyFlagsOps(kv.KeyFlags(0), kv.SetNeedLocked)
+			require.True(t, flag.HasNeedLocked())
+			require.True(t, session.KeyNeedToLock(test.key, test.val, flag))
+		}
 	}
+
+	tempIdxValue := (&tablecodec.TempIndexValueElem{
+		Value:  nonUniqueVal,
+		KeyVer: tablecodec.TempIndexKeyTypeBackfill,
+	}).Encode(nil)
+	need := session.KeyNeedToLock(tempIndexKey, tempIdxValue, 0)
+	if kerneltype.IsNextGen() {
+		require.True(t, need)
+	} else {
+		require.False(t, need)
+	}
+
+	flag := kv.KeyFlags(1)
+	require.True(t, session.KeyNeedToLock(tempIndexKey, tempIdxValue, flag))
 }

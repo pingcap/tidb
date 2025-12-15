@@ -247,15 +247,12 @@ func (a VectorFloat32) Mul(b VectorFloat32) (VectorFloat32, error) {
 func (a VectorFloat32) Compare(b VectorFloat32) int {
 	la := a.Len()
 	lb := b.Len()
-	commonLen := la
-	if lb < commonLen {
-		commonLen = lb
-	}
+	commonLen := min(lb, la)
 
 	va := a.Elements()
 	vb := b.Elements()
 
-	for i := 0; i < commonLen; i++ {
+	for i := range commonLen {
 		if va[i] < vb[i] {
 			return -1
 		} else if va[i] > vb[i] {

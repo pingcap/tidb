@@ -27,19 +27,12 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
-)
-
-var (
-
-	// the base exponential backoff time
-	// the variable is only changed in unit test for running test faster.
-	splitRegionBaseBackOffTime = time.Second
 )
 
 // splitAndScatterRegionInBatches splits&scatter regions in batches.
@@ -48,11 +41,25 @@ func (local *Backend) splitAndScatterRegionInBatches(
 	ctx context.Context,
 	splitKeys [][]byte,
 	batchCnt int,
+	maxCntPerSec float64,
 ) error {
+	var limiter *rate.Limiter
+	if maxCntPerSec > 0 {
+		eventLimit := max(1, int(maxCntPerSec*ratePerSecMultiplier))
+		burstPerSec := getRateBurst(maxCntPerSec)
+		limiter = rate.NewLimiter(rate.Limit(eventLimit), burstPerSec*ratePerSecMultiplier)
+		batchCnt = min(batchCnt, burstPerSec)
+	}
 	for i := 0; i < len(splitKeys); i += batchCnt {
 		batch := splitKeys[i:]
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
+		}
+		if limiter != nil {
+			err := limiter.WaitN(ctx, len(batch)*ratePerSecMultiplier)
+			if err != nil {
+				return err
+			}
 		}
 		if err := local.splitAndScatterRegionByRanges(ctx, batch); err != nil {
 			return errors.Trace(err)
@@ -86,10 +93,10 @@ func (local *Backend) splitAndScatterRegionByRanges(
 	startTime := time.Now()
 	unScatteredCount, err := local.splitCli.WaitRegionsScattered(ctx, scatterRegions)
 	if unScatteredCount == 0 {
-		log.FromContext(ctx).Info("waiting for scattering regions done",
+		logutil.Logger(ctx).Info("waiting for scattering regions done",
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
-		log.FromContext(ctx).Info("waiting for scattering regions timeout",
+		logutil.Logger(ctx).Info("waiting for scattering regions timeout",
 			zap.Int("unScatteredCount", unScatteredCount),
 			zap.Int("allRegionCount", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)),

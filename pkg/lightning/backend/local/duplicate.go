@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -51,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -551,7 +553,42 @@ func (m *dupeDetector) saveIndexHandles(ctx context.Context, handles pendingInde
 func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo, algorithm config.DuplicateResolutionAlgorithm) error {
 	//nolint: errcheck
 	defer stream.Close()
+
+	type indexConflictRecord struct {
+		conflictInfo errormanager.DataConflictInfo
+		handle       tidbkv.Handle
+		rawHandle    []byte
+	}
+
 	indexHandles := makePendingIndexHandlesWithCapacity(0)
+	var (
+		currentKey     []byte
+		currentRecords map[string]indexConflictRecord
+		identDupCount  int
+	)
+	// currentRecords tracks distinct values for the current index key.
+	// We only flag conflicts when the same key maps to more than one value.
+	flushCurrentGroup := func() error {
+		// Persist conflicts only when a key produced multiple different values.
+		if len(currentRecords) < 2 {
+			currentKey = nil
+			currentRecords = nil
+			return nil
+		}
+		for _, record := range currentRecords {
+			indexHandles.append(record.conflictInfo, indexInfo.Name.O, record.handle, record.rawHandle)
+			if indexHandles.Len() >= defaultRecordConflictErrorBatch {
+				if err := m.saveIndexHandles(ctx, indexHandles); err != nil {
+					return errors.Trace(err)
+				}
+				indexHandles.truncate()
+			}
+		}
+		currentKey = nil
+		currentRecords = nil
+		return nil
+	}
+
 	for {
 		key, val, err := stream.Next()
 		if errors.Cause(err) == io.EOF {
@@ -564,7 +601,24 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 		if err != nil {
 			return errors.Trace(err)
 		}
-		m.hasDupe.Store(true)
+
+		// flush previous group if key changes
+		if currentKey == nil || !bytes.Equal(currentKey, key) {
+			if err := flushCurrentGroup(); err != nil {
+				return errors.Trace(err)
+			}
+			currentKey = bytes.Clone(key)
+			currentRecords = make(map[string]indexConflictRecord)
+		}
+
+		// Skip duplicates that have identical key/value pairs but count them for logging.
+		// Due to the re-entrancy issue of `add index`, the same key-value pairs might be imported repeatedly.
+		// Therefore, we only consider pairs with the same key but different values ​​as duplicates.
+		valueKey := string(val)
+		if _, exists := currentRecords[valueKey]; exists {
+			identDupCount++
+			continue
+		}
 
 		h, err := m.decoder.DecodeHandleFromIndex(indexInfo, key, val)
 		if err != nil {
@@ -576,20 +630,31 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 			RawValue: val,
 			KeyData:  h.String(),
 		}
-		indexHandles.append(conflictInfo, indexInfo.Name.O,
-			h, tablecodec.EncodeRowKeyWithHandle(tableID, h))
 
-		if indexHandles.Len() >= defaultRecordConflictErrorBatch {
-			if err := m.saveIndexHandles(ctx, indexHandles); err != nil {
-				return errors.Trace(err)
-			}
-			indexHandles.truncate()
+		currentRecords[valueKey] = indexConflictRecord{
+			conflictInfo: conflictInfo,
+			handle:       h,
+			rawHandle:    tablecodec.EncodeRowKeyWithHandle(tableID, h),
 		}
 
-		if algorithm == config.ErrorOnDup {
-			return newErrFoundIndexConflictRecords(key, val, m.tbl, indexInfo)
+		if len(currentRecords) == 2 {
+			// The second distinct value confirms this key is truly conflicting.
+			m.hasDupe.Store(true)
+			if algorithm == config.ErrorOnDup {
+				return newErrFoundIndexConflictRecords(key, val, m.tbl, indexInfo)
+			}
 		}
 	}
+
+	if err := flushCurrentGroup(); err != nil {
+		return errors.Trace(err)
+	}
+
+	if identDupCount > 0 {
+		m.logger.Warn("skip identical index duplicates", zap.String("category", "detect-dupe"),
+			zap.String("index", indexInfo.Name.O), zap.Int("count", identDupCount))
+	}
+
 	if indexHandles.Len() > 0 {
 		if err := m.saveIndexHandles(ctx, indexHandles); err != nil {
 			return errors.Trace(err)
@@ -600,7 +665,7 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 
 // RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
 // from ErrFoundDuplicateKeys error.
-func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
+func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) (key, value []byte, _ error) {
 	if !common.ErrFoundDuplicateKeys.Equal(err) {
 		return nil, nil, err
 	}
@@ -786,7 +851,7 @@ func (m *dupeDetector) splitLocalDupTaskByKeys(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := splitRangeBySizeProps(common.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
+	ranges := splitRangeBySizeProps(engineapi.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
 	newDupTasks := make([]dupTask, 0, len(ranges))
 	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
@@ -924,7 +989,7 @@ func (m *dupeDetector) processRemoteDupTaskOnce(
 	var metErr common.OnceError
 	wg := &sync.WaitGroup{}
 	atomicMadeProgress := atomic.NewBool(false)
-	for i := 0; i < len(regions); i++ {
+	for i := range regions {
 		if ctx.Err() != nil {
 			metErr.Set(ctx.Err())
 			break
@@ -1079,13 +1144,13 @@ type DupeController struct {
 // CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 // may be repeated with other keys in local data source.
 func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (hasDupe bool, err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
 
 	duplicateManager, err := NewDupeDetector(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
-		local.errorMgr, opts, local.dupeConcurrency, log.FromContext(ctx), local.resourceGroupName, local.taskType)
+		local.errorMgr, opts, local.dupeConcurrency, log.Wrap(tidblogutil.Logger(ctx)), local.resourceGroupName, local.taskType)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1105,13 +1170,13 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 	opts *encode.SessionOptions,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) (hasDupe bool, err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
 
 	duplicateManager, err := NewDupeDetector(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
-		local.errorMgr, opts, local.dupeConcurrency, log.FromContext(ctx), local.resourceGroupName, local.taskType)
+		local.errorMgr, opts, local.dupeConcurrency, log.Wrap(tidblogutil.Logger(ctx)), local.resourceGroupName, local.taskType)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1125,7 +1190,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 // ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 // according to the required algorithm.
 func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()

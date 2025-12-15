@@ -993,10 +993,13 @@ func TestShowVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	var showSQL string
+	sessionOnlyVars := make([]string, 0, len(variable.GetSysVars()))
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
 		if v.Scope == vardef.ScopeSession {
+			sessionOnlyVars = append(sessionOnlyVars, v.Name)
+		} else if !v.HasSessionScope() && !v.InternalSessionVariable {
 			sessionVars = append(sessionVars, v.Name)
 		} else {
 			globalVars = append(globalVars, v.Name)
@@ -1004,18 +1007,20 @@ func TestShowVar(t *testing.T) {
 	}
 
 	// When ScopeSession only. `show global variables` must return empty.
-	sessionVarsStr := strings.Join(sessionVars, "','")
-	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
+	sessionOnlyVarsStr := strings.Join(sessionOnlyVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionOnlyVarsStr + "')"
 	res := tk.MustQuery(showSQL)
-	require.Len(t, res.Rows(), len(sessionVars))
-	showSQL = "show global variables where variable_name in('" + sessionVarsStr + "')"
+	require.Len(t, res.Rows(), len(sessionOnlyVars))
+	showSQL = "show global variables where variable_name in('" + sessionOnlyVarsStr + "')"
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), 0)
 
-	globalVarsStr := strings.Join(globalVars, "','")
-	showSQL = "show variables where variable_name in('" + globalVarsStr + "')"
+	sessionVarsStr := strings.Join(sessionVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
 	res = tk.MustQuery(showSQL)
-	require.Len(t, res.Rows(), len(globalVars))
+	require.Len(t, res.Rows(), len(sessionVars))
+
+	globalVarsStr := strings.Join(globalVars, "','")
 	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), len(globalVars))

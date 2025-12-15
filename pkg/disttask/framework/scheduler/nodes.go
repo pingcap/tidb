@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -24,6 +25,8 @@ import (
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -120,18 +123,23 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 func (nm *NodeManager) refreshNodesLoop(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
 	ticker := time.NewTicker(nodesCheckInterval)
 	defer ticker.Stop()
+	trace := traceevent.NewTrace()
+	ctx = tracing.WithFlightRecorder(ctx, trace)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			nm.refreshNodes(ctx, taskMgr, slotMgr)
+			trace.DiscardOrFlush(ctx)
 		}
 	}
 }
 
 // refreshNodes maintains the nodes managed by the framework.
 func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
+	r := tracing.StartRegion(ctx, "NodeManager.refreshNodes")
+	defer r.End()
 	newNodes, err := taskMgr.GetAllNodes(ctx)
 	if err != nil {
 		nm.logger.Warn("get managed nodes met error", llog.ShortError(err))
@@ -155,9 +163,10 @@ func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, sl
 // return a copy of the nodes.
 func (nm *NodeManager) getNodes() []proto.ManagedNode {
 	nodes := *nm.nodes.Load()
-	res := make([]proto.ManagedNode, len(nodes))
-	copy(res, nodes)
-	return res
+	if nodes == nil {
+		return []proto.ManagedNode{}
+	}
+	return slices.Clone(nodes)
 }
 
 func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {

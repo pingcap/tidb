@@ -174,7 +174,7 @@ Error 1105 (HY000): invalid X509_NAME input: /CN=TiDBOU=PingCAP
 CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP';
 Error 1105 (HY000): invalid X509_NAME input: /CN=TiDBNC=PingCAP
 CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1';
-Error 1105 (HY000): Unsupported cipher suit: AES128-GCM-SHA1
+Error 1105 (HY000): Unsupported cipher suite: AES128-GCM-SHA1
 CREATE USER 'u8'@'%' require subject '/CN';
 Error 1105 (HY000): invalid X509_NAME input: /CN
 CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA';
@@ -330,3 +330,11 @@ GRANT ALL ON t29268 TO u29268;
 DROP USER u29268;
 DROP DATABASE IF EXISTS d29268;
 use executor__grant;
+drop table if exists t;
+drop user if exists test_user;
+create user test_user;
+create temporary table t(id int);
+grant select on t to test_user;
+Error 1146 (42S02): Table 'executor__grant.t' doesn't exist
+drop user test_user;
+drop temporary table t;

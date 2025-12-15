@@ -187,7 +187,7 @@ func TestUnionIterErrors(t *testing.T) {
 			iter, err = NewUnionIter(dirtyIter, snapIter, false)
 			assert.NotNil(t, iter)
 			assert.Nil(t, err)
-			for i := 0; i < ca.nextTimesWhenErrorHappens-1; i++ {
+			for range ca.nextTimesWhenErrorHappens - 1 {
 				err = iter.Next()
 				assert.Nil(t, err)
 			}

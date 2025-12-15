@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package testdata
 
@@ -52,11 +51,13 @@ type testCases struct {
 type TestData struct {
 	input          []testCases
 	output         []testCases
+	casout         []testCases
 	filePathPrefix string
 	funcMap        map[string]int
 }
 
-func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
+func loadTestSuiteData(dir, suiteName string, cascades ...bool) (res TestData, err error) {
+	inCascades := len(cascades) > 0 && cascades[0]
 	res.filePathPrefix = filepath.Join(dir, suiteName)
 	res.input, err = loadTestSuiteCases(fmt.Sprintf("%s_in.json", res.filePathPrefix))
 	if err != nil {
@@ -71,11 +72,28 @@ func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 	if len(res.input) != len(res.output) {
 		return res, fmt.Errorf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output))
 	}
+
+	if inCascades {
+		// Load all test cascades result in order to keep the unrelated test results.
+		res.casout, err = loadTestSuiteCases(fmt.Sprintf("%s_xut.json", res.filePathPrefix))
+		if err != nil {
+			return res, err
+		}
+		if len(res.input) != len(res.output) {
+			return res, fmt.Errorf("Number of test input cases %d does not match test casout cases %d", len(res.input), len(res.casout))
+		}
+	}
+
 	res.funcMap = make(map[string]int, len(res.input))
 	for i, test := range res.input {
 		res.funcMap[test.Name] = i
 		if test.Name != res.output[i].Name {
 			return res, fmt.Errorf("Input name of the %d-case %s does not match output %s", i, test.Name, res.output[i].Name)
+		}
+		if inCascades {
+			if test.Name != res.casout[i].Name {
+				return res, fmt.Errorf("Input name of the %d-case %s does not match casout %s", i, test.Name, res.casout[i].Name)
+			}
 		}
 	}
 	return res, nil
@@ -137,21 +155,37 @@ func ConvertSQLWarnToStrings(warns []contextutil.SQLWarn) (rs []string) {
 }
 
 // LoadTestCases Loads the test cases for a test function.
-func (td *TestData) LoadTestCases(t *testing.T, in any, out any) {
+// opts[0] should be the cascades "on" or "off"
+// opts[1] should be the test portal caller name to locate the output file dir.
+func (td *TestData) LoadTestCases(t *testing.T, in any, out any, opts ...string) {
+	withCascadesOpts := len(opts) > 0
+	inCascades := len(opts) > 0 && opts[0] == "on"
 	// Extract caller's name.
-	pc, _, _, ok := runtime.Caller(1)
-	require.True(t, ok)
-	details := runtime.FuncForPC(pc)
-	funcNameIdx := strings.LastIndex(details.Name(), ".")
-	funcName := details.Name()[funcNameIdx+1:]
+	var funcName string
+	if !withCascadesOpts {
+		pc, _, _, ok := runtime.Caller(1)
+		require.True(t, ok)
+		details := runtime.FuncForPC(pc)
+		funcNameIdx := strings.LastIndex(details.Name(), ".")
+		funcName = details.Name()[funcNameIdx+1:]
+	} else {
+		// since cascades is called in macro wrapper, use the passed caller name
+		require.True(t, len(opts) > 1)
+		funcName = opts[1]
+	}
 
 	casesIdx, ok := td.funcMap[funcName]
 	require.Truef(t, ok, "Must get test %s", funcName)
 	err := json.Unmarshal(*td.input[casesIdx].Cases, in)
 	require.NoError(t, err)
 	if !record {
-		err = json.Unmarshal(*td.output[casesIdx].Cases, out)
-		require.NoError(t, err)
+		if !inCascades {
+			err = json.Unmarshal(*td.output[casesIdx].Cases, out)
+			require.NoError(t, err)
+		} else {
+			err = json.Unmarshal(*td.casout[casesIdx].Cases, out)
+			require.NoError(t, err)
+		}
 	} else {
 		// Init for generate output file.
 		inputLen := reflect.ValueOf(in).Elem().Len()
@@ -160,11 +194,16 @@ func (td *TestData) LoadTestCases(t *testing.T, in any, out any) {
 			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
 		}
 	}
-	td.output[casesIdx].decodedOut = out
+	if !inCascades {
+		td.output[casesIdx].decodedOut = out
+	} else {
+		td.casout[casesIdx].decodedOut = out
+	}
 }
 
 // LoadTestCasesByName loads the test cases for a test function by its name.
-func (td *TestData) LoadTestCasesByName(caseName string, t *testing.T, in any, out any) {
+func (td *TestData) LoadTestCasesByName(caseName string, t *testing.T, in any, out any, opts ...string) {
+	inCascades := len(opts) > 0 && opts[0] == "on"
 	casesIdx, ok := td.funcMap[caseName]
 	require.Truef(t, ok, "Case name: %s", caseName)
 	require.NoError(t, json.Unmarshal(*td.input[casesIdx].Cases, in))
@@ -176,10 +215,18 @@ func (td *TestData) LoadTestCasesByName(caseName string, t *testing.T, in any, o
 			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
 		}
 	} else {
-		require.NoError(t, json.Unmarshal(*td.output[casesIdx].Cases, out))
+		if !inCascades {
+			require.NoError(t, json.Unmarshal(*td.output[casesIdx].Cases, out))
+		} else {
+			require.NoError(t, json.Unmarshal(*td.casout[casesIdx].Cases, out))
+		}
 	}
 
-	td.output[casesIdx].decodedOut = out
+	if !inCascades {
+		td.output[casesIdx].decodedOut = out
+	} else {
+		td.casout[casesIdx].decodedOut = out
+	}
 }
 
 func (td *TestData) generateOutputIfNeeded() error {
@@ -187,53 +234,69 @@ func (td *TestData) generateOutputIfNeeded() error {
 		return nil
 	}
 
-	buf := new(bytes.Buffer)
-	enc := json.NewEncoder(buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	isRecord4ThisSuite := false
-	for i, test := range td.output {
-		if test.decodedOut != nil {
-			// Only update the results for the related test cases.
-			isRecord4ThisSuite = true
-			err := enc.Encode(test.decodedOut)
-			if err != nil {
-				return err
+	record := func(cascades bool) error {
+		buf := new(bytes.Buffer)
+		enc := json.NewEncoder(buf)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		isRecord4ThisSuite := false
+		output := td.output
+		if cascades {
+			output = td.casout
+		}
+		for i, test := range output {
+			if test.decodedOut != nil {
+				// Only update the results for the related test cases.
+				isRecord4ThisSuite = true
+				err := enc.Encode(test.decodedOut)
+				if err != nil {
+					return err
+				}
+				res := make([]byte, len(buf.Bytes()))
+				copy(res, buf.Bytes())
+				buf.Reset()
+				rm := json.RawMessage(res)
+				output[i].Cases = &rm
 			}
-			res := make([]byte, len(buf.Bytes()))
-			copy(res, buf.Bytes())
-			buf.Reset()
-			rm := json.RawMessage(res)
-			td.output[i].Cases = &rm
 		}
+		// Skip the record for the unrelated test files.
+		if !isRecord4ThisSuite {
+			return nil
+		}
+		err := enc.Encode(output)
+		if err != nil {
+			return err
+		}
+		suffix := "_out.json"
+		if cascades {
+			suffix = "_xut.json"
+		}
+		file, err := os.Create(fmt.Sprintf("%s"+suffix, td.filePathPrefix))
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err1 := file.Close(); err == nil && err1 != nil {
+				err = err1
+			}
+		}()
+		_, err = file.Write(buf.Bytes())
+		return err
 	}
-	// Skip the record for the unrelated test files.
-	if !isRecord4ThisSuite {
-		return nil
-	}
-	err := enc.Encode(td.output)
+
+	err := record(false)
 	if err != nil {
 		return err
 	}
-	file, err := os.Create(fmt.Sprintf("%s_out.json", td.filePathPrefix))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err1 := file.Close(); err == nil && err1 != nil {
-			err = err1
-		}
-	}()
-	_, err = file.Write(buf.Bytes())
-	return err
+	return record(true)
 }
 
 // BookKeeper does TestData suite bookkeeping.
 type BookKeeper map[string]TestData
 
 // LoadTestSuiteData loads test suite data from file and bookkeeping in the map.
-func (m *BookKeeper) LoadTestSuiteData(dir, suiteName string) {
-	testData, err := loadTestSuiteData(dir, suiteName)
+func (m *BookKeeper) LoadTestSuiteData(dir, suiteName string, cascades ...bool) {
+	testData, err := loadTestSuiteData(dir, suiteName, cascades...)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on loading test data from file: %v\n", err)
 		os.Exit(1)

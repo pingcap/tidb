@@ -608,10 +608,10 @@ select * from t1 join t2 on t1.id = t2.id where (t1.a <= 3 and (t1.b >= 3 and t1
 id	a	b	id	a	b
 select * from t1 left join t2 on true where (t1.a <=1 or t1.a <= 3 and (t1.b >=3 and t1.b <= 5)) and (t2.a >= 6 and t2.a <= 8) and t2.b>=7 and t2.id>=7 order by t1.id,t1.a;
 id	a	b	id	a	b
-1	1	1	7	7	7
 1	1	1	8	8	8
-3	3	3	7	7	7
+1	1	1	7	7	7
 3	3	3	8	8	8
+3	3	3	7	7	7
 select * from t1 where a <= 1;
 id	a	b
 1	1	1
@@ -764,9 +764,9 @@ id	a	b	id	a	b
 3	3	3	3	3	3
 select * from t1 join t2 on true where t1.a=5 and t2.a BETWEEN 6 AND 8 and t2.b >= 6;
 id	a	b	id	a	b
-5	5	5	8	8	8
-5	5	5	7	7	7
 5	5	5	6	6	6
+5	5	5	7	7	7
+5	5	5	8	8	8
 select count(*) from t1 join t2 on t1.b = t2.b where t1.a BETWEEN 1 AND 2 and t2.a BETWEEN 1 AND 6 and t1.b BETWEEN 1 AND 6;
 count(*)
 2
@@ -784,41 +784,51 @@ partition p0 values less than (1),
 partition p1 values less than (2),
 partition p2 values less than (3),
 partition p_max values less than (maxvalue));
-explain format = 'brief' select * from t where a = 1;
-id	estRows	task	access object	operator info
-TableReader	10.00	root		data:Selection
-└─Selection	10.00	cop[tikv]		eq(test_partition.t.a, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p1	keep order:false, stats:pseudo
-explain format = 'brief' select * from t where a = 2;
-id	estRows	task	access object	operator info
-TableReader	10.00	root		data:Selection
-└─Selection	10.00	cop[tikv]		eq(test_partition.t.a, 2)
-  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p2	keep order:false, stats:pseudo
-explain format = 'brief' select * from t where a = 10;
-id	estRows	task	access object	operator info
-TableReader	10.00	root		data:Selection
-└─Selection	10.00	cop[tikv]		eq(test_partition.t.a, 10)
-  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p_max	keep order:false, stats:pseudo
-explain format = 'brief' select * from t where a = -1;
-id	estRows	task	access object	operator info
-TableReader	10.00	root		data:Selection
-└─Selection	10.00	cop[tikv]		eq(test_partition.t.a, -1)
-  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
-explain format = 'brief' select * from t where a is NULL;
-id	estRows	task	access object	operator info
-TableReader	10.00	root		data:Selection
-└─Selection	10.00	cop[tikv]		isnull(test_partition.t.a)
-  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
-explain format = 'brief' select * from t where a = 1.5;
-id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(cast(test_partition.t.a, decimal(10,0) BINARY), 1.5)
-  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p1	keep order:false, stats:pseudo
-explain format = 'brief' select * from t where a in (2);
-id	estRows	task	access object	operator info
-TableReader	10.00	root		data:Selection
-└─Selection	10.00	cop[tikv]		eq(test_partition.t.a, 2)
-  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p2	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = 1;
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(test_partition.t.a, 1)
+  └─TableFullScan	cop[tikv]	table:t, partition:p1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = 2;
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(test_partition.t.a, 2)
+  └─TableFullScan	cop[tikv]	table:t, partition:p2	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = 10;
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(test_partition.t.a, 10)
+  └─TableFullScan	cop[tikv]	table:t, partition:p_max	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = -1;
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(test_partition.t.a, -1)
+  └─TableFullScan	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a is NULL;
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		isnull(test_partition.t.a)
+  └─TableFullScan	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = 1.5;
+id	task	access object	operator info
+PartitionUnion	root		
+├─TableReader	root		data:Selection
+│ └─Selection	cop[tikv]		eq(cast(test_partition.t.a, decimal(10,0) BINARY), 1.5)
+│   └─TableFullScan	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
+├─TableReader	root		data:Selection
+│ └─Selection	cop[tikv]		eq(cast(test_partition.t.a, decimal(10,0) BINARY), 1.5)
+│   └─TableFullScan	cop[tikv]	table:t, partition:p1	keep order:false, stats:pseudo
+├─TableReader	root		data:Selection
+│ └─Selection	cop[tikv]		eq(cast(test_partition.t.a, decimal(10,0) BINARY), 1.5)
+│   └─TableFullScan	cop[tikv]	table:t, partition:p2	keep order:false, stats:pseudo
+└─TableReader	root		data:Selection
+  └─Selection	cop[tikv]		eq(cast(test_partition.t.a, decimal(10,0) BINARY), 1.5)
+    └─TableFullScan	cop[tikv]	table:t, partition:p_max	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a in (2);
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(test_partition.t.a, 2)
+  └─TableFullScan	cop[tikv]	table:t, partition:p2	keep order:false, stats:pseudo
 create database issue42135;
 use issue42135;
 CREATE TABLE `tx1` (`ID` varchar(13), `a` varchar(13), `b` varchar(4000), `ltype` int(5) NOT NULL);
@@ -830,19 +840,19 @@ analyze table tx2 all columns;
 select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 ID	a	b	ltype	ID	rid	a	b	c	d	ltype
 1	1	1	501	1	1	1	1	1	1	501
-explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
-id	estRows	task	access object	operator info
-HashJoin	1.22	root		inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]
-├─TableReader(Build)	1.00	root		data:Selection
-│ └─Selection	1.00	cop[tikv]		not(isnull(issue42135.tx1.id))
-│   └─TableFullScan	1.00	cop[tikv]	table:tx1	keep order:false
-└─PartitionUnion(Probe)	10.99	root		
-  ├─TableReader	1.00	root		data:Selection
-  │ └─Selection	1.00	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
-  │   └─TableFullScan	1.00	cop[tikv]	table:tx2, partition:p1	keep order:false
-  └─TableReader	9.99	root		data:Selection
-    └─Selection	9.99	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
-      └─TableFullScan	10000.00	cop[tikv]	table:tx2, partition:p2	keep order:false, stats:pseudo
+explain format='plan_tree' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(issue42135.tx1.id))
+│   └─TableFullScan	cop[tikv]	table:tx1	keep order:false
+└─PartitionUnion(Probe)	root		
+  ├─TableReader	root		data:Selection
+  │ └─Selection	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
+  │   └─TableFullScan	cop[tikv]	table:tx2, partition:p1	keep order:false
+  └─TableReader	root		data:Selection
+    └─Selection	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
+      └─TableFullScan	cop[tikv]	table:tx2, partition:p2	keep order:false, stats:pseudo
 drop table tx2;
 CREATE TABLE `tx2` (`ID` varchar(13), `rid` varchar(12), `a` varchar(9), `b` varchar(8), `c` longtext, `d` varchar(12), `ltype` int(5) NOT NULL) PARTITION BY LIST COLUMNS (`ltype`,d) (PARTITION `p1` VALUES IN ((501,1)), PARTITION `p2` VALUES IN ((502,1)));
 insert into tx2 values(1,1,1,1,1,1,501);
@@ -850,19 +860,19 @@ analyze table tx2 all columns;
 select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 ID	a	b	ltype	ID	rid	a	b	c	d	ltype
 1	1	1	501	1	1	1	1	1	1	501
-explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
-id	estRows	task	access object	operator info
-HashJoin	1.22	root		inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]
-├─TableReader(Build)	1.00	root		data:Selection
-│ └─Selection	1.00	cop[tikv]		not(isnull(issue42135.tx1.id))
-│   └─TableFullScan	1.00	cop[tikv]	table:tx1	keep order:false
-└─PartitionUnion(Probe)	10.99	root		
-  ├─TableReader	1.00	root		data:Selection
-  │ └─Selection	1.00	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
-  │   └─TableFullScan	1.00	cop[tikv]	table:tx2, partition:p1	keep order:false
-  └─TableReader	9.99	root		data:Selection
-    └─Selection	9.99	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
-      └─TableFullScan	10000.00	cop[tikv]	table:tx2, partition:p2	keep order:false, stats:pseudo
+explain format='plan_tree' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(issue42135.tx1.id))
+│   └─TableFullScan	cop[tikv]	table:tx1	keep order:false
+└─PartitionUnion(Probe)	root		
+  ├─TableReader	root		data:Selection
+  │ └─Selection	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
+  │   └─TableFullScan	cop[tikv]	table:tx2, partition:p1	keep order:false
+  └─TableReader	root		data:Selection
+    └─Selection	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
+      └─TableFullScan	cop[tikv]	table:tx2, partition:p2	keep order:false, stats:pseudo
 create table t (a varchar(255), b int primary key nonclustered, key (a)) partition by key(b) partitions 3;
 insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6);
 analyze table t;
@@ -878,19 +888,19 @@ Ab	1
 abc	2
 explain select * from t where b in (1,2);
 id	estRows	task	access object	operator info
-PartitionUnion_8	3.00	root		
-├─Batch_Point_Get_9	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
-└─Batch_Point_Get_10	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
+PartitionUnion_9	3.00	root		
+├─Batch_Point_Get_11	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
+└─Batch_Point_Get_12	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
 select * from t where b in (1,2) and a like '%a%';
 a	b
 abc	2
 explain select * from t where b in (1,2) and a like '%a%';
 id	estRows	task	access object	operator info
-PartitionUnion_8	2.40	root		
-├─Selection_10	1.60	root		like(issue42135.t.a, "%a%", 92)
-│ └─Batch_Point_Get_9	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
-└─Selection_12	0.80	root		like(issue42135.t.a, "%a%", 92)
-  └─Batch_Point_Get_11	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
+PartitionUnion_9	2.60	root		
+├─Selection_12	1.60	root		like(issue42135.t.a, "%a%", 92)
+│ └─Batch_Point_Get_11	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
+└─Selection_14	1.00	root		like(issue42135.t.a, "%a%", 92)
+  └─Batch_Point_Get_13	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
 set @@tidb_partition_prune_mode=Default;
 select * from t where b in (1,2);
 a	b
@@ -898,15 +908,49 @@ Ab	1
 abc	2
 explain select * from t where b in (1,2);
 id	estRows	task	access object	operator info
-IndexLookUp_7	2.00	root	partition:p1,p2	
-├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
-└─TableRowIDScan_6(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_8	2.00	root	partition:p1,p2	
+├─IndexRangeScan_6(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where b in (1,2) and a like '%a%';
 a	b
 abc	2
 explain select * from t where b in (1,2) and a like '%a%';
 id	estRows	task	access object	operator info
-IndexLookUp_8	1.60	root	partition:p1,p2	
-├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
-└─Selection_7(Probe)	1.60	cop[tikv]		like(issue42135.t.a, "%a%", 92)
-  └─TableRowIDScan_6	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_9	1.60	root	partition:p1,p2	
+├─IndexRangeScan_6(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
+└─Selection_8(Probe)	1.60	cop[tikv]		like(issue42135.t.a, "%a%", 92)
+  └─TableRowIDScan_7	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+CREATE TABLE `t` (
+`col_4` varchar(223) DEFAULT 'QKd^)QlWh#cT&3',
+UNIQUE KEY `idx_3` (`col_4`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col_4`)
+(PARTITION `p0` VALUES LESS THAN ('+*8Ab='),
+PARTITION `p1` VALUES LESS THAN ('959#Km%JOy2EFI'),
+PARTITION `p2` VALUES LESS THAN ('FbL~@RpX01&CYY-%%+'),
+PARTITION `p3` VALUES LESS THAN ('GFB'),
+PARTITION `p4` VALUES LESS THAN (MAXVALUE));
+insert into t values ('u^D92@_4'), (null);
+explain format='plan_tree' select * from t where col_4 in ( 'u^D92@_4' ,null );
+id	task	access object	operator info
+Point_Get	root	table:t, partition:p4, index:idx_3(col_4)	
+select * from t where col_4 in ( 'u^D92@_4' ,null );
+col_4
+u^D92@_4
+drop table if exists t;
+CREATE TABLE `t` (
+`col_95` char(181) COLLATE gbk_bin NOT NULL DEFAULT 'SaMKHTyg+nlID-X3Y',
+PRIMARY KEY (`col_95`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin
+PARTITION BY RANGE COLUMNS(`col_95`)
+(PARTITION `p0` VALUES LESS THAN ('6)nvX^uj0UGxqX'),
+PARTITION `p1` VALUES LESS THAN ('BHSluf6'),
+PARTITION `p2` VALUES LESS THAN (MAXVALUE));
+insert into t values ('58y-j)84-&Y*'), ('WNe(rS5uwmvIvFnHw'), ('j9FsMawX5uBro%$p'), ('C(#EQm@J');
+explain format='plan_tree' select t.col_95 as r0 from t where t.col_95 between 'Dyw=*7nigCMh' and 'Im0*7sZ' or t.col_95 in ( '58y-j)84-&Y*' ,'WNe(rS5uwmvIvFnHw' ,'j9FsMawX5uBro%$p' ,'C(#EQm@J' ) group by t.col_95  having t.col_95 between '%^2' and '38ABfC-' or t.col_95 between 'eKCAE$d2x_hxscj' and 'zcw35^ATEEp1md=L';
+id	task	access object	operator info
+Point_Get	root	table:t, partition:p2, clustered index:PRIMARY(col_95)	
+select t.col_95 as r0 from t where t.col_95 between 'Dyw=*7nigCMh' and 'Im0*7sZ' or t.col_95 in ( '58y-j)84-&Y*' ,'WNe(rS5uwmvIvFnHw' ,'j9FsMawX5uBro%$p' ,'C(#EQm@J' ) group by t.col_95  having t.col_95 between '%^2' and '38ABfC-' or t.col_95 between 'eKCAE$d2x_hxscj' and 'zcw35^ATEEp1md=L';
+r0
+j9FsMawX5uBro%$p

@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -83,10 +82,7 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 }
 
 func init() {
-	// need a real PD
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Path = "127.0.0.1:2379"
-	})
+	realtikvtest.UpdateTiDBConfig()
 }
 
 func TestMain(m *testing.M) {

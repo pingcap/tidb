@@ -71,14 +71,14 @@ func main() {
 			query += ",('aaaaaaaaaa')"
 		}
 		ch := make(chan struct{}, worker)
-		for i := 0; i < worker; i++ {
+		for range worker {
 			ch <- struct{}{}
 		}
 		var eg *errgroup.Group
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		eg, ctx = errgroup.WithContext(ctx)
-		for i := 0; i < 500; i++ {
+		for range 500 {
 			if ctx.Err() != nil {
 				break
 			}

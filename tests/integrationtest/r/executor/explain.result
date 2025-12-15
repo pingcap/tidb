@@ -1,37 +1,37 @@
 drop table if exists t;
 create table t (v int);
-explain format = 'brief' select * from t t1, t t2;
-id	estRows	task	access object	operator info
-HashJoin	100000000.00	root		CARTESIAN inner join
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v);
-id	estRows	task	access object	operator info
-HashJoin	7992.00	root		CARTESIAN semi join, left side:TableReader, other cond:gt(executor__explain.t.v, executor__explain.t.v)
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(executor__explain.t.v))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	9990.00	root		data:Selection
-  └─Selection	9990.00	cop[tikv]		not(isnull(executor__explain.t.v))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2));
-id	estRows	task	access object	operator info
-HashJoin	8000.00	root		CARTESIAN semi join, left side:TableReader, other cond:in(executor__explain.t.v, plus(executor__explain.t.v, 1), plus(executor__explain.t.v, 2))
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-explain format = 'brief' select * from t t1, t t2 where t1.v = t2.v;
-id	estRows	task	access object	operator info
-HashJoin	12487.50	root		inner join, equal:[eq(executor__explain.t.v, executor__explain.t.v)]
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(executor__explain.t.v))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	9990.00	root		data:Selection
-  └─Selection	9990.00	cop[tikv]		not(isnull(executor__explain.t.v))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t t1, t t2;
+id	task	access object	operator info
+HashJoin	root		CARTESIAN inner join
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v);
+id	task	access object	operator info
+HashJoin	root		CARTESIAN semi join, left side:TableReader, other cond:gt(executor__explain.t.v, executor__explain.t.v)
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(executor__explain.t.v))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(executor__explain.t.v))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2));
+id	task	access object	operator info
+HashJoin	root		CARTESIAN semi join, left side:TableReader, other cond:in(executor__explain.t.v, plus(executor__explain.t.v, 1), plus(executor__explain.t.v, 2))
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t t1, t t2 where t1.v = t2.v;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(executor__explain.t.v, executor__explain.t.v)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(executor__explain.t.v))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(executor__explain.t.v))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int);
 explain analyze insert into t select 1;
@@ -42,7 +42,7 @@ explain analyze update t set a=2 where a=1;
 select * from t;
 a
 2
-explain format = 'brief' insert into t select 1;
+explain format = 'plan_tree' insert into t select 1;
 select * from t;
 a
 2
@@ -53,19 +53,19 @@ a
 1
 2
 3
-desc format='brief' select * from information_schema.statements_summary;
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATEMENTS_SUMMARY	
-desc format='brief' select * from information_schema.statements_summary where digest is null;
-id	estRows	task	access object	operator info
-Selection	8000.00	root		isnull(Column#5)
-└─MemTableScan	10000.00	root	table:STATEMENTS_SUMMARY	
-desc format='brief' select * from information_schema.statements_summary where digest = 'abcdefg';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATEMENTS_SUMMARY	digests: ["abcdefg"]
-desc format='brief' select * from information_schema.statements_summary where digest in ('a','b','c');
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATEMENTS_SUMMARY	digests: ["a","b","c"]
+explain format='plan_tree' select * from information_schema.statements_summary;
+id	task	access object	operator info
+MemTableScan	root	table:STATEMENTS_SUMMARY	
+explain format='plan_tree' select * from information_schema.statements_summary where digest is null;
+id	task	access object	operator info
+Selection	root		isnull(Column#5)
+└─MemTableScan	root	table:STATEMENTS_SUMMARY	
+explain format='plan_tree' select * from information_schema.statements_summary where digest = 'abcdefg';
+id	task	access object	operator info
+MemTableScan	root	table:STATEMENTS_SUMMARY	digests: ["abcdefg"]
+explain format='plan_tree' select * from information_schema.statements_summary where digest in ('a','b','c');
+id	task	access object	operator info
+MemTableScan	root	table:STATEMENTS_SUMMARY	digests: ["a","b","c"]
 drop table if exists tt123;
 CREATE TABLE tt123 (
 id int(11) NOT NULL,
@@ -82,15 +82,15 @@ KEY c (c),
 KEY d (d),
 KEY f (f)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-explain format='brief' select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;
-id	estRows	task	access object	operator info
-Projection	12500.00	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f
-└─HashJoin	12500.00	root		inner join, equal:[eq(executor__explain.tt123.e, Column#15)]
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─Projection(Probe)	10000.00	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, cast(executor__explain.tt123.b, json BINARY)->Column#15
-    └─TableReader	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;
+id	task	access object	operator info
+Projection	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f
+└─HashJoin	root		inner join, equal:[eq(executor__explain.tt123.e, Column#15)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection(Probe)	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, cast(executor__explain.tt123.b, json BINARY)->Column#15
+    └─TableReader	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int primary key);
 insert into t values (2);
@@ -110,19 +110,19 @@ select * from t limit 1;
 a
 explain format = 'plan_cache' select * from (select * from t) t1 limit 1;
 id	estRows	task	access object	operator info
-Limit_8	1.00	root		offset:0, count:1
-└─TableReader_12	1.00	root		data:Limit_11
-  └─Limit_11	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan_10	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit_9	1.00	root		offset:0, count:1
+└─TableReader_15	1.00	root		data:Limit_14
+  └─Limit_14	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan_13	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 Warning	1105	skip non-prepared plan-cache: queries that have sub-queries are not supported
 explain format = 'plan_cache' select * from (select * from t) t1 limit 1;
 id	estRows	task	access object	operator info
-Limit_8	1.00	root		offset:0, count:1
-└─TableReader_12	1.00	root		data:Limit_11
-  └─Limit_11	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan_10	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit_9	1.00	root		offset:0, count:1
+└─TableReader_15	1.00	root		data:Limit_14
+  └─Limit_14	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan_13	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -136,14 +136,14 @@ select @@last_plan_from_cache;
 0
 explain format = 'plan_cache' select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'plan_cache' select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
@@ -156,35 +156,35 @@ select @@last_plan_from_cache;
 1
 explain select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
-explain format = 'brief' select * from t;
-id	estRows	task	access object	operator info
-TableReader	10000.00	root		data:TableFullScan
-└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t;
+id	task	access object	operator info
+TableReader	root		data:TableFullScan
+└─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 explain format = 'dot' select * from t;
 dot contents
 
-digraph TableReader_5 {
-subgraph cluster5{
+digraph TableReader_6 {
+subgraph cluster6{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"TableReader_5"
+"TableReader_6"
 }
-subgraph cluster4{
+subgraph cluster5{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_4"
+"TableFullScan_5"
 }
-"TableReader_5" -> "TableFullScan_4"
+"TableReader_6" -> "TableFullScan_5"
 }
 
 select @@last_plan_from_cache;
@@ -198,28 +198,28 @@ select @@last_plan_from_cache;
 0
 explain format = 'row' select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 explain format = 'verbose' select * from t;
 id	estRows	estCost	task	access object	operator info
-TableReader_5	10000.00	313573.33	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	313573.33	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 explain format = 'traditional' select * from t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 explain format = 'binary' select * from t;
 binary plan
-9AFYCu8BCg1UYWJsZVJlYWRlcl81EncKD1QBEVBGdWxsU2Nhbl80IQEAAAA4DU9BKQABAfBGiMNAOAJAAkoYChYKEWV4ZWN1dG9yX19leHBsYWluEgF0Uh5rZWVwIG9yZGVyOmZhbHNlLCBzdGF0czpwc2V1ZG9w//////8BAwQBeAEGBQEgASFVVVVVlSMTHWYoAUABUhRkYXRhOlQ2kgA4WiN0aW1lOjBzLCBvcGVuBQkMY2xvcwkTHGxvb3BzOjBwBVgBATQBeP///////////wEYAQ==
+9AFUCu8BCg1UYWJsZVJlYWRlcl82EncKDwURUEZ1bGxTY2FuXzUhAQAAADgNT0EpAAEB8EaIw0A4AkACShgKFgoRZXhlY3V0b3JfX2V4cGxhaW4SAXRSHmtlZXAgb3JkZXI6ZmFsc2UsIHN0YXRzOnBzZXVkb3D//////wEDBAF4AQYFASABIVVVVVWVIxMdZigBQAFSFGRhdGE6VAGjGZI4WiN0aW1lOjBzLCBvcGVuBQkMY2xvcwkTHGxvb3BzOjBwBVgBATQBeP///////////wEYAQ==
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -227,13 +227,13 @@ explain format = 'tidb_json' select * from t;
 TiDB_JSON
 [
     {
-        "id": "TableReader_5",
+        "id": "TableReader_6",
         "estRows": "10000.00",
         "taskType": "root",
-        "operatorInfo": "data:TableFullScan_4",
+        "operatorInfo": "data:TableFullScan_5",
         "subOperators": [
             {
-                "id": "TableFullScan_4",
+                "id": "TableFullScan_5",
                 "estRows": "10000.00",
                 "taskType": "cop[tikv]",
                 "accessObject": "table:t",
@@ -248,8 +248,8 @@ select @@last_plan_from_cache;
 0
 explain format = 'cost_trace' select * from t;
 id	estRows	estCost	costFormula	task	access object	operator info
-TableReader_5	10000.00	313573.33	(((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	4070000.00	(scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7)))	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	313573.33	(((((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	4070000.00	((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -268,15 +268,15 @@ executor__explain
 use executor__explain;
 select * from v;
 id
-explain format = 'brief' select * from v;
+explain format = 'plan_tree' select * from v;
 Error 1345 (HY000): EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
 grant show view on executor__explain.v to 'explain'@'%';
-explain format = 'brief' select * from v;
-id	estRows	task	access object	operator info
-TableReader	10000.00	root		data:TableFullScan
-└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from v;
+id	task	access object	operator info
+TableReader	root		data:TableFullScan
+└─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 revoke select on executor__explain.v from 'explain'@'%';
-explain format = 'brief' select * from v;
+explain format = 'plan_tree' select * from v;
 Error 1142 (42000): SELECT command denied to user 'explain'@'%' for table 'v'
 create table t1 (i int);
 create table t2 (j int);
@@ -294,12 +294,12 @@ explain select * from v2;
 Error 1345 (HY000): EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
 explain select * from t3;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain select * from v3;
 id	estRows	task	access object	operator info
-TableReader_7	10000.00	root		data:TableFullScan_6
-└─TableFullScan_6	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+TableReader_8	10000.00	root		data:TableFullScan_7
+└─TableFullScan_7	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 drop table if exists t1;
 create table t1(
 id1 varchar(2) DEFAULT '00',
@@ -324,7 +324,7 @@ create table t3(
 id20 varchar(40) DEFAULT NULL,
 UNIQUE KEY IX_id20 (id20)
 );
-explain UPDATE t1 a
+explain format='plan_tree' UPDATE t1 a
 SET a.id1 = '04',
 a.id3 = CURRENT_TIMESTAMP,
 a.id4 = SUBSTRING_INDEX(USER(), '@', 1),
@@ -342,61 +342,62 @@ FROM t1 rn
 WHERE rn.id1 = '03'
 )
 );
-id	estRows	task	access object	operator info
-Update_17	N/A	root		N/A
-└─Projection_28	8.00	root		executor__explain.t1.id1, executor__explain.t1.id2, executor__explain.t1.id3, executor__explain.t1.id4, executor__explain.t1.id5, executor__explain.t1.id6, executor__explain.t1.id7, executor__explain.t1._tidb_rowid
-  └─Selection_29	8.00	root		eq(minus(executor__explain.t1.id6, ifnull(executor__explain.t1.id7, 0)), ifnull(Column#22, 0))
-    └─HashJoin_32	10.00	root		left outer join, left side:IndexLookUp_84, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
-      ├─HashAgg_85(Build)	12.50	root		group by:executor__explain.t2.id2, funcs:count(1)->Column#22, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
-      │ └─IndexJoin_92	15.62	root		inner join, inner:IndexReader_91, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
-      │   ├─IndexHashJoin_132(Build)	12.50	root		inner join, inner:IndexLookUp_129, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
-      │   │ ├─Projection_160(Build)	10.00	root		executor__explain.t1.id2
-      │   │ │ └─IndexLookUp_164	10.00	root		
-      │   │ │   ├─IndexRangeScan_162(Build)	10.00	cop[tikv]	table:rn, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
-      │   │ │   └─TableRowIDScan_163(Probe)	10.00	cop[tikv]	table:rn	keep order:false, stats:pseudo
-      │   │ └─IndexLookUp_129(Probe)	12.50	root		
-      │   │   ├─IndexRangeScan_127(Build)	12.50	cop[tikv]	table:b, index:IX_id2(id2)	range: decided by [eq(executor__explain.t2.id2, executor__explain.t1.id2)], keep order:false, stats:pseudo
-      │   │   └─TableRowIDScan_128(Probe)	12.50	cop[tikv]	table:b	keep order:false, stats:pseudo
-      │   └─IndexReader_91(Probe)	12.50	root		index:Selection_90
-      │     └─Selection_90	12.50	cop[tikv]		not(isnull(executor__explain.t3.id20))
-      │       └─IndexRangeScan_89	12.50	cop[tikv]	table:c, index:IX_id20(id20)	range: decided by [eq(executor__explain.t3.id20, executor__explain.t2.id10)], keep order:false, stats:pseudo
-      └─IndexLookUp_84(Probe)	10.00	root		
-        ├─IndexRangeScan_82(Build)	10.00	cop[tikv]	table:a, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
-        └─TableRowIDScan_83(Probe)	10.00	cop[tikv]	table:a	keep order:false, stats:pseudo
+id	task	access object	operator info
+Update	root		N/A
+└─Projection	root		executor__explain.t1.id1, executor__explain.t1.id2, executor__explain.t1.id3, executor__explain.t1.id4, executor__explain.t1.id5, executor__explain.t1.id6, executor__explain.t1.id7, executor__explain.t1._tidb_rowid
+  └─Selection	root		eq(minus(executor__explain.t1.id6, ifnull(executor__explain.t1.id7, 0)), ifnull(Column#22, 0))
+    └─HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
+      ├─HashAgg(Build)	root		group by:executor__explain.t2.id2, funcs:count(1)->Column#22, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
+      │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
+      │   ├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
+      │   │ ├─Projection(Build)	root		executor__explain.t1.id2
+      │   │ │ └─IndexLookUp	root		
+      │   │ │   ├─IndexRangeScan(Build)	cop[tikv]	table:rn, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
+      │   │ │   └─TableRowIDScan(Probe)	cop[tikv]	table:rn	keep order:false, stats:pseudo
+      │   │ └─IndexLookUp(Probe)	root		
+      │   │   ├─IndexRangeScan(Build)	cop[tikv]	table:b, index:IX_id2(id2)	range: decided by [eq(executor__explain.t2.id2, executor__explain.t1.id2)], keep order:false, stats:pseudo
+      │   │   └─TableRowIDScan(Probe)	cop[tikv]	table:b	keep order:false, stats:pseudo
+      │   └─IndexReader(Probe)	root		index:Selection
+      │     └─Selection	cop[tikv]		not(isnull(executor__explain.t3.id20))
+      │       └─IndexRangeScan	cop[tikv]	table:c, index:IX_id20(id20)	range: decided by [eq(executor__explain.t3.id20, executor__explain.t2.id10)], keep order:false, stats:pseudo
+      └─IndexLookUp(Probe)	root		
+        ├─IndexRangeScan(Build)	cop[tikv]	table:a, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
+        └─TableRowIDScan(Probe)	cop[tikv]	table:a	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int, b int, index (a));
 insert into t values (1, 1);
-explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;
+explain analyze format='brief' select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashJoin_8	100.00	0	root		<execution_info>	CARTESIAN inner join	<memory>	<disk>
-├─IndexLookUp_15(Build)	10.00	0	root		<execution_info>		<memory>	<disk>
-│ ├─IndexRangeScan_13(Build)	10.00	0	cop[tikv]	table:t2, index:a(a)	<execution_info>	range:[2333,2333], keep order:false, stats:pseudo	<memory>	<disk>
-│ └─TableRowIDScan_14(Probe)	10.00	0	cop[tikv]	table:t2	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
-└─TableReader_12(Probe)	10.00	0	root		<execution_info>	data:Selection_11	<memory>	<disk>
-  └─Selection_11	10.00	0	cop[tikv]		<execution_info>	eq(executor__explain.t.b, 2333)	<memory>	<disk>
-    └─TableFullScan_10	10000.00	1	cop[tikv]	table:t1	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
+IndexHashJoin	12.50	0	root		<execution_info>	inner join, inner:IndexLookUp, outer key:executor__explain.t.b, inner key:executor__explain.t.a, equal cond:eq(executor__explain.t.b, executor__explain.t.a)	<memory>	<disk>
+├─TableReader(Build)	10.00	0	root		<execution_info>	data:Selection	<memory>	<disk>
+│ └─Selection	10.00	0	cop[tikv]		<execution_info>	eq(executor__explain.t.b, 2333)	<memory>	<disk>
+│   └─TableFullScan	10000.00	1	cop[tikv]	table:t1	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
+└─IndexLookUp(Probe)	12.50	0	root		<execution_info>		<memory>	<disk>
+  ├─Selection(Build)	12.50	0	cop[tikv]		<execution_info>	eq(executor__explain.t.a, 2333)	<memory>	<disk>
+  │ └─IndexRangeScan	12500.00	0	cop[tikv]	table:t2, index:a(a)	<execution_info>	range: decided by [eq(executor__explain.t.a, executor__explain.t.b)], keep order:false, stats:pseudo	<memory>	<disk>
+  └─TableRowIDScan(Probe)	12.50	0	cop[tikv]	table:t2	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
 drop table if exists t;
 CREATE TABLE `t` (`a` mediumint(9) NOT NULL,`b` year(4) NOT NULL,`c` varbinary(62) NOT NULL,`d` text COLLATE utf8mb4_unicode_ci NOT NULL,`e` tinyint(4) NOT NULL DEFAULT '115',`f` smallint(6) DEFAULT '2675',`g` date DEFAULT '1981-09-17',`h` mediumint(8) unsigned NOT NULL,`i` varchar(384) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,UNIQUE KEY `idx_23` (`h`,`f`),PRIMARY KEY (`h`,`a`) /*T![clustered_index] CLUSTERED */,UNIQUE KEY `idx_25` (`h`,`i`(5),`e`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (`h`) PARTITIONS 1;
 INSERT INTO `t` VALUES (2065948,1999,_binary '8jxN','rf',-54,-5656,'1987-07-03',259254,'7me坨'),(-8248164,2024,_binary 'zA5A','s)DAkX3',-93,-12983,'2027-12-18',299573,'LUf咲'),(-6131509,2023,_binary 'xdex#Y2','1th%h',-51,19149,'2013-10-28',428279,'矷莒X'),(7545837,1998,_binary 'PCVO','&(lJw6',30,4093,'1987-07-03',736235,'腏@TOIJ'),(-7449472,2029,_binary 'B7&jrl','EjbFfX!',80,-7590,'2011-11-03',765580,'堮ZQF_'),(-7176200,1988,_binary 'tiPglv7mX_#','CnCtNb',-25,NULL,'1987-07-03',842956,'Gq羣嗳殓'),(-115168,2036,_binary 'BqmX$-4It','!8#dvH',82,18787,'1991-09-20',921706,'椉2庘v'),(6665100,1987,_binary '4IJgk0fr4','(D',-73,28628,'1987-07-03',1149668,'摔玝S渉'),(-4065661,2021,_binary '8G%','xDO39xw#',-107,17356,'1970-12-20',1316239,'+0c35掬-阗'),(7622462,1990,_binary '&o+)s)D0','kjoS9Dzld',84,688,'1987-07-03',1403663,'$H鍿_M~'),(5269354,2018,_binary 'wq9hC8','s8XPrN+',-2,-31272,'2008-05-26',1534517,'y椁n躁Q'),(2065948,1982,_binary '8jxNjbksV','g$+i4dg',11,19800,'1987-07-03',1591457,'z^+H~薼A'),(4076971,2024,_binary '&!RrsH','7Mpvk',-63,-632,'2032-10-28',1611011,'鬰+EXmx'),(3522062,1981,_binary ')nq#!UiHKk8','j~wFe77ai',50,6951,'1987-07-03',1716854,'J'),(7859777,2012,_binary 'PBA5xgJ&G&','UM7o!u',18,-5978,'1987-07-03',1967012,'e)浢L獹'),(2065948,2028,_binary '8jxNjbk','JmsEki9t4',51,12002,'2017-12-23',1981288,'mp氏襚');
-explain format='brief' SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
-id	estRows	task	access object	operator info
-Projection	2666.67	root		istrue(or(not(ge(executor__explain.t.i, j筧8)), not(eq(executor__explain.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(executor__explain.t.i)->Column#12
-└─StreamAgg	2666.67	root		group by:executor__explain.t.i, funcs:max(executor__explain.t.e)->Column#10, funcs:firstrow(executor__explain.t.i)->executor__explain.t.i
-  └─Sort	3333.33	root		executor__explain.t.i
-    └─TableReader	3333.33	root	partition:all	data:Selection
-      └─Selection	3333.33	cop[tikv]		or(gt(executor__explain.t.h, 240817), and(ge(executor__explain.t.i, "WVz"), le(executor__explain.t.i, "G#駧褉ZC領*lov")))
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
+id	task	access object	operator info
+Projection	root		istrue(or(not(ge(executor__explain.t.i, j筧8)), not(eq(executor__explain.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(executor__explain.t.i)->Column#12
+└─StreamAgg	root		group by:executor__explain.t.i, funcs:max(executor__explain.t.e)->Column#10, funcs:firstrow(executor__explain.t.i)->executor__explain.t.i
+  └─Sort	root		executor__explain.t.i
+    └─TableReader	root	partition:all	data:Selection
+      └─Selection	cop[tikv]		or(gt(executor__explain.t.h, 240817), and(ge(executor__explain.t.i, "WVz"), le(executor__explain.t.i, "G#駧褉ZC領*lov")))
+        └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(*) from (SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;
 count(*)
 16
-explain format='brief' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
-id	estRows	task	access object	operator info
-Projection	2666.67	root		istrue(or(not(ge(executor__explain.t.i, j筧8)), not(eq(executor__explain.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(executor__explain.t.i)->Column#12
-└─HashAgg	2666.67	root		group by:executor__explain.t.i, funcs:max(Column#15)->Column#10, funcs:firstrow(executor__explain.t.i)->executor__explain.t.i
-  └─TableReader	2666.67	root	partition:all	data:HashAgg
-    └─HashAgg	2666.67	cop[tikv]		group by:executor__explain.t.i, funcs:max(executor__explain.t.e)->Column#15
-      └─Selection	3333.33	cop[tikv]		or(gt(executor__explain.t.h, 240817), and(ge(executor__explain.t.i, "WVz"), le(executor__explain.t.i, "G#駧褉ZC領*lov")))
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
+id	task	access object	operator info
+Projection	root		istrue(or(not(ge(executor__explain.t.i, j筧8)), not(eq(executor__explain.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(executor__explain.t.i)->Column#12
+└─HashAgg	root		group by:executor__explain.t.i, funcs:max(Column#15)->Column#10, funcs:firstrow(executor__explain.t.i)->executor__explain.t.i
+  └─TableReader	root	partition:all	data:HashAgg
+    └─HashAgg	cop[tikv]		group by:executor__explain.t.i, funcs:max(executor__explain.t.e)->Column#15
+      └─Selection	cop[tikv]		or(gt(executor__explain.t.h, 240817), and(ge(executor__explain.t.i, "WVz"), le(executor__explain.t.i, "G#駧褉ZC領*lov")))
+        └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;
 count(*)
 16

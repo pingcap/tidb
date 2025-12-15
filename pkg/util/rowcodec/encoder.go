@@ -239,9 +239,6 @@ func (NoChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
 	return encoder.toBytes(buf), nil
 }
 
-// introduced since v7.1.0
-const checksumVersionColumn byte = 0
-
 // introduced since v8.3.0
 const checksumVersionRawKey byte = 1
 

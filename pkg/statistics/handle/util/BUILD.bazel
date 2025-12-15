@@ -13,11 +13,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
+        "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/vardef",
@@ -33,7 +35,6 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tiancaiamao_gp//:gp",
         "@com_github_tikv_client_go_v2//oracle",
-        "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
     ],
 )
@@ -43,6 +44,7 @@ go_test(
     timeout = "short",
     srcs = ["util_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":util",
         "//pkg/domain/infosync",

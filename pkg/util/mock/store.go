@@ -93,3 +93,13 @@ func (*Store) GetOption(_ any) (any, bool) {
 
 // SetOption implements kv.Storage interface.
 func (*Store) SetOption(_, _ any) {}
+
+// GetClusterID implements kv.Storage interface.
+func (*Store) GetClusterID() uint64 {
+	return 1
+}
+
+// GetKeyspace implements kv.Storage interface.
+func (*Store) GetKeyspace() string {
+	return ""
+}

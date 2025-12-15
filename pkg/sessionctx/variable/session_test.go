@@ -17,18 +17,22 @@ package variable_test
 import (
 	"context"
 	"math/rand"
+	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -134,17 +138,13 @@ func TestSession(t *testing.T) {
 	require.Equal(t, uint16(0), ss.WarningCount())
 }
 
-func TestAllocMPPID(t *testing.T) {
-	ctx := mock.NewContext()
-	require.Equal(t, int64(1), plannercore.AllocMPPTaskID(ctx))
-	require.Equal(t, int64(2), plannercore.AllocMPPTaskID(ctx))
-	require.Equal(t, int64(3), plannercore.AllocMPPTaskID(ctx))
-}
-
 func TestSlowLogFormat(t *testing.T) {
-	ctx := mock.NewContext()
-
-	seVar := ctx.GetSessionVars()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1,1), (2,2)")
+	seVar := tk.Session().GetSessionVars()
 	require.NotNil(t, seVar)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
@@ -157,14 +157,14 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
-	execDetail := execdetails.ExecDetails{
-		BackoffTime:  time.Millisecond,
+	execDetail := &execdetails.ExecDetails{
 		RequestCount: 2,
-		ScanDetail: &util.ScanDetail{
-			ProcessedKeys: 20001,
-			TotalKeys:     10000,
-		},
-		DetailsNeedP90: execdetails.DetailsNeedP90{
+		CopExecDetails: execdetails.CopExecDetails{
+			BackoffTime: time.Millisecond,
+			ScanDetail: &util.ScanDetail{
+				ProcessedKeys: 20001,
+				TotalKeys:     10000,
+			},
 			TimeDetail: util.TimeDetail{
 				ProcessTime: time.Second * time.Duration(2),
 				WaitTime:    time.Minute,
@@ -189,31 +189,35 @@ func TestSlowLogFormat(t *testing.T) {
 		ColumnStatsLoadStatus: map[int64]string{2: "unInitialized"},
 	}
 
+	processTimeStats := execdetails.TaskTimeStats{
+		AvgTime:    time.Second,
+		P90Time:    time.Second * 2,
+		MaxAddress: "10.6.131.78",
+		MaxTime:    time.Second * 3,
+	}
+	waitTimeStats := execdetails.TaskTimeStats{
+		AvgTime:    time.Millisecond * 10,
+		P90Time:    time.Millisecond * 20,
+		MaxTime:    time.Millisecond * 30,
+		MaxAddress: "10.6.131.79",
+	}
 	copTasks := &execdetails.CopTasksDetails{
-		NumCopTasks:       10,
-		AvgProcessTime:    time.Second,
-		P90ProcessTime:    time.Second * 2,
-		MaxProcessAddress: "10.6.131.78",
-		MaxProcessTime:    time.Second * 3,
-		AvgWaitTime:       time.Millisecond * 10,
-		P90WaitTime:       time.Millisecond * 20,
-		MaxWaitTime:       time.Millisecond * 30,
-		MaxWaitAddress:    "10.6.131.79",
-		MaxBackoffTime:    make(map[string]time.Duration),
-		AvgBackoffTime:    make(map[string]time.Duration),
-		P90BackoffTime:    make(map[string]time.Duration),
-		TotBackoffTime:    make(map[string]time.Duration),
-		TotBackoffTimes:   make(map[string]int),
-		MaxBackoffAddress: make(map[string]string),
+		NumCopTasks:         10,
+		ProcessTimeStats:    processTimeStats,
+		WaitTimeStats:       waitTimeStats,
+		BackoffTimeStatsMap: make(map[string]execdetails.TaskTimeStats),
+		TotBackoffTimes:     make(map[string]int),
 	}
 
 	backoffs := []string{"rpcTiKV", "rpcPD", "regionMiss"}
 	for _, backoff := range backoffs {
-		copTasks.MaxBackoffTime[backoff] = time.Millisecond * 200
-		copTasks.MaxBackoffAddress[backoff] = "127.0.0.1"
-		copTasks.AvgBackoffTime[backoff] = time.Millisecond * 200
-		copTasks.P90BackoffTime[backoff] = time.Millisecond * 200
-		copTasks.TotBackoffTime[backoff] = time.Millisecond * 200
+		copTasks.BackoffTimeStatsMap[backoff] = execdetails.TaskTimeStats{
+			MaxTime:    time.Millisecond * 200,
+			MaxAddress: "127.0.0.1",
+			AvgTime:    time.Millisecond * 200,
+			P90Time:    time.Millisecond * 200,
+			TotTime:    time.Millisecond * 200,
+		}
 		copTasks.TotBackoffTimes[backoff] = 200
 	}
 
@@ -245,6 +249,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2
 # Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
 # Mem_max: 2333
+# Mem_arbitration: 0.000054321
 # Disk_max: 6666
 # Prepared: true
 # Plan_from_cache: true
@@ -270,7 +275,9 @@ func TestSlowLogFormat(t *testing.T) {
 # Resource_group: rg1
 # Request_unit_read: 50
 # Request_unit_write: 100.56
-# Time_queued_by_rc: 0.134`
+# Time_queued_by_rc: 0.134
+# Storage_from_kv: true
+# Storage_from_mpp: false`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	tikvExecDetail := util.ExecDetails{
@@ -278,6 +285,11 @@ func TestSlowLogFormat(t *testing.T) {
 		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
 		BackoffDuration:    (12 * time.Second).Nanoseconds(),
 	}
+	ruDetails := util.NewRUDetailsWith(50.0, 100.56, 134*time.Millisecond)
+	seVar.DurationParse = time.Duration(10)
+	seVar.DurationCompile = time.Duration(10)
+	seVar.DurationOptimization = time.Duration(10)
+	seVar.DurationWaitTS = time.Duration(3)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -285,10 +297,6 @@ func TestSlowLogFormat(t *testing.T) {
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
-		TimeParse:         time.Duration(10),
-		TimeCompile:       time.Duration(10),
-		TimeOptimize:      time.Duration(10),
-		TimeWaitTS:        time.Duration(3),
 		IndexNames:        "[t1:a,t2:b]",
 		CopTasks:          copTasks,
 		ExecDetail:        execDetail,
@@ -313,12 +321,14 @@ func TestSlowLogFormat(t *testing.T) {
 		IsWriteCacheTable: true,
 		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
-		RRU:               50.0,
-		WRU:               100.56,
-		WaitRUDuration:    134 * time.Millisecond,
+		RUDetails:         ruDetails,
+		StorageKV:         true,
+		StorageMPP:        false,
+		MemArbitration:    time.Duration(54321).Seconds(),
 	}
 	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
 	logItems.UsedStats.RecordUsedInfo(2, usedStats2)
+	seVar.CurrentDBChanged = false
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
 
@@ -326,6 +336,85 @@ func TestSlowLogFormat(t *testing.T) {
 	logString = seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
 	require.False(t, seVar.CurrentDBChanged)
+
+	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
+	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
+		Fields: map[string]struct{}{
+			strings.ToLower(variable.SlowLogDBStr):          {},
+			strings.ToLower(variable.SlowLogSucc):           {},
+			strings.ToLower(execdetails.ProcessTimeStr):     {},
+			strings.ToLower(variable.SlowLogResourceGroup):  {},
+			strings.ToLower(variable.SlowLogExecRetryCount): {},
+		},
+	})
+	seVar.StmtCtx.SyncExecDetails.Reset()
+	seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execDetail.CopExecDetails, 0)
+	// Make RequestCount to be 2.
+	seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execdetails.CopExecDetails{}, 0)
+	seVar.StmtCtx.ExecRetryCount = logItems.ExecRetryCount
+	seVar.StmtCtx.ResourceGroupName = logItems.ResourceGroupName
+	ctx := context.WithValue(context.Background(), execdetails.StmtExecDetailKey,
+		&execdetails.StmtExecDetails{WriteSQLRespDuration: logItems.WriteSQLRespTotal})
+	actual := executor.PrepareSlowLogItemsForRules(ctx, vardef.GlobalSlowLogRules.Load(), seVar)
+	childCtx := context.WithValue(ctx, util.ExecDetailsKey, &tikvExecDetail)
+	executor.CompleteSlowLogItemsForRules(childCtx, seVar, actual)
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	// make StmtCtx.OriginalSQL is the same as sql
+	seVar.StmtCtx.OriginalSQL = sql
+	seVar.StmtCtx.ResetSQLDigest(sql)
+	seVar.StmtCtx.IndexNames = []string{"t1:a", "t2:b"}
+	seVar.TxnCtx.IsExplicit = logItems.IsExplicitTxn
+	seVar.FoundInPlanCache = logItems.PlanFromCache
+	seVar.FoundInBinding = logItems.PlanFromBinding
+	seVar.RewritePhaseInfo = logItems.RewriteInfo
+	// get an ExecStmt
+	compiler := executor.Compiler{Ctx: tk.Session()}
+	execStmt, err := compiler.Compile(childCtx, stmt)
+	execStmt.GoCtx = childCtx
+	require.NoError(t, err)
+
+	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
+	compareSlowLogItems(t, logItems, actual)
+}
+
+func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogItems) {
+	require.NotNil(t, expected)
+	require.NotNil(t, actual)
+
+	ev := reflect.ValueOf(expected).Elem()
+	av := reflect.ValueOf(actual).Elem()
+	et := ev.Type()
+
+	// Some fields are hard to mock, so we skip them.
+	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "MemArbitration", "DiskMax", "StorageKV"}
+	skipFieldsFunc := func(res string, fields []string) bool {
+		for _, f := range fields {
+			if res == f {
+				return true
+			}
+		}
+		return false
+	}
+
+	for i := 0; i < ev.NumField(); i++ {
+		field := et.Field(i)
+		expVal := ev.Field(i).Interface()
+		actVal := av.Field(i).Interface()
+
+		if skipFieldsFunc(field.Name, skipFields) {
+			continue
+		}
+		if ev.Field(i).Kind() == reflect.Ptr {
+			if ev.Field(i).IsNil() && av.Field(i).IsNil() {
+				continue
+			}
+			require.Equal(t, expVal, actVal, "field %s mismatch", field.Name)
+		} else {
+			require.Equal(t, expVal, actVal, "field %s mismatch", field.Name)
+		}
+	}
 }
 
 func TestIsolationRead(t *testing.T) {
@@ -494,7 +583,7 @@ func TestGetReuseChunk(t *testing.T) {
 	chk1 = sessVars.GetChunkAllocator().Alloc(fieldTypes, initCap, initCap)
 	require.NotNil(t, chk1)
 	chunkReuseMap[chk1] = struct{}{}
-	for i := 0; i < chk1.NumCols(); i++ {
+	for i := range chk1.NumCols() {
 		columnReuseMap[chk1.Column(i)] = struct{}{}
 	}
 	require.True(t, sessVars.GetUseChunkAlloc())
@@ -504,7 +593,7 @@ func TestGetReuseChunk(t *testing.T) {
 	require.NotNil(t, chkres1)
 	_, exist := chunkReuseMap[chkres1]
 	require.True(t, exist)
-	for i := 0; i < chkres1.NumCols(); i++ {
+	for i := range chkres1.NumCols() {
 		_, exist := columnReuseMap[chkres1.Column(i)]
 		require.True(t, exist)
 	}

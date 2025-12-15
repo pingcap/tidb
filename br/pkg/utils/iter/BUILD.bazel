@@ -13,6 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util",
+        "@com_github_prometheus_client_golang//prometheus",
         "@org_golang_x_exp//constraints",
         "@org_golang_x_sync//errgroup",
     ],

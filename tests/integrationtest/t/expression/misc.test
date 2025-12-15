@@ -6,11 +6,12 @@ select timestamp '2017-01-01 00:00:00';
 select timestamp '2017@01@01 00:00:00';
 select timestamp '2017@01@01 00~00~00';
 select timestamp '2017@01@0001 00~00~00.333';
--- error 1292
+-- error 1525
 select timestamp '00:00:00';
--- error 1292
+-- error 1525
 select timestamp '1992-01-03';
--- error 1292
+-- error 1525
+# This is OK in MySQL!
 select timestamp '20171231235959.999999';
 
 # TestTimeLiteral
@@ -243,7 +244,7 @@ drop table if exists t;
 create table t(a bigint, b bigint);
 insert into t values(1, 1);
 --enable_warnings
-desc format='brief' select ifnull("aaaa", a) from t;
+explain format='plan_tree' select ifnull("aaaa", a) from t;
 select ifnull("aaaa", a) from t;
 --disable_warnings
 

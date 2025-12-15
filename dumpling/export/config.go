@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -634,7 +635,7 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	}
 
 	// only parse -T when -f is default value. otherwise bail out.
-	if !sameStringArray(filters, []string{"*.*", DefaultTableFilter}) {
+	if !slices.Equal(filters, []string{"*.*", DefaultTableFilter}) {
 		return nil, errors.New("cannot pass --tables-list and --filter together")
 	}
 

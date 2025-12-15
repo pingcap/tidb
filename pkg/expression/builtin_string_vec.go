@@ -54,7 +54,7 @@ func (b *builtinLowerUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	}
 	result.ReserveString(n)
 	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 		} else {
@@ -90,7 +90,7 @@ func (b *builtinRepeatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -140,7 +140,7 @@ func (b *builtinStringIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			i64s[i] = 1
 		} else {
@@ -166,7 +166,7 @@ func (b *builtinUpperUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	}
 	result.ReserveString(n)
 	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 		} else {
@@ -210,7 +210,7 @@ func (b *builtinLeftUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -255,7 +255,7 @@ func (b *builtinRightUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -294,15 +294,12 @@ func (b *builtinSpaceSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, res
 
 	result.ReserveString(n)
 	nums := buf.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		num := nums[i]
-		if num < 0 {
-			num = 0
-		}
+		num := max(nums[i], 0)
 		if uint64(num) > b.maxAllowedPacket {
 			if err := handleAllowedPacketOverflowed(ctx, "space", b.maxAllowedPacket); err != nil {
 				return err
@@ -330,7 +327,7 @@ func (b *builtinReverseUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	if err := b.args[0].VecEvalString(ctx, input, result); err != nil {
 		return err
 	}
-	for i := 0; i < input.NumRows(); i++ {
+	for i := range input.NumRows() {
 		if result.IsNull(i) {
 			continue
 		}
@@ -363,11 +360,11 @@ func (b *builtinConcatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 	isNulls := make([]bool, n)
 	result.ReserveString(n)
 	var byteBuf []byte
-	for j := 0; j < len(b.args); j++ {
+	for j := range b.args {
 		if err := b.args[j].VecEvalString(ctx, input, buf); err != nil {
 			return err
 		}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if isNulls[i] {
 				continue
 			}
@@ -387,7 +384,7 @@ func (b *builtinConcatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 			strs[i] = append(strs[i], byteBuf...)
 		}
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if isNulls[i] {
 			result.AppendNull()
 		} else {
@@ -429,7 +426,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
 	ci := collate.IsCICollation(b.collation)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -480,7 +477,7 @@ func (b *builtinHexStrArgSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -508,7 +505,7 @@ func (b *builtinLTrimSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, res
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -537,7 +534,7 @@ func (b *builtinQuoteSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, res
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendString("NULL")
 			continue
@@ -589,7 +586,7 @@ func (b *builtinInsertSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 	posIs := pos.Int64s()
 	lengthIs := length.Int64s()
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if str.IsNull(i) || pos.IsNull(i) || length.IsNull(i) || newstr.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -631,7 +628,7 @@ func (b *builtinConcatWSSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 
 	bufs := make([]*chunk.Column, argsLen)
 	var err error
-	for i := 0; i < argsLen; i++ {
+	for i := range argsLen {
 		bufs[i], err = b.bufAllocator.get()
 		if err != nil {
 			return err
@@ -645,7 +642,7 @@ func (b *builtinConcatWSSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	isNulls := make([]bool, n)
 	seps := make([]string, n)
 	strs := make([][]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if bufs[0].IsNull(i) {
 			// If the separator is NULL, the result is NULL.
 			isNulls[i] = true
@@ -659,7 +656,7 @@ func (b *builtinConcatWSSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	var strBuf string
 	targetLengths := make([]int, n)
 	for j := 1; j < argsLen; j++ {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if isNulls[i] || bufs[j].IsNull(i) {
 				// CONCAT_WS() does not skip empty strings. However,
 				// it does skip any NULL values after the separator argument.
@@ -682,7 +679,7 @@ func (b *builtinConcatWSSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		}
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if isNulls[i] {
 			result.AppendNull()
 			continue
@@ -720,7 +717,7 @@ func (b *builtinConvertSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, r
 	}
 	enc := charset.FindEncoding(resultTp.GetCharset())
 	encBuf := &bytes.Buffer{}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if expr.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -751,7 +748,7 @@ func vecEvalStringConvertBinary(result *chunk.Column, n int, expr *chunk.Column,
 	}
 	enc := charset.FindEncoding(chs)
 	encBuf := &bytes.Buffer{}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if expr.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -804,7 +801,7 @@ func (b *builtinSubstringIndexSig) vecEvalString(ctx EvalContext, input *chunk.C
 
 	result.ReserveString(n)
 	counts := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -868,7 +865,7 @@ func (b *builtinUnHexSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, res
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -921,7 +918,7 @@ func (b *builtinExportSet3ArgSig) vecEvalString(ctx EvalContext, input *chunk.Ch
 	}
 	result.ReserveString(n)
 	i64s := bits.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if bits.IsNull(i) || on.IsNull(i) || off.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -951,7 +948,7 @@ func (b *builtinASCIISig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1001,7 +998,7 @@ func (b *builtinLpadSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	result.ReserveString(n)
 	i64s := lenBuf.Int64s()
 	lenBuf.MergeNulls(strBuf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if lenBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1076,7 +1073,7 @@ func (b *builtinLpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 
 	result.ReserveString(n)
 	i64s := buf1.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1141,7 +1138,7 @@ func (b *builtinFindInSetSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.ResizeInt64(n, false)
 	result.MergeNulls(str, strlist)
 	res := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1183,7 +1180,7 @@ func (b *builtinLeftSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	left := buf2.Int64s()
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1207,7 +1204,7 @@ func (b *builtinReverseSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, r
 	if err := b.args[0].VecEvalString(ctx, input, result); err != nil {
 		return err
 	}
-	for i := 0; i < input.NumRows(); i++ {
+	for i := range input.NumRows() {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1235,7 +1232,7 @@ func (b *builtinRTrimSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, res
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1273,7 +1270,7 @@ func (b *builtinStrcmpSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	result.ResizeInt64(n, false)
 	result.MergeNulls(leftBuf, rightBuf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// if left or right is null, then set to null and return 0(which is the default value)
 		if result.IsNull(i) {
 			continue
@@ -1308,7 +1305,7 @@ func (b *builtinLocate2ArgsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1353,7 +1350,7 @@ func (b *builtinLocate3ArgsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1423,7 +1420,7 @@ func (b *builtinExportSet4ArgSig) vecEvalString(ctx EvalContext, input *chunk.Ch
 	}
 	result.ReserveString(n)
 	i64s := bits.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if bits.IsNull(i) || on.IsNull(i) || off.IsNull(i) || separator.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1470,7 +1467,7 @@ func (b *builtinRpadSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	result.ReserveString(n)
 	i64s := lenBuf.Int64s()
 	lenBuf.MergeNulls(strBuf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if lenBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1592,7 +1589,7 @@ func (b *builtinSubstring2ArgsSig) vecEvalString(ctx EvalContext, input *chunk.C
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1642,7 +1639,7 @@ func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1693,7 +1690,7 @@ func (b *builtinTrim2ArgsSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1735,7 +1732,7 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	ci := collate.IsCICollation(b.collation)
 	var strI string
 	var substrI string
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1772,13 +1769,20 @@ func (b *builtinOctStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		negative, overflow := false, false
+
+		// for issue #59446 should return NULL for empty string
 		str := buf.GetString(i)
+		if len(str) == 0 {
+			result.AppendNull()
+			continue
+		}
+
+		negative, overflow := false, false
 		str = getValidPrefix(strings.TrimSpace(str), 10)
 		if len(str) == 0 {
 			result.AppendString("0")
@@ -1824,7 +1828,7 @@ func (b *builtinEltSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resul
 	i64s := buf0.Int64s()
 	argLen := len(b.args)
 	bufs := make([]*chunk.Column, argLen)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1898,7 +1902,7 @@ func (b *builtinInsertUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	i64s1 := buf1.Int64s()
 	i64s2 := buf2.Int64s()
 	buf1.MergeNulls(buf2)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf3.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1985,7 +1989,7 @@ func (b *builtinExportSet5ArgSig) vecEvalString(ctx EvalContext, input *chunk.Ch
 	bits.MergeNulls(numberOfBits)
 	i64s := bits.Int64s()
 	i64s2 := numberOfBits.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if bits.IsNull(i) || on.IsNull(i) || off.IsNull(i) || separator.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2037,7 +2041,7 @@ func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 	result.ReserveString(n)
 	positions := buf1.Int64s()
 	lengths := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2101,7 +2105,7 @@ func (b *builtinTrim3ArgsSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2143,7 +2147,7 @@ func (b *builtinOrdSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2185,7 +2189,7 @@ func (b *builtinInstrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	result.ResizeInt64(n, false)
 	result.MergeNulls(str, substr)
 	res := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2217,7 +2221,7 @@ func (b *builtinLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2256,7 +2260,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
 	ci := collate.IsCICollation(b.collation)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2300,7 +2304,7 @@ func (b *builtinBitLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2318,7 +2322,7 @@ func (b *builtinCharSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	n := input.NumRows()
 	l := len(b.args)
 	buf := make([]*chunk.Column, l-1)
-	for i := 0; i < len(b.args)-1; i++ {
+	for i := range len(b.args) - 1 {
 		te, err := b.bufAllocator.get()
 		if err != nil {
 			return err
@@ -2337,15 +2341,15 @@ func (b *builtinCharSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	bigints := make([]int64, 0, l-1)
 	result.ReserveString(n)
 	bufint := make([]([]int64), l-1)
-	for i := 0; i < l-1; i++ {
+	for i := range l - 1 {
 		bufint[i] = buf[i].Int64s()
 	}
 	encBuf := &bytes.Buffer{}
 	enc := charset.FindEncoding(b.tp.GetCharset())
 	hasStrictMode := sqlMode(ctx).HasStrictMode()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		bigints = bigints[0:0]
-		for j := 0; j < l-1; j++ {
+		for j := range l - 1 {
 			if buf[j].IsNull(i) {
 				continue
 			}
@@ -2400,7 +2404,7 @@ func (b *builtinReplaceSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, r
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2450,13 +2454,13 @@ func (b *builtinMakeSetSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, r
 	bits := bitsBuf.Int64s()
 	result.ReserveString(nr)
 	sets := make([]string, 0, len(b.args)-1)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if bitsBuf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		sets = sets[:0]
-		for j := 0; j < len(b.args)-1; j++ {
+		for j := range len(b.args) - 1 {
 			if strBuf[j].IsNull(i) || (bits[i]&(1<<uint(j))) == 0 {
 				continue
 			}
@@ -2485,7 +2489,7 @@ func (b *builtinOctIntSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 
 	result.ReserveString(n)
 	nums := buf.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2512,7 +2516,7 @@ func (b *builtinToBase64Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2560,7 +2564,7 @@ func (b *builtinTrim1ArgSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2608,7 +2612,7 @@ func (b *builtinRpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 
 	result.ReserveString(n)
 	i64s := buf1.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2665,7 +2669,7 @@ func (b *builtinCharLengthBinarySig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	res := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2692,7 +2696,7 @@ func (b *builtinBinSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resul
 
 	result.ReserveString(n)
 	nums := buf.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2776,7 +2780,7 @@ func (b *builtinRightSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, res
 	}
 	right := buf2.Int64s()
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2831,7 +2835,7 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(ctx EvalContext, input *chunk.C
 	result.ReserveString(n)
 	positions := buf1.Int64s()
 	lengths := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2880,7 +2884,7 @@ func (b *builtinHexIntArgSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	}
 	result.ReserveString(n)
 	i64s := buf.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2908,7 +2912,7 @@ func (b *builtinFromBase64Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2958,7 +2962,7 @@ func (b *builtinCharLengthUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2985,29 +2989,33 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 		}
 
 		locale := "en_US"
+		isNull := false
 		if localeBuf == nil {
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
+			isNull = true
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
-			// TODO: support other locales.
-			tc := typeCtx(ctx)
-
+		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
 		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
-
-		formatString, err := localeFormatFunction(xStr, dStr)
+		formatString, found, err := mysql.FormatByLocale(xStr, dStr, locale)
 		if err != nil {
 			return err
+		}
+		// Check 'found' flag, only warn for unknown locales
+		if !isNull && !found {
+			tc := typeCtx(ctx)
+			if localeBuf != nil {
+				locale = strings.Clone(localeBuf.GetString(i))
+			}
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 		result.AppendString(formatString)
 	}
@@ -3031,29 +3039,33 @@ func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *ch
 		}
 
 		locale := "en_US"
+		isNull := false
 		if localeBuf == nil {
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
+			isNull = true
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
-			// TODO: support other locales.
-			tc := typeCtx(ctx)
-
+		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
 		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
 
-		formatString, err := localeFormatFunction(xStr, dStr)
+		formatString, found, err := mysql.FormatByLocale(xStr, dStr, locale)
 		if err != nil {
 			return err
+		}
+		if !isNull && !found {
+			tc := typeCtx(ctx)
+			if localeBuf != nil {
+				locale = strings.Clone(localeBuf.GetString(i))
+			}
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 		result.AppendString(formatString)
 	}
@@ -3095,7 +3107,7 @@ func (b *builtinTranslateBinarySig) vecEvalString(ctx EvalContext, input *chunk.
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
 		if !(ExprNotNull(ctx, b.args[1]) && ExprNotNull(ctx, b.args[2])) {
-			for i := 0; i < n; i++ {
+			for range n {
 				result.AppendNull()
 			}
 			return nil
@@ -3104,7 +3116,7 @@ func (b *builtinTranslateBinarySig) vecEvalString(ctx EvalContext, input *chunk.
 		fromBytes, toBytes := []byte(buf1.GetString(0)), []byte(buf2.GetString(0))
 		mp = buildTranslateMap4Binary(fromBytes, toBytes)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -3168,7 +3180,7 @@ func (b *builtinTranslateUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Ch
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
 		if !(ExprNotNull(ctx, b.args[1]) && ExprNotNull(ctx, b.args[2])) {
-			for i := 0; i < n; i++ {
+			for range n {
 				result.AppendNull()
 			}
 			return nil
@@ -3177,7 +3189,7 @@ func (b *builtinTranslateUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Ch
 		fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
 		mp = buildTranslateMap4UTF8(fromRunes, toRunes)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue

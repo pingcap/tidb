@@ -33,7 +33,7 @@ func TestFixedOffsetInRowLayout(t *testing.T) {
 
 func TestBitMaskInUint32(t *testing.T) {
 	testData := make([]byte, 4)
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		testData[i/8] = 1 << (7 - i%8)
 		testUint32 := atomic.LoadUint32((*uint32)(unsafe.Pointer(&testData[0])))
 		ref := testUint32 & bitMaskInUint32[i]

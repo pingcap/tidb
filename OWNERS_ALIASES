@@ -1,5 +1,11 @@
-# Sort the member alphabetically.
+# See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners_aliases
+# The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
 aliases:
+  sig-approvers-stats:
+    - mjonss
+    - 0xPoe
+    - time-and-fate
+    - terry1purcell
   sig-critical-approvers-tidb-server:
     - yudongusa
     - BenMeadowcroft
@@ -9,101 +15,96 @@ aliases:
   sig-critical-approvers-parser:
     - yudongusa
     - BenMeadowcroft
-  sig-approvers-autoid-service: # approvers for auto-id service
+  sig-critical-approvers-dep:
+    - bb7133
+    - cfzjywxk
+  sig-approvers-autoid-service:
     - bb7133
     - tiancaiamao
-  sig-approvers-br: # approvers for br module
+  sig-approvers-br:
     - BornChanger
     - 3pointer
     - YuJuncen
     - Leavrth
-  sig-approvers-distsql: # approvers for distsql pkg
+  sig-approvers-distsql:
     - windtalker
     - XuHuaiyu
     - zanmato1984
     - cfzjywxk
     - Benjamin2037
-  sig-approvers-executor: # approvers for executor pkg
+  sig-approvers-executor:
     - windtalker
     - XuHuaiyu
     - zanmato1984
-  sig-approvers-executor-import: # approvers for importer part of executor pkg.
+  sig-approvers-executor-import:
     - D3Hunter
     - gmhdbjd
     - Benjamin2037
-  sig-approvers-expression: # approvers for expression pkg
+  sig-approvers-expression:
     - windtalker
     - XuHuaiyu
     - zanmato1984
-  sig-approvers-lightning: # approvers for lightning module
+  sig-approvers-lightning:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-  sig-approvers-domain: # approvers for domain pkg
+    - OliverS929
+  sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
-  sig-approvers-ddl: # approvers for ddl pkg
+  sig-approvers-ddl:
     - Benjamin2037
-    - tangenta
-    - wjhuang2016
-    - D3Hunter
-    - gmhdbjd
-  sig-approvers-disttask: # approvers for disttask pkg
-    - Benjamin2037
-    - D3Hunter
-    - gmhdbjd
-    - tangenta
-    - wjhuang2016
-  sig-approvers-dumpling: # approvers for dumpling module
-    - Benjamin2037
-    - gmhdbjd
-    - tangenta
-  sig-approvers-infoschema: # approvers for infoschema pkg
-    - wjhuang2016
-    - tangenta
-    - D3Hunter
-    - Benjamin2037
-    - gmhdbjd
-  sig-approvers-meta: # approvers for meta pkg
-    - Benjamin2037
-    - gmhdbjd
-    - tangenta
     - wjhuang2016
     - D3Hunter
-  sig-approvers-owner: # approvers for `owner` pkg
+    - gmhdbjd
+  sig-approvers-disttask:
     - Benjamin2037
-    - tangenta
+    - D3Hunter
+    - gmhdbjd
+    - wjhuang2016
+  sig-approvers-dumpling:
+    - Benjamin2037
+    - gmhdbjd
+    - D3Hunter
+  sig-approvers-infoschema:
     - wjhuang2016
     - D3Hunter
-  sig-approvers-parser: # approvers for `parser` module.
+    - Benjamin2037
+    - gmhdbjd
+  sig-approvers-meta:
+    - Benjamin2037
+    - gmhdbjd
+    - wjhuang2016
+    - D3Hunter
+  sig-approvers-owner:
+    - Benjamin2037
+    - wjhuang2016
+    - D3Hunter
+  sig-approvers-parser:
     - bb7133
+    - Benjamin2037
     - BornChanger
     - D3Hunter
-    - tangenta
-  sig-approvers-resourcemanager: # approvers for resourcemanager pkg
+  sig-approvers-resourcemanager:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
-  sig-approvers-table: # approvers for table packages.
+  sig-approvers-table:
     - Benjamin2037
     - cfzjywxk
     - gmhdbjd
-    - tangenta
     - wjhuang2016
-  sig-approvers-lock: # approvers for lock pkg
+  sig-approvers-lock:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
-  sig-approvers-tidb-binlog: # approvers for tidb-binlog module
+  sig-approvers-tidb-binlog:
     - Benjamin2037
     - gmhdbjd
-  sig-approvers-planner: # approvers for planner module
+  sig-approvers-planner:
     - AilinKid
-    - Rustin170506
+    - 0xPoe
     - elsa0520
     - fixdb
     - hawkingrei
@@ -112,3 +113,178 @@ aliases:
     - winoros
     - terry1purcell
     - ghazalfamilyusa
+    - henrybw
+    - wddevries
+    - King-Dylan
+  sig-approvers-metrics:
+    - XuHuaiyu
+    - zimulala
+    - yibin87
+    - nolouch
+  sig-community-reviewers:
+    - CabinfeverB
+    - ChenPeng2013
+    - LittleFall
+    - MoCuishle28
+    - RidRisR
+    - SeaRise
+    - Tjianke
+    - TonsnakeLin
+    - Tristan1900
+    - TszKitLo40
+    - aytrack
+    - ben1009
+    - bobotu
+    - charleszheng44
+    - dhysum
+    - fengou1
+    - fzzf678
+    - gengliqi
+    - ghazalfamilyusa
+    - henrybw
+    - iamxy
+    - js00070
+    - lamxTyler
+    - longfangsong
+    - lyzx2001
+    - mengxin9014
+    - mornyx
+    - nongfushanquan
+    - pingyu
+    - shihongzhi
+    - spongedu
+    - tangwz
+    - tsthght
+    - wddevries
+    - xzhangxian1008
+    - yibin87
+    - zhangjinpeng1987
+    - zhongzc
+    - zhuo-zhi
+  sig-community-approvers:
+    - 0xPoe
+    - 3AceShowHand
+    - 3pointer
+    - 5kbpers
+    - AilinKid
+    - AndreMouche
+    - AndrewDi
+    - Benjamin2037
+    - BornChanger
+    - CharlesCheung96
+    - D3Hunter
+    - Deardrops
+    - Defined2014
+    - Ehco1996
+    - GMHDBJD
+    - IANTHEREAL
+    - JmPotato
+    - King-Dylan
+    - Leavrth
+    - Little-Wallace
+    - MyonKeminta
+    - OliverS929
+    - Reminiscent
+    - SunRunAway
+    - Tammyxia
+    - WangXiangUSTC
+    - WizardXiao
+    - XuHuaiyu
+    - Yisaer
+    - YuJuncen
+    - amyangfei
+    - andylokandy
+    - asddongmen
+    - b41sh
+    - bb7133
+    - breezewish
+    - buchuitoudegou
+    - c4pt0r
+    - cbcwestwolf
+    - cfzjywxk
+    - chrysan
+    - coocood
+    - crazycs520
+    - csuzhangxc
+    - disksing
+    - djshow832
+    - dsdashun
+    - dveeden
+    - ekexium
+    - elsa0520
+    - eurekaka
+    - fixdb
+    - francis0407
+    - fzhedu
+    - glorv
+    - gozssky
+    - guo-shaoge
+    - hanfei1991
+    - hawkingrei
+    - hicqu
+    - holys
+    - hongyunyan
+    - ichn-hu
+    - imtbkcat
+    - jackysp
+    - jiyfhust
+    - joccau
+    - joechenrh
+    - july2993
+    - kennytm
+    - lance6716
+    - lcwangchao
+    - leoppro
+    - lichunzhu
+    - lidezhu
+    - liuzix
+    - lonng
+    - lysu
+    - lzmhhh123
+    - maxshuang
+    - mjonss
+    - mmyj
+    - morgo
+    - ngaut
+    - niubell
+    - nolouch
+    - nrc
+    - okJiang
+    - overvenus
+    - qiuyesuifeng
+    - qw4990
+    - rebelice
+    - rleungx
+    - sdojjy
+    - shenli
+    - siddontang
+    - sticnarf
+    - suzaku
+    - sylzd
+    - tangenta
+    - terry1purcell
+    - tiancaiamao
+    - time-and-fate
+    - tisonkun
+    - windtalker
+    - winkyao
+    - winoros
+    - wjhuang2016
+    - wk989898
+    - wlwilliamx
+    - wshwsh12
+    - xhebox
+    - xiongjiwei
+    - xuyifangreeneyes
+    - yangkeao
+    - you06
+    - youjiali1995
+    - ywqzzy
+    - zanmato1984
+    - zhangjinpeng87
+    - zhaoxinyu
+    - zhouqiang-cl
+    - zimulala
+    - zwj-coder
+    - zyguan
+    - zz-jason

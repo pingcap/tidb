@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -269,6 +270,23 @@ type Expression interface {
 	StringerWithCtx
 }
 
+var expressionSlices = zeropool.New[[]Expression](
+	func() []Expression {
+		return make([]Expression, 0, 4)
+	})
+
+// GetExpressionSlices gets a slice of Expression from pool.
+func GetExpressionSlices(size int) []Expression {
+	result := expressionSlices.Get()
+	return slices.Grow(result, size)
+}
+
+// PutExpressionSlices puts a slice of Expression back to pool.
+func PutExpressionSlices(exprs []Expression) {
+	exprs = exprs[:0]
+	expressionSlices.Put(exprs)
+}
+
 // CNFExprs stands for a CNF expression.
 type CNFExprs []Expression
 
@@ -298,8 +316,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-	cols := make([]*Column, 0, 1)
-	cols = ExtractColumnsFromExpressions(cols, sf.GetArgs(), isColumnInOperand)
+	cols := ExtractColumnsMapFromExpressions(isColumnInOperand, sf.GetArgs()...)
 	return len(cols) > 0
 }
 
@@ -399,7 +416,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	n := input.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
-	for i := 0; i < n; i++ {
+	for range n {
 		selected = append(selected, false)
 		nulls = append(nulls, false)
 	}
@@ -407,7 +424,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	sel := allocSelSlice(n)
 	defer deallocateSelSlice(sel)
 	sel = sel[:0]
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sel = append(sel, i)
 	}
 	input.SetSel(sel)
@@ -885,6 +902,7 @@ type VarAssignment struct {
 	Expr        Expression
 	IsDefault   bool
 	IsGlobal    bool
+	IsInstance  bool
 	IsSystem    bool
 	ExtendValue *Constant
 }
@@ -922,7 +940,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // Set the skip cache to false when the caller will not change the logical plan tree.
 // it is currently closed only by pkg/planner/core.ExtractNotNullFromConds when to extractFD.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCacheCheck bool) (Expression, error) {
-	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, expr) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {

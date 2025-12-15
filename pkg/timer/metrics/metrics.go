@@ -17,6 +17,7 @@ package metrics
 import (
 	"fmt"
 
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -27,7 +28,7 @@ var (
 
 // InitTimerMetrics initializes timers metrics.
 func InitTimerMetrics() {
-	TimerEventCounter = prometheus.NewCounterVec(
+	TimerEventCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",

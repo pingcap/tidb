@@ -63,7 +63,7 @@ func (s *schedulerImpl) OnNextSubtasksBatch(_ context.Context, _ storage.TaskHan
 	switch nextStep {
 	case proto.StepOne, proto.StepTwo:
 		metas := make([][]byte, s.subtaskCount)
-		for i := 0; i < s.subtaskCount; i++ {
+		for i := range s.subtaskCount {
 			bytes, err := json.Marshal(&subtaskMeta{
 				Message: fmt.Sprintf("subtask %d of step %s", i, proto.Step2Str(task.Type, nextStep)),
 			})

@@ -697,18 +697,41 @@ func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
 	}
 }
 
-func generateData(t *testing.T) *Histogram {
-	var data []*bucket4Test
-	sumCount := int64(0)
-	for n := 100; n < 10000; n = n + 100 {
-		sumCount += 100
-		data = append(data, &bucket4Test{
-			lower:  int64(n),
-			upper:  int64(n + 100),
-			count:  sumCount,
-			repeat: 10,
-			ndv:    10,
-		})
-	}
-	return genHist4Test(t, data, 0)
+func TestNewPseudoHistogramReuseChunk(t *testing.T) {
+	const (
+		msgPseudoSameChunk   = "pseudo histograms should share the same Bounds chunk"
+		msgRegularDiffChunks = "regular histograms should have different Bounds chunks"
+		msgRegularPseudoDiff = "regular and pseudo histograms should have different Bounds chunks"
+	)
+
+	// test that NewPseudoHistogram reuses the same global chunk instance
+	tp1 := types.NewFieldType(mysql.TypeLonglong)
+	tp2 := types.NewFieldType(mysql.TypeVarchar)
+	tp3 := types.NewFieldType(mysql.TypeBlob)
+
+	hist1 := NewPseudoHistogram(1, tp1)
+	hist2 := NewPseudoHistogram(2, tp2)
+	hist3 := NewPseudoHistogram(3, tp3)
+
+	// verify that all pseudo histograms share the same Bounds chunk instance
+	require.Same(t, hist1.Bounds, hist2.Bounds, msgPseudoSameChunk)
+	require.Same(t, hist1.Bounds, hist3.Bounds, msgPseudoSameChunk)
+	require.Same(t, hist2.Bounds, hist3.Bounds, msgPseudoSameChunk)
+
+	// verify that regular histograms do NOT share chunks
+	regularHist1 := NewHistogram(1, 0, 0, 0, tp1, 10, 0)
+	regularHist2 := NewHistogram(2, 0, 0, 0, tp2, 10, 0)
+
+	require.NotSame(t, regularHist1.Bounds, regularHist2.Bounds, msgRegularDiffChunks)
+	require.NotSame(t, regularHist1.Bounds, hist1.Bounds, msgRegularPseudoDiff)
+	require.NotSame(t, regularHist2.Bounds, hist1.Bounds, msgRegularPseudoDiff)
+
+	// verify that string type field types are properly handled
+	require.Equal(t, mysql.TypeLonglong, hist1.Tp.GetType())
+	require.Equal(t, mysql.TypeVarchar, hist2.Tp.GetType())
+	require.Equal(t, mysql.TypeBlob, hist3.Tp.GetType())
+
+	// for string types, collation should be set to binary
+	require.Equal(t, "binary", hist2.Tp.GetCollate())
+	require.Equal(t, "binary", hist3.Tp.GetCollate())
 }

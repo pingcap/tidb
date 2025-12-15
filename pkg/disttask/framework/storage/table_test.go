@@ -15,7 +15,9 @@
 package storage_test
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -24,7 +26,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/atomic"
 )
 
 func checkTaskStateStep(t *testing.T, task *proto.Task, state proto.TaskState, step proto.Step) {
@@ -46,12 +51,11 @@ func TestTaskTable(t *testing.T) {
 
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
-	_, err := gm.CreateTask(ctx, "key1", "test", 999, "", 0, proto.ExtraParams{}, []byte("test"))
+	_, err := gm.CreateTask(ctx, "key1", "test", "", 999, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.ErrorContains(t, err, "task concurrency(999) larger than cpu count")
 
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
-	id, err := gm.CreateTask(ctx, "key1", "test", 4, "aaa",
-		12, proto.ExtraParams{ManualRecovery: true}, []byte("testmeta"))
+	id, err := gm.CreateTask(ctx, "key1", "test", "test_keyspace", 4, "aaa", 12, proto.ExtraParams{ManualRecovery: true}, []byte("testmeta"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
@@ -67,6 +71,7 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, "aaa", task.TargetScope)
 	require.Equal(t, 12, task.MaxNodeCount)
 	require.Equal(t, proto.ExtraParams{ManualRecovery: true}, task.ExtraParams)
+	require.Equal(t, "test_keyspace", task.Keyspace)
 	require.Equal(t, []byte("testmeta"), task.Meta)
 	require.GreaterOrEqual(t, task.CreateTime, timeBeforeCreate)
 	require.Zero(t, task.StartTime)
@@ -81,12 +86,20 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, task3, 1)
 	require.Equal(t, task, task3[0])
+	tasksBase3, err := gm.GetTaskBasesInStates(ctx, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Len(t, tasksBase3, 1)
+	require.EqualValues(t, &task3[0].TaskBase, tasksBase3[0])
 
 	task4, err := gm.GetTasksInStates(ctx, proto.TaskStatePending, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, task4, 1)
 	require.Equal(t, task, task4[0])
 	require.GreaterOrEqual(t, task4[0].StateUpdateTime, task.StateUpdateTime)
+	tasksBase4, err := gm.GetTaskBasesInStates(ctx, proto.TaskStatePending, proto.TaskStateRunning)
+	require.NoError(t, err)
+	require.Len(t, tasksBase4, 1)
+	require.EqualValues(t, &task4[0].TaskBase, tasksBase4[0])
 
 	err = gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil)
 	require.NoError(t, err)
@@ -103,11 +116,11 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, task.State, task6.State)
 
 	// test cannot insert task with dup key
-	_, err = gm.CreateTask(ctx, "key1", "test2", 4, "", 0, proto.ExtraParams{}, []byte("test2"))
+	_, err = gm.CreateTask(ctx, "key1", "test2", "", 4, "", 0, proto.ExtraParams{}, []byte("test2"))
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
 
 	// test cancel task
-	id, err = gm.CreateTask(ctx, "key2", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key2", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 
 	cancelling, err := testutil.IsTaskCancelling(ctx, gm, id)
@@ -119,7 +132,7 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, cancelling)
 
-	id, err = gm.CreateTask(ctx, "key-fail", "test2", 4, "", 0, proto.ExtraParams{}, []byte("test2"))
+	id, err = gm.CreateTask(ctx, "key-fail", "test2", "", 4, "", 0, proto.ExtraParams{}, []byte("test2"))
 	require.NoError(t, err)
 	// state not right, update nothing
 	require.NoError(t, gm.FailTask(ctx, id, proto.TaskStateRunning, errors.New("test error")))
@@ -139,7 +152,7 @@ func TestTaskTable(t *testing.T) {
 	require.GreaterOrEqual(t, endTime, curTime)
 
 	// succeed a pending task, no effect
-	id, err = gm.CreateTask(ctx, "key-success", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key-success", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	require.NoError(t, gm.SucceedTask(ctx, id))
 	task, err = gm.GetTaskByID(ctx, id)
@@ -158,7 +171,7 @@ func TestTaskTable(t *testing.T) {
 	require.GreaterOrEqual(t, task.StateUpdateTime, startTime)
 
 	// reverted a pending task, no effect
-	id, err = gm.CreateTask(ctx, "key-reverted", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key-reverted", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	require.NoError(t, gm.RevertedTask(ctx, id))
 	task, err = gm.GetTaskByID(ctx, id)
@@ -182,7 +195,7 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, proto.TaskStateReverted, task.State)
 
 	// paused
-	id, err = gm.CreateTask(ctx, "key-paused", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key-paused", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	require.NoError(t, gm.PausedTask(ctx, id))
 	task, err = gm.GetTaskByID(ctx, id)
@@ -217,9 +230,8 @@ func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, s
 	sort.Slice(gotSubtasks, func(i, j int) bool {
 		return gotSubtasks[i].Ordinal < gotSubtasks[j].Ordinal
 	})
-	for i := 0; i < len(gotSubtasks); i++ {
-		subtask := gotSubtasks[i]
-		require.Equal(t, []byte(fmt.Sprintf("%d", i)), subtask.Meta)
+	for i, subtask := range gotSubtasks {
+		require.Equal(t, fmt.Appendf(nil, "%d", i), subtask.Meta)
 		require.Equal(t, i+1, subtask.Ordinal)
 		require.Equal(t, 11, subtask.Concurrency)
 		require.Equal(t, ":4000", subtask.ExecID)
@@ -233,15 +245,15 @@ func TestSwitchTaskStep(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
-	taskID, err := tm.CreateTask(ctx, "key1", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	taskID, err := tm.CreateTask(ctx, "key1", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	task, err := tm.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
 	subtasksStepOne := make([]*proto.Subtask, 3)
-	for i := 0; i < len(subtasksStepOne); i++ {
+	for i := range subtasksStepOne {
 		subtasksStepOne[i] = proto.NewSubtask(proto.StepOne, taskID, proto.TaskTypeExample,
-			":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
+			":4000", 11, fmt.Appendf(nil, "%d", i), i+1)
 	}
 	startTime := time.Unix(time.Now().Unix(), 0)
 	task.Meta = []byte("changed meta")
@@ -262,9 +274,9 @@ func TestSwitchTaskStep(t *testing.T) {
 	time.Sleep(time.Second)
 	taskStartTime := task.StartTime
 	subtasksStepTwo := make([]*proto.Subtask, 3)
-	for i := 0; i < len(subtasksStepTwo); i++ {
+	for i := range subtasksStepTwo {
 		subtasksStepTwo[i] = proto.NewSubtask(proto.StepTwo, taskID, proto.TaskTypeExample,
-			":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
+			":4000", 11, fmt.Appendf(nil, "%d", i), i+1)
 	}
 	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar(vardef.TiDBMemQuotaQuery, "1024"))
 	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, subtasksStepTwo))
@@ -278,6 +290,52 @@ func TestSwitchTaskStep(t *testing.T) {
 	checkAfterSwitchStep(t, startTime, task, subtasksStepTwo, proto.StepTwo)
 }
 
+func TestGetSubtaskSummaries(t *testing.T) {
+	store, tm, ctx := testutil.InitTableTest(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
+	taskID, err := tm.CreateTask(ctx, "test", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+
+	subtasks := make([]*proto.Subtask, 3)
+	for i := range subtasks {
+		subtasks[i] = proto.NewSubtask(proto.StepOne, taskID, proto.TaskTypeExample,
+			":4000", 11, fmt.Appendf(nil, "%d", i), i+1)
+	}
+
+	task, err := tm.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasks))
+
+	summary := &execute.SubtaskSummary{
+		RowCnt: *atomic.NewInt64(100),
+		Bytes:  *atomic.NewInt64(200),
+	}
+	bytes, err := json.Marshal(summary)
+	require.NoError(t, err)
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set summary = '%s' where task_key = %d", string(bytes), task.ID))
+	summaries, err := tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
+	require.NoError(t, err)
+	require.Len(t, summaries, len(subtasks))
+	for _, summary := range summaries {
+		require.EqualValues(t, 100, summary.RowCnt.Load())
+		require.EqualValues(t, 200, summary.Bytes.Load())
+	}
+
+	// If the JSON value is wrong, we still get an empty summary.
+	// This can only happen if the summary field is manually updated.
+	// It's acceptable, as the correct summary will be set by the executor later.
+	tk.MustExec(fmt.Sprintf(`update mysql.tidb_background_subtask set summary = '{"wrong_key": 123}' where task_key = %d`, task.ID))
+	summaries, err = tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
+	require.NoError(t, err)
+	for _, summary := range summaries {
+		require.EqualValues(t, 0, summary.RowCnt.Load())
+		require.EqualValues(t, 0, summary.Bytes.Load())
+	}
+}
+
 func TestSwitchTaskStepInBatch(t *testing.T) {
 	store, tm, ctx := testutil.InitTableTest(t)
 	tk := testkit.NewTestKit(t, store)
@@ -285,15 +343,15 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
 	// normal flow
 	prepare := func(taskKey string) (*proto.Task, []*proto.Subtask) {
-		taskID, err := tm.CreateTask(ctx, taskKey, "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+		taskID, err := tm.CreateTask(ctx, taskKey, "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 		require.NoError(t, err)
 		task, err := tm.GetTaskByID(ctx, taskID)
 		require.NoError(t, err)
 		checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
 		subtasks := make([]*proto.Subtask, 3)
-		for i := 0; i < len(subtasks); i++ {
+		for i := range subtasks {
 			subtasks[i] = proto.NewSubtask(proto.StepOne, taskID, proto.TaskTypeExample,
-				":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
+				":4000", 11, fmt.Appendf(nil, "%d", i), i+1)
 		}
 		return task, subtasks
 	}
@@ -336,7 +394,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 
 	// mock subtasks unstable
 	task3, subtasks3 := prepare("key3")
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		subtask := subtasks3[i]
 		_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
 			insert into mysql.tidb_background_subtask(
@@ -366,8 +424,8 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		proto.TaskStateRunning,
 		proto.TaskStateReverting,
 		proto.TaskStateCancelling,
-		proto.TaskStatePausing,
-		proto.TaskStateResuming,
+		proto.TaskStatePausing,  // key/5
+		proto.TaskStateResuming, // key/6
 		proto.TaskStateFailed,
 		proto.TaskStatePending,
 		proto.TaskStatePending,
@@ -377,7 +435,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	}
 	for i, state := range taskStates {
 		taskKey := fmt.Sprintf("key/%d", i)
-		_, err := gm.CreateTask(ctx, taskKey, "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+		_, err := gm.CreateTask(ctx, taskKey, "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 		require.NoError(t, err)
 		require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
 			_, err := se.GetSQLExecutor().ExecuteInternal(ctx, `
@@ -428,9 +486,19 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 11)
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
+
+	proto.MaxConcurrentTask = 3
+	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"key/5", "key/3", "key/4", "key/12"}, getTaskKeys(tasks))
+
+	proto.MaxConcurrentTask = 1
+	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"key/5", "key/3"}, getTaskKeys(tasks))
 }
 
-func TestGetUsedSlotsOnNodes(t *testing.T) {
+func TestGetUsedSlotsOnNodesAndBusyNodes(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 
 	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-1", []byte(""), proto.SubtaskStateRunning, "test", 12)
@@ -438,6 +506,8 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 	testutil.InsertSubtask(t, sm, 2, proto.StepOne, "tidb-2", []byte(""), proto.SubtaskStatePending, "test", 8)
 	testutil.InsertSubtask(t, sm, 3, proto.StepOne, "tidb-3", []byte(""), proto.SubtaskStatePending, "test", 8)
 	testutil.InsertSubtask(t, sm, 4, proto.StepOne, "tidb-3", []byte(""), proto.SubtaskStateFailed, "test", 8)
+	testutil.InsertSubtask(t, sm, 5, proto.StepOne, "tidb-4", []byte(""), proto.SubtaskStateFailed, "test", 8)
+
 	slotsOnNodes, err := sm.GetUsedSlotsOnNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, map[string]int{
@@ -445,19 +515,26 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 		"tidb-2": 20,
 		"tidb-3": 8,
 	}, slotsOnNodes)
+
+	busyNodes, err := sm.GetBusyNodes(ctx)
+	require.NoError(t, err)
+	slices.SortFunc(busyNodes, func(a, b schstatus.Node) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	require.EqualValues(t, []schstatus.Node{{ID: "tidb-1"}, {ID: "tidb-2"}, {ID: "tidb-3"}}, busyNodes)
 }
 
 func TestGetActiveSubtasks(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
-	id, err := tm.CreateTask(ctx, "key1", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err := tm.CreateTask(ctx, "key1", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 	task, err := tm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 
 	subtasks := make([]*proto.Subtask, 0, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		subtasks = append(subtasks,
 			proto.NewSubtask(proto.StepOne, id, "test", fmt.Sprintf("tidb%d", i), 8, []byte("{}}"), i+1),
 		)
@@ -482,7 +559,7 @@ func TestSubTaskTable(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
 	require.NoError(t, sm.InitMeta(ctx, ":4000", ""))
-	id, err := sm.CreateTask(ctx, "key1", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err := sm.CreateTask(ctx, "key1", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 	err = sm.SwitchTaskStep(
@@ -576,10 +653,10 @@ func TestSubTaskTable(t *testing.T) {
 	rowCount, err := sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), rowCount)
-	require.NoError(t, sm.UpdateSubtaskRowCount(ctx, subtaskID, 100))
+	require.NoError(t, sm.UpdateSubtaskSummary(ctx, subtaskID, &execute.SubtaskSummary{RowCnt: *atomic.NewInt64(100)}))
 	rowCount, err = sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
-	require.Equal(t, int64(100), rowCount)
+	require.EqualValues(t, 100, rowCount)
 
 	getSubtaskBaseSlice := func(sts []*proto.Subtask) []*proto.SubtaskBase {
 		res := make([]*proto.SubtaskBase, 0, len(sts))
@@ -638,7 +715,7 @@ func TestSubTaskTable(t *testing.T) {
 func TestBothTaskAndSubTaskTable(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, sm.InitMeta(ctx, ":4000", ""))
-	id, err := sm.CreateTask(ctx, "key1", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err := sm.CreateTask(ctx, "key1", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
@@ -781,6 +858,22 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4001", Role: "", CPUCount: 8},
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
+	require.NoError(t, sm.InitMeta(ctx, ":4001", "background"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
+	require.NoError(t, sm.InitMeta(ctx, ":4003", ""))
+	cpuCount, err = sm.GetCPUCountOfNode(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 100, cpuCount)
+	cpuCount, err = sm.GetCPUCountOfNodeByRole(ctx, "")
+	require.NoError(t, err)
+	require.Equal(t, 8, cpuCount)
+	cpuCount, err = sm.GetCPUCountOfNodeByRole(ctx, "background")
+	require.NoError(t, err)
+	require.Equal(t, 100, cpuCount)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
@@ -847,14 +940,17 @@ func TestTaskHistoryTable(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
-	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, 1, "", 0, proto.ExtraParams{}, nil)
+	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
-	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, 1, "", 0, proto.ExtraParams{}, nil)
+	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 
 	tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(tasks))
+	taskBases, err := gm.GetTaskBasesInStates(ctx, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.EqualValues(t, []*proto.TaskBase{&tasks[0].TaskBase, &tasks[1].TaskBase}, taskBases)
 	testutil.InsertSubtask(t, gm, tasks[0].ID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
 	testutil.InsertSubtask(t, gm, tasks[1].ID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
 	oldTasks := tasks
@@ -882,7 +978,7 @@ func TestTaskHistoryTable(t *testing.T) {
 	require.NotNil(t, task)
 
 	// task with fail transfer
-	_, err = gm.CreateTask(ctx, "3", proto.TaskTypeExample, 1, "", 0, proto.ExtraParams{}, nil)
+	_, err = gm.CreateTask(ctx, "3", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
@@ -974,6 +1070,9 @@ func TestInitMeta(t *testing.T) {
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows(""))
 	require.NoError(t, sm.InitMeta(ctx, "tidb1", "background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows("background"))
+	t.Cleanup(func() {
+		tk.MustExec(`set global tidb_service_scope=""`)
+	})
 	tk.MustExec(`set global tidb_service_scope=""`)
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
 
@@ -1139,7 +1238,7 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 	taskStates := []proto.TaskState{proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateReverting, proto.TaskStatePausing}
 	tasks := make([]*proto.Task, 0, len(taskStates))
 	for i, expectedState := range taskStates {
-		taskID, err := tm.CreateTask(ctx, fmt.Sprintf("key-%d", i), proto.TaskTypeExample, 8, "", 0, proto.ExtraParams{}, []byte(""))
+		taskID, err := tm.CreateTask(ctx, fmt.Sprintf("key-%d", i), proto.TaskTypeExample, "", 8, "", 0, proto.ExtraParams{}, []byte(""))
 		require.NoError(t, err)
 		task, err := tm.GetTaskByID(ctx, taskID)
 		require.NoError(t, err)
@@ -1194,7 +1293,7 @@ func TestTaskManagerEntrySize(t *testing.T) {
 	store, tm, ctx := testutil.InitTableTest(t)
 	getMeta := func(l int) []byte {
 		meta := make([]byte, l)
-		for i := 0; i < l; i++ {
+		for i := range l {
 			meta[i] = 'a'
 		}
 		return meta

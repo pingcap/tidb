@@ -14,7 +14,7 @@ CREATE TABLE t1 (
 		PARTITION p20201127 VALUES LESS THAN ("20201128"),
 		PARTITION p20201128 VALUES LESS THAN ("20201129"),
 		PARTITION p20201129 VALUES LESS THAN ("20201130"));
-explain format='brief' select /*+ HASH_AGG() */ count(1) from t1 where dt in ('2020-11-27','2020-11-28');
+explain format='plan_tree' select /*+ HASH_AGG() */ count(1) from t1 where dt in ('2020-11-27','2020-11-28');
 insert into t1 values (1, "2020-11-25");
 insert into t1 values (2, "2020-11-26");
 insert into t1 values (3, "2020-11-27");
@@ -32,13 +32,13 @@ create table t2 (a int) partition by range columns(a) (
 insert into t2 values (-1), (1), (11), (null);
 select a from t2 where a in (-1, 1) order by a;
 select a from t2 where a in (1, 11, null) order by a;
-explain format='brief' select a from t2 where a in (-1, 1);
+explain format='plan_tree' select a from t2 where a in (-1, 1);
 create table t3 (a varchar(10)) partition by range columns(a) (
 		partition p0 values less than ("aaa"),
 		partition p1 values less than ("bbb"),
 		partition p2 values less than ("ccc"));
-explain format='brief' select a from t3 where a in ('aaa', 'aab');
-explain format='brief' select a from t3 where a in ('aaa', 'bu');
+explain format='plan_tree' select a from t3 where a in ('aaa', 'aab');
+explain format='plan_tree' select a from t3 where a in ('aaa', 'bu');
 
 
 # TestRangeColumnPartitionPruningForInString
@@ -50,281 +50,281 @@ set @@session.tidb_partition_prune_mode='static';
 create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns(a)( partition pNull values less than (""),partition pAAAA values less than ("AAAA"),partition pCCC values less than ("CCC"),partition pShrimpsandwich values less than ("Räksmörgås"),partition paaa values less than ("aaa"),partition pSushi values less than ("🍣🍣🍣"),partition pMax values less than (MAXVALUE));
 insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest"),("AA"),("aa"),("AAA"),("aaa");
 set @@tidb_partition_prune_mode = 'dynamic';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a = 'aa';
+explain format='plan_tree' select * from t where a = 'aa';
 --sorted_result
 select * from t where a = 'aa';
-explain format = 'brief' select * from t where a = 'aa' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'aa' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'aa' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci = 'aa';
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci = 'aa';
 --sorted_result
 select * from t where a collate utf8mb4_general_ci = 'aa';
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a in ('AAA', 'aa');
 --sorted_result
 select * from t where a in ('AAA', 'aa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 --sorted_result
 select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 set @@tidb_partition_prune_mode = 'static';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a = 'aa';
+explain format='plan_tree' select * from t where a = 'aa';
 --sorted_result
 select * from t where a = 'aa';
-explain format = 'brief' select * from t where a = 'aa' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'aa' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'aa' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci = 'aa';
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci = 'aa';
 --sorted_result
 select * from t where a collate utf8mb4_general_ci = 'aa';
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a in ('AAA', 'aa');
 --sorted_result
 select * from t where a in ('AAA', 'aa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 --sorted_result
 select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 set names utf8mb4 collate utf8mb4_general_ci;
 set @@tidb_partition_prune_mode = 'dynamic';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a = 'aa';
+explain format='plan_tree' select * from t where a = 'aa';
 --sorted_result
 select * from t where a = 'aa';
-explain format = 'brief' select * from t where a = 'aa' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'aa' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'aa' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci = 'aa';
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci = 'aa';
 --sorted_result
 select * from t where a collate utf8mb4_general_ci = 'aa';
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a in ('AAA', 'aa');
 --sorted_result
 select * from t where a in ('AAA', 'aa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 --sorted_result
 select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 set @@tidb_partition_prune_mode = 'static';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a = 'aa';
+explain format='plan_tree' select * from t where a = 'aa';
 --sorted_result
 select * from t where a = 'aa';
-explain format = 'brief' select * from t where a = 'aa' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'aa' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'aa' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci = 'aa';
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci = 'aa';
 --sorted_result
 select * from t where a collate utf8mb4_general_ci = 'aa';
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a in ('AAA', 'aa');
 --sorted_result
 select * from t where a in ('AAA', 'aa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 --sorted_result
 select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 set names utf8mb4 collate utf8mb4_unicode_ci;
 set @@tidb_partition_prune_mode = 'dynamic';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a = 'aa';
+explain format='plan_tree' select * from t where a = 'aa';
 --sorted_result
 select * from t where a = 'aa';
-explain format = 'brief' select * from t where a = 'aa' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'aa' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'aa' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci = 'aa';
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci = 'aa';
 --sorted_result
 select * from t where a collate utf8mb4_general_ci = 'aa';
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a in ('AAA', 'aa');
 --sorted_result
 select * from t where a in ('AAA', 'aa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 --sorted_result
 select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 set @@tidb_partition_prune_mode = 'static';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a = 'aa';
+explain format='plan_tree' select * from t where a = 'aa';
 --sorted_result
 select * from t where a = 'aa';
-explain format = 'brief' select * from t where a = 'aa' collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = 'aa' collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = 'aa' collate utf8mb4_general_ci;
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci = 'aa';
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci = 'aa';
 --sorted_result
 select * from t where a collate utf8mb4_general_ci = 'aa';
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a in ('AAA', 'aa');
 --sorted_result
 select * from t where a in ('AAA', 'aa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci);
-explain format = 'brief' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
+explain format='plan_tree' select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 --sorted_result
 select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa');
 drop table t;
@@ -332,227 +332,227 @@ create table t (a varchar(255) charset utf8mb4 collate utf8mb4_general_ci) parti
 insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest"),("AA"),("aa"),("AAA"),("aaa");
 set names utf8mb4 collate utf8mb4_bin;
 set @@tidb_partition_prune_mode = 'dynamic';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AAA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AAA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AA', 'aaa');
+explain format='plan_tree' select * from t where a in ('AA', 'aaa');
 --sorted_result
 select * from t where a in ('AA', 'aaa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 set @@tidb_partition_prune_mode = 'static';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AAA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AAA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AA', 'aaa');
+explain format='plan_tree' select * from t where a in ('AA', 'aaa');
 --sorted_result
 select * from t where a in ('AA', 'aaa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 set names utf8mb4 collate utf8mb4_general_ci;
 set @@tidb_partition_prune_mode = 'dynamic';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AAA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AAA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AA', 'aaa');
+explain format='plan_tree' select * from t where a in ('AA', 'aaa');
 --sorted_result
 select * from t where a in ('AA', 'aaa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 set @@tidb_partition_prune_mode = 'static';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AAA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AAA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AA', 'aaa');
+explain format='plan_tree' select * from t where a in ('AA', 'aaa');
 --sorted_result
 select * from t where a in ('AA', 'aaa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 set names utf8mb4 collate utf8mb4_unicode_ci;
 set @@tidb_partition_prune_mode = 'dynamic';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AAA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AAA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AA', 'aaa');
+explain format='plan_tree' select * from t where a in ('AA', 'aaa');
 --sorted_result
 select * from t where a in ('AA', 'aaa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 set @@tidb_partition_prune_mode = 'static';
-explain format = 'brief' select * from t where a IS NULL;
+explain format='plan_tree' select * from t where a IS NULL;
 --sorted_result
 select * from t where a IS NULL;
-explain format = 'brief' select * from t where a = 'AA';
+explain format='plan_tree' select * from t where a = 'AA';
 --sorted_result
 select * from t where a = 'AA';
-explain format = 'brief' select * from t where a = 'AA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AAA';
+explain format='plan_tree' select * from t where a = 'AAA';
 --sorted_result
 select * from t where a = 'AAA';
-explain format = 'brief' select * from t where a = 'AAA' collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = 'AAA' collate utf8mb4_bin;
 --sorted_result
 select * from t where a = 'AAA' collate utf8mb4_bin;
-explain format = 'brief' select * from t where a = 'AB';
+explain format='plan_tree' select * from t where a = 'AB';
 --sorted_result
 select * from t where a = 'AB';
-explain format = 'brief' select * from t where a = 'aB';
+explain format='plan_tree' select * from t where a = 'aB';
 --sorted_result
 select * from t where a = 'aB';
-explain format = 'brief' select * from t where a = '🍣';
+explain format='plan_tree' select * from t where a = '🍣';
 --sorted_result
 select * from t where a = '🍣';
-explain format = 'brief' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
+explain format='plan_tree' select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
 --sorted_result
 select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?");
-explain format = 'brief' select * from t where a in ('AA', 'aaa');
+explain format='plan_tree' select * from t where a in ('AA', 'aaa');
 --sorted_result
 select * from t where a in ('AA', 'aaa');
-explain format = 'brief' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
+explain format='plan_tree' select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
 --sorted_result
 select * from t where a in ('AAA' collate utf8mb4_bin, 'aa');
-explain format = 'brief' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
+explain format='plan_tree' select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 --sorted_result
 select * from t where a in ('AAA', 'aa' collate utf8mb4_bin);
 
@@ -821,7 +821,7 @@ partition by range (a) (
     partition p1 values less than (10),
     partition p2 values less than (20)
 );
-explain format = 'brief' select * from t2 where not (a < 5);
+explain format='plan_tree' select * from t2 where not (a < 5);
 set @@tidb_partition_prune_mode='dynamic';
 drop table if exists t3;
 create table t3(a int) partition by hash (a) partitions 10;
@@ -903,33 +903,33 @@ analyze table t all columns;
 select * from t where a in (1,2) and b in (1,2);
 --sorted_result
 select * from t where a in (1,2) and b in (3,4);
-explain format='brief' select * from t where a in (1,2) and b in (3,4);
+explain format='plan_tree' select * from t where a in (1,2) and b in (3,4);
 --sorted_result
 select * from t where a in (1,2) and b in (1,2);
-explain format='brief' select * from t where a in (1,2) and b in (1,2);
+explain format='plan_tree' select * from t where a in (1,2) and b in (1,2);
 --sorted_result
 select * from t where a in (1) and b in (1);
-explain format='brief' select * from t where a in (1) and b in (1);
+explain format='plan_tree' select * from t where a in (1) and b in (1);
 --sorted_result
 select * from t where a = 1 and b = 1;
-explain format='brief' select * from t where a = 1 and b = 1;
+explain format='plan_tree' select * from t where a = 1 and b = 1;
 drop table t;
 create table t (a int, b int) partition by list columns (a,b) (partition p1 values in ((1,1), (1,2)), partition p2 values in ((2,2),(2,1)), partition pDef default);
 insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4);
 analyze table t all columns;
 --sorted_result
 select * from t where a in (1,2) and b in (1,2);
-explain format='brief' select * from t where a in (1,2) and b in (1,2);
+explain format='plan_tree' select * from t where a in (1,2) and b in (1,2);
 drop table t;
 create table t (a int, b int) partition by list columns (a) (partition p1 values in (1), partition p2 values in (2), partition pDef default);
 insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4);
 analyze table t all columns;
 --sorted_result
 select * from t where a in (1,2);
-explain format='brief' select * from t where a in (1,2);
+explain format='plan_tree' select * from t where a in (1,2);
 --sorted_result
 select * from t where a = 1;
-explain format='brief' select * from t where a  = 1;
+explain format='plan_tree' select * from t where a  = 1;
 
 
 # TestIssue42273
@@ -942,8 +942,8 @@ CREATE TABLE t(a tinyint unsigned,  b tinyint unsigned) PARTITION BY RANGE COLUM
 			PARTITION p3 VALUES LESS THAN (MAXVALUE, 0));
 insert into t values(20, 30);
 analyze table t all columns;
-explain format='brief' select * from t where a = 20;
-explain format='brief' select * from t where a > 10 and a <= 20;
+explain format='plan_tree' select * from t where a = 20;
+explain format='plan_tree' select * from t where a > 10 and a <= 20;
 --sorted_result
 select * from t where a = 20;
 --sorted_result

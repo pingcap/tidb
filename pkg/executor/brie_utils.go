@@ -89,12 +89,12 @@ func showRestoredCreateTable(sctx sessionctx.Context, tbl *model.TableInfo, brCo
 func BRIECreateTable(
 	sctx sessionctx.Context,
 	dbName ast.CIStr,
-	table *model.TableInfo,
+	clonedTable *model.TableInfo,
 	brComment string,
 	cs ...ddl.CreateTableOption,
 ) error {
 	d := domain.GetDomain(sctx).DDLExecutor()
-	query, err := showRestoredCreateTable(sctx, table, brComment)
+	query, err := showRestoredCreateTable(sctx, clonedTable, brComment)
 	if err != nil {
 		return err
 	}
@@ -108,15 +108,13 @@ func BRIECreateTable(
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
 
-	table = table.Clone()
-
-	return d.CreateTableWithInfo(sctx, dbName, table, nil, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
+	return d.CreateTableWithInfo(sctx, dbName, clonedTable, nil, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
 }
 
 // BRIECreateTables creates the tables with OnExistIgnore option in batch
 func BRIECreateTables(
 	sctx sessionctx.Context,
-	tables map[string][]*model.TableInfo,
+	clonedTables map[string][]*model.TableInfo,
 	brComment string,
 	cs ...ddl.CreateTableOption,
 ) error {
@@ -128,23 +126,17 @@ func BRIECreateTables(
 		sctx.SetValue(sessionctx.QueryString, originQuery)
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
-	for db, tablesInDB := range tables {
+	for db, tablesInDB := range clonedTables {
 		dbName := ast.NewCIStr(db)
-		queryBuilder := strings.Builder{}
-		cloneTables := make([]*model.TableInfo, 0, len(tablesInDB))
+		querys := make([]string, 0, len(tablesInDB))
 		for _, table := range tablesInDB {
 			query, err := showRestoredCreateTable(sctx, table, brComment)
 			if err != nil {
 				return errors.Trace(err)
 			}
-
-			queryBuilder.WriteString(query)
-			queryBuilder.WriteString(";")
-
-			cloneTables = append(cloneTables, table.Clone())
+			querys = append(querys, query)
 		}
-		sctx.SetValue(sessionctx.QueryString, queryBuilder.String())
-		if err := splitBatchCreateTable(sctx, dbName, cloneTables, cs...); err != nil {
+		if err := splitBatchCreateTable(sctx, dbName, tablesInDB, querys, cs...); err != nil {
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
 			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
 			//we fall back to old way that creating table one by one
@@ -156,25 +148,35 @@ func BRIECreateTables(
 	return nil
 }
 
+func mergeQuerys(querys []string) string {
+	queryBuilder := strings.Builder{}
+	for _, query := range querys {
+		queryBuilder.WriteString(query)
+		queryBuilder.WriteString(";")
+	}
+	return queryBuilder.String()
+}
+
 // splitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
 func splitBatchCreateTable(sctx sessionctx.Context, schema ast.CIStr,
-	infos []*model.TableInfo, cs ...ddl.CreateTableOption) error {
+	infos []*model.TableInfo, querys []string, cs ...ddl.CreateTableOption) error {
 	var err error
+	sctx.SetValue(sessionctx.QueryString, mergeQuerys(querys))
 	d := domain.GetDomain(sctx).DDLExecutor()
 	err = d.BatchCreateTableWithInfo(sctx, schema, infos, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
-	if kv.ErrEntryTooLarge.Equal(err) {
+	if kv.ErrEntryTooLarge.Equal(err) || kv.ErrTxnTooLarge.Equal(err) {
 		log.Info("entry too large, split batch create table", zap.Int("num table", len(infos)))
 		if len(infos) == 1 {
 			return err
 		}
 		mid := len(infos) / 2
-		err = splitBatchCreateTable(sctx, schema, infos[:mid], cs...)
+		err = splitBatchCreateTable(sctx, schema, infos[:mid], querys[:mid], cs...)
 		if err != nil {
 			return err
 		}
-		err = splitBatchCreateTable(sctx, schema, infos[mid:], cs...)
+		err = splitBatchCreateTable(sctx, schema, infos[mid:], querys[mid:], cs...)
 		if err != nil {
 			return err
 		}

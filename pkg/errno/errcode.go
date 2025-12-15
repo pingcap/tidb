@@ -1087,6 +1087,8 @@ const (
 	ErrMemoryExceedForInstance             = 8176
 	ErrDeleteNotFoundColumn                = 8177
 	ErrKeyTooLarge                         = 8178
+	ErrTimeStampInDSTTransition            = 8179
+	ErrQueryExecStopped                    = 8180
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1137,6 +1139,8 @@ const (
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
 	ErrIngestCheckEnvFailed               = 8256
+	ErrProtectedTableMode                 = 8258
+	ErrInvalidTableModeSet                = 8259
 
 	ErrCannotPauseDDLJob  = 8260
 	ErrCannotResumeDDLJob = 8261
@@ -1146,6 +1150,8 @@ const (
 	ErrGlobalIndexNotExplicitlySet = 8264
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
+
+	ErrInvalidAffinityOption = 8266
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1159,8 +1165,10 @@ const (
 	ErrResourceGroupInvalidForRole            = 8257
 
 	// Reserved for future use.
-	ErrEngineAttributeInvalidFormat = 8270
-	ErrStorageClassInvalidSpec      = 8271
+	ErrEngineAttributeInvalidFormat             = 8270
+	ErrStorageClassInvalidSpec                  = 8271
+	ErrModifyColumnReferencedByPartialCondition = 8272
+	ErrCheckPartialIndexWithoutFastCheck        = 8273
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
@@ -1168,7 +1176,7 @@ const (
 	ErrTiKVServerBusy            = 9003
 	ErrResolveLockTimeout        = 9004
 	ErrRegionUnavailable         = 9005
-	ErrGCTooEarly                = 9006
+	ErrTxnAbortedByGC            = 9006
 	ErrWriteConflict             = 9007
 	ErrTiKVStoreLimit            = 9008
 	ErrPrometheusAddrIsNotSet    = 9009

@@ -95,4 +95,16 @@ drop table if exists t1;
 drop table if exists t2;
 create table t1(code varchar(32)) CHARSET=utf8 COLLATE=utf8_general_ci;
 create table t2(code varchar(32)) CHARSET=utf8 COLLATE=utf8_bin;
-desc format=brief select * from t1 join t2 on t1.code=t2.code and t1.code in ('1') and t2.code in ('1');
+explain format='plan_tree' select * from t1 join t2 on t1.code=t2.code and t1.code in ('1') and t2.code in ('1');
+
+# for constant prepagation
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id_ci varchar(10) charset utf8mb4 collate utf8mb4_general_ci, id_bin varchar(10) charset utf8mb4 collate utf8mb4_bin);
+create table t2(id_ci varchar(10) charset utf8mb4 collate utf8mb4_general_ci, id_bin varchar(10) charset utf8mb4 collate utf8mb4_bin);
+insert into t1 values('a','A');
+insert into t2 values('A','A');
+select * from t1 join t2 on t1.id_ci = t2.id_ci;
+explain format='plan_tree' select * from t1 join t2 on t1.id_ci = t2.id_ci;
+select * from t1 join t2 on t1.id_ci = t2.id_ci where t1.id_ci in (t2.id_ci, t2.id_bin);
+explain format='plan_tree' select * from t1 join t2 on t1.id_ci = t2.id_ci where t1.id_ci in (t2.id_ci, t2.id_bin);

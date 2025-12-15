@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -72,6 +73,11 @@ func (cfg *Config) Adjust() {
 // methods to simplify Lightning's log usage.
 type Logger struct {
 	*zap.Logger
+}
+
+// Wrap wraps a zap.Logger into a Logger.
+func Wrap(logger *zap.Logger) Logger {
+	return Logger{Logger: logger}
 }
 
 // logger for lightning, different from tidb logger.
@@ -197,11 +203,7 @@ func IsContextCanceledError(err error) bool {
 	// 	awserr.New("RequestCanceled", "request context canceled", err) and the nested err is context.Canceled
 	// 	awserr.New( "MultipartUpload", "upload multipart failed", err) and the nested err is the upper one
 	if v, ok := err.(awserr.BatchedErrors); ok {
-		for _, origErr := range v.OrigErrs() {
-			if IsContextCanceledError(origErr) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(v.OrigErrs(), IsContextCanceledError)
 	}
 	return false
 }
@@ -297,22 +299,4 @@ func (task *Task) End2(level zapcore.Level, err error, extraFields ...zap.Field)
 		ce.Write(append(extraFields, zap.Duration("takeTime", elapsed), errField)...)
 	}
 	return elapsed
-}
-
-type ctxKeyType struct{}
-
-var ctxKey ctxKeyType
-
-// NewContext returns a new context with the provided logger.
-func NewContext(ctx context.Context, logger Logger) context.Context {
-	return context.WithValue(ctx, ctxKey, logger)
-}
-
-// FromContext returns the logger stored in the context.
-func FromContext(ctx context.Context) Logger {
-	m, ok := ctx.Value(ctxKey).(Logger)
-	if !ok {
-		return appLogger
-	}
-	return m
 }

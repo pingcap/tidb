@@ -49,7 +49,7 @@ func (g *gb18030BinCollator) Compare(a, b string) int {
 
 	// compare the character one by one.
 	for len(a) > 0 && len(b) > 0 {
-		aLen, bLen := runeLen(a[0]), runeLen(b[0])
+		aLen, bLen := min(len(a), runeLen(a[0])), min(len(b), runeLen(b[0]))
 		aGb18030, err := g.e.Bytes(hack.Slice(a[:aLen]))
 		// if convert error happened, we use '?'(0x3F) replace it.
 		// It should not happen.
@@ -77,11 +77,16 @@ func (g *gb18030BinCollator) Key(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gb18030BinCollator) ImmutableKey(str string) []byte {
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (g *gb18030BinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str))
 	for len(str) > 0 {
-		l := runeLen(str[0])
+		l := min(len(str), runeLen(str[0]))
 		r, _ := utf8.DecodeRuneInString(str[:l])
 		var buf1 []byte
 		if _, ok := fourBytesRune[r]; ok {

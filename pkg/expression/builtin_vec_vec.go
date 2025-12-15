@@ -40,7 +40,7 @@ func (b *builtinVecDimsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	res := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -76,7 +76,7 @@ func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(col1, col2)
 	res := result.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -121,7 +121,7 @@ func (b *builtinVecL2DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(col1, col2)
 	res := result.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -166,7 +166,7 @@ func (b *builtinVecNegativeInnerProductSig) vecEvalReal(ctx EvalContext, input *
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(col1, col2)
 	res := result.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -211,7 +211,7 @@ func (b *builtinVecCosineDistanceSig) vecEvalReal(ctx EvalContext, input *chunk.
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(col1, col2)
 	res := result.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -247,7 +247,7 @@ func (b *builtinVecL2NormSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, r
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(col1)
 	res := result.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -277,7 +277,7 @@ func (b *builtinVecFromTextSig) vecEvalVectorFloat32(ctx EvalContext, input *chu
 		return err
 	}
 	result.ReserveVectorFloat32(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -310,7 +310,7 @@ func (b *builtinVecAsTextSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue

@@ -18,7 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -97,7 +96,7 @@ func (tsc *TableStatusCache) Update(ctx context.Context, se session.Session) err
 
 	newTables := make(map[int64]*TableStatus, len(rows))
 	for _, row := range rows {
-		status, err := RowToTableStatus(se, row)
+		status, err := RowToTableStatus(se.GetSessionVars().Location(), row)
 		if err != nil {
 			return err
 		}
@@ -110,9 +109,8 @@ func (tsc *TableStatusCache) Update(ctx context.Context, se session.Session) err
 }
 
 // RowToTableStatus converts a row to table status
-func RowToTableStatus(sctx sessionctx.Context, row chunk.Row) (*TableStatus, error) {
+func RowToTableStatus(timeZone *time.Location, row chunk.Row) (*TableStatus, error) {
 	var err error
-	timeZone := sctx.GetSessionVars().Location()
 
 	status := &TableStatus{
 		TableID: row.GetInt64(0),

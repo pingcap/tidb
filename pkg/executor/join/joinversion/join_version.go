@@ -27,6 +27,8 @@ const (
 	HashJoinVersionLegacy = "legacy"
 	// HashJoinVersionOptimized means hash join v2
 	HashJoinVersionOptimized = "optimized"
+	// TiFlashHashJoinVersionDefVal means the default value of hash join version in TiFlash
+	TiFlashHashJoinVersionDefVal = HashJoinVersionLegacy
 )
 
 var (
@@ -40,7 +42,7 @@ var (
 
 func init() {
 	// This variable is set to true for test, need to be set back to false in release version
-	UseHashJoinV2ForNonGAJoin = false
+	UseHashJoinV2ForNonGAJoin = true
 }
 
 // IsOptimizedVersion returns true if hashJoinVersion equals to HashJoinVersionOptimized

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // TaskTable defines the interface to access the task table.
@@ -58,6 +59,14 @@ type TaskTable interface {
 	// node from running to pending.
 	// see subtask state machine for more detail.
 	RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.SubtaskBase) error
+
+	WithNewSession(fn func(se sessionctx.Context) error) error
+
+	// UpdateSubtaskCheckpoint updates the subtask's checkpoint.
+	UpdateSubtaskCheckpoint(ctx context.Context, subtaskID int64, checkpoint any) error
+
+	// GetSubtaskCheckpoint gets the subtask's checkpoint.
+	GetSubtaskCheckpoint(ctx context.Context, subtaskID int64) (string, error)
 }
 
 // TaskExecutor is the executor for a task.
@@ -137,6 +146,9 @@ func (*BaseStepExecutor) RunSubtask(context.Context, *proto.Subtask) error {
 func (*BaseStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
+
+// ResetSummary implements the StepExecutor interface.
+func (*BaseStepExecutor) ResetSummary() {}
 
 // Cleanup implements the StepExecutor interface.
 func (*BaseStepExecutor) Cleanup(context.Context) error {

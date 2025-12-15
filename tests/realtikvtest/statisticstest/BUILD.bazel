@@ -9,9 +9,13 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 5,
     deps = [
         "//pkg/parser/ast",
+        "//pkg/sessionctx",
         "//pkg/statistics/asyncload",
+        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",

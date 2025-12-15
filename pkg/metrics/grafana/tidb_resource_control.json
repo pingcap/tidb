@@ -181,15 +181,36 @@
                      "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}",
+                     "legendFormat": "tp-{{resource_group}}",
                      "refId": "A"
                   },
                   {
                      "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m]))",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "total",
+                     "legendFormat": "tp-total",
                      "refId": "B"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "ap-{{resource_group}}",
+                     "refId": "C"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m]))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "ap-total",
+                     "refId": "D"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap|tp\"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap|tp\"}[1m]))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "total",
+                     "refId": "E"
                   }
                ],
                "thresholds": [ ],
@@ -364,7 +385,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (name) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "expr": "(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}",
@@ -550,7 +571,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}",
@@ -1328,7 +1349,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "expr": "sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "{{resource_group}}",
@@ -1563,6 +1584,192 @@
                      "show": true
                   }
                ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The metrics about cross AZ network traffic involved in queries for all resource groups.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 20,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": false,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\", type=\"read\"}[1m])) by (resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{resource_group}}",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"read\"}[1m]))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "total",
+                     "refId": "B"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Cross AZ Traffic Bytes(Read)",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The metrics about cross AZ network traffic involved in write for all resource groups.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 21,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": false,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\", type=\"write\"}[1m])) by (resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{resource_group}}",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"write\"}[1m]))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "total",
+                     "refId": "B"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Cross AZ Traffic Bytes(Write)",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
             }
          ],
          "repeat": null,
@@ -1582,7 +1789,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 20,
+         "id": 22,
          "panels": [
             {
                "aliasColors": { },
@@ -1599,7 +1806,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 21,
+               "id": 23,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -1685,7 +1892,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 22,
+               "id": 24,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -1720,7 +1927,7 @@
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_client_request_success_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name) + sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name)",
+                     "expr": "sum(rate(resource_manager_client_request_success_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) + sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m]))",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "total",
@@ -1778,7 +1985,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 23,
+               "id": 25,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -1872,7 +2079,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 24,
+               "id": 26,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1933,7 +2140,7 @@
                },
                "yaxes": [
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -1941,7 +2148,7 @@
                      "show": true
                   },
                   {
-                     "format": "short",
+                     "format": "s",
                      "label": null,
                      "logBase": 1,
                      "max": null,
@@ -1965,7 +2172,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 25,
+               "id": 27,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2058,7 +2265,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 26,
+               "id": 28,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2151,7 +2358,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 27,
+               "id": 29,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2261,7 +2468,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 28,
+         "id": 30,
          "panels": [
             {
                "aliasColors": { },
@@ -2278,7 +2485,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 29,
+               "id": 31,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2364,7 +2571,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 30,
+               "id": 32,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2460,7 +2667,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 31,
+         "id": 33,
          "panels": [
             {
                "aliasColors": { },
@@ -2477,7 +2684,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 32,
+               "id": 34,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2563,7 +2770,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 33,
+               "id": 35,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2649,7 +2856,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 34,
+               "id": 36,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2735,7 +2942,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 35,
+               "id": 37,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2831,7 +3038,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 36,
+         "id": 38,
          "panels": [
             {
                "aliasColors": { },
@@ -2848,7 +3055,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 37,
+               "id": 39,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2941,7 +3148,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 38,
+               "id": 40,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3027,7 +3234,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 39,
+               "id": 41,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3113,7 +3320,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 40,
+               "id": 42,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3199,7 +3406,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 41,
+               "id": 43,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3285,7 +3492,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 42,
+               "id": 44,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3371,7 +3578,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 43,
+               "id": 45,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3460,7 +3667,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 44,
+         "id": 46,
          "panels": [
             {
                "aliasColors": { },
@@ -3477,7 +3684,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 45,
+               "id": 47,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3584,7 +3791,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 46,
+               "id": 48,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -3678,7 +3885,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 47,
+               "id": 49,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3771,7 +3978,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 48,
+               "id": 50,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -3864,7 +4071,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 49,
+               "id": 51,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,

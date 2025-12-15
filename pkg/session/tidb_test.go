@@ -45,7 +45,7 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 
 	count := 200
 	stmts := make([]ast.StmtNode, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		stmt, err := se.ParseWithParams(context.Background(), "select * from mysql.user limit 1")
 		require.NoError(t, err)
 		stmts[i] = stmt
@@ -53,7 +53,7 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
 	var wg util.WaitGroupWrapper
-	for i := 0; i < count; i++ {
+	for i := range count {
 		s := stmts[i]
 		wg.Run(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)

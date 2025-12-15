@@ -131,7 +131,7 @@ func TestQueue(t *testing.T) {
 }
 
 func checkHeap(q *slowQueryHeap, t *testing.T) {
-	for i := 0; i < len(q.data); i++ {
+	for i := range q.data {
 		left := 2*i + 1
 		right := 2*i + 2
 		if left < len(q.data) {

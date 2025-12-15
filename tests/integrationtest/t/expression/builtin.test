@@ -33,6 +33,8 @@ select sin(1), sin(100);
 select sin('abcd');
 select cos(0), cos(3.1415926535898);
 select cos('abcd');
+# On Mac arm64 floating point calculations slightly different than x86
+--replace_regex /0.9999999999999998/1/
 select tan(0.00), tan(PI()/4);
 select tan('abcd');
 select log2(0.0);
@@ -897,6 +899,11 @@ insert into t values("中国", cast("国" as binary)), ("中国", ""), ("abc", "
 select instr(a, b) from t;
 select oct("aaaa"), oct("-1.9"),  oct("-9999999999999999999999999"), oct("9999999999999999999999999");
 select oct(-1.9), oct(1.9), oct(-1), oct(1), oct(-9999999999999999999999999), oct(9999999999999999999999999);
+select oct(""), oct(" "), oct(NULL);
+drop table if exists t_oct;
+CREATE TABLE t_oct (a VARCHAR(20));
+INSERT INTO t_oct VALUES (''), (' '), (NULL), ('123'), ('abc'), ('0'), ('255');
+SELECT oct(CONCAT(a, '')) FROM t_oct;
 select find_in_set("", ""), find_in_set("", ","), find_in_set("中文", "字符串,中文"), find_in_set("b,", "a,b,c,d");
 select find_in_set(NULL, ""), find_in_set("", NULL), find_in_set(1, "2,3,1");
 select make_set(0, "12"), make_set(3, "aa", "11"), make_set(3, NULL, "中文"), make_set(NULL, "aa");

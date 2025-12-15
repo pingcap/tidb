@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 // SelectionFactor is the factor which is used to estimate the row count of selection.
@@ -35,7 +35,7 @@ const SelectionFactor = 0.8
 // should be adjusted by the limit number 1, because only one row is returned.
 func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 	dsStatsInfo, dsTableStats *property.StatsInfo, dsStatisticTable *statistics.Table,
-	path *util.AccessPath, expectedCnt float64, desc bool) float64 {
+	path *util.AccessPath, expectedCnt float64, isMatchProp, desc bool) float64 {
 	rowCount := path.CountAfterAccess
 	if expectedCnt < dsStatsInfo.RowCount {
 		selectivity := dsStatsInfo.RowCount / path.CountAfterAccess
@@ -57,6 +57,16 @@ func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 		} else if abs := math.Abs(corr); abs < 1 {
 			correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
 			rowCount = min(path.CountAfterAccess, uniformEst/correlationFactor)
+		}
+	}
+
+	if isMatchProp && path.CountAfterAccess > rowCount {
+		// if orderRatio is enabled, we use it to recognize that we must scan more rows to find the first row.
+		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+		// Record the variable usage for explain explore.
+		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+		if orderRatio > 0 {
+			rowCount += max(0, path.CountAfterAccess-rowCount) * orderRatio
 		}
 	}
 	return rowCount
@@ -89,22 +99,26 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 	if ok {
 		rowCount = count
 	} else if abs := math.Abs(corr); abs < 1 {
-		// If OptOrderingIdxSelRatio is enabled - estimate the difference between index and table filtering, as this represents
-		// the possible scan range when LIMIT rows will be found. orderRatio is the estimated percentage of that range when the first
-		// row is expected to be found. Index filtering applies orderRatio twice. Once found - rows are estimated to be clustered (expectedCnt).
-		// This formula is to bias away from non-filtering (or poorly filtering) indexes that provide order due, where filtering exists
-		// outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
-		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
-		if dsStatsInfo.RowCount < path.CountAfterAccess && orderRatio >= 0 {
-			rowsToMeetFirst := (((path.CountAfterAccess - path.CountAfterIndex) * orderRatio) + (path.CountAfterIndex - dsStatsInfo.RowCount)) * orderRatio
-			rowCount = rowsToMeetFirst + expectedCnt
-		} else {
-			// Assume rows are linearly distributed throughout the range - for example: selectivity 0.1 assumes that a
-			// qualified row is found every 10th row.
-			correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
-			selectivity := dsStatsInfo.RowCount / rowCount
-			rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
-		}
+		// Assume rows are linearly distributed throughout the range - for example: selectivity 0.1 assumes that a
+		// qualified row is found every 10th row.
+		correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
+		selectivity := dsStatsInfo.RowCount / rowCount
+		rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
+	}
+	// Estimate the difference between index matching and other filtering, as this represents the possible
+	// scan range when the LIMIT rows will be found. orderRatio controls the estimated percentage of the range when
+	// the first row is expected to be found. For example:
+	// 0.1 means 10% of the range must be scanned.
+	// 0.5 means 50% of the range must be scanned.
+	// 1 means that the full range must be scanned.
+	// <= 0 disables this adjustment.
+	// This is to bias away from non-filtering (or poorly filtering) indexes that provide order, where filtering
+	// exists outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
+	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	if path.CountAfterAccess > rowCount && orderRatio > 0 && (len(path.IndexFilters) > 0 || len(path.TableFilters) > 0) {
+		rowsToMeetFirst := (path.CountAfterAccess - rowCount) * orderRatio
+		rowCount += rowsToMeetFirst
 	}
 	return rowCount
 }
@@ -156,7 +170,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}
-	rangeCounts, _, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
+	rangeCounts, _, _, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
 	if !ok {
 		return 0, false, corr
 	}
@@ -166,9 +180,13 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
+		var tempResult statistics.RowEstimate
+		tempResult, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges, nil)
+		rangeCount = tempResult.Est
 	} else {
-		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
+		var rangeCountEst statistics.RowEstimate
+		rangeCountEst, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges, false)
+		rangeCount = rangeCountEst.Est
 	}
 	if err != nil {
 		return 0, false, corr
@@ -182,30 +200,34 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
-func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, float64, bool) {
+func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) (rangeCounts []float64, minCount float64, maxCount float64, ok bool) {
 	var err error
-	var count, corrCount float64
-	rangeCounts := make([]float64, len(ranges))
+	var count float64
+	rangeCounts = make([]float64, len(ranges))
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.GetIdx(idxID)
 			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
-				return nil, 0, false
+				return nil, 0, 0, false
 			}
-			count, corrCount, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
+			var tempResult statistics.RowEstimate
+			tempResult, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran}, nil)
+			count, minCount, maxCount = tempResult.Est, tempResult.MinEst, tempResult.MaxEst
 		} else {
 			colHist := histColl.GetCol(colID)
 			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {
-				return nil, 0, false
+				return nil, 0, 0, false
 			}
-			count, err = GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran})
+			var countEst statistics.RowEstimate
+			countEst, err = GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran}, false)
+			count = countEst.Est
 		}
 		if err != nil {
-			return nil, 0, false
+			return nil, 0, 0, false
 		}
 		rangeCounts[i] = count
 	}
-	return rangeCounts, corrCount, true
+	return rangeCounts, minCount, maxCount, true
 }
 
 // convertRangeFromExpectedCnt builds new ranges used to estimate row count we need to scan in table scan before finding specified
@@ -226,7 +248,7 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 		}
 		convertedRanges = []*ranger.Range{{LowVal: ranges[i].HighVal, HighVal: []types.Datum{types.MaxValueDatum()}, LowExclude: !ranges[i].HighExclude, Collators: ranges[i].Collators}}
 	} else {
-		for i = 0; i < len(ranges); i++ {
+		for i = range ranges {
 			if count+rangeCounts[i] >= expectedCnt {
 				break
 			}
@@ -246,20 +268,13 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
 		return nil, 0
 	}
-	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, path.TableFilters, nil)
-	cols = expression.ExtractColumnsFromExpressions(cols, path.IndexFilters, nil)
+	cols := expression.ExtractColumnsMapFromExpressions(nil, append(path.TableFilters, path.IndexFilters...)...)
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		if colSet.Exist(col.UniqueID) {
-			continue
-		}
-		colSet.Insert(col.UniqueID)
 		curCorr := float64(0)
 		for _, item := range histColl.ExtendedStats.Stats {
 			if (col.ID == item.ColIDs[0] && path.FullIdxCols[0].ID == item.ColIDs[1]) ||
@@ -273,7 +288,7 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+	if len(cols) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr
@@ -282,19 +297,13 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 // getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition
 // contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
 func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
-	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
+	cols := expression.ExtractColumnsMapFromExpressions(nil, exprs...)
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		if colSet.Exist(col.UniqueID) {
-			continue
-		}
-		colSet.Insert(col.UniqueID)
 		hist := histColl.GetCol(col.ID)
 		if hist == nil {
 			continue
@@ -305,7 +314,7 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+	if len(cols) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr

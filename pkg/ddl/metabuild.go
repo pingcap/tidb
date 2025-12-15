@@ -23,7 +23,7 @@ import (
 // NewMetaBuildContextWithSctx creates a new MetaBuildContext with the given session context.
 func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild.Option) *metabuild.Context {
 	intest.AssertNotNil(sctx)
-	sessVars := sctx.GetSessionVars()
+	sessVars := sctx.GetSessionVars() //nolint:forbidigo
 	intest.AssertNotNil(sessVars)
 	opts := []metabuild.Option{
 		metabuild.WithExprCtx(sctx.GetExprCtx()),
@@ -32,7 +32,7 @@ func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild
 		metabuild.WithClusteredIndexDefMode(sessVars.EnableClusteredIndex),
 		metabuild.WithShardRowIDBits(sessVars.ShardRowIDBits),
 		metabuild.WithPreSplitRegions(sessVars.PreSplitRegions),
-		metabuild.WithInfoSchema(sctx.GetDomainInfoSchema()),
+		metabuild.WithInfoSchema(sctx.GetLatestInfoSchema()),
 	}
 
 	if len(otherOpts) > 0 {

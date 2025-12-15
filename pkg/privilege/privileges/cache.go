@@ -30,6 +30,7 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -43,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -56,7 +57,7 @@ var (
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
 )
 
-const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv
+const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv | mysql.CreateTMPTablePriv
 
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
@@ -1409,7 +1410,7 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 		return nil
 	}
 
-	for i := 0; i < len(item.data); i++ {
+	for i := range item.data {
 		record := &item.data[i]
 		if record.match(user, host) {
 			return record
@@ -1430,7 +1431,7 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 			return nil
 		}
 		for _, addr := range addrs {
-			for i := 0; i < len(item.data); i++ {
+			for i := range item.data {
 				record := &item.data[i]
 				if record.match(user, addr) {
 					return record
@@ -1447,7 +1448,7 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	records, exists := p.user.Get(itemUser{username: user})
 	if exists {
-		for i := 0; i < len(records.data); i++ {
+		for i := range records.data {
 			record := &records.data[i]
 			if record.Host == host { // exact match
 				return record
@@ -1463,7 +1464,7 @@ func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
 		return nil
 	}
 	uGlobal := item.data
-	for i := 0; i < len(uGlobal); i++ {
+	for i := range uGlobal {
 		record := &uGlobal[i]
 		if record.match(user, host) {
 			return record
@@ -1476,7 +1477,7 @@ func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 	item, exists := p.user.Get(itemUser{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host) {
 				return record
@@ -1490,7 +1491,7 @@ func (p *MySQLPrivilege) matchDB(user, host, db string) *dbRecord {
 	item, exists := p.db.Get(itemDB{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host, db) {
 				return record
@@ -1504,7 +1505,7 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 	item, exists := p.tablesPriv.Get(itemTablesPriv{username: user})
 	if exists {
 		records := item.data
-		for i := 0; i < len(records); i++ {
+		for i := range records {
 			record := &records[i]
 			if record.match(user, host, db, table) {
 				return record
@@ -1517,7 +1518,7 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *columnsPrivRecord {
 	item, exists := p.columnsPriv.Get(itemColumnsPriv{username: user})
 	if exists {
-		for i := 0; i < len(item.data); i++ {
+		for i := range item.data {
 			record := &item.data[i]
 			if record.match(user, host, db, table, column) {
 				return record
@@ -1641,13 +1642,13 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 			return true
 		}
 		// For metrics_schema, `PROCESS` can also work.
-		if record.Privileges&mysql.ProcessPriv > 0 && strings.EqualFold(db, util.MetricSchemaName.O) {
+		if record.Privileges&mysql.ProcessPriv > 0 && strings.EqualFold(db, metadef.MetricSchemaName.O) {
 			return true
 		}
 	}
 
 	// INFORMATION_SCHEMA is visible to all users.
-	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+	if strings.EqualFold(db, metadef.InformationSchemaName.O) {
 		return true
 	}
 

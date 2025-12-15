@@ -183,7 +183,7 @@ func initUnfinishedPathsFromExpr(
 		if path.IsTablePath() {
 			continue
 		}
-		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblCols, false)
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblColsByID, false)
 		if !ok {
 			continue
 		}
@@ -359,7 +359,7 @@ func buildIntoAccessPath(
 				idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 					ds.Table.Meta(),
 					unfinishedPath.index,
-					ds.TblCols,
+					ds.TblColsByID,
 					true,
 				)
 				if !ok {
@@ -460,9 +460,7 @@ func buildIntoAccessPath(
 	}
 
 	// Keep this filter as a part of table filters for safety if it has any parameter.
-	needKeepORSourceFilter := expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(),
-		[]expression.Expression{allConds[orListIdxInAllConds]},
-	)
+	needKeepORSourceFilter := expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), allConds[orListIdxInAllConds])
 
 	// 3. Build the final access path.
 	possiblePath := &util.AccessPath{

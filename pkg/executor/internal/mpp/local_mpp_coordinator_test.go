@@ -17,21 +17,21 @@ package mpp
 import (
 	"testing"
 
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNeedReportExecutionSummary(t *testing.T) {
-	tableScan := &plannercore.PhysicalTableScan{}
-	limit := &plannercore.PhysicalLimit{}
-	passSender := &plannercore.PhysicalExchangeSender{
+	tableScan := &physicalop.PhysicalTableScan{}
+	limit := &physicalop.PhysicalLimit{}
+	passSender := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
 	passSender.SetID(10)
-	tableReader := &plannercore.PhysicalTableReader{}
+	tableReader := &physicalop.PhysicalTableReader{}
 	tableReader.SetTablePlanForTest(passSender)
-	limitTIDB := &plannercore.PhysicalLimit{}
+	limitTIDB := &physicalop.PhysicalLimit{}
 	limitTIDB.SetChildren(tableReader)
 	passSender.SetChildren(limit)
 	limit.SetChildren(tableScan)
@@ -39,17 +39,17 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 	require.True(t, needReportExecutionSummary(limitTIDB, 10, false))
 	require.False(t, needReportExecutionSummary(limitTIDB, 11, false))
 
-	projection := &plannercore.PhysicalProjection{}
+	projection := &physicalop.PhysicalProjection{}
 	projection.SetChildren(tableReader)
 	require.False(t, needReportExecutionSummary(projection, 10, false))
 
-	join := &plannercore.PhysicalHashJoin{}
-	tableScan2 := &plannercore.PhysicalTableScan{}
+	join := &physicalop.PhysicalHashJoin{}
+	tableScan2 := &physicalop.PhysicalTableScan{}
 	tableScan2.SetID(20)
-	tableReader2 := &plannercore.PhysicalTableReader{}
+	tableReader2 := &physicalop.PhysicalTableReader{}
 	tableReader2.SetTablePlanForTest(tableScan2)
 	join.SetChildren(tableReader2, projection)
-	limitTIDB2 := &plannercore.PhysicalLimit{}
+	limitTIDB2 := &physicalop.PhysicalLimit{}
 	limitTIDB2.SetChildren(join)
 	require.True(t, needReportExecutionSummary(limitTIDB2, 10, false))
 }
@@ -84,7 +84,7 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
 	require.True(t, quickFill)
 	require.Equal(t, slots, len(sameZoneFlags))
-	for i := 0; i < slots; i++ {
+	for i := range slots {
 		require.True(t, sameZoneFlags[i])
 	}
 
@@ -96,7 +96,7 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
 	require.True(t, quickFill)
 	require.Equal(t, slots, len(sameZoneFlags))
-	for i := 0; i < slots; i++ {
+	for i := range slots {
 		require.False(t, sameZoneFlags[i])
 	}
 
@@ -105,7 +105,7 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
 	require.True(t, quickFill)
 	require.Equal(t, slots, len(sameZoneFlags))
-	for i := 0; i < slots; i++ {
+	for i := range slots {
 		require.True(t, sameZoneFlags[i])
 	}
 

@@ -15,6 +15,8 @@
 package logicalop
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -23,9 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -73,19 +72,18 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 // PredicatePushDown inherits the BaseLogicalPlan.LogicalPlan.<1st> implementation.
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	leftCols, rightCols := la.ExtractUsedCols(parentUsedCols)
 	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
 	var err error
-	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin {
-		logicaltrace.ApplyEliminateTraceStep(la.Children()[1], opt)
+	if allowEliminateApply && rightCols == nil && la.JoinType == base.LeftOuterJoin {
 		resultPlan := la.Children()[0]
 		// reEnter the new child's column pruning, returning child[0] as a new child here.
-		return resultPlan.PruneColumns(parentUsedCols, opt)
+		return resultPlan.PruneColumns(parentUsedCols)
 	}
 
 	// column pruning for child-1.
-	la.Children()[1], err = la.Children()[1].PruneColumns(rightCols, opt)
+	la.Children()[1], err = la.Children()[1].PruneColumns(rightCols)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +94,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	}
 
 	// column pruning for child-0.
-	la.Children()[0], err = la.Children()[0].PruneColumns(leftCols, opt)
+	la.Children()[0], err = la.Children()[0].PruneColumns(leftCols)
 	if err != nil {
 		return nil, err
 	}
@@ -136,10 +134,11 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		RowCount: leftProfile.RowCount,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
+	// TODO: investigate why this cannot be replaced with maps.Copy()
 	for id, c := range leftProfile.ColNDVs {
 		la.StatsInfo().ColNDVs[id] = c
 	}
-	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
+	if la.JoinType == base.LeftOuterSemiJoin || la.JoinType == base.AntiLeftOuterSemiJoin {
 		la.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 	} else {
 		for i := childSchema[0].Len(); i < selfSchema.Len(); i++ {
@@ -154,7 +153,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 func (la *LogicalApply) ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column {
 	var outerSchema *expression.Schema
 	// Apply doesn't have RightOuterJoin.
-	if la.JoinType == LeftOuterJoin || la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
+	if la.JoinType == base.LeftOuterJoin || la.JoinType == base.LeftOuterSemiJoin || la.JoinType == base.AntiLeftOuterSemiJoin {
 		outerSchema = la.Children()[0].Schema()
 	}
 	if len(colGroups) == 0 || outerSchema == nil {
@@ -173,20 +172,12 @@ func (la *LogicalApply) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
 
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalApply(la, prop)
-}
-
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.LogicalJoin.ExtractCorrelatedCols()
-	for i := len(corCols) - 1; i >= 0; i-- {
-		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
-			corCols = append(corCols[:i], corCols[i+1:]...)
-		}
-	}
-	return corCols
+	return slices.DeleteFunc(corCols, func(col *expression.CorrelatedColumn) bool {
+		return la.Children()[0].Schema().Contains(&col.Column)
+	})
 }
 
 // MaxOneRow inherits BaseLogicalPlan.LogicalPlan.<16th> implementation.
@@ -216,11 +207,11 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 		}
 	}
 	switch la.JoinType {
-	case InnerJoin:
+	case base.InnerJoin:
 		return la.ExtractFDForInnerJoin(equivs)
-	case LeftOuterJoin, RightOuterJoin:
+	case base.LeftOuterJoin, base.RightOuterJoin:
 		return la.ExtractFDForOuterJoin(equivs)
-	case SemiJoin:
+	case base.SemiJoin:
 		return la.ExtractFDForSemiJoin(equivs)
 	default:
 		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
@@ -235,7 +226,7 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 
 // CanPullUpAgg checks if an apply can pull an aggregation up.
 func (la *LogicalApply) CanPullUpAgg() bool {
-	if la.JoinType != InnerJoin && la.JoinType != LeftOuterJoin {
+	if la.JoinType != base.InnerJoin && la.JoinType != base.LeftOuterJoin {
 		return false
 	}
 	if len(la.EqualConditions)+len(la.LeftConditions)+len(la.RightConditions)+len(la.OtherConditions) > 0 {
@@ -275,7 +266,7 @@ func (la *LogicalApply) DeCorColFromEqExpr(expr expression.Expression) expressio
 }
 
 func (la *LogicalApply) getGroupNDVs(childStats []*property.StatsInfo) []property.GroupNDV {
-	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin || la.JoinType == LeftOuterJoin {
+	if la.JoinType == base.LeftOuterSemiJoin || la.JoinType == base.AntiLeftOuterSemiJoin || la.JoinType == base.LeftOuterJoin {
 		return childStats[0].GroupNDVs
 	}
 	return nil

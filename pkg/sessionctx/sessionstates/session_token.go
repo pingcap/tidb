@@ -224,7 +224,7 @@ func (sc *signingCert) loadCert() error {
 		privKey:    tlsCert.PrivateKey,
 		expireTime: now.Add(LoadCertInterval + oldCertValidTime),
 	})
-	for i := 0; i < len(sc.certs); i++ {
+	for i := range sc.certs {
 		// Discard the certs that are already expired.
 		if now.After(sc.certs[i].expireTime) {
 			break

@@ -23,16 +23,20 @@ import (
 	"github.com/pingcap/failpoint"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -48,14 +52,11 @@ var (
 	MaxSubtaskCheckInterval = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
-	unfinishedSubtaskStates = []proto.SubtaskState{
-		proto.SubtaskStatePending,
-		proto.SubtaskStateRunning,
-	}
 )
 
 // Manager monitors the task table and manages the taskExecutors.
 type Manager struct {
+	store     kv.Storage
 	taskTable TaskTable
 	mu        struct {
 		sync.RWMutex
@@ -71,22 +72,27 @@ type Manager struct {
 	logger       *zap.Logger
 	slotManager  *slotManager
 	nodeResource *proto.NodeResource
+	trace        *traceevent.Trace
 }
 
 // NewManager creates a new task executor Manager.
-func NewManager(ctx context.Context, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
+func NewManager(ctx context.Context, store kv.Storage, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
 	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
 	}
 
 	m := &Manager{
+		store:        store,
 		id:           id,
 		taskTable:    taskTable,
 		logger:       logger,
 		slotManager:  newSlotManager(resource.TotalCPU),
 		nodeResource: resource,
+		trace:        traceevent.NewTrace(),
 	}
+
+	ctx = tracing.WithFlightRecorder(ctx, m.trace)
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.taskExecutors = make(map[int64]TaskExecutor)
 
@@ -149,8 +155,10 @@ func (m *Manager) handleTasksLoop() {
 		}
 
 		m.handleTasks()
+		m.trace.DiscardOrFlush(m.ctx)
+
 		// service scope might change, so we call WithLabelValues every time.
-		metrics.DistTaskUsedSlotsGauge.WithLabelValues(vardef.ServiceScope.Load()).
+		dxfmetric.UsedSlotsGauge.WithLabelValues(vardef.ServiceScope.Load()).
 			Set(float64(m.slotManager.usedSlots()))
 		metrics.GlobalSortUploadWorkerCount.Set(float64(litstorage.GetActiveUploadWorkerCount()))
 	}
@@ -164,6 +172,9 @@ func (m *Manager) handleTasksLoop() {
 // when there is no enough slots to run a task even after considers preemption,
 // tasks with low ranking can run.
 func (m *Manager) handleTasks() {
+	r := tracing.StartRegion(m.ctx, "taskexecutor.handleTasks")
+	defer r.End()
+
 	// we don't query task in 'modifying' state, if it's prev-state is 'pending'
 	// or 'paused', then they are not executable, if it's 'running', it should be
 	// queried out soon as 'modifying' is a fast process.
@@ -171,7 +182,7 @@ func (m *Manager) handleTasks() {
 	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
-		m.logErr(err)
+		m.logger.Error("failed to get executable task", zap.Error(err))
 		return
 	}
 
@@ -184,11 +195,11 @@ func (m *Manager) handleTasks() {
 			}
 		case proto.TaskStatePausing:
 			if err := m.handlePausingTask(task.ID); err != nil {
-				m.logErr(err)
+				m.logger.Error("failed to handle task in pausing state", zap.Error(err))
 			}
 		case proto.TaskStateReverting:
 			if err := m.handleRevertingTask(task.ID); err != nil {
-				m.logErr(err)
+				m.logger.Error("failed to handle task in reverting state", zap.Error(err))
 			}
 		}
 	}
@@ -213,7 +224,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 
 		if !canAlloc {
 			// try to run tasks of low ranking
-			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
+			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 			continue
 		}
 		failpoint.InjectCall("beforeCallStartTaskExecutor", task.TaskBase)
@@ -270,7 +281,7 @@ func (m *Manager) recoverMetaLoop() {
 			return
 		case <-ticker.C:
 			if err := m.recoverMeta(); err != nil {
-				m.logErr(err)
+				m.logger.Error("failed to recover node meta", zap.Error(err))
 				continue
 			}
 		}
@@ -295,12 +306,14 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	// TODO: remove it when we can create task executor with task base.
 	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
 	if err != nil {
-		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
+		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID),
+			zap.String("task-key", taskBase.Key), zap.Error(err))
 		return false
 	}
 	if !m.slotManager.alloc(&task.TaskBase) {
 		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
-			zap.Int64("task-id", taskBase.ID), zap.Int("concurrency", taskBase.Concurrency),
+			zap.Int64("task-id", taskBase.ID), zap.String("task-key", taskBase.Key),
+			zap.Int("concurrency", taskBase.Concurrency),
 			zap.Int("remaining-slots", m.slotManager.availableSlots()))
 		return false
 	}
@@ -322,6 +335,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		slotMgr:   m.slotManager,
 		nodeRc:    m.getNodeResource(),
 		execID:    m.id,
+		Store:     m.store,
 	})
 	err = executor.Init(m.ctx)
 	if err != nil {
@@ -329,12 +343,12 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		return false
 	}
 	m.addTaskExecutor(executor)
-	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
+	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
 		zap.Stringer("type", task.Type), zap.Int("concurrency", task.Concurrency),
 		zap.Int("remaining-slots", m.slotManager.availableSlots()))
 	m.executorWG.RunWithLog(func() {
 		defer func() {
-			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID),
+			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
 				zap.Stringer("type", task.Type))
 			m.slotManager.free(task.ID)
 			m.delTaskExecutor(executor)
@@ -369,24 +383,20 @@ func (m *Manager) isExecutorStarted(taskID int64) bool {
 	return ok
 }
 
-func (m *Manager) logErr(err error) {
-	m.logger.Error("task manager met error", zap.Error(err), zap.Stack("stack"))
-}
-
 func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor) {
-	m.logErr(err)
+	m.logger.Error("update one subtask as failed", zap.Error(err))
 	// TODO we want to define err of taskexecutor.Init as fatal, but add-index have
 	// some code in Init that need retry, remove it after it's decoupled.
 	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
-		m.logger.Error("met retryable err", zap.Error(err), zap.Stack("stack"))
+		m.logger.Error("met retryable err", zap.Error(err))
 		return
 	}
 	err1 := m.runWithRetry(func() error {
 		return m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
 	}, "update to subtask failed")
 	if err1 == nil {
-		m.logger.Error("update error to subtask success", zap.Int64("task-id", taskID),
-			zap.Error(err1), zap.Stack("stack"))
+		m.logger.Info("update error to subtask success", zap.Int64("task-id", taskID),
+			zap.Error(err))
 	}
 }
 

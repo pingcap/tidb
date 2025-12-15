@@ -2,45 +2,135 @@
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
-explain select * from t, (select * from s where s.id>1) tmp where t.id=tmp.id; -- inner join;
-explain select * from t, (select * from s where s.id>1) tmp where t.name=tmp.name; -- can't, without id equal predicate;
-explain select * from t, (select name from s where s.id>1) tmp where t.name=tmp.name; -- can't, projection without id column;
-explain select * from t, (select id as id1, name as name1 from s where s.id>1) tmp where t.id=tmp.id1; -- projection above of s.id>1;
-explain select * from t, (select id +1 as id1 from s where s.id>1) tmp where t.id=tmp.id1; -- can't optimize, projection has column function;
+explain format='plan_tree' select * from t, (select * from s where s.id>1) tmp where t.id=tmp.id; -- inner join;
+explain format='plan_tree' select * from t, (select * from s where s.id>1) tmp where t.name=tmp.name; -- can't, without id equal predicate;
+explain format='plan_tree' select * from t, (select name from s where s.id>1) tmp where t.name=tmp.name; -- can't, projection without id column;
+explain format='plan_tree' select * from t, (select id as id1, name as name1 from s where s.id>1) tmp where t.id=tmp.id1; -- projection above of s.id>1;
+explain format='plan_tree' select * from t, (select id +1 as id1 from s where s.id>1) tmp where t.id=tmp.id1; -- can't optimize, projection has column function;
 
 
 # TestDifferentJoinTypeConstantPropagation
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
-explain select * from (select * from t where t.id >1) tmp1, (select * from s where s.id <4) tmp2 where tmp1.id=tmp2.id; -- inner join, both children can be optimized;
-explain select * from (select * from t where t.id>1) tmp, s where tmp.id=s.id; -- inner join, child 0;
-explain select * from (select * from t where t.id>1) tmp left join s on tmp.id=s.id; -- left join, only left child can be optimized;
-explain select * from t left join (select * from s where s.id>1) tmp on t.id=tmp.id; -- can't, left join;
-explain select * from t right join (select * from s where s.id>1) tmp on t.id=tmp.id; -- right join, only right child can be optimized;
-explain select * from (select * from t where t.id>1) tmp  right join s on tmp.id=s.id; -- can't, right join;
+explain format='plan_tree' select * from (select * from t where t.id >1) tmp1, (select * from s where s.id <4) tmp2 where tmp1.id=tmp2.id; -- inner join, both children can be optimized;
+explain format='plan_tree' select * from (select * from t where t.id>1) tmp, s where tmp.id=s.id; -- inner join, child 0;
+explain format='plan_tree' select * from (select * from t where t.id>1) tmp left join s on tmp.id=s.id; -- left join, only left child can be optimized;
+explain format='plan_tree' select * from t left join (select * from s where s.id>1) tmp on t.id=tmp.id; -- can't, left join;
+explain format='plan_tree' select * from t right join (select * from s where s.id>1) tmp on t.id=tmp.id; -- right join, only right child can be optimized;
+explain format='plan_tree' select * from (select * from t where t.id>1) tmp  right join s on tmp.id=s.id; -- can't, right join;
 
 
 # TestSelectionThroughPlanNode
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
-explain select * from t, (select id as id1 from s where s.id>1) tmp where t.id=tmp.id1; -- constant propagation can through the projection node;
-explain select * from t, (select id, count(name) from s where s.id>1 group by id) tmp where t.id=tmp.id; -- can't, constant propagation can't through the aggregation node;
-explain select * from t, (select id from s where s.id>1 order by id limit 2) tmp where t.id=tmp.id; -- can't, constant propagation can't through the sort node;
+explain format='plan_tree' select * from t, (select id as id1 from s where s.id>1) tmp where t.id=tmp.id1; -- constant propagation can through the projection node;
+explain format='plan_tree' select * from t, (select id, count(name) from s where s.id>1 group by id) tmp where t.id=tmp.id; -- can't, constant propagation can't through the aggregation node;
+explain format='plan_tree' select * from t, (select id from s where s.id>1 order by id limit 2) tmp where t.id=tmp.id; -- can't, constant propagation can't through the sort node;
 
 
 # TestUpdate
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
-explain Update t, (select * from s where s.id>1) tmp set t.name=tmp.name where t.id=tmp.id;
+explain format='plan_tree' Update t, (select * from s where s.id>1) tmp set t.name=tmp.name where t.id=tmp.id;
 
 
 # TestMultiSubtreeMatch
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
-explain select * from (select * from (select t.id+1 as id1, t.name from t, (select * from s where s.id>1) s1 where t.id=s1.id ) tmp order by id1) a union (select tmp.* from (select * from t where t.id <3) tmp left join s on tmp.id=s.id); -- match twice;
+explain format='plan_tree' select * from (select * from (select t.id+1 as id1, t.name from t, (select * from s where s.id>1) s1 where t.id=s1.id ) tmp order by id1) a union (select tmp.* from (select * from t where t.id <3) tmp left join s on tmp.id=s.id); -- match twice;
 
+create table t1(id int, value int);
+create table t2(id int, value int);
+INSERT INTO t1 (id, value) VALUES (10, 0),(20, 0),(30, 0);
+INSERT INTO t2 (id, value) VALUES (10, 100), (10, 200), (10, 300), (20, 400), (30, 500);
+explain format='plan_tree' update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
+update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
+select * from t1;
+select * from t2;
+drop table if exists t1, t2;
 
+CREATE TABLE t2 (
+    k INT,
+    b INT
+);
+
+CREATE TABLE t3 (
+    k INT,
+    b INT
+);
+INSERT INTO t2 (k, b) VALUES
+(1, 100),
+(2, NULL),
+(3, 300),
+(NULL, 400),
+(5, 500);
+INSERT INTO t3 (k, b) VALUES
+(1, 100),
+(2, NULL),
+(3, 300),
+(NULL, 400),
+(6, 600);
+explain select * from t2 where not exists (select 1 from t3 where t3.k = t2.k and t3.b = t2.b and t2.k = 1);
+explain select * from t2 where exists (select 1 from t3 where t3.k = t2.k and t3.b = t2.b and t2.k = 1);
+EXPLAIN SELECT * FROM t2
+WHERE NOT EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+SELECT * FROM t2
+WHERE NOT EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+EXPLAIN SELECT * FROM t2
+WHERE EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+SELECT * FROM t2
+WHERE NOT EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+SELECT * FROM t2
+WHERE NOT EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
+);
+DELETE FROM t3 WHERE k = 1 AND b = 100;
+SELECT * FROM t2
+WHERE EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+SELECT * FROM t2
+WHERE NOT EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+SELECT * FROM t2
+WHERE EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+SELECT * FROM t2
+WHERE NOT EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
+);
+SELECT * FROM t2
+WHERE EXISTS (
+    SELECT 1 FROM t3
+    WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
+);

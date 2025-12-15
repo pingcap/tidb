@@ -60,7 +60,7 @@ func AutoAnalyze(
 		if err1 != nil {
 			escaped = ""
 		}
-		statslogutil.StatsLogger().Error(
+		statslogutil.StatsErrVerboseSampleLogger().Error(
 			"auto analyze failed",
 			zap.String("sql", escaped),
 			zap.Duration("cost_time", dur),
@@ -127,7 +127,7 @@ func ParseAutoAnalyzeRatio(ratio string) float64 {
 
 // ParseAutoAnalysisWindow parses the time window for auto analysis.
 // It parses the times in UTC location.
-func ParseAutoAnalysisWindow(start, end string) (time.Time, time.Time, error) {
+func ParseAutoAnalysisWindow(start, end string) (_, _ time.Time, err error) {
 	if start == "" {
 		start = vardef.DefAutoAnalyzeStartTime
 	}

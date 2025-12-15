@@ -729,7 +729,7 @@ func TestCompressChunkRestore(t *testing.T) {
 
 	var totalBytes int64
 	for i := 0; i < 300; i += 3 {
-		n, err := gzWriter.Write([]byte(fmt.Sprintf("%d,%d,%d\r\n", i, i+1, i+2)))
+		n, err := gzWriter.Write(fmt.Appendf(nil, "%d,%d,%d\r\n", i, i+1, i+2))
 		require.NoError(t, err)
 		totalBytes += int64(n)
 	}

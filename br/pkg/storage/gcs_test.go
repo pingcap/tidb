@@ -10,6 +10,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"testing"
@@ -17,12 +19,22 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
 
-func TestGCS(t *testing.T) {
+func CheckAccessStats(t *testing.T, rec *recording.AccessStats, expectedGets, expectedPuts, expectedRead, expectWrite int) {
+	t.Helper()
+	require.EqualValues(t, expectedGets, rec.Requests.Get.Load())
+	require.EqualValues(t, expectedPuts, rec.Requests.Put.Load())
+	require.EqualValues(t, expectedRead, rec.Traffic.Read.Load())
+	require.EqualValues(t, expectWrite, rec.Traffic.Write.Load())
+}
+
+func prepareGCSStore(t *testing.T, bucketName string, accessRec *recording.AccessStats) (*fakestorage.Server, *GCSStorage) {
+	t.Helper()
 	require.True(t, intest.InTest)
 	ctx := context.Background()
 
@@ -31,7 +43,6 @@ func TestGCS(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opts)
 	require.NoError(t, err)
-	bucketName := "testbucket"
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
 
 	gcs := &backuppb.GCS{
@@ -45,10 +56,19 @@ func TestGCS(t *testing.T) {
 		SendCredentials:  false,
 		CheckPermissions: []Permission{AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
+		AccessRecording:  accessRec,
 	})
 	require.NoError(t, err)
+	return server, stg
+}
 
-	err = stg.WriteFile(ctx, "key", []byte("data"))
+func TestGCS(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+	bucketName := "testbucket"
+	server, stg := prepareGCSStore(t, bucketName, nil)
+
+	err := stg.WriteFile(ctx, "key", []byte("data"))
 	require.NoError(t, err)
 
 	err = stg.WriteFile(ctx, "key1", []byte("data1"))
@@ -168,7 +188,7 @@ func TestGCS(t *testing.T) {
 
 	// test 1003 files
 	var totalSize int64 = 0
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		err = stg.WriteFile(ctx, fmt.Sprintf("f%d", i), []byte("data"))
 		require.NoError(t, err)
 	}
@@ -186,7 +206,7 @@ func TestGCS(t *testing.T) {
 	require.True(t, ok)
 	_, ok = filesSet["key2"]
 	require.True(t, ok)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, ok = filesSet[fmt.Sprintf("f%d", i)]
 		require.True(t, ok)
 	}
@@ -424,7 +444,8 @@ func TestNewGCSStorage(t *testing.T) {
 	}
 }
 
-func TestReadRange(t *testing.T) {
+func createGCSStore(t *testing.T) *GCSStorage {
+	t.Helper()
 	require.True(t, intest.InTest)
 	ctx := context.Background()
 
@@ -449,9 +470,18 @@ func TestReadRange(t *testing.T) {
 		HTTPClient:       server.HTTPClient(),
 	})
 	require.NoError(t, err)
+	return stg
+}
+
+func TestReadRange(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
 
 	filename := "key"
-	err = stg.WriteFile(ctx, filename, []byte("0123456789"))
+	err := stg.WriteFile(ctx, filename, []byte("0123456789"))
 	require.NoError(t, err)
 
 	start := int64(2)
@@ -514,13 +544,13 @@ func TestSpeedReadManyFiles(t *testing.T) {
 
 	fileNum := 1000
 	filenames := make([]string, fileNum)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filenames[i] = fmt.Sprintf("TestSpeedReadManySmallFiles/%d", i)
 	}
 	fileSize := 1024
 	data := make([]byte, fileSize)
 	eg := &errgroup.Group{}
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filename := filenames[i]
 		eg.Go(func() error {
 			return s.WriteFile(ctx, filename, data)
@@ -547,12 +577,12 @@ func TestSpeedReadManyFiles(t *testing.T) {
 
 	fileNum = 30
 	filenames = make([]string, fileNum)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filenames[i] = fmt.Sprintf("TestSpeedReadManyLargeFiles/%d", i)
 	}
 	fileSize = 100 * 1024 * 1024
 	data = make([]byte, fileSize)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filename := filenames[i]
 		eg.Go(func() error {
 			return s.WriteFile(ctx, filename, data)
@@ -577,4 +607,69 @@ func TestGCSShouldRetry(t *testing.T) {
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: server sent GOAWAY and closed the connectiont"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: client connection lost"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 	require.True(t, shouldRetry(&url.Error{Err: io.EOF, Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+}
+
+func TestCtxUsage(t *testing.T) {
+	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer httpSvr.Close()
+
+	ctx := context.Background()
+	gcs := &backuppb.GCS{
+		Endpoint:      httpSvr.URL,
+		Bucket:        "test",
+		Prefix:        "prefix",
+		StorageClass:  "NEARLINE",
+		PredefinedAcl: "private",
+		CredentialsBlob: fmt.Sprintf(`
+{
+	"type":"external_account",
+	"audience":"//iam.googleapis.com/projects/1234567890123/locations/global/workloadIdentityPools/my-pool/providers/my-provider",
+	"subject_token_type":"urn:ietf:params:oauth:token-type:access_token",
+	"credential_source":{"url":"%s"}
+}`, httpSvr.URL),
+	}
+	stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{})
+	require.NoError(t, err)
+
+	_, err = stg.FileExists(ctx, "key")
+	// before the fix, it's context canceled error
+	require.ErrorContains(t, err, "invalid_request")
+}
+
+func TestDeleteFiles(t *testing.T) {
+	ctx := context.Background()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
+
+	filename := "key"
+	err := stg.WriteFile(ctx, filename, []byte("0123456789"))
+	require.NoError(t, err)
+	require.NoError(t, stg.DeleteFiles(ctx, []string{filename, "not-exist-file"}))
+}
+
+func TestGCSAccessRecording(t *testing.T) {
+	ctx := context.Background()
+	accessRec := &recording.AccessStats{}
+	_, store := prepareGCSStore(t, "testbucket", accessRec)
+	require.NoError(t, store.WriteFile(ctx, "a.txt", []byte("hello")))
+	CheckAccessStats(t, accessRec, 0, 1, 0, 5)
+	_, err := store.ReadFile(ctx, "a.txt")
+	require.NoError(t, err)
+	CheckAccessStats(t, accessRec, 1, 1, 5, 5)
+	writer, err := store.Create(ctx, "b.txt", nil)
+	require.NoError(t, err)
+	_, err = writer.Write(ctx, []byte(" world!"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
+	CheckAccessStats(t, accessRec, 1, 2, 5, 12)
+	reader, err := store.Open(ctx, "b.txt", nil)
+	require.NoError(t, err)
+	buf := make([]byte, 20)
+	n, err := reader.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, 7, n)
+	require.NoError(t, reader.Close())
+	// Open will use 2 get, one for get file size.
+	CheckAccessStats(t, accessRec, 3, 2, 12, 12)
 }

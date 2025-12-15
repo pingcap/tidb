@@ -19,12 +19,15 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -77,6 +80,10 @@ type Binding struct {
 
 	// TableNames records all schema and table names in this binding statement, which are used for cross-db matching.
 	TableNames []*ast.TableName `json:"-"`
+
+	// UsageInfo is to track the usage information `last_used_time` of this binding
+	// and it will be updated when this binding is used.
+	UsageInfo bindingInfoUsageInfo
 }
 
 // IsBindingEnabled returns whether the binding is enabled.
@@ -88,6 +95,27 @@ func (b *Binding) IsBindingEnabled() bool {
 func (b *Binding) size() float64 {
 	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
+}
+
+// UpdateLastUsedAt is to update binding usage info when this binding is used.
+func (b *Binding) UpdateLastUsedAt() {
+	now := time.Now()
+	b.UsageInfo.LastUsedAt.Store(&now)
+}
+
+// UpdateLastSavedAt is to update the last saved time
+func (b *Binding) UpdateLastSavedAt(ts *time.Time) {
+	b.UsageInfo.LastSavedAt.Store(ts)
+}
+
+type bindingInfoUsageInfo struct {
+	// LastUsedAt records the last time when this binding is used.
+	// It is nil if this binding has never been used.
+	// It is updated when this binding is used.
+	// It is used to update the `last_used_time` field in mysql.bind_info table.
+	LastUsedAt atomic.Pointer[time.Time]
+	// LastSavedAt records the last time when this binding is saved into storage.
+	LastSavedAt atomic.Pointer[time.Time]
 }
 
 var (
@@ -104,11 +132,10 @@ type BindingMatchInfo struct {
 }
 
 // MatchSQLBindingForPlanCache matches binding for plan cache.
-func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string, ignoreBinding bool) {
+func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string) {
 	binding, matched, _ := matchSQLBinding(sctx, stmtNode, info)
 	if matched {
 		bindingSQL = binding.BindSQL
-		ignoreBinding = binding.Hint.ContainTableHint(hint.HintIgnorePlanCache)
 	}
 	return
 }
@@ -153,6 +180,10 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	}
 	binding, matched = globalHandle.MatchingBinding(sctx, noDBDigest, tableNames)
 	if matched {
+		if vardef.EnableBindingUsage.Load() {
+			// After hitting the cache, update the usage time of the bind.
+			binding.UpdateLastUsedAt()
+		}
 		return binding, matched, metrics.ScopeGlobal
 	}
 
@@ -173,6 +204,10 @@ func crossDBMatchBindings(sctx sessionctx.Context, tableNames []*ast.TableName, 
 	leastWildcards := len(tableNames) + 1
 	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, binding := range bindings {
+		if !binding.IsBindingEnabled() {
+			// because of cross-db bindings, there might be multiple bindings for the same SQL, skip disabled ones.
+			continue
+		}
 		numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
 		if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
 			continue // cross-db binding is disabled, skip this binding

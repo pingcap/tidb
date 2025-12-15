@@ -75,8 +75,8 @@
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
-      "Join{DataScan(ta)->DataScan(tb)}->Projection",
-      "Join{DataScan(ta)->DataScan(tb)}->Projection",
+      "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
+      "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{Join{DataScan(ta)->DataScan(tb)}(test.t.a,test.t.a)->DataScan(tc)}(test.t.b,test.t.b)->Projection",
       "Join{Join{DataScan(ta)->DataScan(tb)}(test.t.a,test.t.a)->DataScan(tc)}(test.t.b,test.t.b)->Projection",
@@ -94,7 +94,7 @@
       "DataScan(t)->Aggr(sum(test.t.c),firstrow(test.t.a),firstrow(test.t.b))->Projection->Projection",
       "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Projection->Aggr(sum(Column#13),firstrow(test.t.a))->Projection->Projection",
       "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Sel([gt(cast(test.t.a, decimal(10,0) BINARY), Column#13)])->Projection->Projection",
-      "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Sel([gt(test.t.a, 1)])->Projection->Projection",
+      "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Projection->Projection",
       "Dual->Sel([gt(test.t.a, 1)])->Projection",
       "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Sel([lt(Column#13, 1)])->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
@@ -202,7 +202,7 @@
         "Err": false
       },
       {
-        "Best": "Join{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual}->Sort->Projection",
+        "Best": "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual->Projection}->Sort->Projection",
         "Err": false
       }
     ]
@@ -284,8 +284,8 @@
     "Name": "TestWindowParallelFunction",
     "Cases": [
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.a))->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection",
-      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(20,0) BINARY))->Column#17 over(partition by Column#15))->Partition(execution info: concurrency:4, data sources:[Projection_8])->Projection",
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_13])->Projection",
+      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(20,0) BINARY))->Column#17 over(partition by Column#15))->Partition(execution info: concurrency:4, data sources:[Projection_12])->Projection",
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(order by test.t.a, test.t.b desc range between unbounded preceding and current row))->Projection",
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "[planner:1054]Unknown column 'z' in 'field list'",
@@ -327,7 +327,7 @@
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to ntile",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>)->Column#14 over())->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection",
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_13])->Projection",
       "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1)->Column#14 over())->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(10,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(10,0) BINARY))->Column#16 over(order by test.t.a range between unbounded preceding and current row))->Projection",
       "[planner:3593]You cannot use the window function 'sum' in this context.'",
@@ -335,7 +335,7 @@
       "[planner:3593]You cannot use the window function 'row_number' in this context.'",
       "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c, decimal(10,0) BINARY))->Column#17 over(partition by test.t.a order by test.t.c range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b, decimal(10,0) BINARY))->Column#18 over(order by test.t.a, test.t.b, test.t.c range between unbounded preceding and current row))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#19 over(partition by test.t.a order by test.t.b range between unbounded preceding and current row))->Window(sum(cast(test.t.d, decimal(10,0) BINARY))->Column#20 over())->Projection",
       "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
-      "TableReader(Table(t))->Sort->Window(dense_rank()->Column#14 over(partition by test.t.b order by test.t.a desc, test.t.b desc))->Partition(execution info: concurrency:4, data sources:[TableReader_9])->Projection",
+      "TableReader(Table(t))->Sort->Window(dense_rank()->Column#14 over(partition by test.t.b order by test.t.a desc, test.t.b desc))->Partition(execution info: concurrency:4, data sources:[TableReader_11])->Projection",
       "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
       "[planner:3585]Window 'w1': frame end cannot be UNBOUNDED PRECEDING.",
       "[planner:3584]Window 'w1': frame start cannot be UNBOUNDED FOLLOWING.",
@@ -349,7 +349,7 @@
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
-      "TableReader(Table(t))->Sort->Window(row_number()->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection"
+      "TableReader(Table(t))->Sort->Window(row_number()->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_12])->Projection"
     ]
   },
   {
@@ -969,10 +969,10 @@
     "Cases": [
       "Join{Join{Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.b)->DataScan(t3)}(test.t.a,test.t.b)->DataScan(t4)}(test.t.c,test.t.a)(test.t.c,test.t.d)->Join{DataScan(t5)->DataScan(t6)}(test.t.d,test.t.d)}->Projection",
       "Join{Join{Join{Join{DataScan(t1)->DataScan(t8)}(test.t.a,test.t.a)->DataScan(t2)}->Join{DataScan(t3)->DataScan(t4)}}->Join{Join{DataScan(t5)->DataScan(t6)}->DataScan(t7)}}->Projection->Projection",
-      "Join{Join{Join{Join{DataScan(t5)->DataScan(t1)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)}(test.t.a,test.t.a)(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)(test.t.a,test.t.a)(test.t.a,test.t.a)->Projection->Projection",
-      "Join{Join{Join{DataScan(t3)->DataScan(t1)}->Join{DataScan(t2)->DataScan(t4)}}->DataScan(t5)}->Projection->Projection",
+      "Join{Join{Join{Join{DataScan(t5)->DataScan(t1)}(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection",
+      "Join{Join{Join{Join{DataScan(t1)->DataScan(t5)}(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)->DataScan(t2)}->DataScan(t3)}->Projection->Projection",
       "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection}->Projection",
-      "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(t3)}->Projection}->Projection"
+      "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection}->Projection"
     ]
   },
   {
@@ -1012,7 +1012,7 @@
         "JoinType": "inner join"
       },
       {
-        "Best": "Join{DataScan(t1)->DataScan(t2)}(test.t.b,test.t.b)->Sel([not(and(gt(test.t.c, 1), gt(test.t.c, 1)))])->Projection",
+        "Best": "Join{DataScan(t1)->DataScan(t2)}(test.t.b,test.t.b)->Sel([or(le(test.t.c, 1), le(test.t.c, 1))])->Projection",
         "JoinType": "left outer join"
       },
       {
@@ -1024,7 +1024,7 @@
         "JoinType": "left outer join"
       },
       {
-        "Best": "Join{DataScan(t1)->DataScan(t2)}(test.t.b,test.t.b)->Sel([not(plus(0, and(eq(test.t.c, 1), eq(test.t.c, 2))))])->Projection",
+        "Best": "Join{DataScan(t1)->DataScan(t2)}(test.t.b,test.t.b)->Sel([not(istrue_with_null(plus(0, and(eq(test.t.c, 1), eq(test.t.c, 2)))))])->Projection",
         "JoinType": "left outer join"
       },
       {
@@ -1140,7 +1140,7 @@
             "handle cols: test.t3._tidb_rowid:0"
           ]
         ],
-        "InsidePlan": "TableReader(Table(t3)->Sel([eq(test.t3.b, 1)]))->Projection"
+        "InsidePlan": "TableReader(Table(t3)->Sel([eq(test.t3.b, 1)])->Projection)"
       },
       {
         "SQL": "",

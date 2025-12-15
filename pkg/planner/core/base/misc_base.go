@@ -16,6 +16,7 @@ package base
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
@@ -67,4 +68,25 @@ type MemTablePredicateExtractor interface {
 	Extract(PlanContext, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
 	// ExplainInfo give the basic desc of this mem extractor, `p` indicates a PhysicalPlan here.
 	ExplainInfo(p PhysicalPlan) string
+}
+
+// DataAccesser is a plan that means it can access underlying data.
+// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
+// ExplainInfo = AccessObject + OperatorInfo
+type DataAccesser interface {
+	// AccessObject return plan's `table`, `partition` and `index`.
+	AccessObject() AccessObject
+
+	// OperatorInfo return other operator information to be explained.
+	OperatorInfo(normalized bool) string
+}
+
+// PartitionAccesser is a plan that can access partitioned data.
+type PartitionAccesser interface {
+	AccessObject(PlanContext) AccessObject
+}
+
+// PartitionTable is for those tables which implement partition.
+type PartitionTable interface {
+	PartitionExpr() *tables.PartitionExpr
 }

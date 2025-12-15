@@ -396,15 +396,6 @@ alter table t add unique index idx_ac(a, c);
 alter table t add unique index idx_b(b);
 drop table if exists t;
 
-# TestFulltextIndexIgnore
-drop table if exists t_ft;
-create table t_ft (a text, fulltext key (a));
-show warnings;
-alter table t_ft add fulltext key (a);
-show warnings;
-show create table t_ft;
-drop table if exists t_ft;
-
 # TestDefaultValueIsString
 drop table if exists t;
 create table t (a int default b'1');
@@ -1061,6 +1052,8 @@ create table t (j json, key k (((j,j))));
 create table t (j json, key k ((j+1),(j+1)));
 -- error 3761
 create table t1 (col1 int, index ((concat(''))));
+-- error 3761
+create table t1 (col1 int, index ((null)));
 -- error 3756
 CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);
 

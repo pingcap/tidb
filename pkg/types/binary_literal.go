@@ -160,7 +160,7 @@ func ParseBitStr(s string) (BinaryLiteral, error) {
 	byteLength := len(s) >> 3
 	buf := make([]byte, byteLength)
 
-	for i := 0; i < byteLength; i++ {
+	for i := range byteLength {
 		strPosition := i << 3
 		val, err := strconv.ParseUint(s[strPosition:strPosition+8], 2, 8)
 		if err != nil {

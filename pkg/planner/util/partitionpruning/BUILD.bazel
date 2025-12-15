@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "partitionpruning",
+    srcs = ["partition_prune.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/util/partitionpruning",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/rule",
+        "//pkg/table",
+        "//pkg/types",
+    ],
+)

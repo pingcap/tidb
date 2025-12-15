@@ -193,7 +193,7 @@ func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
 // It's only check during the test environment, so it would panic directly.
 // These checks may be controlled by configuration in the future.
 func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
-	if !intest.InTest {
+	if !intest.EnableInternalCheck {
 		return
 	}
 

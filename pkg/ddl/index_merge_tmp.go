@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,37 +26,42 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
-func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
+func batchCheckTemporaryUniqueKey(
 	txn kv.Transaction,
+	tbl table.Table,
+	currentIndex *model.IndexInfo,
+	originIdxKeys []kv.Key,
 	idxRecords []*temporaryIndexRecord,
 ) error {
-	if !w.currentIndex.Unique {
+	if !currentIndex.Unique {
 		// non-unique key need no check, just overwrite it,
 		// because in most case, backfilling indices is not exists.
 		return nil
 	}
 
-	batchVals, err := txn.BatchGet(context.Background(), w.originIdxKeys)
+	batchVals, err := txn.BatchGet(context.Background(), originIdxKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	for i, key := range w.originIdxKeys {
+	for i, key := range originIdxKeys {
 		keyStr := string(key)
 		if val, found := batchVals[keyStr]; found {
 			// Found a value in the original index key.
-			matchDeleted, err := checkTempIndexKey(txn, idxRecords[i], val, w.table)
+			matchDeleted, err := checkTempIndexKey(txn, idxRecords[i], val, tbl)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) {
-					return driver.ExtractKeyExistsErrFromIndex(key, val, w.table.Meta(), w.currentIndex.ID)
+					return driver.ExtractKeyExistsErrFromIndex(key, val, tbl.Meta(), currentIndex.ID)
 				}
 				return errors.Trace(err)
 			}
@@ -134,123 +140,128 @@ type mergeIndexWorker struct {
 
 	indexes []table.Index
 
-	tmpIdxRecords []*temporaryIndexRecord
-	originIdxKeys []kv.Key
-	tmpIdxKeys    []kv.Key
-
-	needValidateKey        bool
-	currentTempIndexPrefix []byte
-	currentIndex           *model.IndexInfo
+	buffers      *tempIdxBuffers
+	currentIndex *model.IndexInfo
 }
 
-func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements []*meta.Element) *mergeIndexWorker {
+func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements []*meta.Element) (*mergeIndexWorker, error) {
 	allIndexes := make([]table.Index, 0, len(elements))
 	for _, elem := range elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		if err != nil {
+			return nil, err
+		}
 		allIndexes = append(allIndexes, index)
 	}
 
 	return &mergeIndexWorker{
 		backfillCtx: bfCtx,
 		indexes:     allIndexes,
-	}
-}
-
-func (w *mergeIndexWorker) validateTaskRange(taskRange *reorgBackfillTask) (skip bool, err error) {
-	tmpID, err := tablecodec.DecodeIndexID(taskRange.startKey)
-	if err != nil {
-		return false, err
-	}
-	startIndexID := tmpID & tablecodec.IndexIDMask
-	tmpID, err = tablecodec.DecodeIndexID(taskRange.endKey)
-	if err != nil {
-		return false, err
-	}
-	endIndexID := tmpID & tablecodec.IndexIDMask
-
-	w.needValidateKey = startIndexID != endIndexID
-	containsTargetID := false
-	for _, idx := range w.indexes {
-		idxInfo := idx.Meta()
-		if idxInfo.ID == startIndexID {
-			containsTargetID = true
-			w.currentIndex = idxInfo
-			break
-		}
-		if idxInfo.ID == endIndexID {
-			containsTargetID = true
-		}
-	}
-	return !containsTargetID, nil
+		buffers:     newTempIdxBuffers(bfCtx.batchCnt),
+	}, nil
 }
 
 // BackfillData merge temp index data in txn.
-func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
-	skip, err := w.validateTaskRange(&taskRange)
-	if skip || err != nil {
+func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+	idx, err := findIndexInfoByDecodingKey(w.indexes, taskRange.startKey)
+	if err != nil {
 		return taskCtx, err
 	}
+	w.currentIndex = idx
 
+	var currentTxnStartTS uint64
 	oprStartTime := time.Now()
-	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	ctx = kv.WithInternalSourceAndTaskType(ctx, w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	bfCtx := w.GetCtx()
+	originBatchCnt := bfCtx.batchCnt
+	defer func() {
+		bfCtx.batchCnt = originBatchCnt
+	}()
 
-	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
-		taskCtx.addedCount = 0
-		taskCtx.scanCount = 0
-		updateTxnEntrySizeLimitIfNeeded(txn)
-		txn.SetOption(kv.Priority, taskRange.priority)
-		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
-			txn.SetOption(kv.ResourceGroupTagger, tagger)
-		}
-		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
+	attempts := 0
+	for {
+		attempts++
 
-		tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, taskRange)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		taskCtx.nextKey = nextKey
-		taskCtx.done = taskDone
-
-		err = w.batchCheckTemporaryUniqueKey(txn, tmpIdxRecords)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for i, idxRecord := range tmpIdxRecords {
-			taskCtx.scanCount++
-			// The index is already exists, we skip it, no needs to backfill it.
-			// The following update, delete, insert on these rows, TiDB can handle it correctly.
-			// If all batch are skipped, update first index key to make txn commit to release lock.
-			if idxRecord.skip {
-				continue
+		err := kv.RunInNewTxn(ctx, w.ddlCtx.store, false, func(_ context.Context, txn kv.Transaction) error {
+			currentTxnStartTS = txn.StartTS()
+			taskCtx.addedCount = 0
+			taskCtx.scanCount = 0
+			updateTxnEntrySizeLimitIfNeeded(txn)
+			txn.SetOption(kv.Priority, taskRange.priority)
+			if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
+				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
+			txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
+			rs, err := fetchTempIndexVals(
+				w.jobContext, w.store, w.table, w.currentIndex, txn,
+				taskRange.startKey, taskRange.endKey,
+				bfCtx.batchCnt, w.buffers)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			taskCtx.nextKey = rs.nextKey
+			taskCtx.done = rs.done
 
-			// Lock the corresponding row keys so that it doesn't modify the index KVs
-			// that are changing by a pessimistic transaction.
-			rowKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), idxRecord.handle)
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), rowKey)
+			err = batchCheckTemporaryUniqueKey(txn, w.table, w.currentIndex, w.buffers.originIdxKeys, w.buffers.tmpIdxRecords)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			if idxRecord.delete {
-				if idxRecord.unique {
-					err = txn.GetMemBuffer().DeleteWithFlags(w.originIdxKeys[i], kv.SetNeedLocked)
-				} else {
-					err = txn.GetMemBuffer().Delete(w.originIdxKeys[i])
+			for i, idxRecord := range w.buffers.tmpIdxRecords {
+				// The index is already exists, we skip it, no needs to backfill it.
+				// The following update, delete, insert on these rows, TiDB can handle it correctly.
+				// If all batch are skipped, update first index key to make txn commit to release lock.
+				if idxRecord.skip {
+					continue
 				}
-			} else {
-				err = txn.GetMemBuffer().Set(w.originIdxKeys[i], idxRecord.vals)
-			}
-			if err != nil {
-				return err
-			}
-			taskCtx.addedCount++
-		}
-		return nil
-	})
 
+				originIdxKey := w.buffers.originIdxKeys[i]
+				if idxRecord.delete {
+					err = txn.GetMemBuffer().Delete(originIdxKey)
+				} else {
+					err = txn.GetMemBuffer().Set(originIdxKey, idxRecord.vals)
+				}
+				if err != nil {
+					return err
+				}
+
+				err = txn.GetMemBuffer().Delete(w.buffers.tmpIdxKeys[i])
+				if err != nil {
+					return err
+				}
+
+				failpoint.InjectCall("mockDMLExecutionMergingInTxn")
+
+				taskCtx.addedCount++
+			}
+			return nil
+		})
+		if err != nil {
+			if kv.IsTxnRetryableError(err) {
+				if err := w.ddlCtx.isReorgRunnable(ctx, false); err != nil {
+					return taskCtx, errors.Trace(err)
+				}
+				if bfCtx.batchCnt > 1 {
+					bfCtx.batchCnt /= 2
+				}
+				w.conflictCounter.Add(1)
+				backoff := kv.BackOff(uint(attempts))
+				logutil.DDLLogger().Warn("temp index merge worker retry",
+					zap.Int64("jobID", taskRange.jobID),
+					zap.Int("batchCnt", bfCtx.batchCnt),
+					zap.Int("attempts", attempts),
+					zap.Duration("backoff", time.Duration(backoff)),
+					zap.Uint64("startTS", currentTxnStartTS),
+					zap.Error(err))
+				continue
+			}
+			return taskCtx, errors.Trace(err)
+		}
+		break
+	}
+
+	metrics.DDLSetTempIndexScanAndMerge(w.table.Meta().ID, uint64(taskCtx.scanCount), uint64(taskCtx.addedCount))
 	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionMerging != nil {
@@ -261,7 +272,23 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 	return
 }
 
-func (*mergeIndexWorker) AddMetricInfo(float64) {
+func findIndexInfoByDecodingKey(indexes []table.Index, key kv.Key) (*model.IndexInfo, error) {
+	indexID, err := tablecodec.DecodeIndexID(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	indexID &= tablecodec.IndexIDMask
+	for _, idx := range indexes {
+		idxInfo := idx.Meta()
+		if idxInfo.ID == indexID {
+			return idxInfo, nil
+		}
+	}
+	return nil, errors.Errorf("index (id=%d) not found", indexID)
+}
+
+func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
+	w.metricCounter.Add(cnt)
 }
 
 func (*mergeIndexWorker) String() string {
@@ -272,80 +299,82 @@ func (w *mergeIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
-func (w *mergeIndexWorker) prefixIsChanged(newKey kv.Key) bool {
-	return len(w.currentTempIndexPrefix) == 0 || !bytes.HasPrefix(newKey, w.currentTempIndexPrefix)
+type tempIdxBuffers struct {
+	tmpIdxRecords []*temporaryIndexRecord
+	originIdxKeys []kv.Key
+	tmpIdxKeys    []kv.Key
 }
 
-func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) (skip bool, err error) {
-	tempIdxID, err := tablecodec.DecodeIndexID(newIndexKey)
-	if err != nil {
-		return false, err
+func newTempIdxBuffers(size int) *tempIdxBuffers {
+	return &tempIdxBuffers{
+		tmpIdxRecords: make([]*temporaryIndexRecord, 0, size),
+		originIdxKeys: make([]kv.Key, 0, size),
+		tmpIdxKeys:    make([]kv.Key, 0, size),
 	}
-	idxID := tablecodec.IndexIDMask & tempIdxID
-	var curIdx *model.IndexInfo
-	for _, idx := range w.indexes {
-		if idx.Meta().ID == idxID {
-			curIdx = idx.Meta()
-		}
-	}
-	if curIdx == nil {
-		// Index IDs are always increasing, but not always continuous:
-		// if DDL adds another index between these indexes, it is possible that:
-		//   multi-schema add index IDs = [1, 2, 4, 5]
-		//   another index ID = [3]
-		// If the new index get rollback, temp index 0xFFxxx03 may have dirty records.
-		// We should skip these dirty records.
-		return true, nil
-	}
-	pfx := tablecodec.CutIndexPrefix(newIndexKey)
-
-	w.currentTempIndexPrefix = kv.Key(pfx).Clone()
-	w.currentIndex = curIdx
-
-	return false, nil
 }
 
-func (w *mergeIndexWorker) fetchTempIndexVals(
+func (b *tempIdxBuffers) reset() {
+	b.tmpIdxRecords = b.tmpIdxRecords[:0]
+	b.originIdxKeys = b.originIdxKeys[:0]
+	b.tmpIdxKeys = b.tmpIdxKeys[:0]
+}
+
+func (b *tempIdxBuffers) add(idxRecord *temporaryIndexRecord, originIdxKey, tmpIdxKey kv.Key) {
+	b.tmpIdxRecords = append(b.tmpIdxRecords, idxRecord)
+	b.originIdxKeys = append(b.originIdxKeys, originIdxKey)
+	b.tmpIdxKeys = append(b.tmpIdxKeys, tmpIdxKey)
+}
+
+func (b *tempIdxBuffers) len() int {
+	return len(b.tmpIdxRecords)
+}
+
+type tempIdxResult struct {
+	scanCount int
+	addCount  int
+	nextKey   kv.Key
+	done      bool
+}
+
+func fetchTempIndexVals(
+	reorgCtx *ReorgContext,
+	store kv.Storage,
+	tbl table.Table,
+	idx *model.IndexInfo,
 	txn kv.Transaction,
-	taskRange reorgBackfillTask,
-) ([]*temporaryIndexRecord, kv.Key, bool, error) {
+	start, end kv.Key,
+	batchCnt int,
+	buffers *tempIdxBuffers,
+) (tempIdxResult, error) {
 	startTime := time.Now()
-	w.tmpIdxRecords = w.tmpIdxRecords[:0]
-	w.tmpIdxKeys = w.tmpIdxKeys[:0]
-	w.originIdxKeys = w.originIdxKeys[:0]
-	// taskDone means that the merged handle is out of taskRange.endHandle.
+	buffers.reset()
 	taskDone := false
 	oprStartTime := startTime
-	idxPrefix := w.table.IndexPrefix()
+	idxPrefix := tbl.IndexPrefix()
 	var lastKey kv.Key
-	err := iterateSnapshotKeys(w.jobContext, w.ddlCtx.store, taskRange.priority, idxPrefix, txn.StartTS(),
-		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
+	scanCnt := 0
+	err := iterateSnapshotKeys(reorgCtx, store, kv.PriorityLow, idxPrefix, txn.StartTS(),
+		start, end, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)
 			oprStartTime = oprEndTime
 
-			taskDone = indexKey.Cmp(taskRange.endKey) >= 0
+			taskDone = indexKey.Cmp(end) >= 0
 
-			if taskDone || len(w.tmpIdxRecords) >= w.batchCnt {
+			if taskDone || buffers.len() >= batchCnt {
 				return false, nil
-			}
-
-			if w.needValidateKey && w.prefixIsChanged(indexKey) {
-				skip, err := w.updateCurrentIndexInfo(indexKey)
-				if err != nil || skip {
-					return skip, err
-				}
 			}
 
 			tempIdxVal, err := tablecodec.DecodeTempIndexValue(rawValue)
 			if err != nil {
 				return false, err
 			}
-			tempIdxVal, err = decodeTempIndexHandleFromIndexKV(indexKey, tempIdxVal, len(w.currentIndex.Columns))
+			tempIdxVal, err = decodeTempIndexHandleFromIndexKV(indexKey, tempIdxVal, len(idx.Columns))
 			if err != nil {
 				return false, err
 			}
 
+			scanCnt += len(tempIdxVal)
 			tempIdxVal = tempIdxVal.FilterOverwritten()
 
 			// Extract the operations on the original index and replay them later.
@@ -370,28 +399,33 @@ func (w *mergeIndexWorker) fetchTempIndexVals(
 					idxRecord.vals = elem.Value
 					idxRecord.distinct = tablecodec.IndexKVIsUnique(elem.Value)
 				}
-				w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
-				w.originIdxKeys = append(w.originIdxKeys, originIdxKey)
-				w.tmpIdxKeys = append(w.tmpIdxKeys, indexKey)
+				buffers.add(idxRecord, originIdxKey, indexKey)
 			}
 
 			lastKey = indexKey
 			return true, nil
 		})
 
-	if len(w.tmpIdxRecords) == 0 {
-		taskDone = true
-	}
+	taskDone = buffers.len() == 0
 	var nextKey kv.Key
 	if taskDone {
-		nextKey = taskRange.endKey
+		nextKey = end
 	} else {
 		nextKey = lastKey
 	}
 
-	logutil.DDLLogger().Debug("merge temp index txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
-		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
-	return w.tmpIdxRecords, nextKey.Next(), taskDone, errors.Trace(err)
+	if logutil.DDLLogger().Level() == zapcore.DebugLevel {
+		logutil.DDLLogger().Debug("merge temp index txn fetches handle info",
+			zap.Uint64("txnStartTS", txn.StartTS()),
+			zap.String("start", hex.EncodeToString(start)),
+			zap.String("end", hex.EncodeToString(end)),
+			zap.Duration("takeTime", time.Since(startTime)))
+	}
+	return tempIdxResult{
+		scanCount: scanCnt,
+		nextKey:   nextKey.Next(),
+		done:      taskDone,
+	}, errors.Trace(err)
 }
 
 func decodeTempIndexHandleFromIndexKV(indexKey kv.Key, tmpVal tablecodec.TempIndexValue, idxColLen int) (ret tablecodec.TempIndexValue, err error) {

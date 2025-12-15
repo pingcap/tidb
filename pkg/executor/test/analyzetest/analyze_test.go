@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -43,6 +44,7 @@ import (
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -77,7 +79,7 @@ PARTITION BY RANGE ( a ) (
 		require.NoError(t, err)
 		handle := do.StatsHandle()
 		for _, def := range pi.Definitions {
-			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+			statsTbl := handle.GetPhysicalTableStats(def.ID, table.Meta())
 			require.False(t, statsTbl.Pseudo)
 			require.Equal(t, statsTbl.ColNum(), 3)
 			require.Equal(t, statsTbl.IdxNum(), 1)
@@ -104,7 +106,7 @@ PARTITION BY RANGE ( a ) (
 		require.NotNil(t, pi)
 
 		for i, def := range pi.Definitions {
-			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+			statsTbl := handle.GetPhysicalTableStats(def.ID, table.Meta())
 			if i == 0 {
 				require.False(t, statsTbl.Pseudo)
 				require.Equal(t, statsTbl.ColNum(), 3)
@@ -127,6 +129,7 @@ func TestAnalyzeReplicaReadFollower(t *testing.T) {
 	ctx.GetSessionVars().SetReplicaRead(kv.ReplicaReadFollower)
 	tk.MustExec("analyze table t")
 }
+
 func TestAnalyzeRestrict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -141,13 +144,16 @@ func TestAnalyzeRestrict(t *testing.T) {
 }
 
 func TestAnalyzeParameters(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
 	tk.MustExec("insert into t values (19), (19), (19)")
@@ -158,7 +164,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+	tbl := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col := tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 	require.Len(t, col.TopN.TopN, 1)
@@ -167,7 +173,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	require.Equal(t, int32(2048), width)
 
 	tk.MustExec("analyze table t with 4 buckets, 0 topn, 4 cmsketch width, 4 cmsketch depth")
-	tbl = dom.StatsHandle().GetTableStats(tableInfo)
+	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col = tbl.GetCol(1)
 	require.Equal(t, 4, col.Len())
 	require.Nil(t, col.TopN)
@@ -177,7 +183,7 @@ func TestAnalyzeParameters(t *testing.T) {
 
 	// Test very large cmsketch
 	tk.MustExec(fmt.Sprintf("analyze table t with %d cmsketch width, %d cmsketch depth", core.CMSketchSizeLimit, 1))
-	tbl = dom.StatsHandle().GetTableStats(tableInfo)
+	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col = tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 
@@ -188,7 +194,7 @@ func TestAnalyzeParameters(t *testing.T) {
 
 	// Test very large cmsketch
 	tk.MustExec("analyze table t with 20480 cmsketch width, 50 cmsketch depth")
-	tbl = dom.StatsHandle().GetTableStats(tableInfo)
+	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col = tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 	require.Len(t, col.TopN.TopN, 1)
@@ -214,7 +220,7 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+	tbl := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col1 := tbl.GetCol(1)
 	require.Equal(t, 0, col1.Len())
 	require.Equal(t, 0, col1.TopN.Num())
@@ -222,6 +228,9 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 }
 
 func TestFailedAnalyzeRequest(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -245,10 +254,10 @@ func TestExtractTopN(t *testing.T) {
 	tk.MustExec("drop table if exists test_extract_topn")
 	tk.MustExec("create table test_extract_topn(a int primary key, b int, index index_b(b))")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, %d)", i, i))
 	}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, 0)", i+10))
 	}
 	tk.MustExec("analyze table test_extract_topn")
@@ -256,7 +265,7 @@ func TestExtractTopN(t *testing.T) {
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test_extract_topn"), ast.NewCIStr("test_extract_topn"))
 	require.NoError(t, err)
 	tblInfo := table.Meta()
-	tblStats := dom.StatsHandle().GetTableStats(tblInfo)
+	tblStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	colStats := tblStats.GetCol(tblInfo.Columns[1].ID)
 	require.Len(t, colStats.TopN.TopN, 10)
 	item := colStats.TopN.TopN[0]
@@ -341,6 +350,9 @@ func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
 }
 
 func TestDefaultValForAnalyze(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version=1")
@@ -356,7 +368,7 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk.MustExec("use test_default_val_for_analyze")
 
 	tk.MustExec("create table t (a int, key(a));")
-	for i := 0; i < 256; i++ {
+	for range 256 {
 		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
 	for i := 1; i < 4; i++ {
@@ -371,12 +383,12 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk.MustExec("analyze table t with 0 topn, 2 buckets, 10000 samples")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 512.00 root  index:IndexRangeScan",
 		"└─IndexRangeScan 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
-	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 0.00 root  index:IndexRangeScan",
-		"└─IndexRangeScan 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 1.25 root  index:IndexRangeScan",
+		"└─IndexRangeScan 1.25 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, key(a));")
-	for i := 0; i < 256; i++ {
+	for range 256 {
 		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
 	for i := 1; i < 2049; i += 8 {
@@ -511,7 +523,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "220000", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t, reason to use this rate is \"use min(1, 110000/220000) as the sample-rate=0.5\"",
 	))
 	tk.MustExec("insert into t values(1),(1),(1)")
@@ -521,12 +532,14 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "3", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"",
 	))
 }
 
 func TestAnalyzeIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -556,26 +569,6 @@ func TestIssue20874(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))")
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
-	tk.MustExec("set @@tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 0 1 1 \x02\xd2 \x02\xd2 0",
-		"test t  a 0 1 2 1 \x0e\x0f \x0e\x0f 0",
-		"test t  a 0 2 3 1 \x0e3 \x0e3 0",
-		"test t  b 0 0 1 1 \x00A \x00A 0",
-		"test t  b 0 1 3 2 \x00C \x00C 0",
-		"test t  idxa 1 0 1 1 \x02\xd2 \x02\xd2 0",
-		"test t  idxa 1 1 2 1 \x0e\x0f \x0e\x0f 0",
-		"test t  idxa 1 2 3 1 \x0e3 \x0e3 0",
-		"test t  idxb 1 0 1 1 \x00A \x00A 0",
-		"test t  idxb 1 1 3 2 \x00C \x00C 0",
-	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 3 0 9 1 1",
-		"0 2 2 0 9 1 -0.5",
-		"1 1 3 0 0 1 0",
-		"1 2 2 0 0 1 0",
-	))
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
@@ -599,8 +592,10 @@ func TestIssue20874(t *testing.T) {
 }
 
 func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -646,8 +641,7 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 }
 
 func TestSmallTableAnalyzeV2(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -726,12 +720,12 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	}()
 	tk.MustExec("analyze table t with 1 topn, 2 buckets")
 	is := dom.InfoSchema()
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
 	col0 := tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 2, len(col0.Buckets))
@@ -750,7 +744,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
@@ -758,12 +752,12 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 
 	// manual analyze uses the table-level persisted options by merging the new options
 	tk.MustExec("analyze table t columns a,b with 1 samplerate, 3 buckets")
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 3, len(col0.Buckets))
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	col1 = tbl.GetCol(tableInfo.Columns[1].ID)
 	require.Equal(t, 1, len(col1.TopN.TopN))
@@ -782,7 +776,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustExec("set global tidb_persist_analyze_options = false")
 	// manual analyze will neither use the pre-persisted options nor persist new options
 	tk.MustExec("analyze table t with 2 topn")
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.NotEqual(t, 3, len(col0.Buckets))
@@ -822,7 +816,7 @@ PARTITION BY RANGE ( a ) (
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
-	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	lastVersion := p0.Version
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
@@ -836,8 +830,8 @@ PARTITION BY RANGE ( a ) (
 
 	// merge partition & table level options
 	tk.MustExec("analyze table t columns a,b with 0 topn, 2 buckets")
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	p0 = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
+	p1 := h.GetPhysicalTableStats(pi.Definitions[1].ID, tableInfo)
 	require.Greater(t, p0.Version, lastVersion)
 	lastVersion = p0.Version
 	require.Equal(t, 2, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
@@ -870,8 +864,8 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition only updates this partition, and set different collist
 	tk.MustExec("analyze table t partition p1 columns a,c with 1 buckets")
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	p1 = h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	p0 = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
+	p1 = h.GetPhysicalTableStats(pi.Definitions[1].ID, tableInfo)
 	require.Equal(t, p0.Version, lastVersion)
 	require.Greater(t, p1.Version, lastVersion)
 	lastVersion = p1.Version
@@ -896,7 +890,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition without options uses saved partition options
 	tk.MustExec("analyze table t partition p0")
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p0 = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	require.Greater(t, p0.Version, lastVersion)
 	lastVersion = p0.Version
 	require.Equal(t, 2, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
@@ -909,7 +903,7 @@ PARTITION BY RANGE ( a ) (
 
 	// merge options of statement's, partition's and table's
 	tk.MustExec("analyze table t partition p0 with 3 buckets")
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p0 = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	require.Greater(t, p0.Version, lastVersion)
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
@@ -929,7 +923,7 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, err)
 	tableInfo = table.Meta()
 	pi = tableInfo.GetPartitionInfo()
-	p2 := h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
+	p2 := h.GetPhysicalTableStats(pi.Definitions[2].ID, tableInfo)
 	require.Equal(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p2.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
@@ -945,12 +939,15 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
-
+	if kerneltype.IsNextGen() {
+		t.Log("analyze V1 cannot support in the next gen")
+		return
+	}
 	// set analyze version back to 1, will not use persisted
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t partition p2")
 	pi = tableInfo.GetPartitionInfo()
-	p2 = h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
+	p2 = h.GetPhysicalTableStats(pi.Definitions[2].ID, tableInfo)
 	require.NotEqual(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
 
 	// drop column
@@ -1019,8 +1016,8 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo1 := table1.Meta()
 	tableInfo2 := table2.Meta()
-	tblStats1 := h.GetTableStats(tableInfo1)
-	tblStats2 := h.GetTableStats(tableInfo2)
+	tblStats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
+	tblStats2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	tbl1Col0 := tblStats1.GetCol(tableInfo1.Columns[0].ID)
 	tbl2Col0 := tblStats2.GetCol(tableInfo2.Columns[0].ID)
 	require.Equal(t, 3, len(tbl1Col0.Buckets))
@@ -1077,7 +1074,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	tk.MustExec("analyze table t predicate columns")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tblStats := h.GetTableStats(tblInfo)
+	tblStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	lastVersion := tblStats.Version
 	// column b is analyzed
 	require.Greater(t, lastVersion, tblStats.GetCol(tblInfo.Columns[0].ID).LastUpdateVersion)
@@ -1090,7 +1087,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	// manually analyze uses the saved option(predicate columns).
 	tk.MustExec("analyze table t")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tblStats = h.GetTableStats(tblInfo)
+	tblStats = h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column b, c are analyzed
@@ -1103,7 +1100,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), is))
 	// auto analyze uses the saved option(predicate columns).
 	h.HandleAutoAnalyze()
-	tblStats = h.GetTableStats(tblInfo)
+	tblStats = h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column b, c are analyzed
@@ -1829,6 +1826,9 @@ func TestAnalyzeSampleRateReason(t *testing.T) {
 }
 
 func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1925,7 +1925,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	lastVersion := h.GetTableStats(tableInfo).Version
+	lastVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	jobInfo := "auto analyze "
@@ -1960,7 +1960,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
-			currentVersion := h.GetTableStats(tableInfo).Version
+			currentVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
 				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
@@ -1983,6 +1983,9 @@ func TestKillAutoAnalyze(t *testing.T) {
 }
 
 func TestKillAutoAnalyzeIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
@@ -2007,7 +2010,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	lastVersion := h.GetTableStats(tblInfo).Version
+	lastVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	const jobInfo = "auto analyze index idx"
@@ -2033,7 +2036,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
-			currentVersion := h.GetTableStats(tblInfo).Version
+			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
 				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
@@ -2211,7 +2214,7 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
-PARTITION BY RANGE ( a ) (
+		PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (20)
 )`
@@ -2233,9 +2236,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table only sets table options and gen globalStats
 	tk.MustExec("analyze table t columns a,c with 1 topn, 3 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
 	// both globalStats and partition stats generated and options saved for column a,c
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
@@ -2253,9 +2256,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table with persisted table-level options
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
@@ -2273,9 +2276,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table with merged table-level options
 	tk.MustExec("analyze table t with 2 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
@@ -2305,7 +2308,7 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
-PARTITION BY RANGE ( a ) (
+		PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (20)
 )`
@@ -2327,11 +2330,11 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition under static mode with options
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
-	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
+	p1 := h.GetPhysicalTableStats(pi.Definitions[1].ID, tableInfo)
 	lastVersion := tbl.Version
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
@@ -2352,9 +2355,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table in dynamic mode will ignore partition-level options and use default
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	p0, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[0].ID, true, 0)
@@ -2376,9 +2379,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode with specified options with old partition-level options
 	tk.MustExec("analyze table t columns b,d with 2 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[1].ID).Buckets))
@@ -2396,9 +2399,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode without options with old table-level & partition-level options
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
@@ -2406,9 +2409,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode with specified options with old table-level & partition-level options
 	tk.MustExec("analyze table t with 1 topn")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[1].ID).Buckets))
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
@@ -2468,7 +2471,7 @@ PARTITION BY RANGE ( a ) (
 	))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
 	require.NotEqual(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.NotEqual(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
@@ -2477,13 +2480,12 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/9) as the sample-rate=1\"",
 	))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion) // global stats updated
 }
 
 func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
@@ -2523,7 +2525,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
 
 	// analyze partition with existing stats of other partitions under dynamic
@@ -2555,18 +2557,21 @@ PARTITION BY RANGE ( a ) (
 	// flaky test, fix it later
 	//tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	//require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	//tbl := h.GetTableStats(tableInfo)
+	//tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	//require.Equal(t, 0, len(tbl.Columns))
 
 	// ignore both p0's 3 buckets, persisted-partition-options' 1 bucket, just use table-level 2 buckets
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 }
 
 func TestAnalyzePartitionUnderV1Dynamic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
@@ -2607,19 +2612,22 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 
 	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetIdx(tableInfo.Indices[0].ID).Buckets))
 }
 
 func TestIssue35056(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2812,7 +2820,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	stats := h.GetTableStats(tblInfo)
+	stats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.True(t, stats.GetCol(tblInfo.Columns[0].ID).IsStatsInitialized())
 	require.True(t, stats.GetCol(tblInfo.Columns[1].ID).IsStatsInitialized())
 	require.False(t, stats.GetCol(tblInfo.Columns[2].ID).IsStatsInitialized())
@@ -2923,7 +2931,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 			"char":     []string{"aaa", "cccccc", "eee", "asdf", "k!@cvd", "yuiop", "%*$%#@qwe"},
 		},
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		jsonValue := jsonData[i]
 		jsonValueStr, err := json.Marshal(jsonValue)
 		require.NoError(t, err)
@@ -3155,4 +3163,160 @@ func TestIssue55438(t *testing.T) {
 	tk.MustExec("CREATE TABLE t0(c0 NUMERIC , c1 BIGINT UNSIGNED  AS ((CASE 0 WHEN false THEN 1358571571 ELSE TRIM(c0) END )));")
 	tk.MustExec("CREATE INDEX i0 ON t0(c1);")
 	tk.MustExec("analyze table t0")
+}
+
+func TestIssue61609(t *testing.T) {
+	// Analyze table with only 1 sample (of 10 rows) - TopN result should multiply the 1 value by 10.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0),(0),(0);")
+
+	tk.MustExec("explain select * from t where a = 0")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
+	tk.MustExec("analyze table t with 1 topn, 1 samples")
+	tk.MustExec("explain select * from t where a = 0")
+
+	h := dom.StatsHandle()
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 0 10",
+	))
+}
+
+// TestGeneratedColumns verifies that statistics collection works correctly for generated columns and their indexes.
+//
+// | Type                                             | Stats Collected | Reason                                              |
+// |--------------------------------------------------|-----------------|-----------------------------------------------------|
+// | Base JSON column (data)                          | ✅ Yes          | Regular column (used by the generated columns)     |
+// | Virtual generated column                         | ❌ No           | Cannot evaluate expression on TiKV side            |
+// | Stored generated column                          | ✅ Yes          | Value is stored in TiKV                            |
+// | JSON column (not used by the generated columns)  | ❌ No           | Excluded by tidb_analyze_skip_column_types setting |
+// | Index on virtual column                          | ✅ Yes          | Index entries are stored in TiKV                   |
+// | Index on stored column                           | ✅ Yes          | Index entries are stored in TiKV                   |
+func TestGeneratedColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Create table with JSON column and generated columns
+	tk.MustExec(`CREATE TABLE test_gen_cols (
+		id INT PRIMARY KEY,
+		data JSON,
+		virtual_col VARCHAR(50) AS (JSON_UNQUOTE(JSON_EXTRACT(data, '$.name'))) VIRTUAL,
+		stored_col VARCHAR(50) AS (JSON_UNQUOTE(JSON_EXTRACT(data, '$.status'))) STORED,
+		json_but_not_used_by_generated_column JSON,
+		INDEX idx_virtual (virtual_col),
+		INDEX idx_stored (stored_col)
+	)`)
+
+	// Insert test data with simple JSON
+	tk.MustExec(`INSERT INTO test_gen_cols (id, data, json_but_not_used_by_generated_column) VALUES
+		(1, '{"name": "user1", "status": "active"}', '{"category": "admin", "level": 1}'),
+		(2, '{"name": "user2", "status": "inactive"}', '{"category": "user", "level": 2}'),
+		(3, '{"name": "user3", "status": "active"}', '{"category": "user", "level": 1}')`)
+
+	// Analyze the table
+	tk.MustExec("ANALYZE TABLE test_gen_cols")
+
+	h := dom.StatsHandle()
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_gen_cols"))
+	require.NoError(t, err)
+
+	// Get the table statistics
+	tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.NotNil(t, tblStats)
+	require.True(t, tblStats.IsAnalyzed())
+
+	// For the base column used by generated columns, we should collect statistics even it is not used by any indexes.
+	require.True(t, tblStats.GetCol(tbl.Meta().Columns[1].ID).IsAnalyzed())
+
+	// For virtual generated columns, we don't collect statistics because we cannot evaluate the expression on the TiKV side
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
+
+	// For stored generated columns, we collect statistics because the values are stored in TiKV
+	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
+
+	// For JSON columns that are not used by generated columns, we don't collect statistics because we exclude it by tidb_analyze_skip_column_types.
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[4].ID).IsAnalyzed())
+
+	// For indexes on generated columns, we collect statistics because index entries are stored in TiKV regardless of whether the column is virtual or stored
+	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed())
+	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[1].ID).IsAnalyzed())
+}
+
+// TestSkipStatsForGeneratedColumnsOnSkippedColumns verifies that when we skip JSON columns, the generated columns that depend on them are also skipped.
+// See: https://github.com/pingcap/tidb/issues/62465
+func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Create table with JSON column and generated columns
+	tk.MustExec(`CREATE TABLE test_gen_cols (
+		id INT PRIMARY KEY,
+		data JSON,
+		virtual_col VARCHAR(50) AS (JSON_UNQUOTE(JSON_EXTRACT(data, '$.name'))) VIRTUAL,
+		stored_col VARCHAR(50) AS (JSON_UNQUOTE(JSON_EXTRACT(data, '$.status'))) STORED
+	)`)
+	// Insert test data with simple JSON
+	tk.MustExec(`INSERT INTO test_gen_cols (id, data) VALUES
+		(1, '{"name": "user1", "status": "active"}'),
+		(2, '{"name": "user2", "status": "inactive"}'),
+		(3, '{"name": "user3", "status": "active"}')`)
+
+	// Explicitly set tidb_analyze_skip_column_types to skip JSON columns
+	tk.MustExec("set @@tidb_analyze_skip_column_types = 'json, text, blob'")
+	// Check tidb_analyze_skip_column_types setting
+	tk.MustQuery("select @@tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
+	// Analyze the table with all columns
+	tk.MustExec("ANALYZE TABLE test_gen_cols all columns")
+	h := dom.StatsHandle()
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_gen_cols"))
+	require.NoError(t, err)
+	// Get the table statistics
+	tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.NotNil(t, tblStats)
+	require.True(t, tblStats.IsAnalyzed())
+	// For JSON column, it should not collect statistics because we skip it
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[1].ID).IsAnalyzed())
+	// For virtual generated columns, because it depends on the skipped JSON column, we also skip it
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
+	// For stored columns, because it depends on the skipped JSON column, we also skip it
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
+
+	// Test the predicate columns.
+	tk.MustExec("select * from test_gen_cols where virtual_col = 'a' and stored_col = 'b'")
+	require.NoError(t, h.DumpColStatsUsageToKV())
+	// Check the predicate columns collection.
+	rows := tk.MustQuery("show column_stats_usage where table_name = 'test_gen_cols'").Rows()
+	require.Len(t, rows, 3)
+	require.Equal(t, "id", rows[0][3])
+	require.Equal(t, "virtual_col", rows[1][3])
+	require.Equal(t, "stored_col", rows[2][3])
+
+	tk.MustExec("ANALYZE TABLE test_gen_cols")
+	tblStats = h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.NotNil(t, tblStats)
+	require.True(t, tblStats.IsAnalyzed())
+	// For JSON column, it should not collect statistics because we skip it
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[1].ID).IsAnalyzed())
+	// For virtual generated columns, because it depends on the skipped JSON column, we also skip it
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
+	// For stored columns, because it depends on the skipped JSON column, we also skip it
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
+
+	// Remove the skip setting and re-analyze
+	tk.MustExec("set @@tidb_analyze_skip_column_types = 'text, blob'")
+	tk.MustQuery("select @@tidb_analyze_skip_column_types").Check(testkit.Rows("text,blob"))
+	tk.MustExec("ANALYZE TABLE test_gen_cols")
+	tblStats = h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.NotNil(t, tblStats)
+	require.True(t, tblStats.IsAnalyzed())
+	// For JSON column, it should be analyzed now
+	require.True(t, tblStats.GetCol(tbl.Meta().Columns[1].ID).IsAnalyzed())
+	// For virtual generated columns, we still could not collect statistics because we couldn't evaluate the expression on the TiKV side
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
+	// For stored columns, we can collect statistics because the values are stored in TiKV
+	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
 }

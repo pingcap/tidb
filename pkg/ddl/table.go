@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"go.uber.org/zap"
@@ -577,11 +577,11 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		}
 	})
 
-	var partitions []model.PartitionDefinition
-	if pi := tblInfo.GetPartitionInfo(); pi != nil {
-		partitions = tblInfo.GetPartitionInfo().Definitions
+	var scatterScope string
+	if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
+		scatterScope = val
 	}
-	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions)
+	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -1090,15 +1090,17 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 	}
 
 	// Ban setting replica count for tables in system database.
-	if tidbutil.IsMemOrSysDB(job.SchemaName) {
+	if metadef.IsMemOrSysDB(job.SchemaName) {
 		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
+	// Check the validity of the replica count. For example, not exceeding the tiflash store count.
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
 	// We should check this first, in order to avoid creating redundant DDL jobs.
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		logutil.DDLLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
@@ -1119,11 +1121,21 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 		}
 	}
 
-	available := false
-	if tblInfo.TiFlashReplica != nil {
-		available = tblInfo.TiFlashReplica.Available
-	}
 	if replicaInfo.Count > 0 {
+		available := false
+		if args.ResetAvailable {
+			// Reset the available field to false. This is required when fixing the placement rules after native BR.
+			// Because the `available` field may be true after native BR restore, but the user should wait before
+			// TiFlash peers are rebuilt.
+			available = false
+		} else if tblInfo.TiFlashReplica != nil {
+			// If there is already TiFlash replica info, we should keep the Available field.
+			// For example, during the process of increasing the number of TiFlash replicas from 2 to 3,
+			// or decreasing it from 3 to 2, if the `available` field of the original TiFlash replica
+			// is already `True`, its value remains unchanged. In this case, the optimizer can still choose
+			// to route queries to TiFlash for execution, avoiding any impact on service continuity.
+			available = tblInfo.TiFlashReplica.Available
+		}
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:          replicaInfo.Count,
 			LocationLabels: replicaInfo.Labels,
@@ -1582,10 +1594,9 @@ func onAlterTablePlacement(jobCtx *jobContext, job *model.Job) (ver int64, err e
 	return ver, nil
 }
 
-func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName string) (string, []string, []string, map[string]*label.Rule, error) {
-	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
-	oldRuleIDs := []string{tableRuleID}
-	var partRuleIDs []string
+func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName string) (tableRuleID string, partRuleIDs, oldRuleIDs []string, oldRules map[string]*label.Rule, err error) {
+	tableRuleID = fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
+	oldRuleIDs = []string{tableRuleID}
 	if tblInfo.GetPartitionInfo() != nil {
 		for _, def := range tblInfo.GetPartitionInfo().Definitions {
 			partRuleIDs = append(partRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L))
@@ -1593,7 +1604,7 @@ func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName stri
 	}
 
 	oldRuleIDs = append(oldRuleIDs, partRuleIDs...)
-	oldRules, err := infosync.GetLabelRules(context.TODO(), oldRuleIDs)
+	oldRules, err = infosync.GetLabelRules(context.TODO(), oldRuleIDs)
 	return tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err
 }
 
@@ -1699,4 +1710,68 @@ func onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err err
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("alter table no cache", tbInfo.TableCacheStatusType.String())
 	}
 	return ver, err
+}
+
+func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, err = model.GetRefreshMetaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	// update schema version
+	ver, err = updateSchemaVersion(jobCtx, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
+	return ver, nil
+}
+
+func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetAlterTableAffinityArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err = validateTableAffinity(tblInfo, args.Affinity); err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	tblInfo.Affinity = args.Affinity
+
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if err = updateTableAffinityGroupInPD(tblInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func updateTableAffinityGroupInPD(tblInfo *model.TableInfo) error {
+	affinityLevel := ""
+	if tblInfo.Affinity != nil {
+		affinityLevel = tblInfo.Affinity.Level
+	}
+
+	// TODO: implement it
+	logutil.DDLLogger().Warn(
+		"updateTableAffinityGroupInPD is skipped because it has not been implemented yet",
+		zap.Int64("tableID", tblInfo.ID),
+		zap.String("tableName", tblInfo.Name.O),
+		zap.String("affinity", affinityLevel),
+	)
+	return nil
 }

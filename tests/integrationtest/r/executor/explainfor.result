@@ -1,59 +1,59 @@
-desc format='brief' select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:tidb_query_duration	PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s
-desc format='brief' select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:up	PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s
-desc format='brief' select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:CLUSTER_LOG	start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13
-desc format='brief' select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:CLUSTER_LOG	start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, log_levels:["error","warn"]
-desc format='brief' select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:CLUSTER_LOG	start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]
-desc format='brief' select * from information_schema.slow_query;
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:SLOW_QUERY	only search in the current 'tidb-slow.log' file
-desc format='brief' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:SLOW_QUERY	start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000
+explain format='plan_tree' select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
+id	task	access object	operator info
+MemTableScan	root	table:tidb_query_duration	PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s
+explain format='plan_tree' select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
+id	task	access object	operator info
+MemTableScan	root	table:up	PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s
+explain format='plan_tree' select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	task	access object	operator info
+MemTableScan	root	table:CLUSTER_LOG	start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13
+explain format='plan_tree' select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	task	access object	operator info
+MemTableScan	root	table:CLUSTER_LOG	start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, log_levels:["error","warn"]
+explain format='plan_tree' select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	task	access object	operator info
+MemTableScan	root	table:CLUSTER_LOG	start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]
+explain format='plan_tree' select * from information_schema.slow_query;
+id	task	access object	operator info
+MemTableScan	root	table:SLOW_QUERY	only search in the current 'tidb-slow.log' file
+explain format='plan_tree' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	task	access object	operator info
+MemTableScan	root	table:SLOW_QUERY	start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000
 set @@time_zone = '+00:00';
-desc format='brief' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:SLOW_QUERY	start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000
+explain format='plan_tree' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	task	access object	operator info
+MemTableScan	root	table:SLOW_QUERY	start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000
 set @@time_zone = default;
-desc format='brief' select * from information_schema.cluster_config where type in ('tikv', 'tidb');
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:CLUSTER_CONFIG	node_types:["tidb","tikv"]
-desc format='brief' select * from information_schema.cluster_config where instance='192.168.1.7:2379';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:CLUSTER_CONFIG	instances:["192.168.1.7:2379"]
-desc format='brief' select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:CLUSTER_CONFIG	node_types:["tidb"], instances:["192.168.1.7:2379"]
-desc format='brief' select * from information_schema.inspection_result where rule = 'ddl' and rule = 'config';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:INSPECTION_RESULT	skip_inspection:true
-desc format='brief' select * from information_schema.inspection_result where rule in ('ddl', 'config');
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:INSPECTION_RESULT	rules:["config","ddl"], items:[]
-desc format='brief' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool');
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:INSPECTION_RESULT	rules:[], items:["ddl.lease","raftstore.threadpool"]
-desc format='brief' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config');
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:INSPECTION_RESULT	rules:["config","ddl"], items:["ddl.lease","raftstore.threadpool"]
-desc format='brief' select * from information_schema.inspection_rules where type='inspection';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:INSPECTION_RULES	node_types:["inspection"]
-desc format='brief' select * from information_schema.inspection_rules where type='inspection' or type='summary';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:INSPECTION_RULES	node_types:["inspection","summary"]
-desc format='brief' select * from information_schema.inspection_rules where type='inspection' and type='summary';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:INSPECTION_RULES	skip_request: true
+explain format='plan_tree' select * from information_schema.cluster_config where type in ('tikv', 'tidb');
+id	task	access object	operator info
+MemTableScan	root	table:CLUSTER_CONFIG	node_types:["tidb","tikv"]
+explain format='plan_tree' select * from information_schema.cluster_config where instance='192.168.1.7:2379';
+id	task	access object	operator info
+MemTableScan	root	table:CLUSTER_CONFIG	instances:["192.168.1.7:2379"]
+explain format='plan_tree' select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379';
+id	task	access object	operator info
+MemTableScan	root	table:CLUSTER_CONFIG	node_types:["tidb"], instances:["192.168.1.7:2379"]
+explain format='plan_tree' select * from information_schema.inspection_result where rule = 'ddl' and rule = 'config';
+id	task	access object	operator info
+MemTableScan	root	table:INSPECTION_RESULT	skip_inspection:true
+explain format='plan_tree' select * from information_schema.inspection_result where rule in ('ddl', 'config');
+id	task	access object	operator info
+MemTableScan	root	table:INSPECTION_RESULT	rules:["config","ddl"], items:[]
+explain format='plan_tree' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool');
+id	task	access object	operator info
+MemTableScan	root	table:INSPECTION_RESULT	rules:[], items:["ddl.lease","raftstore.threadpool"]
+explain format='plan_tree' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config');
+id	task	access object	operator info
+MemTableScan	root	table:INSPECTION_RESULT	rules:["config","ddl"], items:["ddl.lease","raftstore.threadpool"]
+explain format='plan_tree' select * from information_schema.inspection_rules where type='inspection';
+id	task	access object	operator info
+MemTableScan	root	table:INSPECTION_RULES	node_types:["inspection"]
+explain format='plan_tree' select * from information_schema.inspection_rules where type='inspection' or type='summary';
+id	task	access object	operator info
+MemTableScan	root	table:INSPECTION_RULES	node_types:["inspection","summary"]
+explain format='plan_tree' select * from information_schema.inspection_rules where type='inspection' and type='summary';
+id	task	access object	operator info
+MemTableScan	root	table:INSPECTION_RULES	skip_request: true
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists t;
 create table t(a int, b int, c int generated always as (a+b) stored);
@@ -72,87 +72,87 @@ insert into t(a,b,c) values(3,3,3);
 Error 3105 (HY000): The value specified for generated column 'c' in table 't' is not allowed.
 rollback;
 set tidb_enable_prepared_plan_cache=default;
-desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLE_STORAGE_STATS	schema:["information_schema"]
-desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLE_STORAGE_STATS	table:["schemata"]
-desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLE_STORAGE_STATS	schema:["information_schema"], table:["schemata"]
-desc format='brief' select * from information_schema.inspection_summary where rule='ddl';
-id	estRows	task	access object	operator info
-Selection	8000.00	root		eq(Column#1, "ddl")
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl"]
-desc format='brief' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config';
-id	estRows	task	access object	operator info
-Selection	8000.00	root		or(eq("ddl", Column#1), eq(Column#1, "config"))
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config","ddl"]
-desc format='brief' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query';
-id	estRows	task	access object	operator info
-Selection	8000.00	root		or(eq("ddl", Column#1), or(eq(Column#1, "config"), eq(Column#1, "slow_query")))
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config","ddl","slow_query"]
-desc format='brief' select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1');
-id	estRows	task	access object	operator info
-Selection	8000.00	root		or(eq(Column#1, "config"), eq(Column#1, "slow_query")), or(eq(Column#3, "metric_name3"), eq(Column#3, "metric_name1"))
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config","slow_query"], metric_names:["metric_name1","metric_name3"]
-desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query');
-id	estRows	task	access object	operator info
-Selection	8000.00	root		in(Column#1, "ddl", "slow_query")
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"]
-desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1';
-id	estRows	task	access object	operator info
-Selection	8000.00	root		eq(Column#3, "metric_name1"), in(Column#1, "ddl", "slow_query")
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"], metric_names:["metric_name1"]
-desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2');
-id	estRows	task	access object	operator info
-Selection	8000.00	root		in(Column#1, "ddl", "slow_query"), in(Column#3, "metric_name1", "metric_name2")
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"], metric_names:["metric_name1","metric_name2"]
-desc format='brief' select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2');
-id	estRows	task	access object	operator info
-Selection	8000.00	root		eq(Column#1, "ddl"), in(Column#3, "metric_name1", "metric_name2")
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl"], metric_names:["metric_name1","metric_name2"]
-desc format='brief' select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3';
-id	estRows	task	access object	operator info
-Selection	8000.00	root		eq(Column#1, "ddl"), eq(Column#3, "metric_NAME3")
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl"], metric_names:["metric_name3"]
-desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config');
-id	estRows	task	access object	operator info
-Selection	8000.00	root		in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config")
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config"]
-desc format='brief' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90);
-id	estRows	task	access object	operator info
-Selection	8000.00	root		in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name4")
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config"], metric_names:["metric_name4"], quantiles:[0.800000,0.900000]
-desc format='brief' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3');
-id	estRows	task	access object	operator info
-Selection	8000.00	root		in(Column#3, "metric_name1", "metric_name3"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name1"), in(Column#3, "metric_name5", "metric_name4")
-└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	skip_inspection: true
-desc format='brief' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TIFLASH_TABLES	tiflash_instances:["192.168.1.7:3930"]
-desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TIFLASH_SEGMENTS	tiflash_instances:["192.168.1.7:3930"]
-desc format='brief' select * from information_schema.TIFLASH_TABLES where TIDB_DATABASE = 'test';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TIFLASH_TABLES	tidb_databases:["test"]
-desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIDB_DATABASE = 'test';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TIFLASH_SEGMENTS	tidb_databases:["test"]
-desc format='brief' select * from information_schema.TIFLASH_TABLES where TIDB_TABLE = 't';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TIFLASH_TABLES	tidb_tables:["t"]
-desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIDB_TABLE = 't';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TIFLASH_SEGMENTS	tidb_tables:["t"]
-desc format='brief' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TIFLASH_TABLES	tiflash_instances:["192.168.1.7:3930"], tidb_databases:["test"], tidb_tables:["t"]
-desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TIFLASH_SEGMENTS	tiflash_instances:["192.168.1.7:3930"], tidb_databases:["test"], tidb_tables:["t"]
+explain format='plan_tree' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';
+id	task	access object	operator info
+MemTableScan	root	table:TABLE_STORAGE_STATS	schema:["information_schema"]
+explain format='plan_tree' select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata';
+id	task	access object	operator info
+MemTableScan	root	table:TABLE_STORAGE_STATS	table:["schemata"]
+explain format='plan_tree' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata';
+id	task	access object	operator info
+MemTableScan	root	table:TABLE_STORAGE_STATS	schema:["information_schema"], table:["schemata"]
+explain format='plan_tree' select * from information_schema.inspection_summary where rule='ddl';
+id	task	access object	operator info
+Selection	root		eq(Column#1, "ddl")
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl"]
+explain format='plan_tree' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config';
+id	task	access object	operator info
+Selection	root		or(eq("ddl", Column#1), eq(Column#1, "config"))
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config","ddl"]
+explain format='plan_tree' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query';
+id	task	access object	operator info
+Selection	root		or(eq("ddl", Column#1), or(eq(Column#1, "config"), eq(Column#1, "slow_query")))
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config","ddl","slow_query"]
+explain format='plan_tree' select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1');
+id	task	access object	operator info
+Selection	root		or(eq(Column#1, "config"), eq(Column#1, "slow_query")), or(eq(Column#3, "metric_name3"), eq(Column#3, "metric_name1"))
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config","slow_query"], metric_names:["metric_name1","metric_name3"]
+explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query');
+id	task	access object	operator info
+Selection	root		in(Column#1, "ddl", "slow_query")
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"]
+explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1';
+id	task	access object	operator info
+Selection	root		eq(Column#3, "metric_name1"), in(Column#1, "ddl", "slow_query")
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"], metric_names:["metric_name1"]
+explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2');
+id	task	access object	operator info
+Selection	root		in(Column#1, "ddl", "slow_query"), in(Column#3, "metric_name1", "metric_name2")
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"], metric_names:["metric_name1","metric_name2"]
+explain format='plan_tree' select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2');
+id	task	access object	operator info
+Selection	root		eq(Column#1, "ddl"), in(Column#3, "metric_name1", "metric_name2")
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl"], metric_names:["metric_name1","metric_name2"]
+explain format='plan_tree' select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3';
+id	task	access object	operator info
+Selection	root		eq(Column#1, "ddl"), eq(Column#3, "metric_NAME3")
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["ddl"], metric_names:["metric_name3"]
+explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config');
+id	task	access object	operator info
+Selection	root		in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config")
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config"]
+explain format='plan_tree' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90);
+id	task	access object	operator info
+Selection	root		in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name4")
+└─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config"], metric_names:["metric_name4"], quantiles:[0.800000,0.900000]
+explain format='plan_tree' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3');
+id	task	access object	operator info
+Selection	root		in(Column#3, "metric_name1", "metric_name3"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name1"), in(Column#3, "metric_name5", "metric_name4")
+└─MemTableScan	root	table:INSPECTION_SUMMARY	skip_inspection: true
+explain format='plan_tree' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930';
+id	task	access object	operator info
+MemTableScan	root	table:TIFLASH_TABLES	tiflash_instances:["192.168.1.7:3930"]
+explain format='plan_tree' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930';
+id	task	access object	operator info
+MemTableScan	root	table:TIFLASH_SEGMENTS	tiflash_instances:["192.168.1.7:3930"]
+explain format='plan_tree' select * from information_schema.TIFLASH_TABLES where TIDB_DATABASE = 'test';
+id	task	access object	operator info
+MemTableScan	root	table:TIFLASH_TABLES	tidb_databases:["test"]
+explain format='plan_tree' select * from information_schema.TIFLASH_SEGMENTS where TIDB_DATABASE = 'test';
+id	task	access object	operator info
+MemTableScan	root	table:TIFLASH_SEGMENTS	tidb_databases:["test"]
+explain format='plan_tree' select * from information_schema.TIFLASH_TABLES where TIDB_TABLE = 't';
+id	task	access object	operator info
+MemTableScan	root	table:TIFLASH_TABLES	tidb_tables:["t"]
+explain format='plan_tree' select * from information_schema.TIFLASH_SEGMENTS where TIDB_TABLE = 't';
+id	task	access object	operator info
+MemTableScan	root	table:TIFLASH_SEGMENTS	tidb_tables:["t"]
+explain format='plan_tree' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
+id	task	access object	operator info
+MemTableScan	root	table:TIFLASH_TABLES	tiflash_instances:["192.168.1.7:3930"], tidb_databases:["test"], tidb_tables:["t"]
+explain format='plan_tree' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
+id	task	access object	operator info
+MemTableScan	root	table:TIFLASH_SEGMENTS	tiflash_instances:["192.168.1.7:3930"], tidb_databases:["test"], tidb_tables:["t"]
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
 drop table if exists t1, t2;
@@ -533,12 +533,12 @@ CREATE TABLE t12(a INT, b INT);
 CREATE TABLE t97(a INT, b INT UNIQUE NOT NULL);
 EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;
 id	estRows	task	access object	operator info
-TableReader_7	10000.00	root		data:TableFullScan_6
-└─TableFullScan_6	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
+TableReader_8	10000.00	root		data:TableFullScan_7
+└─TableFullScan_7	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
 EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;
 id	estRows	task	access object	operator info
-TableReader_7	10000.00	root		data:TableFullScan_6
-└─TableFullScan_6	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
+TableReader_8	10000.00	root		data:TableFullScan_7
+└─TableFullScan_7	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
 drop table if exists t;
@@ -837,60 +837,60 @@ drop table if exists t;
 create table t(a int);
 drop table if exists r;
 create table r(a int);
-desc format='brief' select * from information_schema.tables where table_name='t';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLES	table_name:["t"]
-desc format='brief' select * from information_schema.tables where lower(table_name)='t';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLES	table_name:["t"]
-desc format='brief' select * from information_schema.tables where upper(table_name)=upper('t');
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLES	table_name:["t"]
-desc format='brief' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]
-desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_name='t';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	table_name:["t"]
-desc format='brief' select * from information_schema.STATISTICS where table_name='t';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATISTICS	table_name:["t"]
-desc format='brief' select * from information_schema.STATISTICS where table_name='t' and table_name='r';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATISTICS	skip_request:true
-desc format='brief' select * from information_schema.STATISTICS where table_name='t' or table_name='r';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATISTICS	table_name:["r","t"]
-desc format='brief' select * from information_schema.tables where table_schema='t';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLES	table_schema:["t"]
-desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_schema='s1';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	table_schema:["s1"]
-desc format='brief' select * from information_schema.STATISTICS where table_schema='s1';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATISTICS	table_schema:["s1"]
-desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' and table_schema='test';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATISTICS	skip_request:true
-desc format='brief' select * from information_schema.STATISTICS where table_name='s1' and table_schema='test';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATISTICS	table_name:["s1"], table_schema:["test"]
-desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' or table_schema='test';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:STATISTICS	table_schema:["s1","test"]
-desc format='brief' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
-id	estRows	task	access object	operator info
-Projection	10000.00	root		Column#8->Column#19
-└─Sort	10000.00	root		Column#7
-  └─MemTableScan	10000.00	root	table:STATISTICS	index_name:["idx1"], table_name:["t"], table_schema:["plan_cache"]
-desc format='brief' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
-id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLES	table_name:["t"], table_schema:["plan_cache"]
-desc format='brief' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';
-id	estRows	task	access object	operator info
-Projection	8000.00	root		Column#2, Column#3, Column#1, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9, Column#10, Column#11, Column#12, Column#15, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23
-└─HashJoin	8000.00	root		inner join, equal:[eq(Column#3, Column#14)]
-  ├─Selection(Build)	8000.00	root		ne(Column#23, "t")
-  │ └─MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	constraint_schema:["plan_cache"], table_name:["t"], table_schema:["plan_cache"]
-  └─MemTableScan(Probe)	10000.00	root	table:REFERENTIAL_CONSTRAINTS	constraint_schema:["plan_cache"], table_name:["t"]
+explain format='plan_tree' select * from information_schema.tables where table_name='t';
+id	task	access object	operator info
+MemTableScan	root	table:TABLES	table_name:["t"]
+explain format='plan_tree' select * from information_schema.tables where lower(table_name)='t';
+id	task	access object	operator info
+MemTableScan	root	table:TABLES	table_name:["t"]
+explain format='plan_tree' select * from information_schema.tables where upper(table_name)=upper('t');
+id	task	access object	operator info
+MemTableScan	root	table:TABLES	table_name:["t"]
+explain format='plan_tree' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
+id	task	access object	operator info
+MemTableScan	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]
+explain format='plan_tree' select * from information_schema.KEY_COLUMN_USAGE where table_name='t';
+id	task	access object	operator info
+MemTableScan	root	table:KEY_COLUMN_USAGE	table_name:["t"]
+explain format='plan_tree' select * from information_schema.STATISTICS where table_name='t';
+id	task	access object	operator info
+MemTableScan	root	table:STATISTICS	table_name:["t"]
+explain format='plan_tree' select * from information_schema.STATISTICS where table_name='t' and table_name='r';
+id	task	access object	operator info
+MemTableScan	root	table:STATISTICS	skip_request:true
+explain format='plan_tree' select * from information_schema.STATISTICS where table_name='t' or table_name='r';
+id	task	access object	operator info
+MemTableScan	root	table:STATISTICS	table_name:["r","t"]
+explain format='plan_tree' select * from information_schema.tables where table_schema='t';
+id	task	access object	operator info
+MemTableScan	root	table:TABLES	table_schema:["t"]
+explain format='plan_tree' select * from information_schema.KEY_COLUMN_USAGE where table_schema='s1';
+id	task	access object	operator info
+MemTableScan	root	table:KEY_COLUMN_USAGE	table_schema:["s1"]
+explain format='plan_tree' select * from information_schema.STATISTICS where table_schema='s1';
+id	task	access object	operator info
+MemTableScan	root	table:STATISTICS	table_schema:["s1"]
+explain format='plan_tree' select * from information_schema.STATISTICS where table_schema='s1' and table_schema='test';
+id	task	access object	operator info
+MemTableScan	root	table:STATISTICS	skip_request:true
+explain format='plan_tree' select * from information_schema.STATISTICS where table_name='s1' and table_schema='test';
+id	task	access object	operator info
+MemTableScan	root	table:STATISTICS	table_name:["s1"], table_schema:["test"]
+explain format='plan_tree' select * from information_schema.STATISTICS where table_schema='s1' or table_schema='test';
+id	task	access object	operator info
+MemTableScan	root	table:STATISTICS	table_schema:["s1","test"]
+explain format='plan_tree' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
+id	task	access object	operator info
+Projection	root		Column#8->Column#19
+└─Sort	root		Column#7
+  └─MemTableScan	root	table:STATISTICS	index_name:["idx1"], table_name:["t"], table_schema:["plan_cache"]
+explain format='plan_tree' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
+id	task	access object	operator info
+MemTableScan	root	table:TABLES	table_name:["t"], table_schema:["plan_cache"]
+explain format='plan_tree' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';
+id	task	access object	operator info
+Projection	root		Column#2, Column#3, Column#1, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9, Column#10, Column#11, Column#12, Column#15, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23
+└─HashJoin	root		inner join, equal:[eq(Column#3, Column#14) eq(Column#2, Column#13)]
+  ├─Selection(Build)	root		ne(Column#23, "t")
+  │ └─MemTableScan	root	table:KEY_COLUMN_USAGE	constraint_schema:["plan_cache"], table_name:["t"], table_schema:["plan_cache"]
+  └─MemTableScan(Probe)	root	table:REFERENTIAL_CONSTRAINTS	constraint_schema:["plan_cache"], table_name:["t"]

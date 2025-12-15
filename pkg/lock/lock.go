@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/lock/context"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util"
 )
 
 // Checker uses to check tables lock.
@@ -47,7 +47,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	// System DB and memory DB are not support table lock.
-	if util.IsMemOrSysDB(db) {
+	if metadef.IsMemOrSysDB(db) {
 		return nil
 	}
 	// check operation on database.

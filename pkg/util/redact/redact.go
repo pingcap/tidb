@@ -22,7 +22,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/gogo/protobuf/proto"
@@ -33,13 +32,6 @@ import (
 
 var (
 	_ fmt.Stringer = redactStringer{}
-
-	reAccessKey       = regexp.MustCompile(`access_key:\"[^\"]*\"`)
-	reSecretAccessKey = regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
-	reSharedKey       = regexp.MustCompile(`shared_key:\"[^\"]*\"`)
-	reCredentialsBlob = regexp.MustCompile(`credentials_blob:\"[^\"]*\"`)
-	reAccessSig       = regexp.MustCompile(`access_sig:\"[^\"]*\"`)
-	reEncryptKey      = regexp.MustCompile(`encryption_key:<.*?>`)
 )
 
 // String will redact the input string according to 'mode'. Check 'tidb_redact_log': https://github.com/pingcap/tidb/blob/acf9e3128693a5a13f31027f05f4de41edf8d7b2/pkg/sessionctx/variable/sysvar.go#L2154.

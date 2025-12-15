@@ -17,7 +17,6 @@ package plugin_test
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -689,7 +688,7 @@ func TestAuditLogNormal(t *testing.T) {
 		}
 		testResults = append(testResults, audit)
 	}
-	loadPlugin(t, onGeneralEvent)
+	plugin.LoadPluginForTest(t, onGeneralEvent)
 	defer plugin.Shutdown(context.Background())
 
 	require.NoError(t, conn.HandleQuery(context.Background(), "use test"))
@@ -729,57 +728,4 @@ func TestAuditLogNormal(t *testing.T) {
 			require.Equal(t, plugin.Completed, result.event, errMsg)
 		}
 	}
-}
-
-func loadPlugin(t *testing.T, onGeneralEvent func(context.Context, *variable.SessionVars, plugin.GeneralEvent, string)) {
-	ctx := context.Background()
-	pluginName := "audit_test"
-	pluginVersion := uint16(1)
-	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
-
-	cfg := plugin.Config{
-		Plugins:    []string{pluginSign},
-		PluginDir:  "",
-		EnvVersion: map[string]uint16{"go": 1112},
-	}
-
-	validate := func(ctx context.Context, manifest *plugin.Manifest) error {
-		return nil
-	}
-	onInit := func(ctx context.Context, manifest *plugin.Manifest) error {
-		return nil
-	}
-	onShutdown := func(ctx context.Context, manifest *plugin.Manifest) error {
-		return nil
-	}
-	onConnectionEvent := func(ctx context.Context, event plugin.ConnectionEvent, info *variable.ConnectionInfo) error {
-		return nil
-	}
-
-	// setup load test hook.
-	loadOne := func(p *plugin.Plugin, dir string, pluginID plugin.ID) (manifest func() *plugin.Manifest, err error) {
-		return func() *plugin.Manifest {
-			m := &plugin.AuditManifest{
-				Manifest: plugin.Manifest{
-					Kind:       plugin.Audit,
-					Name:       pluginName,
-					Version:    pluginVersion,
-					OnInit:     onInit,
-					OnShutdown: onShutdown,
-					Validate:   validate,
-				},
-				OnGeneralEvent:    onGeneralEvent,
-				OnConnectionEvent: onConnectionEvent,
-			}
-			return plugin.ExportManifest(m)
-		}, nil
-	}
-	plugin.SetTestHook(loadOne)
-
-	// trigger load.
-	err := plugin.Load(ctx, cfg)
-	require.NoErrorf(t, err, "load plugin [%s] fail, error [%s]\n", pluginSign, err)
-
-	err = plugin.Init(ctx, cfg)
-	require.NoErrorf(t, err, "init plugin [%s] fail, error [%s]\n", pluginSign, err)
 }

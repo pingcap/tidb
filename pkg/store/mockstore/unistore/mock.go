@@ -20,13 +20,19 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	usconf "github.com/pingcap/tidb/pkg/store/mockstore/unistore/config"
 	ussvr "github.com/pingcap/tidb/pkg/store/mockstore/unistore/server"
 	pd "github.com/tikv/pd/client"
 )
 
 // New creates an embed unistore client, pd client and cluster handler.
-func New(path string, pdAddrs []string) (*RPCClient, pd.Client, *Cluster, error) {
+func New(
+	path string,
+	pdAddrs []string,
+	currentKeyspaceID uint32,
+	clusterKeyspaces []*keyspacepb.KeyspaceMeta,
+) (*RPCClient, pd.Client, *Cluster, error) {
 	persistent := true
 	if path == "" {
 		var err error
@@ -70,7 +76,7 @@ func New(path string, pdAddrs []string) (*RPCClient, pd.Client, *Cluster, error)
 		rawHandler: newRawHandler(),
 	}
 	srv.RPCClient = client
-	pdClient := newPDClient(pd, pdAddrs)
+	pdClient := newPDClient(pd, pdAddrs, currentKeyspaceID, clusterKeyspaces)
 
 	return client, pdClient, cluster, nil
 }

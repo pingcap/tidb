@@ -22,11 +22,15 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // CancelTask cancels task.
 func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
@@ -53,6 +57,9 @@ func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Co
 
 // FailTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
@@ -67,6 +74,9 @@ func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 
 // RevertTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	return mgr.transitTaskStateOnErr(ctx, taskID, taskState, proto.TaskStateReverting, taskErr)
 }
 
@@ -84,11 +94,17 @@ func (mgr *TaskManager) transitTaskStateOnErr(ctx context.Context, taskID int64,
 
 // AwaitingResolveTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) AwaitingResolveTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	return mgr.transitTaskStateOnErr(ctx, taskID, taskState, proto.TaskStateAwaitingResolution, taskErr)
 }
 
 // RevertedTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
@@ -103,6 +119,9 @@ func (mgr *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
 // PauseTask pauses the task.
 func (mgr *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, error) {
 	found := false
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return false, err
+	}
 	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`update mysql.tidb_global_task
@@ -127,6 +146,9 @@ func (mgr *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, er
 
 // PausedTask update the task state from pausing to paused.
 func (mgr *TaskManager) PausedTask(ctx context.Context, taskID int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
@@ -164,6 +186,9 @@ func (mgr *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, e
 
 // ResumedTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) ResumedTask(ctx context.Context, taskID int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		update mysql.tidb_global_task
 		set state = %?,
@@ -213,6 +238,9 @@ func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param 
 
 // ModifiedTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	prevState := task.ModifyParam.PrevState
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		failpoint.InjectCall("beforeModifiedTask")
@@ -220,11 +248,12 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 			update mysql.tidb_global_task
 			set state = %?,
 			    concurrency = %?,
+				max_node_count = %?,
 				meta = %?,
 			    modify_params = null,
 				state_update_time = CURRENT_TIMESTAMP()
 			where id = %? and state = %?`,
-			prevState, task.Concurrency, task.Meta, task.ID, proto.TaskStateModifying,
+			prevState, task.Concurrency, task.MaxNodeCount, task.Meta, task.ID, proto.TaskStateModifying,
 		)
 		if err != nil {
 			return err
@@ -248,6 +277,9 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 
 // SucceedTask update task state from running to succeed.
 func (mgr *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	return mgr.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_global_task

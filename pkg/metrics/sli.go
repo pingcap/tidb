@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -27,7 +28,7 @@ var (
 
 // InitSliMetrics initializes sli metrics.
 func InitSliMetrics() {
-	SmallTxnWriteDuration = NewHistogram(
+	SmallTxnWriteDuration = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "sli",
@@ -36,7 +37,7 @@ func InitSliMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 74h
 		})
 
-	TxnWriteThroughput = NewHistogram(
+	TxnWriteThroughput = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "sli",

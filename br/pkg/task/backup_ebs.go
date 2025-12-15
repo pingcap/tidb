@@ -259,7 +259,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		}
 		log.Info("async snapshots finished.")
 	} else {
-		for i := 0; i < int(storeCount); i++ {
+		for i := range int(storeCount) {
 			progress.IncBy(100)
 			totalSize = 1024
 			timeToSleep := getMockSleepTime()
@@ -328,7 +328,7 @@ func isRegionsHasHole(allRegions []*metapb.Region) bool {
 		return bytes.Compare(left.StartKey, right.StartKey) < 0
 	})
 
-	for j := 0; j < len(allRegions)-1; j++ {
+	for j := range len(allRegions) - 1 {
 		left, right := allRegions[j], allRegions[j+1]
 		// we don't need to handle the empty end key specially, since
 		// we sort by start key of region, and the end key of the last region is not checked

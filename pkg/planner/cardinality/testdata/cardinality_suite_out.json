@@ -7,14 +7,14 @@
         "test t  a 0 \u0000B\u0000B\u0000B 2"
       ],
       [
-        "TableReader_7 2.00 root  data:Selection_6",
-        "└─Selection_6 2.00 cop[tikv]  eq(test.t.a, \"aÄa\")",
-        "  └─TableFullScan_5 4.00 cop[tikv] table:t keep order:false"
+        "TableReader_8 2.00 root  data:Selection_7",
+        "└─Selection_7 2.00 cop[tikv]  eq(test.t.a, \"aÄa\")",
+        "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_7 2.00 root  data:Selection_6",
-        "└─Selection_6 2.00 cop[tikv]  gt(test.t.a, \"aÄa\")",
-        "  └─TableFullScan_5 4.00 cop[tikv] table:t keep order:false"
+        "TableReader_8 2.00 root  data:Selection_7",
+        "└─Selection_7 2.00 cop[tikv]  gt(test.t.a, \"aÄa\")",
+        "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
       ]
     ]
   },
@@ -24,52 +24,52 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 767.004166655054
+        "Count": 763
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 247.04782734719248
+        "Count": 13
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 226.14487557169574
+        "Count": 13
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 205.24192379619902
+        "Count": 13
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 184.33897202070227
+        "Count": 13
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 142.53306846970884
+        "Count": 13
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 214.85728161292752
+        "Count": 13
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 131.2454745109406
+        "Count": 13
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 47.650389770374105
+        "Count": 13
       },
       {
         "Start": 1500,
         "End": 1600,
-        "Count": 12.5
+        "Count": 13
       },
       {
         "Start": 300,
@@ -79,12 +79,12 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1225.196869573942
+        "Count": 763
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 1502.495833344946
+        "Count": 13
       },
       {
         "Start": 300,
@@ -94,17 +94,17 @@
       {
         "Start": 200,
         "End": 300,
-        "Count": 466.52882098990807
+        "Count": 13
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 382.91701388792114
+        "Count": 13
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 1231.5288209899081
+        "Count": 763
       },
       {
         "Start": 200,
@@ -114,17 +114,17 @@
       {
         "Start": 0,
         "End": 100,
-        "Count": 299.3052067859343
+        "Count": 13
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 299.3052067859343
+        "Count": 13
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 7.5
+        "Count": 13
       }
     ]
   },
@@ -132,144 +132,99 @@
     "Name": "TestOutOfRangeEstimationAfterDelete",
     "Cases": [
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 300",
-        "Result": [
-          "TableReader 1003.33 root  data:Selection",
-          "└─Selection 1003.33 cop[tikv]  le(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 300,
+        "End": 500,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a < 300",
-        "Result": [
-          "TableReader 1000.00 root  data:Selection",
-          "└─Selection 1000.00 cop[tikv]  lt(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 500,
+        "End": 700,
+        "Count": 1005
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 500",
-        "Result": [
-          "TableReader 1670.00 root  data:Selection",
-          "└─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 700,
+        "End": 900,
+        "Count": 1010
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a >= 300 and a <= 900",
-        "Result": [
-          "TableReader 2000.00 root  data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 900,
+        "End": 1100,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a >= 900",
-        "Result": [
-          "TableReader 1000.00 root  data:Selection",
-          "└─Selection 1000.00 cop[tikv]  ge(test.t.a, 900)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 200,
+        "End": 400,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 900",
-        "Result": [
-          "TableReader 1000.00 root  data:Selection",
-          "└─Selection 1000.00 cop[tikv]  gt(test.t.a, 900)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 400,
+        "End": 600,
+        "Count": 510
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a >= 300",
-        "Result": [
-          "TableReader 2000.00 root  data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 600,
+        "End": 800,
+        "Count": 1005
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 900",
-        "Result": [
-          "TableReader 2000.00 root  data:Selection",
-          "└─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 800,
+        "End": 1000,
+        "Count": 510
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
-        "Result": [
-          "TableReader 793.20 root  data:Selection",
-          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 100,
+        "End": 300,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
-        "Result": [
-          "TableReader 458.19 root  data:Selection",
-          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 300,
+        "End": 500,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
-        "Result": [
-          "TableReader 832.77 root  data:Selection",
-          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 500,
+        "End": 700,
+        "Count": 1005
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
-        "Result": [
-          "TableReader 459.03 root  data:Selection",
-          "└─Selection 459.03 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 700,
+        "End": 900,
+        "Count": 1010
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
-        "Result": [
-          "TableReader 834.45 root  data:Selection",
-          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 900,
+        "End": 1100,
+        "Count": 10
       },
       {
-        "SQL": "set @@tidb_opt_objective = 'determinate'",
-        "Result": null
+        "Start": 0,
+        "End": 200,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 300",
-        "Result": [
-          "TableReader 5.00 root  data:Selection",
-          "└─Selection 5.00 cop[tikv]  le(test.t.a, 300)",
-          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 200,
+        "End": 400,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 500",
-        "Result": [
-          "TableReader 1005.00 root  data:Selection",
-          "└─Selection 1005.00 cop[tikv]  le(test.t.a, 500)",
-          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 400,
+        "End": 600,
+        "Count": 510
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 900",
-        "Result": [
-          "TableReader 1.00 root  data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900)",
-          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 600,
+        "End": 800,
+        "Count": 1005
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 900",
-        "Result": [
-          "TableReader 3000.00 root  data:Selection",
-          "└─Selection 3000.00 cop[tikv]  le(test.t.a, 900)",
-          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 800,
+        "End": 1000,
+        "Count": 510
+      },
+      {
+        "Start": 1000,
+        "End": 1200,
+        "Count": 10
       }
     ]
   },
@@ -277,48 +232,48 @@
     "Name": "TestColumnIndexNullEstimation",
     "Cases": [
       [
-        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], keep order:false"
+        "IndexReader_7 4.00 root  index:IndexRangeScan_6",
+        "└─IndexRangeScan_6 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], keep order:false"
       ],
       [
-        "IndexReader_6 1.00 root  index:IndexFullScan_5",
-        "└─IndexFullScan_5 1.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
+        "IndexReader_7 1.00 root  index:IndexFullScan_6",
+        "└─IndexFullScan_6 1.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
       ],
       [
-        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], (3,+inf], keep order:false"
+        "IndexReader_7 4.00 root  index:IndexRangeScan_6",
+        "└─IndexRangeScan_6 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], (3,+inf], keep order:false"
       ],
       [
-        "IndexReader_5 5.00 root  index:IndexFullScan_4",
-        "└─IndexFullScan_4 5.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
+        "IndexReader_6 5.00 root  index:IndexFullScan_5",
+        "└─IndexFullScan_5 5.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
       ],
       [
-        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:idx_b(b) range:[-inf,4), keep order:false"
+        "IndexReader_7 1.00 root  index:IndexRangeScan_6",
+        "└─IndexRangeScan_6 1.00 cop[tikv] table:t, index:idx_b(b) range:[-inf,4), keep order:false"
       ],
       [
-        "TableReader_7 1.00 root  data:Selection_6",
-        "└─Selection_6 1.00 cop[tikv]  isnull(test.t.a)",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
+        "TableReader_8 1.00 root  data:Selection_7",
+        "└─Selection_7 1.00 cop[tikv]  isnull(test.t.a)",
+        "  └─TableFullScan_6 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_7 4.00 root  data:Selection_6",
-        "└─Selection_6 4.00 cop[tikv]  not(isnull(test.t.a))",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
+        "TableReader_8 4.00 root  data:Selection_7",
+        "└─Selection_7 4.00 cop[tikv]  not(isnull(test.t.a))",
+        "  └─TableFullScan_6 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_7 2.00 root  data:Selection_6",
-        "└─Selection_6 2.00 cop[tikv]  or(isnull(test.t.a), gt(test.t.a, 3))",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
+        "TableReader_8 2.00 root  data:Selection_7",
+        "└─Selection_7 2.00 cop[tikv]  or(isnull(test.t.a), gt(test.t.a, 3))",
+        "  └─TableFullScan_6 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_5 5.00 root  data:TableFullScan_4",
-        "└─TableFullScan_4 5.00 cop[tikv] table:t keep order:false"
+        "TableReader_6 5.00 root  data:TableFullScan_5",
+        "└─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_7 3.00 root  data:Selection_6",
-        "└─Selection_6 3.00 cop[tikv]  lt(test.t.a, 4)",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
+        "TableReader_8 3.00 root  data:Selection_7",
+        "└─Selection_7 3.00 cop[tikv]  lt(test.t.a, 4)",
+        "  └─TableFullScan_6 5.00 cop[tikv] table:t keep order:false"
       ]
     ]
   },
@@ -326,7 +281,7 @@
     "Name": "TestUniqCompEqualEst",
     "Cases": [
       [
-        "Point_Get_5 1.00 root table:t, clustered index:PRIMARY(a, b) "
+        "Point_Get_6 1.00 root table:t, clustered index:PRIMARY(a, b) "
       ]
     ]
   },
@@ -422,7 +377,7 @@
         "SQL": "explain format = 'brief' select * from t where a not regexp '.*111.*'",
         "Result": [
           "TableReader 7.00 root  data:Selection",
-          "└─Selection 7.00 cop[tikv]  not(istrue_with_null(regexp(test.t.a, \".*111.*\")))",
+          "└─Selection 7.00 cop[tikv]  not(regexp(test.t.a, \".*111.*\"))",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -519,7 +474,7 @@
         "SQL": "explain format = 'brief' select * from t where b not regexp '.*111.*'",
         "Result": [
           "TableReader 7.00 root  data:Selection",
-          "└─Selection 7.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*111.*\")))",
+          "└─Selection 7.00 cop[tikv]  not(regexp(test.t.b, \".*111.*\"))",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -652,7 +607,7 @@
         "SQL": "explain format = 'brief' select * from t where a not regexp '.*111.*'",
         "Result": [
           "TableReader 7.00 root  data:Selection",
-          "└─Selection 7.00 cop[tikv]  not(istrue_with_null(regexp(test.t.a, \".*111.*\")))",
+          "└─Selection 7.00 cop[tikv]  not(regexp(test.t.a, \".*111.*\"))",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -749,7 +704,7 @@
         "SQL": "explain format = 'brief' select * from t where b not regexp '.*111.*'",
         "Result": [
           "TableReader 36.00 root  data:Selection",
-          "└─Selection 36.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*111.*\")))",
+          "└─Selection 36.00 cop[tikv]  not(regexp(test.t.b, \".*111.*\"))",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -857,104 +812,104 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 300",
         "Result": [
-          "TableReader 1003.33 root partition:p0 data:Selection",
-          "└─Selection 1003.33 cop[tikv]  le(test.t.a, 300)",
+          "TableReader 8.33 root partition:p0 data:Selection",
+          "└─Selection 8.33 cop[tikv]  le(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a < 300",
         "Result": [
-          "TableReader 1000.00 root partition:p0 data:Selection",
-          "└─Selection 1000.00 cop[tikv]  lt(test.t.a, 300)",
+          "TableReader 5.00 root partition:p0 data:Selection",
+          "└─Selection 5.00 cop[tikv]  lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "TableReader 1670.00 root partition:p0,p1 data:Selection",
-          "└─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
+          "TableReader 675.00 root partition:p0,p1 data:Selection",
+          "└─Selection 675.00 cop[tikv]  le(test.t.a, 500)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300 and a <= 900",
         "Result": [
-          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
+          "TableReader 1338.33 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 1338.33 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 900",
         "Result": [
-          "TableReader 1000.00 root partition:p3,p4 data:Selection",
-          "└─Selection 1000.00 cop[tikv]  ge(test.t.a, 900)",
+          "TableReader 5.00 root partition:p3,p4 data:Selection",
+          "└─Selection 5.00 cop[tikv]  ge(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900",
         "Result": [
-          "TableReader 1000.00 root partition:p3,p4 data:Selection",
-          "└─Selection 1000.00 cop[tikv]  gt(test.t.a, 900)",
+          "TableReader 5.00 root partition:p3,p4 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300",
         "Result": [
-          "TableReader 2000.00 root partition:all data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
+          "TableReader 1338.33 root partition:all data:Selection",
+          "└─Selection 1338.33 cop[tikv]  ge(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 900",
         "Result": [
-          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "└─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
+          "TableReader 1338.33 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 1338.33 cop[tikv]  le(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 793.20 root partition:p3 data:Selection",
-          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "TableReader 335.00 root partition:p3 data:Selection",
+          "└─Selection 335.00 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
         "Result": [
-          "TableReader 458.19 root partition:p3 data:Selection",
-          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "TableReader 5.00 root partition:p3 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
         "Result": [
-          "TableReader 832.77 root partition:p3,p4 data:Selection",
-          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "TableReader 5.00 root partition:p3,p4 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
         "Result": [
-          "TableReader 459.03 root partition:p0 data:Selection",
-          "└─Selection 459.03 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "TableReader 5.00 root partition:p0 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
         "Result": [
-          "TableReader 834.45 root partition:p0 data:Selection",
-          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "TableReader 5.00 root partition:p0 data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       }
@@ -976,9 +931,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 200.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 196.08 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9950)",
-          "    └─TableRowIDScan 200.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 196.08 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -986,9 +941,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 200.00 cop[tikv] table:t, index:ic(c) keep order:true, desc, stats:pseudo",
+          "  ├─IndexFullScan(Build) 196.08 cop[tikv] table:t, index:ic(c) keep order:true, desc, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9950)",
-          "    └─TableRowIDScan 200.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 196.08 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -996,9 +951,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 9.98 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 8999)",
-          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 9.98 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1006,9 +961,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9000)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1016,9 +971,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 10.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9001)",
-          "    └─TableRowIDScan 10.01 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1068,7 +1023,27 @@
           "└─TableReader 1.00 root  data:Limit",
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
-          "      └─TableRangeScan 100.00 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
+          "      └─TableRangeScan 99.01 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 196.08 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.d, 9950)",
+          "    └─TableRowIDScan 196.08 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  lt(test.t.d, 9950)",
+          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1080,9 +1055,9 @@
         "Result": [
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 510.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1090,9 +1065,9 @@
         "Result": [
           "TopN 1.00 root  test.t.c:desc, offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c:desc, offset:0, count:1",
-          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 510.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1100,9 +1075,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 9.98 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 8999)",
-          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 9.98 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1110,9 +1085,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9000)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1121,7 +1096,7 @@
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─TableReader 1.00 root  data:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─Selection 9990.00 cop[tikv]  ge(test.t.b, 9001)",
+          "    └─Selection 10000.00 cop[tikv]  ge(test.t.b, 9001)",
           "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1151,7 +1126,7 @@
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─TableReader 1.00 root  data:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─TableRangeScan 9999.00 cop[tikv] table:t range:[-inf,9999), keep order:false, stats:pseudo"
+          "    └─TableRangeScan 10000.00 cop[tikv] table:t range:[-inf,9999), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1170,9 +1145,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ic(c) range:[9950,+inf], keep order:true, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ic(c) range:[9950,+inf], keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9950)",
-          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 510.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1180,10 +1155,10 @@
         "Result": [
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─Selection 5.00 cop[tikv]  ge(test.t.c, 9900)",
-          "      └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─Selection 5.15 cop[tikv]  ge(test.t.c, 9900)",
+          "      └─TableRowIDScan 510.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1193,7 +1168,51 @@
           "└─TableReader 1.00 root  data:Limit",
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
-          "      └─TableRangeScan 100.00 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
+          "      └─TableRangeScan 99.01 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 196.08 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.d, 9950)",
+          "    └─TableRowIDScan 196.08 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  lt(test.t.d, 9950)",
+          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_threshold = 1",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─Selection 510.00 cop[tikv]  ge(test.t.d, 9950)",
+          "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─Selection 99510.00 cop[tikv]  lt(test.t.d, 9950)",
+          "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1214,9 +1233,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 9.90 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 9.90 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1224,9 +1243,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 99.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 100.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 99.01 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1236,7 +1255,7 @@
           "└─TableReader 1.00 root  data:Limit",
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
-          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+          "      └─TableRangeScan 9.90 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1248,9 +1267,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 9.90 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 9.90 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1258,9 +1277,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 99.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 99.01 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1270,7 +1289,41 @@
           "└─TableReader 1.00 root  data:Limit",
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
-          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+          "      └─TableRangeScan 9.90 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = 0.01",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 19.80 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 19.80 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+        "Result": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 108.02 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 108.02 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 9.90 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1282,9 +1335,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 91.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 108.91 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 91.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 108.91 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1292,9 +1345,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 189.11 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 100.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 189.11 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1304,7 +1357,7 @@
           "└─TableReader 1.00 root  data:Limit",
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
-          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+          "      └─TableRangeScan 9.90 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1316,9 +1369,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 451.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 504.95 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 451.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 504.95 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1326,9 +1379,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-          "  ├─IndexFullScan(Build) 460.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 549.50 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 460.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 549.50 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1338,7 +1391,7 @@
           "└─TableReader 1.00 root  data:Limit",
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
-          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+          "      └─TableRangeScan 9.90 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1575,7 +1628,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -1589,7 +1646,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 50
+                    "Result": {
+                      "Est": 50,
+                      "MaxEst": 50,
+                      "MinEst": 50
+                    }
                   }
                 ]
               },
@@ -1664,7 +1725,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -1678,7 +1743,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 1
+                    "Result": {
+                      "Est": 1,
+                      "MaxEst": 1,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -1754,7 +1823,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -1824,7 +1897,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -1987,7 +2064,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -2067,7 +2148,7 @@
                 "partial cover": false
               },
               {
-                "Result": 0.0000052707033226513745
+                "Result": 0.0003246753246753247
               }
             ]
           }
@@ -2132,7 +2213,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -2146,7 +2231,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 51.67785234899329
+                    "Result": {
+                      "Est": 51.67785234899329,
+                      "MaxEst": 51.67785234899329,
+                      "MinEst": 51.67785234899329
+                    }
                   }
                 ]
               },
@@ -2227,7 +2316,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2241,7 +2334,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 1.0335570469798658
+                    "Result": {
+                      "Est": 1.0335570469798658,
+                      "MaxEst": 1.0335570469798658,
+                      "MinEst": 1.0335570469798658
+                    }
                   }
                 ]
               },
@@ -2573,13 +2670,28 @@
                             "realtimeRowCount": 3080
                           },
                           {
-                            "Result": 0
+                            "commonPrefix": 0,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
+                            "unsigned": false
+                          },
+                          {
+                            "avgRowCount": 0,
+                            "boundL": -7000,
+                            "boundR": 11000,
+                            "histL": -1000,
+                            "histR": 5000,
+                            "lPercent": 0.8402777777777778,
+                            "rPercent": 0
+                          },
+                          {
+                            "Result": 1.539230384807596
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 1.539230384807596,
                           "Type": "Range"
                         }
                       }
@@ -2587,7 +2699,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 1
+                    "Result": {
+                      "Est": 1.539230384807596,
+                      "MaxEst": 30.8,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -2662,7 +2778,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2711,7 +2831,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2725,7 +2849,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 2
+                    "Result": {
+                      "Est": 2,
+                      "MaxEst": 2,
+                      "MinEst": 2
+                    }
                   }
                 ]
               },
@@ -2857,13 +2985,28 @@
                                 "realtimeRowCount": 3080
                               },
                               {
-                                "Result": 0
+                                "commonPrefix": 0,
+                                "lScalar": 72057594037927940,
+                                "rScalar": 252201579132747780,
+                                "unsigned": false
+                              },
+                              {
+                                "avgRowCount": 0,
+                                "boundL": 252201579132747740,
+                                "boundR": 252201579132747840,
+                                "histL": 252201579132747780,
+                                "histR": 252201579132747800,
+                                "lPercent": 1,
+                                "rPercent": 0
+                              },
+                              {
+                                "Result": 1.539230384807596
                               }
                             ]
                           },
                           {
                             "End estimate range": {
-                              "RowCount": 0,
+                              "RowCount": 1.539230384807596,
                               "Type": "Range"
                             }
                           }
@@ -2871,7 +3014,7 @@
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 1,
+                          "RowCount": 1.539230384807596,
                           "Type": "Range"
                         }
                       }
@@ -2879,7 +3022,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 1
+                    "Result": 1.539230384807596
                   }
                 ]
               },
@@ -2955,7 +3098,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -3004,7 +3151,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3053,7 +3204,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3102,7 +3257,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3201,7 +3360,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -3250,7 +3413,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3299,7 +3466,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3348,7 +3519,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3431,11 +3606,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0.0003246753246753247,
+                "Selectivity": 0.0004997501249375312,
                 "partial cover": false
               },
               {
-                "Result": 2.1082813290605499e-7
+                "Result": 0.0003246753246753247
               }
             ]
           }
@@ -3581,22 +3756,22 @@
                             "unsigned": false
                           },
                           {
+                            "avgRowCount": 0,
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
                             "histR": 999,
                             "lPercent": 0.5613744375005636,
-                            "rPercent": 0,
-                            "rowCount": 555.760693125558
+                            "rPercent": 0
                           },
                           {
-                            "Result": 100
+                            "Result": 1
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 100,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -3604,7 +3779,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 100
+                    "Result": {
+                      "Est": 1,
+                      "MaxEst": 1100,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -3765,7 +3944,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -3779,7 +3962,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 2.713087248322148
+                    "Result": {
+                      "Est": 2.713087248322148,
+                      "MaxEst": 2.713087248322148,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -3900,34 +4087,34 @@
                       {
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
-                            "lDatum": "KindBytes \\x01",
+                            "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
-                            "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$",
+                            "rDatum": "KindInt64 -1500",
                             "realtimeRowCount": 3080
                           },
                           {
                             "commonPrefix": 0,
-                            "lScalar": 72057594037927940,
-                            "rScalar": 252201579132747780,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
                             "unsigned": false
                           },
                           {
-                            "boundL": 252201579132747780,
-                            "boundR": 252201579132747780,
-                            "histL": 252201579132747780,
-                            "histR": 252201579132747780,
-                            "lPercent": 0,
-                            "rPercent": 0,
-                            "rowCount": 392.8571428571429
+                            "avgRowCount": 0,
+                            "boundL": -2997,
+                            "boundR": 2997,
+                            "histL": -999,
+                            "histR": 999,
+                            "lPercent": 0.5613744375005636,
+                            "rPercent": 0
                           },
                           {
-                            "Result": 100
+                            "Result": 1
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 100,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -3935,7 +4122,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 100
+                    "Result": 1
                   }
                 ]
               },
@@ -4088,11 +4275,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0.032467532467532464,
+                "Selectivity": 0.0003246753246753247,
                 "partial cover": false
               },
               {
-                "Result": 0.000019066503965832824
+                "Result": 0.0003246753246753247
               }
             ]
           }
@@ -4106,16 +4293,16 @@
       {
         "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
         "Result": [
-          "Projection 2000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
-          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-          "  ├─TableReader(Build) 1000.00 root  data:Selection",
-          "  │ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+          "Projection 4000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─IndexJoin 4000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─TableReader(Build) 2000.00 root  data:Selection",
+          "  │ └─Selection 2000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
           "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "  └─IndexLookUp(Probe) 2000.00 root  ",
-          "    ├─Selection(Build) 1000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
+          "  └─IndexLookUp(Probe) 4000.00 root  ",
+          "    ├─Selection(Build) 2000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
           "    │ └─IndexRangeScan 500000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
-          "    └─Selection(Probe) 2000.00 cop[tikv]  eq(test.t.a, 0)",
-          "      └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "    └─Selection(Probe) 4000.00 cop[tikv]  eq(test.t.a, 0)",
+          "      └─TableRowIDScan 2000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4125,16 +4312,16 @@
       {
         "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
         "Result": [
-          "Projection 2000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
-          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-          "  ├─TableReader(Build) 1000.00 root  data:Selection",
-          "  │ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+          "Projection 4000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─IndexJoin 4000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─TableReader(Build) 2000.00 root  data:Selection",
+          "  │ └─Selection 2000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
           "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "  └─IndexLookUp(Probe) 2000.00 root  ",
-          "    ├─Selection(Build) 1000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
-          "    │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
-          "    └─Selection(Probe) 2000.00 cop[tikv]  eq(test.t.a, 0)",
-          "      └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "  └─IndexLookUp(Probe) 4000.00 root  ",
+          "    ├─Selection(Build) 2000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
+          "    │ └─IndexRangeScan 2000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 4000.00 cop[tikv]  eq(test.t.a, 0)",
+          "      └─TableRowIDScan 2000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -4180,8 +4367,8 @@
       {
         "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1",
         "Result": [
-          "IndexReader 20.32 root  index:IndexRangeScan",
-          "└─IndexRangeScan 20.32 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
+          "IndexReader 18.29 root  index:IndexRangeScan",
+          "└─IndexRangeScan 18.29 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
         ]
       }
     ]

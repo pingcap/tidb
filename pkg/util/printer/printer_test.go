@@ -17,6 +17,7 @@ package printer
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,4 +50,13 @@ func TestPrintResult(t *testing.T) {
 	result, ok = GetPrintResult(cols, datas)
 	require.False(t, ok)
 	require.Equal(t, "", result)
+}
+
+func TestGetTiDBInfo(t *testing.T) {
+	info := GetTiDBInfo()
+	if kerneltype.IsNextGen() {
+		require.Contains(t, info, "\nKernel Type: Next Generation")
+	} else {
+		require.Contains(t, info, "\nKernel Type: Classic")
+	}
 }

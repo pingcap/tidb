@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pberror"
@@ -50,6 +51,7 @@ type Server struct {
 	tikvpb.UnimplementedTikvServer
 	mvccStore     *MVCCStore
 	regionManager RegionManager
+	pdClient      pd.Client
 	innerServer   InnerServer
 	RPCClient     client.Client
 	refCount      int32
@@ -57,10 +59,11 @@ type Server struct {
 }
 
 // NewServer returns a new server.
-func NewServer(rm RegionManager, store *MVCCStore, innerServer InnerServer) *Server {
+func NewServer(rm RegionManager, pdClient pd.Client, store *MVCCStore, innerServer InnerServer) *Server {
 	return &Server{
 		mvccStore:     store,
 		regionManager: rm,
+		pdClient:      pdClient,
 		innerServer:   innerServer,
 	}
 }
@@ -109,6 +112,8 @@ type requestCtx struct {
 	storeID          uint64
 	asyncMinCommitTS uint64
 	onePCCommitTS    uint64
+	regionManager    RegionManager
+	pdClient         pd.Client
 }
 
 func newRequestCtx(svr *Server, ctx *kvrpcpb.Context, method string) (*requestCtx, error) {
@@ -127,6 +132,8 @@ func newRequestCtx(svr *Server, ctx *kvrpcpb.Context, method string) (*requestCt
 	storeAddr, storeID, regErr := svr.regionManager.GetStoreInfoFromCtx(ctx)
 	req.storeAddr = storeAddr
 	req.storeID = storeID
+	req.regionManager = svr.regionManager
+	req.pdClient = svr.pdClient
 	if regErr != nil {
 		req.regErr = regErr
 	}
@@ -140,8 +147,43 @@ func (req *requestCtx) getDBReader() *dbreader.DBReader {
 		txn := mvccStore.db.NewTransaction(false)
 		req.reader = dbreader.NewDBReader(req.regCtx.RawStart(), req.regCtx.RawEnd(), txn)
 		req.reader.RcCheckTS = req.isRcCheckTSIsolationLevel()
+		req.reader.ExtraDbReaderProvider = req
 	}
 	return req.reader
+}
+
+func (req *requestCtx) LocateExtraRegion(ctx context.Context, key []byte) (dbreader.LocateExtraRegionResult, error) {
+	region, err := req.pdClient.GetRegion(ctx, key)
+	if err != nil {
+		return dbreader.LocateExtraRegionResult{}, err
+	}
+
+	if region.Leader == nil || region.Leader.StoreId != req.storeID {
+		return dbreader.LocateExtraRegionResult{}, nil
+	}
+
+	return dbreader.LocateExtraRegionResult{
+		Found:    true,
+		Region:   region.Meta,
+		Peer:     region.Leader,
+		IsLeader: true,
+	}, nil
+}
+
+func (req *requestCtx) GetExtraDBReaderByRegion(ctx dbreader.GetExtraDBReaderContext) (*dbreader.DBReader, *errorpb.Error) {
+	regCtx, err := req.regionManager.GetRegionFromCtx(&kvrpcpb.Context{
+		RegionId:    ctx.Region.GetId(),
+		RegionEpoch: ctx.Region.RegionEpoch,
+		Peer:        ctx.Peer,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	mvccStore := req.svr.mvccStore
+	txn := mvccStore.db.NewTransaction(false)
+	return dbreader.NewDBReader(regCtx.RawStart(), regCtx.RawEnd(), txn), nil
 }
 
 func (req *requestCtx) isSnapshotIsolation() bool {
@@ -907,7 +949,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		err        error
 	)
 	maxRetryTime := 5
-	for i := 0; i < maxRetryTime; i++ {
+	for range maxRetryTime {
 		mppHandler, err = svr.GetMPPTaskHandler(req.SenderMeta.TaskId, storeID)
 		if err != nil {
 			return errors.Trace(err)

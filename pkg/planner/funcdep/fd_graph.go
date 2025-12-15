@@ -16,6 +16,7 @@ package funcdep
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -135,12 +136,12 @@ func (s *FDSet) closureOfLax(colSet intset.FastIntSet) intset.FastIntSet {
 	return laxOneStepReached
 }
 
-// closureOfEquivalence is to find strict equivalence closure of X with respect to F.
-func (s *FDSet) closureOfEquivalence(colSet intset.FastIntSet) intset.FastIntSet {
+// ClosureOfEquivalence is to find strict equivalence closure of X with respect to F.
+func (s *FDSet) ClosureOfEquivalence(colSet intset.FastIntSet) intset.FastIntSet {
 	resultSet := intset.NewFastIntSet()
 	// self included.
 	resultSet.UnionWith(colSet)
-	for i := 0; i < len(s.fdEdges); i++ {
+	for i := range s.fdEdges {
 		// equivalence is maintained as {superset} == {superset}, we don't need to do transitive computation.
 		// but they may multi equivalence closure, eg: {a,b}=={a,b}, {c,d} =={c,d}, when adding b=c, we need traverse them all.
 		fd := s.fdEdges[i]
@@ -345,7 +346,7 @@ func (e *fdEdge) implies(otherEdge *fdEdge) bool {
 func (s *FDSet) addEquivalence(eqs intset.FastIntSet) {
 	var addConst bool
 	// get equivalence closure.
-	eqClosure := s.closureOfEquivalence(eqs)
+	eqClosure := s.ClosureOfEquivalence(eqs)
 	s.fdEdges = append(s.fdEdges, &fdEdge{from: eqClosure.Copy(), to: eqClosure.Copy(), strict: true, equiv: true})
 
 	for i := 0; i < len(s.fdEdges)-1; i++ {
@@ -361,7 +362,7 @@ func (s *FDSet) addEquivalence(eqs intset.FastIntSet) {
 		} else if fd.from.SubsetOf(eqClosure) {
 			if fd.equiv {
 				// this equivalence is enclosed in the super closure appended above, remove it.
-				s.fdEdges = append(s.fdEdges[:i], s.fdEdges[i+1:]...)
+				s.fdEdges = slices.Delete(s.fdEdges, i, i+1)
 				i--
 			} else {
 				// Since from side are all in equivalence closure, we can eliminate some
@@ -370,7 +371,7 @@ func (s *FDSet) addEquivalence(eqs intset.FastIntSet) {
 				// eg: {A,B} --> {C,D}, {A,B,D} in equivalence, FD can be shortly as {A,B} --> {C}
 				if fd.removeColumnsToSide(eqClosure) {
 					// Once the to side is empty, remove the FD.
-					s.fdEdges = append(s.fdEdges[:i], s.fdEdges[i+1:]...)
+					s.fdEdges = slices.Delete(s.fdEdges, i, i+1)
 					i--
 				}
 			}
@@ -459,7 +460,7 @@ func (s *FDSet) AddConstants(cons intset.FastIntSet) {
 			}
 		}
 		if shouldRemoved {
-			s.fdEdges = append(s.fdEdges[:i], s.fdEdges[i+1:]...)
+			s.fdEdges = slices.Delete(s.fdEdges, i, i+1)
 			i--
 		}
 	}
@@ -510,7 +511,7 @@ func (e *fdEdge) removeColumnsToSide(cons intset.FastIntSet) bool {
 
 // ConstantCols returns the set of columns that will always have the same value for all rows in table.
 func (s *FDSet) ConstantCols() intset.FastIntSet {
-	for i := 0; i < len(s.fdEdges); i++ {
+	for i := range s.fdEdges {
 		if s.fdEdges[i].isConstant() {
 			return s.fdEdges[i].to
 		}
@@ -520,7 +521,7 @@ func (s *FDSet) ConstantCols() intset.FastIntSet {
 
 // EquivalenceCols returns the set of columns that are constrained to equal to each other.
 func (s *FDSet) EquivalenceCols() (eqs []*intset.FastIntSet) {
-	for i := 0; i < len(s.fdEdges); i++ {
+	for i := range s.fdEdges {
 		if s.fdEdges[i].isEquivalence() {
 			// return either side is the same.
 			eqs = append(eqs, &s.fdEdges[i].from)
@@ -534,19 +535,19 @@ func (s *FDSet) EquivalenceCols() (eqs []*intset.FastIntSet) {
 // which can upgrade lax FDs to strict ones.
 func (s *FDSet) MakeNotNull(notNullCols intset.FastIntSet) {
 	notNullCols.UnionWith(s.NotNullCols)
-	notNullColsSet := s.closureOfEquivalence(notNullCols)
+	notNullColsSet := s.ClosureOfEquivalence(notNullCols)
 	// make nc FD visible.
 	for i := 0; i < len(s.ncEdges); i++ {
 		fd := s.ncEdges[i]
 		if fd.conditionNC.Intersects(notNullColsSet) {
 			// condition satisfied.
-			s.ncEdges = append(s.ncEdges[:i], s.ncEdges[i+1:]...)
+			s.ncEdges = slices.Delete(s.ncEdges, i, i+1)
 			i--
 			if fd.isConstant() {
 				s.AddConstants(fd.to)
 			} else if fd.equiv {
 				s.AddEquivalence(fd.from, fd.to)
-				newNotNullColsSet := s.closureOfEquivalence(notNullColsSet)
+				newNotNullColsSet := s.ClosureOfEquivalence(notNullColsSet)
 				if !newNotNullColsSet.Difference(notNullColsSet).IsEmpty() {
 					notNullColsSet = newNotNullColsSet
 					// expand not-null set.
@@ -587,7 +588,7 @@ func (s *FDSet) MakeNullable(nullableCols intset.FastIntSet) {
 // them together is adequate. But for constant FDs, according to our definition, we should merge them
 // as a larger superset pointing themselves.
 func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
-	for i := 0; i < len(rhs.fdEdges); i++ {
+	for i := range rhs.fdEdges {
 		fd := rhs.fdEdges[i]
 		if fd.isConstant() {
 			// both from or to side is ok since {superset} --> {superset}.
@@ -880,7 +881,7 @@ type ArgOpts struct {
 // FindPrimaryKey checks whether there's a key in the current set which implies key -> all cols.
 func (s FDSet) FindPrimaryKey() (*intset.FastIntSet, bool) {
 	allCols := s.AllCols()
-	for i := 0; i < len(s.fdEdges); i++ {
+	for i := range s.fdEdges {
 		fd := s.fdEdges[i]
 		// Since we haven't maintained the key column, let's traverse every strict FD to judge with.
 		if fd.strict && !fd.equiv {
@@ -898,7 +899,7 @@ func (s FDSet) FindPrimaryKey() (*intset.FastIntSet, bool) {
 // AllCols returns all columns in the current set.
 func (s FDSet) AllCols() intset.FastIntSet {
 	allCols := intset.NewFastIntSet()
-	for i := 0; i < len(s.fdEdges); i++ {
+	for i := range s.fdEdges {
 		allCols.UnionWith(s.fdEdges[i].from)
 		if !s.fdEdges[i].equiv {
 			allCols.UnionWith(s.fdEdges[i].to)
@@ -950,7 +951,7 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 //	result: {} --> {a,c}, {a,c} == {a,c}
 func (s *FDSet) MaxOneRow(cols intset.FastIntSet) {
 	cnt := 0
-	for i := 0; i < len(s.fdEdges); i++ {
+	for i := range s.fdEdges {
 		fd := s.fdEdges[i]
 		// non-equivalence FD, skip it.
 		if !fd.equiv {
@@ -994,7 +995,7 @@ func (s *FDSet) ProjectCols(cols intset.FastIntSet) {
 	//      fd2: {a,b} == {a,b}
 	//      if only a is un-projected, the fd1 can actually be kept as {b} --> {c}.
 	var constCols, detCols, equivCols intset.FastIntSet
-	for i := 0; i < len(s.fdEdges); i++ {
+	for i := range s.fdEdges {
 		fd := s.fdEdges[i]
 
 		if fd.isConstant() {
@@ -1143,7 +1144,7 @@ func (s *FDSet) ProjectCols(cols intset.FastIntSet) {
 			nc.to.IntersectionWith(cols)
 			if nc.to.IsEmpty() {
 				// edge is projected out.
-				s.ncEdges = append(s.ncEdges[:i], s.ncEdges[i+1:]...)
+				s.ncEdges = slices.Delete(s.ncEdges, i, i+1)
 				i--
 			}
 			continue
@@ -1153,7 +1154,7 @@ func (s *FDSet) ProjectCols(cols intset.FastIntSet) {
 			nc.to.IntersectionWith(cols)
 			if nc.from.IsEmpty() {
 				// edge is projected out.
-				s.ncEdges = append(s.ncEdges[:i], s.ncEdges[i+1:]...)
+				s.ncEdges = slices.Delete(s.ncEdges, i, i+1)
 				i--
 			}
 		}
@@ -1166,7 +1167,7 @@ func (s *FDSet) makeEquivMap(detCols, projectedCols intset.FastIntSet) map[int]i
 	for i, ok := detCols.Next(0); ok; i, ok = detCols.Next(i + 1) {
 		var oneCol intset.FastIntSet
 		oneCol.Insert(i)
-		closure := s.closureOfEquivalence(oneCol)
+		closure := s.ClosureOfEquivalence(oneCol)
 		closure.IntersectionWith(projectedCols)
 		// the column to be deleted has an equivalence column exactly in the project list.
 		if !closure.IsEmpty() {

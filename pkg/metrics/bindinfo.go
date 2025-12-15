@@ -14,7 +14,10 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // bindinfo metrics.
 var (
@@ -27,35 +30,35 @@ var (
 
 // InitBindInfoMetrics initializes bindinfo metrics.
 func InitBindInfoMetrics() {
-	BindingCacheHitCounter = NewCounter(
+	BindingCacheHitCounter = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "binding_cache_hit_total",
 			Help:      "Counter of binding cache hit.",
 		})
-	BindingCacheMissCounter = NewCounter(
+	BindingCacheMissCounter = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "binding_cache_miss_total",
 			Help:      "Counter of binding cache miss.",
 		})
-	BindingCacheMemUsage = NewGauge(
+	BindingCacheMemUsage = metricscommon.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "binding_cache_mem_usage",
 			Help:      "Memory usage of binding cache.",
 		})
-	BindingCacheMemLimit = NewGauge(
+	BindingCacheMemLimit = metricscommon.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "binding_cache_mem_limit",
 			Help:      "Memory limit of binding cache.",
 		})
-	BindingCacheNumBindings = NewGauge(
+	BindingCacheNumBindings = metricscommon.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",

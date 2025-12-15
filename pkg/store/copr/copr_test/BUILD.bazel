@@ -11,6 +11,7 @@ go_test(
     shard_count = 5,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/kv",
         "//pkg/resourcegroup/runaway",
         "//pkg/store/copr",
@@ -25,6 +26,7 @@ go_test(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//constants",
         "@com_github_tikv_pd_client//opt",
         "@com_github_tikv_pd_client//resource_group/controller",
         "@org_uber_go_goleak//:goleak",

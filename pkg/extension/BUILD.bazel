@@ -61,7 +61,7 @@ go_test(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/mock",
-        "//pkg/util/sem",
+        "//pkg/util/sem/compat",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",

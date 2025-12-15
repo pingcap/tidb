@@ -36,7 +36,7 @@ func TestLazyRowIterator(t *testing.T) {
 	_, err = Execute(ctx, qctx, "create table t (id int)")
 	require.NoError(t, err)
 	// insert 1000 rows
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, err = Execute(ctx, qctx, fmt.Sprintf("insert into t values (%d)", i))
 		require.NoError(t, err)
 	}
@@ -47,7 +47,7 @@ func TestLazyRowIterator(t *testing.T) {
 		require.NoError(t, err)
 		crs := resultset.WrapWithLazyCursor(rs, chkSize.initSize, chkSize.maxSize)
 		iter := crs.GetRowIterator()
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			row := iter.Current(ctx)
 			require.Equal(t, int64(i), row.GetInt64(0))
 			row = iter.Next(ctx)

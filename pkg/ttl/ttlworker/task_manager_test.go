@@ -150,7 +150,7 @@ func (t *runningScanTask) GetStatistics() *ttlStatistics {
 	return t.statistics
 }
 
-// ResetEndTime resets the end time
+// ResetEndTimeForTest resets the end time
 func (t *runningScanTask) ResetEndTimeForTest(tb *testing.T, tm time.Time) {
 	require.NotNil(tb, t.result)
 	t.result.time = tm

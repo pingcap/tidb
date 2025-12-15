@@ -2,17 +2,18 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "handletest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "handle_test.go",
         "main_test.go",
     ],
     flaky = True,
-    race = "on",
-    shard_count = 34,
+    shard_count = 38,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx/variable",
@@ -22,6 +23,7 @@ go_test(
         "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",

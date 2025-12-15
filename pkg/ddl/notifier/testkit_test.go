@@ -21,12 +21,14 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -64,12 +66,14 @@ func TestPublishToTableStore(t *testing.T) {
 	closeFn()
 }
 
+var localNotifierTableSQL = strings.ReplaceAll(ddl.NotifierTableSQL, "mysql.tidb_ddl_notifier", "tidb_ddl_notifier")
+
 func TestBasicPubSub(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
@@ -83,6 +87,8 @@ func TestBasicPubSub(t *testing.T) {
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 
 	var seenChangesMu sync.Mutex
 	seenChanges := make([]*notifier.SchemaChangeEvent, 0, 8)
@@ -141,7 +147,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
@@ -154,6 +160,8 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		nil,
 	)
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 
 	newRndFailHandler := func() (notifier.SchemaChangeHandler, *[]int64) {
 		maxFail := 5
@@ -315,7 +323,7 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 	tk.MustExec("CREATE TABLE result (id INT PRIMARY KEY)")
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
@@ -330,6 +338,8 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 	waitCh := make(chan struct{})
 	waitCh2 := make(chan struct{})
 
@@ -451,7 +461,7 @@ func TestBeginTwice(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
@@ -465,6 +475,8 @@ func TestBeginTwice(t *testing.T) {
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 
 	testHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
 		return nil
@@ -502,7 +514,7 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 	ctx := context.Background()
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
@@ -515,6 +527,8 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 		nil,
 	)
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 	// Always fails
 	failHandler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
 		// Mock a duplicate key error
@@ -544,6 +558,9 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 }
 
 func TestCommitFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	// Make sure events don't get lost if internal txn commit failed.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -553,7 +570,7 @@ func TestCommitFailed(t *testing.T) {
 		tk.MustExec("set global tidb_enable_metadata_lock=1")
 	})
 	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec(localNotifierTableSQL)
 	tk.MustExec("CREATE TABLE subscribe_table (id INT PRIMARY KEY, c INT)")
 	tk.MustExec("INSERT INTO subscribe_table VALUES (1, 1)")
 
@@ -569,6 +586,8 @@ func TestCommitFailed(t *testing.T) {
 		nil,
 	)
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 	handler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
 		// pessimistic + DDL will cause an "infoschema is changed" error at commit time.
 		_, err := sctx.GetSQLExecutor().Execute(

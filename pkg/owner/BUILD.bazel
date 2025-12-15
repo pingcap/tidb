@@ -5,15 +5,16 @@ go_library(
     srcs = [
         "manager.go",
         "mock.go",
+        "mock_owner_state.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/owner",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/ddl/util",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser/terror",
         "//pkg/util",
+        "//pkg/util/etcd",
         "//pkg/util/logutil",
         "//pkg/util/timeutil",
         "@com_github_pingcap_errors//:errors",

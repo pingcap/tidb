@@ -141,20 +141,26 @@ func (col *Column) ExplainNormalizedInfo4InList() string {
 func (expr *Constant) ExplainInfo(ctx EvalContext) string {
 	redact := ctx.GetTiDBRedactLog()
 	if redact == errors.RedactLogEnable {
+		if expr.SubqueryRefID > 0 {
+			return fmt.Sprintf("ScalarQueryCol#%d(?)", expr.SubqueryRefID)
+		}
 		return "?"
 	}
+
 	dt, err := expr.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return "not recognized const value"
 	}
+
+	valueStr := expr.format(dt)
+
 	if redact == errors.RedactLogMarker {
-		builder := new(strings.Builder)
-		builder.WriteString("‹")
-		builder.WriteString(expr.format(dt))
-		builder.WriteString("›")
-		return builder.String()
+		valueStr = "‹" + valueStr + "›"
 	}
-	return expr.format(dt)
+	if expr.SubqueryRefID > 0 {
+		return fmt.Sprintf("ScalarQueryCol#%d(%s)", expr.SubqueryRefID, valueStr)
+	}
+	return valueStr
 }
 
 // ExplainNormalizedInfo implements the Expression interface.
@@ -182,7 +188,7 @@ func (expr *Constant) format(dt types.Datum) string {
 func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, redactMode string) string {
 	builder := &strings.Builder{}
 	for i, expr := range exprs {
-		switch expr.(type) {
+		switch expr := expr.(type) {
 		case *Column, *CorrelatedColumn:
 			builder.WriteString(expr.StringWithCtx(ctx, redactMode))
 			if expr.StringWithCtx(ctx, redactMode) != schema.Columns[i].StringWithCtx(ctx, redactMode) {

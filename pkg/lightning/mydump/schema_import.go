@@ -112,7 +112,7 @@ func (si *SchemaImporter) importDatabases(ctx context.Context, dbMetas []*MDData
 
 	ch := make(chan *MDDatabaseMeta)
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := 0; i < si.concurrency; i++ {
+	for range si.concurrency {
 		eg.Go(func() error {
 			p := parser.New()
 			p.SetSQLMode(si.sqlMode)
@@ -154,7 +154,7 @@ func (si *SchemaImporter) importDatabases(ctx context.Context, dbMetas []*MDData
 func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabaseMeta) error {
 	ch := make(chan *MDTableMeta)
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := 0; i < si.concurrency; i++ {
+	for range si.concurrency {
 		eg.Go(func() error {
 			p := parser.New()
 			p.SetSQLMode(si.sqlMode)

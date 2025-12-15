@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -29,6 +30,9 @@ import (
 )
 
 func TestGCStats(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -62,6 +66,9 @@ func TestGCStats(t *testing.T) {
 }
 
 func TestGCPartition(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -196,7 +203,7 @@ func TestExtremCaseOfGC(t *testing.T) {
 	rs := testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
 	require.Len(t, rs.Rows(), 1)
 	rs = testKit.MustQuery("select * from mysql.stats_histograms where table_id = ?", tid)
-	require.Len(t, rs.Rows(), 0)
+	require.Len(t, rs.Rows(), 2)
 	h := dom.StatsHandle()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset", `return(0)`)
 	h.GCStats(dom.InfoSchema(), time.Second*3)

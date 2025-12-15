@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "teststore",
+    srcs = ["store.go"],
+    importpath = "github.com/pingcap/tidb/pkg/store/mockstore/teststore",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/disttask/framework/handle",
+        "//pkg/keyspace",
+        "//pkg/kv",
+        "//pkg/store",
+        "//pkg/store/mockstore",
+    ],
+)

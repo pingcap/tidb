@@ -19,6 +19,7 @@ import (
 )
 
 // GetDomain gets domain from context.
+// might return nil if the session is a cross keyspace one.
 func GetDomain(ctx contextutil.ValueStoreContext) *Domain {
 	v, ok := ctx.GetDomain().(*Domain)
 	if ok {

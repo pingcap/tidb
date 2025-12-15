@@ -8,7 +8,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/util/filter"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	tf "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
@@ -18,8 +18,8 @@ func TestFilterTables(t *testing.T) {
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
 
-	dbTables.AppendTables(filter.InformationSchemaName, []string{"xxx"}, []uint64{0})
-	dbTables.AppendTables(strings.ToUpper(filter.PerformanceSchemaName), []string{"xxx"}, []uint64{0})
+	dbTables.AppendTables(metadef.InformationSchemaName.O, []string{"xxx"}, []uint64{0})
+	dbTables.AppendTables(strings.ToUpper(metadef.PerformanceSchemaName.O), []string{"xxx"}, []uint64{0})
 	dbTables.AppendTables("xxx", []string{"yyy"}, []uint64{0})
 	expectedDBTables.AppendTables("xxx", []string{"yyy"}, []uint64{0})
 	dbTables.AppendTables("yyy", []string{"xxx"}, []uint64{0})
@@ -34,7 +34,7 @@ func TestFilterTables(t *testing.T) {
 		Tables:      dbTables,
 		TableFilter: tableFilter,
 	}
-	databases := []string{filter.InformationSchemaName, filter.PerformanceSchemaName, "xxx", "yyy"}
+	databases := []string{metadef.InformationSchemaName.O, metadef.PerformanceSchemaName.O, "xxx", "yyy"}
 	require.Equal(t, databases, filterDatabases(tctx, conf, databases))
 
 	conf.TableFilter = tf.NewSchemasFilter("xxx")

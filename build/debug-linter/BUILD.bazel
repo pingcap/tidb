@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "debug-linter_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/build/debug-linter",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//build/linter/bootstrap",
+        "@org_golang_x_tools//go/analysis/singlechecker",
+    ],
+)
+
+go_binary(
+    name = "debug-linter",
+    embed = [":debug-linter_lib"],
+    visibility = ["//visibility:public"],
+)

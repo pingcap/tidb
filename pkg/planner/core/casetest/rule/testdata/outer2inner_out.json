@@ -57,10 +57,10 @@
       {
         "SQL": "select * from t1 left outer join t2 on a1=a2 where c2 = 5 AND b2 is null -- case with A AND B (A is null filtering and B is not)",
         "Plan": [
-          "Projection 0.01 root  test.t1.a1, test.t1.b1, test.t1.c1, test.t2.a2, test.t2.b2, test.t2.c2",
-          "└─HashJoin 0.01 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
-          "  ├─TableReader(Build) 0.01 root  data:Selection",
-          "  │ └─Selection 0.01 cop[tikv]  eq(test.t2.c2, 5), isnull(test.t2.b2), not(isnull(test.t2.a2))",
+          "Projection 1.25 root  test.t1.a1, test.t1.b1, test.t1.c1, test.t2.a2, test.t2.b2, test.t2.c2",
+          "└─HashJoin 1.25 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
+          "  ├─TableReader(Build) 1.00 root  data:Selection",
+          "  │ └─Selection 1.00 cop[tikv]  eq(test.t2.c2, 5), isnull(test.t2.b2), not(isnull(test.t2.a2))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
@@ -70,10 +70,10 @@
       {
         "SQL": "select * from t1 left outer join t2 on a1=a2 where b2 is NULL AND c2 = 5 -- case with A AND B (A is null filtering and B is not)",
         "Plan": [
-          "Projection 0.01 root  test.t1.a1, test.t1.b1, test.t1.c1, test.t2.a2, test.t2.b2, test.t2.c2",
-          "└─HashJoin 0.01 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
-          "  ├─TableReader(Build) 0.01 root  data:Selection",
-          "  │ └─Selection 0.01 cop[tikv]  eq(test.t2.c2, 5), isnull(test.t2.b2), not(isnull(test.t2.a2))",
+          "Projection 1.25 root  test.t1.a1, test.t1.b1, test.t1.c1, test.t2.a2, test.t2.b2, test.t2.c2",
+          "└─HashJoin 1.25 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
+          "  ├─TableReader(Build) 1.00 root  data:Selection",
+          "  │ └─Selection 1.00 cop[tikv]  eq(test.t2.c2, 5), isnull(test.t2.b2), not(isnull(test.t2.a2))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
@@ -83,10 +83,10 @@
       {
         "SQL": "select * from t1 left outer join t2 on a1=a2 where not (b2 is NULL OR c2 = 5) -- NOT case ",
         "Plan": [
-          "Projection 9990.00 root  test.t1.a1, test.t1.b1, test.t1.c1, test.t2.a2, test.t2.b2, test.t2.c2",
-          "└─HashJoin 9990.00 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
-          "  ├─TableReader(Build) 7992.00 root  data:Selection",
-          "  │ └─Selection 7992.00 cop[tikv]  and(not(isnull(test.t2.b2)), ne(test.t2.c2, 5)), not(isnull(test.t2.a2))",
+          "Projection 8304.20 root  test.t1.a1, test.t1.b1, test.t1.c1, test.t2.a2, test.t2.b2, test.t2.c2",
+          "└─HashJoin 8304.20 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
+          "  ├─TableReader(Build) 6643.36 root  data:Selection",
+          "  │ └─Selection 6643.36 cop[tikv]  ne(test.t2.c2, 5), not(isnull(test.t2.a2)), not(isnull(test.t2.b2))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
@@ -256,10 +256,10 @@
         "Plan": [
           "Projection 1.00 root  div(Column#15, 7.0)->Column#16",
           "└─StreamAgg 1.00 root  funcs:sum(test.lineitem.l_extendedprice)->Column#15",
-          "  └─HashJoin 0.01 root  inner join, equal:[eq(test.part.p_partkey, test.lineitem.l_partkey)], other cond:lt(test.lineitem.l_quantity, mul(0.2, Column#13))",
-          "    ├─HashJoin(Build) 0.01 root  inner join, equal:[eq(test.part.p_partkey, test.lineitem.l_partkey)]",
-          "    │ ├─TableReader(Build) 0.01 root  data:Selection",
-          "    │ │ └─Selection 0.01 cop[tikv]  eq(test.part.p_brand, \"Brand#44\"), eq(test.part.p_container, \"WRAP PKG\"), not(isnull(test.part.p_partkey))",
+          "  └─HashJoin 1.25 root  inner join, equal:[eq(test.part.p_partkey, test.lineitem.l_partkey)], other cond:lt(test.lineitem.l_quantity, mul(0.2, Column#13))",
+          "    ├─HashJoin(Build) 1.25 root  inner join, equal:[eq(test.part.p_partkey, test.lineitem.l_partkey)]",
+          "    │ ├─TableReader(Build) 1.00 root  data:Selection",
+          "    │ │ └─Selection 1.00 cop[tikv]  eq(test.part.p_brand, \"Brand#44\"), eq(test.part.p_container, \"WRAP PKG\"), not(isnull(test.part.p_partkey))",
           "    │ │   └─TableFullScan 10000.00 cop[tikv] table:part keep order:false, stats:pseudo",
           "    │ └─TableReader(Probe) 9990.00 root  data:Selection",
           "    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.lineitem.l_partkey))",
@@ -284,29 +284,27 @@
           "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob_key))",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:alias2 keep order:false, stats:pseudo",
           "  └─Projection(Probe) 12487.50 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, cast(test.dd.col_blob_key, datetime(6) BINARY)->Column#41",
-          "    └─HashJoin 12487.50 root  inner join, equal:[eq(test.d.col_date, test.dd.col_date)]",
+          "    └─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.d.col_date, test.dd.col_date)]",
           "      ├─TableReader(Build) 9990.00 root  data:Selection",
           "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_date))",
           "      │   └─TableFullScan 10000.00 cop[tikv] table:outr2 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 9990.00 root  data:Selection",
-          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.d.col_date))",
-          "          └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "with cte as (select count(a2) as cnt,b2-5 as b3 from t1 left outer join t2 on a1=a2 group by b3) select * from cte where b3 > 1 -- aggregate case.",
         "Plan": [
           "Projection 6393.60 root  Column#21, minus(test.t2.b2, 5)->Column#22",
-          "└─Selection 6393.60 root  gt(minus(test.t2.b2, 5), 1)",
-          "  └─HashAgg 7992.00 root  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:firstrow(Column#25)->test.t2.b2",
-          "    └─Projection 12487.50 root  test.t2.a2->Column#24, test.t2.b2->Column#25, minus(test.t2.b2, 5)->Column#26",
-          "      └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a1, test.t2.a2)]",
-          "        ├─TableReader(Build) 9990.00 root  data:Selection",
-          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
-          "        │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "        └─TableReader(Probe) 9990.00 root  data:Selection",
-          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
-          "            └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─HashAgg 6393.60 root  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:firstrow(Column#25)->test.t2.b2",
+          "  └─Projection 9990.00 root  test.t2.a2->Column#24, test.t2.b2->Column#25, minus(test.t2.b2, 5)->Column#26",
+          "    └─HashJoin 9990.00 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
+          "      ├─TableReader(Build) 7992.00 root  data:Selection",
+          "      │ └─Selection 7992.00 cop[tikv]  gt(minus(test.t2.b2, 5), 1), not(isnull(test.t2.a2))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -367,7 +365,7 @@
       {
         "SQL": "select * from t1 left outer join t2 on a1=a2 where not(b2 is not null) -- nested 'not' negative case",
         "Plan": [
-          "Selection 9990.00 root  not(not(isnull(test.t2.b2)))",
+          "Selection 9990.00 root  isnull(test.t2.b2)",
           "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1.a1, test.t2.a2)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
@@ -379,7 +377,7 @@
       {
         "SQL": "select * from t1 left outer join t2 on a1=a2 where not(not(b2 is null)) -- nested 'not' negative case",
         "Plan": [
-          "Selection 9990.00 root  not(not(isnull(test.t2.b2)))",
+          "Selection 9990.00 root  isnull(test.t2.b2)",
           "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1.a1, test.t2.a2)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
@@ -415,13 +413,12 @@
       {
         "SQL": "select * from t2 left outer join t1 on a1=a2 where true OR b1 = 5; -- negative case with OR and one branch is TRUE",
         "Plan": [
-          "Selection 9990.00 root  or(1, eq(test.t1.b1, 5))",
-          "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.a2, test.t1.a1)]",
-          "  ├─TableReader(Build) 9990.00 root  data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.a2, test.t1.a1)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -515,8 +512,7 @@
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:inner_t1 keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 10000.00 root  left outer join, left side:TableReader, equal:[eq(test.ti.i, test.ti.i)]",
-          "  ├─Selection(Build) 0.00 root  not(isnull(test.ti.i))",
-          "  │ └─TableDual 0.00 root  rows:0",
+          "  ├─TableDual(Build) 0.00 root  rows:0",
           "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:ti keep order:false, stats:pseudo"
         ]
@@ -603,24 +599,24 @@
       {
         "SQL": "select * from t0 left outer join t11 on a0=a1 where t0.b0 in ('5', t11.b1) -- some = in the in list is not null filtering",
         "Plan": [
-          "Selection 9990.00 root  in(test.t0.b0, \"5\", test.t11.b1)",
-          "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t0.a0, test.t11.a1)]",
-          "  ├─TableReader(Build) 9990.00 root  data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t11.a1))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t0.a0, test.t11.a1)], other cond:in(test.t0.b0, \"5\", test.t11.b1)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t11.a1))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.a0))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from t0 left outer join t11 on a0=a1 where '5' in (t0.b0, t11.b1) -- some = in the in list is not null filtering",
         "Plan": [
-          "Selection 9990.00 root  in(\"5\", test.t0.b0, test.t11.b1)",
-          "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t0.a0, test.t11.a1)]",
-          "  ├─TableReader(Build) 9990.00 root  data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t11.a1))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t0.a0, test.t11.a1)], other cond:in(\"5\", test.t0.b0, test.t11.b1)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t11.a1))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.a0))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo"
         ]
       }

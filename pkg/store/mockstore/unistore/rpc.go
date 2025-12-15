@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -59,6 +60,13 @@ var CheckResourceTagForTopSQLInGoTest bool
 
 // UnistoreRPCClientSendHook exports for test.
 var UnistoreRPCClientSendHook atomic.Pointer[func(*tikvrpc.Request)]
+
+// SendRequestAsync sends a request to mock cluster asynchronously.
+func (c *RPCClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	go func() {
+		cb.Schedule(c.SendRequest(ctx, addr, req, tikv.ReadTimeoutMedium))
+	}()
+}
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -198,6 +206,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			case "keyError":
 				failpoint.Return(&tikvrpc.Response{
 					Resp: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
+				}, nil)
+			case "undeterminedResult":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{
+						UndeterminedResult: &errorpb.UndeterminedResult{}},
+					},
 				}, nil)
 			}
 		})

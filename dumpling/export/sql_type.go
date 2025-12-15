@@ -73,7 +73,7 @@ func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 		last   = 0
 	)
 	// reference: https://gist.github.com/siddontang/8875771
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		escape = 0
 
 		switch s[i] {
@@ -115,7 +115,7 @@ func escapeBackslashCSV(s []byte, bf *bytes.Buffer, opt *csvOption) {
 		specCmt = opt.separator[0] // if csv's delimiter is "", we should escape the separator to avoid error
 	}
 
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		escape = 0
 
 		switch s[i] {

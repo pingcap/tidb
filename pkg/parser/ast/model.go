@@ -19,7 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 // TableLockType is the type of the table lock.
@@ -207,22 +207,32 @@ func (t IndexType) String() string {
 		return "HYPO"
 	case IndexTypeHNSW:
 		return "HNSW"
+	case IndexTypeVector:
+		return "VECTOR"
 	case IndexTypeInverted:
 		return "INVERTED"
+	case IndexTypeFulltext:
+		return "FULLTEXT"
 	default:
 		return ""
 	}
 }
 
 // IndexTypes
+// Warning: 1) Also used in TiFlash 2) May come from a previous version persisted in TableInfo.
+// So you must keep it compatible when modifying it.
 const (
 	IndexTypeInvalid IndexType = iota
 	IndexTypeBtree
 	IndexTypeHash
 	IndexTypeRtree
 	IndexTypeHypo
-	IndexTypeHNSW
+	IndexTypeVector
 	IndexTypeInverted
+	// IndexTypeHNSW is only used in AST.
+	// It will be rewritten into IndexTypeVector after preprocessor phase.
+	IndexTypeHNSW
+	IndexTypeFulltext
 )
 
 // ReferOptionType is the type for refer options.
@@ -262,7 +272,7 @@ type CIStr struct {
 }
 
 // Hash64 implements HashEquals interface.
-func (cis *CIStr) Hash64(h types.IHasher) {
+func (cis *CIStr) Hash64(h util.IHasher) {
 	h.HashString(cis.L)
 }
 

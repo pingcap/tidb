@@ -42,7 +42,7 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(ctx EvalContext, input *ch
 	result.MergeNulls(buf)
 	i64s := buf.Int64s()
 	ds := result.GoDurations()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -108,7 +108,7 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 	hasUnsignedFlag0 := mysql.HasUnsignedFlag(b.tp.GetFlag())
 	hasUnsignedFlag1 := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -142,7 +142,7 @@ func (b *builtinCastRealAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chu
 	if !conditionUnionAndUnsigned {
 		return nil
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -174,7 +174,7 @@ func (b *builtinCastTimeAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chu
 
 	result.ReserveJSON(n)
 	tms := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -300,7 +300,7 @@ func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(ctx EvalContext, input *chu
 	decs := result.Decimals()
 	tc, ec := typeCtx(ctx), errCtx(ctx)
 	dec := new(types.MyDecimal)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -338,7 +338,7 @@ func (b *builtinCastDurationAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.C
 	fsp := b.args[0].GetType(ctx).GetDecimal()
 	isYear := b.tp.GetType() == mysql.TypeYear
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -387,7 +387,7 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chun
 	fsp := b.tp.GetDecimal()
 
 	var tm types.Time
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			continue
 		}
@@ -430,7 +430,7 @@ func (b *builtinCastRealAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chu
 	}
 	f64s := buf.Float64s()
 	result.ReserveJSON(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.```
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -460,7 +460,7 @@ func (b *builtinCastJSONAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chu
 	result.MergeNulls(buf)
 	f64s := result.Float64s()
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -498,7 +498,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chu
 	}
 	fsp := b.tp.GetDecimal()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -583,7 +583,7 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chu
 	f64s := buf.Float64s()
 	tc := typeCtx(ctx)
 	fsp := b.tp.GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			continue
 		}
@@ -623,7 +623,7 @@ func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(ctx EvalContext, input *
 	tc, ec := typeCtx(ctx), errCtx(ctx)
 	conditionUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag())
 	dec := new(types.MyDecimal)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -666,7 +666,7 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk
 		ts = gotime.Now()
 	}
 	fsp := b.tp.GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -710,7 +710,7 @@ func (b *builtinCastIntAsStringSig) vecEvalString(ctx EvalContext, input *chunk.
 	isYearType := tp.GetType() == mysql.TypeYear
 	result.ReserveString(n)
 	i64s := buf.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var str string
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -762,7 +762,7 @@ func (b *builtinCastRealAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 	i64s := result.Int64s()
 	f64s := buf.Float64s()
 	unsigned := mysql.HasUnsignedFlag(b.tp.GetFlag())
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -806,7 +806,7 @@ func (b *builtinCastTimeAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chu
 	result.MergeNulls(buf)
 	times := buf.Times()
 	f64s := result.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -846,7 +846,7 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.C
 	typ := b.args[0].GetType(ctx)
 	if types.IsBinaryStr(typ) {
 		var res types.BinaryJSON
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if buf.IsNull(i) {
 				result.AppendNull()
 				continue
@@ -868,7 +868,7 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.C
 		}
 	} else if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
 		var res types.BinaryJSON
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if buf.IsNull(i) {
 				result.AppendNull()
 				continue
@@ -880,7 +880,7 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.C
 			result.AppendJSON(res)
 		}
 	} else {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if buf.IsNull(i) {
 				result.AppendNull()
 				continue
@@ -910,7 +910,7 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(ctx EvalContext, input *chu
 	bufreal := buf.Float64s()
 	resdecimal := result.Decimals()
 	tc, ec := typeCtx(ctx), errCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -966,7 +966,7 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	i64s := result.Int64s()
 	isUnsigned := mysql.HasUnsignedFlag(b.tp.GetFlag())
 	unionUnsigned := isUnsigned && b.inUnion
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1018,7 +1018,7 @@ func (b *builtinCastStringAsDurationSig) vecEvalDuration(ctx EvalContext, input 
 	result.MergeNulls(buf)
 	ds := result.GoDurations()
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1064,7 +1064,7 @@ func (b *builtinCastDurationAsDecimalSig) vecEvalDecimal(ctx EvalContext, input 
 	if fsp, err = types.CheckFsp(fsp); err != nil {
 		return err
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1102,7 +1102,7 @@ func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(ctx EvalContext, input *chun
 	decs := result.Decimals()
 	tc, ec := typeCtx(ctx), errCtx(ctx)
 	dec := new(types.MyDecimal)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1142,7 +1142,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 	nums := buf.Int64s()
 	result.ReserveJSON(n)
 	if mysql.HasIsBooleanFlag(b.args[0].GetType(ctx).GetFlag()) {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if buf.IsNull(i) {
 				result.AppendNull()
 			} else {
@@ -1150,7 +1150,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 			}
 		}
 	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) || b.args[0].GetType(ctx).GetType() == mysql.TypeYear {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if buf.IsNull(i) {
 				result.AppendNull()
 			} else {
@@ -1158,7 +1158,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 			}
 		}
 	} else {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if buf.IsNull(i) {
 				result.AppendNull()
 			} else {
@@ -1195,7 +1195,7 @@ func (b *builtinCastJSONAsStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 	result.ReserveString(n)
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1234,7 +1234,7 @@ func (b *builtinCastDurationAsRealSig) vecEvalReal(ctx EvalContext, input *chunk
 		return err
 	}
 	ds := buf.GoDurations()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1267,7 +1267,7 @@ func (b *builtinCastJSONAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	tc, ec := typeCtx(ctx), errCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1298,7 +1298,7 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(ctx EvalContext, input *c
 	f64s := buf.Float64s()
 	ds := result.GoDurations()
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1404,7 +1404,7 @@ func (b *builtinCastDurationAsStringSig) vecEvalString(ctx EvalContext, input *c
 	tc := typeCtx(ctx)
 	result.ReserveString(n)
 	fsp := b.args[0].GetType(ctx).GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1448,7 +1448,7 @@ func (b *builtinCastDecimalAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 	rs := result.Float64s()
 
 	inUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag())
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1494,7 +1494,7 @@ func (b *builtinCastDecimalAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.
 	decimals := buf.Decimals()
 	tc := typeCtx(ctx)
 	fsp := b.tp.GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			continue
 		}
@@ -1535,7 +1535,7 @@ func (b *builtinCastTimeAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 	times := buf.Times()
 	i64s := result.Int64s()
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1564,7 +1564,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chu
 	times := result.Times()
 	tc := typeCtx(ctx)
 	fsp := b.tp.GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1650,7 +1650,7 @@ func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(ctx EvalContext, input *chu
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf)
 	res := result.Decimals()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1696,7 +1696,7 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.C
 	ret := result.Float64s()
 	tc := typeCtx(ctx)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1737,7 +1737,7 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(ctx EvalContext, input *c
 	result.MergeNulls(buf)
 	res := result.Decimals()
 	tc, ec := typeCtx(ctx), errCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1778,7 +1778,7 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.C
 	times := result.Times()
 	tc := typeCtx(ctx)
 	fsp := b.tp.GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1829,7 +1829,7 @@ func (b *builtinCastDecimalAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	d64s := buf.Decimals()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1884,7 +1884,7 @@ func (b *builtinCastDecimalAsDurationSig) vecEvalDuration(ctx EvalContext, input
 	args := buf.Decimals()
 	ds := result.GoDurations()
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1925,7 +1925,7 @@ func (b *builtinCastStringAsStringSig) vecEvalString(ctx EvalContext, input *chu
 	var isNull bool
 	tc := typeCtx(ctx)
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1968,7 +1968,7 @@ func (b *builtinCastJSONAsDurationSig) vecEvalDuration(ctx EvalContext, input *c
 	result.MergeNulls(buf)
 	var dur types.Duration
 	ds := result.GoDurations()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2034,7 +2034,7 @@ func (b *builtinCastDecimalAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.
 	result.ReserveJSON(n)
 	f64s := buf.Decimals()
 	var f float64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2068,7 +2068,7 @@ func (b *builtinCastDurationAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk
 	var dur types.Duration
 	dur.Fsp = types.MaxFsp
 	ds := buf.GoDurations()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue

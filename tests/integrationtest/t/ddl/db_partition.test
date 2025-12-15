@@ -13,22 +13,22 @@ create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by
  partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba");
 analyze table t all columns;
-explain format='brief' select * from t where a = "AA" collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = "AA" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = "AA" collate utf8mb4_general_ci;
-explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = "aa" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = "aa" collate utf8mb4_general_ci;
-explain format='brief' select * from t where a >= "aa" collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a >= "aa" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a >= "aa" collate utf8mb4_general_ci;
-explain format='brief' select * from t where a > "aa" collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a > "aa" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a > "aa" collate utf8mb4_general_ci;
-explain format='brief' select * from t where a <= "aa" collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a <= "aa" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a <= "aa" collate utf8mb4_general_ci;
-explain format='brief' select * from t where a < "aa" collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a < "aa" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a < "aa" collate utf8mb4_general_ci;
 drop table t;
@@ -42,28 +42,28 @@ create table t (a varchar(255) charset utf8mb4 collate utf8mb4_general_ci) parti
  partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ");
 analyze table t all columns;
-explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
+explain format='plan_tree' select * from t where a = "aa" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = "aa" collate utf8mb4_general_ci;
-explain format='brief' select * from t where a = "aa" collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = "aa" collate utf8mb4_bin;
 --sorted_result
 select * from t where a = "aa" collate utf8mb4_bin;
-explain format='brief' select * from t where a = "ä" collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = "ä" collate utf8mb4_bin;
 --sorted_result
 select * from t where a = "ä" collate utf8mb4_bin;
-explain format='brief' select * from t where a = "b" collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a = "b" collate utf8mb4_bin;
 --sorted_result
 select * from t where a = "b" collate utf8mb4_bin;
-explain format='brief' select * from t where a <= "b" collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a <= "b" collate utf8mb4_bin;
 --sorted_result
 select * from t where a <= "b" collate utf8mb4_bin;
-explain format='brief' select * from t where a < "b" collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a < "b" collate utf8mb4_bin;
 --sorted_result
 select * from t where a < "b" collate utf8mb4_bin;
-explain format='brief' select * from t where a >= "b" collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a >= "b" collate utf8mb4_bin;
 --sorted_result
 select * from t where a >= "b" collate utf8mb4_bin;
-explain format='brief' select * from t where a > "b" collate utf8mb4_bin;
+explain format='plan_tree' select * from t where a > "b" collate utf8mb4_bin;
 --sorted_result
 select * from t where a > "b" collate utf8mb4_bin;
 
@@ -242,16 +242,16 @@ set @@tidb_partition_prune_mode = 'dynamic';
 select * from t where a = 4;
 select * from t where a is null;
 select * from t where a = 3;
-explain format = 'brief' select * from t where a = 4;
-explain format = 'brief' select * from t where a is null;
-explain format = 'brief' select * from t where a = 3;
+explain format = 'plan_tree' select * from t where a = 4;
+explain format = 'plan_tree' select * from t where a is null;
+explain format = 'plan_tree' select * from t where a = 3;
 set @@tidb_partition_prune_mode = 'static';
 select * from t where a = 4;
 select * from t where a is null;
 select * from t where a = 3;
-explain format = 'brief' select * from t where a = 4;
-explain format = 'brief' select * from t where a is null;
-explain format = 'brief' select * from t where a = 3;
+explain format = 'plan_tree' select * from t where a = 4;
+explain format = 'plan_tree' select * from t where a is null;
+explain format = 'plan_tree' select * from t where a = 3;
 # TODO: check ranges with 1,2 and 3 matching values, including 'holes' matching DEFAULT
 # DEFAULT partition will not be used in reorganize partition if not included in the source/destination
 -- error 1526
@@ -273,46 +273,46 @@ select * from t partition(p1);
 --sorted_result
 select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_schema = 'ddl__db_partition' and table_name = 't';
 set @@tidb_partition_prune_mode = 'dynamic';
-explain format = 'brief' select * from t where a is null;
+explain format = 'plan_tree' select * from t where a is null;
 --sorted_result
 select * from t where a is null;
 --sorted_result
 select * from t where a = 4;
-explain format = 'brief' select * from t where a = 4;
+explain format = 'plan_tree' select * from t where a = 4;
 --sorted_result
 select * from t where a = 3;
-explain format = 'brief' select * from t where a = 3;
-explain format = 'brief' select * from t where a = "3";
+explain format = 'plan_tree' select * from t where a = 3;
+explain format = 'plan_tree' select * from t where a = "3";
 --sorted_result
 select * from t where a = "3";
 --sorted_result
 select * from t where a = "4";
-explain format = 'brief' select * from t where a = "4";
+explain format = 'plan_tree' select * from t where a = "4";
 # Notice in string context that "35" is between "3" and "4"
-explain format = 'brief' select * from t where a between "3" and "4";
+explain format = 'plan_tree' select * from t where a between "3" and "4";
 --sorted_result
 select * from t where a between "3" and "4";
-explain format = 'brief' select * from t where a >= "3" and a <= "4";
+explain format = 'plan_tree' select * from t where a >= "3" and a <= "4";
 --sorted_result
 select * from t where a >= "3" and a <= "4";
 set @@tidb_partition_prune_mode = 'static';
 --sorted_result
 select * from t where a is null;
-explain format = 'brief' select * from t where a is null;
+explain format = 'plan_tree' select * from t where a is null;
 --sorted_result
 select * from t where a = 4;
 --sorted_result
 select * from t where a = "4";
-explain format = 'brief' select * from t where a = "4";
+explain format = 'plan_tree' select * from t where a = "4";
 --sorted_result
 select * from t where a = 3;
 --sorted_result
 select * from t where a = "3";
-explain format = 'brief' select * from t where a = "3";
-explain format = 'brief' select * from t where a between "3" and "4";
+explain format = 'plan_tree' select * from t where a = "3";
+explain format = 'plan_tree' select * from t where a between "3" and "4";
 --sorted_result
 select * from t where a between "3" and "4";
-explain format = 'brief' select * from t where a >= "3" and a <= "4";
+explain format = 'plan_tree' select * from t where a >= "3" and a <= "4";
 --sorted_result
 select * from t where a >= "3" and a <= "4";
 # DEFAULT partition will not be used in reorganize partition if not included in the source/destination

@@ -14,37 +14,37 @@ create table t1(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (
 insert into t1 select 'a', 'cd', 'ef';
 create table t2(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2(1)), key idx1 (c1,c2));
 insert into t2 select 'a', 'cd', 'ef';
-explain format = 'brief' select c2 from t1 use index(idx1);
-id	estRows	task	access object	operator info
-IndexReader	10000.00	root		index:IndexFullScan
-└─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx1(c2)	keep order:false, stats:pseudo
+explain format = 'plan_tree' select c2 from t1 use index(idx1);
+id	task	access object	operator info
+IndexReader	root		index:IndexFullScan
+└─IndexFullScan	cop[tikv]	table:t1, index:idx1(c2)	keep order:false, stats:pseudo
 select c2 from t1 use index(idx1);
 c2
 cd
-explain format = 'brief' select count(1) from t1 use index(idx1) where c2 = 'cd';
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(Column#6)->Column#4
-└─IndexReader	1.00	root		index:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#6
-    └─Selection	10.00	cop[tikv]		eq(session__clustered_index.t1.c2, "cd")
-      └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:idx1(c2)	range:["c","c"], keep order:false, stats:pseudo
+explain format = 'plan_tree' select count(1) from t1 use index(idx1) where c2 = 'cd';
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column#6)->Column#4
+└─IndexReader	root		index:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#6
+    └─Selection	cop[tikv]		eq(session__clustered_index.t1.c2, "cd")
+      └─IndexRangeScan	cop[tikv]	table:t1, index:idx1(c2)	range:["c","c"], keep order:false, stats:pseudo
 select count(1) from t1 use index(idx1) where c2 = 'cd';
 count(1)
 1
-explain format = 'brief' select c2 from t2 use index(idx1);
-id	estRows	task	access object	operator info
-IndexReader	10000.00	root		index:IndexFullScan
-└─IndexFullScan	10000.00	cop[tikv]	table:t2, index:idx1(c1, c2)	keep order:false, stats:pseudo
+explain format = 'plan_tree' select c2 from t2 use index(idx1);
+id	task	access object	operator info
+IndexReader	root		index:IndexFullScan
+└─IndexFullScan	cop[tikv]	table:t2, index:idx1(c1, c2)	keep order:false, stats:pseudo
 select c2 from t2 use index(idx1);
 c2
 cd
-explain format = 'brief' select count(1) from t2 use index(idx1) where c2 = 'cd';
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(Column#9)->Column#4
-└─IndexReader	1.00	root		index:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#9
-    └─Selection	10.00	cop[tikv]		eq(session__clustered_index.t2.c2, "cd")
-      └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:idx1(c1, c2)	keep order:false, stats:pseudo
+explain format = 'plan_tree' select count(1) from t2 use index(idx1) where c2 = 'cd';
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column#9)->Column#4
+└─IndexReader	root		index:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#9
+    └─Selection	cop[tikv]		eq(session__clustered_index.t2.c2, "cd")
+      └─IndexFullScan	cop[tikv]	table:t2, index:idx1(c1, c2)	keep order:false, stats:pseudo
 select count(1) from t2 use index(idx1) where c2 = 'cd';
 count(1)
 1
@@ -100,13 +100,13 @@ create table t (a int, pk char(10), c int, primary key(pk), key(a));
 insert into t values (1, '111', 3);
 begin;
 update t set a = a + 1, pk = '222' where a = 1;
-explain format='brief' select pk, c from t where a = 2;
-id	estRows	task	access object	operator info
-Projection	10.00	root		session__clustered_index.t.pk, session__clustered_index.t.c
-└─UnionScan	10.00	root		eq(session__clustered_index.t.a, 2)
-  └─IndexLookUp	10.00	root		
-    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:a(a)	range:[2,2], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select pk, c from t where a = 2;
+id	task	access object	operator info
+Projection	root		session__clustered_index.t.pk, session__clustered_index.t.c
+└─UnionScan	root		eq(session__clustered_index.t.a, 2)
+  └─IndexLookUp	root		
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:a(a)	range:[2,2], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select pk, c from t where a = 2;
 pk	c
 222	3
@@ -164,14 +164,14 @@ insert into t(name, b) values('aaa', 3);
 Error 1062 (23000): Duplicate entry 'aa' for key 't.PRIMARY'
 explain select * from t use index(primary) where name = 'aaaaa';
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root		data:Selection_6
-└─Selection_6	10.00	cop[tikv]		eq(session__clustered_index.t.name, "aaaaa")
-  └─TableRangeScan_5	12.50	cop[tikv]	table:t	range:["aa","aa"], keep order:false, stats:pseudo
+TableReader_8	10.00	root		data:Selection_7
+└─Selection_7	10.00	cop[tikv]		eq(session__clustered_index.t.name, "aaaaa")
+  └─TableRangeScan_6	12.50	cop[tikv]	table:t	range:["aa","aa"], keep order:false, stats:pseudo
 explain select * from t use index(primary) where name = 'aaaaa';
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root		data:Selection_6
-└─Selection_6	10.00	cop[tikv]		eq(session__clustered_index.t.name, "aaaaa")
-  └─TableRangeScan_5	12.50	cop[tikv]	table:t	range:["aa","aa"], keep order:false, stats:pseudo
+TableReader_8	10.00	root		data:Selection_7
+└─Selection_7	10.00	cop[tikv]		eq(session__clustered_index.t.name, "aaaaa")
+  └─TableRangeScan_6	12.50	cop[tikv]	table:t	range:["aa","aa"], keep order:false, stats:pseudo
 select * from t use index(primary) where name = 'aaaaa';
 name	b	c
 aaaaa	1	NULL

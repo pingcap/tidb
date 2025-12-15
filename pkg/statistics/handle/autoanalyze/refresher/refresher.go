@@ -94,7 +94,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	err := r.setAutoAnalysisTimeWindow(parameters)
 	if err != nil {
-		statslogutil.StatsLogger().Error("Set auto analyze time window failed", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Set auto analyze time window failed", zap.Error(err))
 		return false
 	}
 	if !r.isWithinTimeWindow() {
@@ -104,7 +104,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
 		if err := r.jobs.Initialize(r.ctx); err != nil {
-			statslogutil.StatsLogger().Error("Failed to initialize the queue", zap.Error(err))
+			statslogutil.StatsErrVerboseSampleLogger().Error("Failed to initialize the queue", zap.Error(err))
 			return false
 		}
 		r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
@@ -116,7 +116,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 			r.lastSeenPruneMode = currentPruneMode
 			err := r.jobs.Rebuild()
 			if err != nil {
-				statslogutil.StatsLogger().Error("Failed to rebuild the queue", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Error("Failed to rebuild the queue", zap.Error(err))
 				return false
 			}
 		}
@@ -242,6 +242,12 @@ func (r *Refresher) ProcessDMLChangesForTest() {
 // Only used in the test.
 func (r *Refresher) RequeueMustRetryJobsForTest() {
 	r.jobs.RequeueMustRetryJobs()
+}
+
+// IsQueueInitializedForTest returns whether the priority queue is initialized.
+// Only used in the test.
+func (r *Refresher) IsQueueInitializedForTest() bool {
+	return r.jobs.IsInitialized()
 }
 
 // Len returns the length of the analysis job queue.

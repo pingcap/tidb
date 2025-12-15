@@ -163,14 +163,6 @@ func MergePartitionStats2GlobalStatsByTableID(
 	return
 }
 
-// analyzeOptionDefault saves the default values of NumBuckets and NumTopN.
-// These values will be used in dynamic mode when we drop table partition and then need to merge global-stats.
-// These values originally came from the analyzeOptionDefault structure in the planner/core/planbuilder.go file.
-var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets: 256,
-	ast.AnalyzeOptNumTopN:    20,
-}
-
 // blockingMergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
 // It is the old algorithm to merge partition-level stats to global-level stats. It will happen the OOM. because it will load all the partition-level stats into memory.
 func blockingMergePartitionStats2GlobalStats(
@@ -212,7 +204,7 @@ func blockingMergePartitionStats2GlobalStats(
 	allCms := make([][]*statistics.CMSketch, globalStats.Num)
 	allTopN := make([][]*statistics.TopN, globalStats.Num)
 	allFms := make([][]*statistics.FMSketch, globalStats.Num)
-	for i := 0; i < globalStats.Num; i++ {
+	for i := range globalStats.Num {
 		allHg[i] = make([]*statistics.Histogram, 0, partitionNum)
 		allCms[i] = make([]*statistics.CMSketch, 0, partitionNum)
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
@@ -252,7 +244,7 @@ func blockingMergePartitionStats2GlobalStats(
 			}
 		}
 
-		for i := 0; i < globalStats.Num; i++ {
+		for i := range globalStats.Num {
 			// GetStatsInfo will return the copy of the statsInfo, so we don't need to worry about the data race.
 			// partitionStats will be released after the for loop.
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex, externalCache)
@@ -305,7 +297,7 @@ func blockingMergePartitionStats2GlobalStats(
 
 	// After collect all the statistics from the partition-level stats,
 	// we should merge them together.
-	for i := 0; i < globalStats.Num; i++ {
+	for i := range globalStats.Num {
 		if len(allHg[i]) == 0 {
 			// If all partitions have no stats, we skip merging global stats because it may not handle the case `len(allHg[i]) == 0`
 			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
@@ -325,10 +317,7 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 
 		// Update the global NDV.
-		globalStatsNDV := globalStats.Fms[i].NDV()
-		if globalStatsNDV > globalStats.Count {
-			globalStatsNDV = globalStats.Count
-		}
+		globalStatsNDV := min(globalStats.Fms[i].NDV(), globalStats.Count)
 		globalStats.Fms[i].DestroyAndPutToPool()
 
 		// Merge CMSketch.
@@ -360,11 +349,12 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 
 		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-		for j := range globalStats.Hg[i].Buckets {
-			globalStats.Hg[i].Buckets[j].NDV = 0
+		if globalStats.Hg[i] != nil {
+			for j := range globalStats.Hg[i].Buckets {
+				globalStats.Hg[i].Buckets[j].NDV = 0
+			}
+			globalStats.Hg[i].NDV = globalStatsNDV
 		}
-
-		globalStats.Hg[i].NDV = globalStatsNDV
 	}
 	return
 }
@@ -372,7 +362,7 @@ func blockingMergePartitionStats2GlobalStats(
 // WriteGlobalStatsToStorage is to write global stats to storage
 func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
 	// Dump global-level stats to kv.
-	for i := 0; i < globalStats.Num; i++ {
+	for i := range globalStats.Num {
 		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
 		if hg == nil {
 			// All partitions have no stats so global stats are not created.
@@ -391,7 +381,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			util.StatsMetaHistorySourceAnalyze,
 		)
 		if err != nil {
-			statslogutil.StatsLogger().Error("save global-level stats to storage failed",
+			statslogutil.StatsLogger().Warn("save global-level stats to storage failed",
 				zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", gid))
 		}
 	}

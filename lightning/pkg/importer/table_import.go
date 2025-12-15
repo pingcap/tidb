@@ -29,7 +29,6 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -53,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -288,6 +288,7 @@ func (tr *TableImporter) Close() {
 func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
 	divideConfig := mydump.NewDataDivideConfig(rc.cfg, len(tr.tableInfo.Core.Columns), rc.ioWorkers, rc.store, tr.tableMeta)
+	divideConfig.SkipParquetRowCount = common.SkipReadRowCount(tr.tableInfo.Desired)
 	tableRegions, err := mydump.MakeTableRegions(ctx, divideConfig)
 	if err == nil {
 		timestamp := time.Now().Unix()
@@ -317,7 +318,7 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 					tr.tableInfo.Core,
 					region.Chunk.Columns,
 					tr.ignoreColumns,
-					log.FromContext(ctx))
+					log.Wrap(logutil.Logger(ctx)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -682,8 +683,8 @@ func (tr *TableImporter) preprocessEngine(
 	var chunkErr common.OnceError
 
 	type chunkFlushStatus struct {
-		dataStatus  backend.ChunkFlushStatus
-		indexStatus backend.ChunkFlushStatus
+		dataStatus  common.ChunkFlushStatus
+		indexStatus common.ChunkFlushStatus
 		chunkCp     *checkpoints.ChunkCheckpoint
 	}
 
@@ -786,13 +787,6 @@ ChunkLoop:
 			break
 		}
 
-		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			// TODO: use the compressed size of the chunk to conduct memory control
-			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
 		go func(w *worker.Worker, cr *chunkProcessor) {
@@ -806,7 +800,7 @@ ChunkLoop:
 				metrics.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
 			}
 			err := cr.process(ctx, tr, engineID, dataWriter, indexWriter, rc)
-			var dataFlushStatus, indexFlushStaus backend.ChunkFlushStatus
+			var dataFlushStatus, indexFlushStaus common.ChunkFlushStatus
 			if err == nil {
 				dataFlushStatus, err = dataWriter.Close(ctx)
 			}
@@ -893,11 +887,11 @@ ChunkLoop:
 		if isLocalBackend(rc.cfg) && common.IsContextCanceledError(err) {
 			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
 			if _, err2 := dataEngine.Close(context.Background()); err2 != nil {
-				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
+				logutil.Logger(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 				return nil, errors.Trace(err)
 			}
 			if err2 := trySavePendingChunks(context.Background()); err2 != nil {
-				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
+				logutil.Logger(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 			}
 		}
 		return nil, errors.Trace(err)
@@ -1199,46 +1193,10 @@ func (tr *TableImporter) postProcess(
 	return true, nil
 }
 
-func getChunkCompressedSizeForParquet(
-	ctx context.Context,
-	chunk *checkpoints.ChunkCheckpoint,
-	store storage.ExternalStorage,
-) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
-		ZStdDecodeConcurrency: 1,
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
-	if err != nil {
-		_ = reader.Close()
-		return 0, errors.Trace(err)
-	}
-	//nolint: errcheck
-	defer parser.Close()
-	err = parser.Reader.ReadFooter()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	rowGroups := parser.Reader.Footer.GetRowGroups()
-	var maxRowGroupSize int64
-	for _, rowGroup := range rowGroups {
-		var rowGroupSize int64
-		columnChunks := rowGroup.GetColumns()
-		for _, columnChunk := range columnChunks {
-			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
-			rowGroupSize += columnChunkSize
-		}
-		maxRowGroupSize = max(maxRowGroupSize, rowGroupSize)
-	}
-	return maxRowGroupSize, nil
-}
-
 func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
 	s := common.SQLWithRetry{
 		DB:     db,
-		Logger: log.FromContext(ctx).With(zap.Int64("tableID", tableID)),
+		Logger: log.Wrap(logutil.Logger(ctx)).With(zap.Int64("tableID", tableID)),
 	}
 	err := s.Transact(ctx, "update stats_meta", func(ctx context.Context, tx *sql.Tx) error {
 		rs, err := tx.ExecContext(ctx, `
@@ -1415,7 +1373,7 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
 }
 
 func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
-	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("table", tr.tableName))
 
 	tblInfo := tr.tableInfo
 	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
@@ -1470,7 +1428,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 		return nil
 	}
 
-	logger := log.FromContext(ctx).With(zap.String("table", tableName))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("table", tableName))
 
 	defer func() {
 		if retErr == nil {
@@ -1496,10 +1454,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	// Try to add all indexes in one statement.
 	err := tr.executeDDL(ctx, db, singleSQL, func(status *ddlStatus) {
 		if totalRows > 0 {
-			progress := float64(status.rowCount) / float64(totalRows*len(multiSQLs))
-			if progress > 1 {
-				progress = 1
-			}
+			progress := min(float64(status.rowCount)/float64(totalRows*len(multiSQLs)), 1)
 			web.BroadcastTableProgress(tableName, progressStep, progress)
 			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 		}
@@ -1540,7 +1495,7 @@ func (*TableImporter) executeDDL(
 	ddl string,
 	updateProgress func(status *ddlStatus),
 ) error {
-	logger := log.FromContext(ctx).With(zap.String("ddl", ddl))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("ddl", ddl))
 	logger.Info("execute ddl")
 
 	s := common.SQLWithRetry{

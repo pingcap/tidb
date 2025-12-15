@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -27,7 +29,7 @@ import (
 )
 
 // NewEtcdCli creates a new clientv3.Client from store if the store support it.
-// the returned client might be nil.
+// the returned client will have the same keyspace the store, and it might be nil.
 // TODO currently uni-store/mock-tikv/tikv all implements EtcdBackend while they don't support actually.
 // refactor this part.
 func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
@@ -41,6 +43,9 @@ func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
 	cli, err := NewEtcdCliWithAddrs(addrs, etcdStore)
 	if err != nil {
 		return nil, err
+	}
+	if len(store.GetCodec().GetKeyspace()) > 0 {
+		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
 	}
 	return cli, nil
 }

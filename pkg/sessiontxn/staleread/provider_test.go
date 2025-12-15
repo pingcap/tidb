@@ -86,7 +86,7 @@ func TestStaleReadReplicaReadScope(t *testing.T) {
 
 func createStaleReadProvider(t *testing.T, tk *testkit.TestKit, explicitTxn bool) *staleread.StalenessTxnContextProvider {
 	tk.MustExec("rollback")
-	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 	se := tk.Session()
 	ts := getOracleTS(t, se)
 	if explicitTxn {

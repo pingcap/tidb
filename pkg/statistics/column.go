@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -135,21 +134,11 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *HistColl, cid int64) (res bool) {
 	var totalCount float64
 	var ndv int64
-	var inValidForCollPseudo, essentialLoaded bool
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx,
-				"IsInvalid", res,
-				"InValidForCollPseudo", inValidForCollPseudo,
-				"TotalCount", totalCount,
-				"NDV", ndv,
-				"EssentialLoaded", essentialLoaded,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+	var essentialLoaded bool
 	if sctx != nil {
+		if sctx.GetSessionVars().InRestrictedSQL {
+			return true
+		}
 		stmtctx := sctx.GetSessionVars().StmtCtx
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
@@ -163,13 +152,9 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 		}
 	}
 	if histColl.Pseudo {
-		inValidForCollPseudo = true
 		return true
 	}
 	if colStats == nil {
-		totalCount = -1
-		ndv = -1
-		essentialLoaded = false
 		return true
 	}
 	// In some cases, some statistics in column would be evicted
@@ -240,7 +225,7 @@ func (s StatsLoadedStatus) StatusToString() string {
 // IsAnalyzed indicates whether the column is analyzed.
 // The set of IsAnalyzed columns is a subset of the set of StatsAvailable columns.
 func (c *Column) IsAnalyzed() bool {
-	return c.GetStatsVer() != Version0
+	return IsAnalyzed(c.GetStatsVer())
 }
 
 // StatsAvailable indicates whether the column stats are collected.
@@ -254,7 +239,7 @@ func (c *Column) StatsAvailable() bool {
 	// Typically, when the column is analyzed, StatsVer is set to Version1/Version2, so we check IsAnalyzed().
 	// However, when we add/modify a column, its stats are generated according to the default value without setting
 	// StatsVer, so we check NDV > 0 || NullCount > 0 for the case.
-	return c.IsAnalyzed() || c.NDV > 0 || c.NullCount > 0
+	return IsColumnAnalyzedOrSynthesized(c.GetStatsVer(), c.NDV, c.NullCount)
 }
 
 // EmptyColumn creates an empty column object. It may be used for pseudo estimation or to stop loading unexisting stats.
@@ -265,4 +250,14 @@ func EmptyColumn(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column 
 		Histogram:  *NewHistogram(colInfo.ID, 0, 0, 0, &colInfo.FieldType, 0, 0),
 		IsHandle:   pkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 	}
+}
+
+// GetHistogram returns the histogram for this column.
+func (c *Column) GetHistogram() *Histogram {
+	return &c.Histogram
+}
+
+// GetTopN returns the TopN for this column.
+func (c *Column) GetTopN() *TopN {
+	return c.TopN
 }

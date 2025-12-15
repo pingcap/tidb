@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -118,7 +120,7 @@ func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Dom
 	wrk := setupWorkerForTest(ctx, etcdCli, dom, id, testWorker)
 
 	t.Cleanup(func() {
-		wrk.stop()
+		wrk.setRepositoryDest(ctx, "")
 	})
 
 	return wrk
@@ -129,7 +131,7 @@ func eventuallyWithLock(t *testing.T, wrk *worker, fn func() bool) {
 		wrk.Lock()
 		defer wrk.Unlock()
 		return fn()
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
 }
 
 func trueWithLock(t *testing.T, wrk *worker, fn func() bool) {
@@ -189,7 +191,7 @@ func TestRaceToCreateTablesWorker(t *testing.T) {
 }
 
 func getMultipleWorkerCount(tk *testkit.TestKit, worker string) int {
-	res := tk.MustQuery("select count(*) from workload_schema.hist_memory_usage group by instance_id having instance_id = '" + worker + "'").Rows()
+	res := tk.MustQuery("select * from workload_schema.hist_memory_usage where instance_id = '" + worker + "'").Rows()
 	return len(res)
 }
 
@@ -203,58 +205,69 @@ func TestMultipleWorker(t *testing.T) {
 	wrk2.changeSamplingInterval(ctx, "1")
 
 	// start worker 1
-	now := time.Now()
+	now := time.Now() // This time must be before we started worker1.
 	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
 	waitForTables(ctx, t, wrk1, now)
-	require.True(t, wrk1.owner.IsOwner())
-
 	require.Eventually(t, func() bool {
 		return getMultipleWorkerCount(tk, "worker1") >= 1
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
+	// worker1 should be the owner.
+	require.True(t, wrk1.owner.IsOwner())
 
 	// start worker 2
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
-	eventuallyWithLock(t, wrk2, func() bool { return wrk2.owner != nil })
-	require.True(t, !wrk2.owner.IsOwner())
-
 	require.Eventually(t, func() bool {
 		return getMultipleWorkerCount(tk, "worker2") >= 1
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
+	// worker1 should still be the owner.
+	require.True(t, wrk1.owner.IsOwner())
+	require.False(t, wrk2.owner.IsOwner())
 
-	// stop worker 1, worker 2 should become owner
+	// stop worker1
 	require.NoError(t, wrk1.setRepositoryDest(ctx, ""))
+	// wait for worker1 to stop
+	eventuallyWithLock(t, wrk1, func() bool {
+		return wrk1.cancel == nil
+	})
+	// worker2 should become owner
 	require.Eventually(t, func() bool {
 		return wrk2.owner.IsOwner()
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
 
 	// start worker 1 again
-	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
-	eventuallyWithLock(t, wrk1, func() bool { return wrk1.owner != nil })
-	require.True(t, !wrk1.owner.IsOwner())
-
-	// get counts from tables for both workers
 	cnt1 := getMultipleWorkerCount(tk, "worker1")
-	cnt2 := getMultipleWorkerCount(tk, "worker2")
-
+	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
+	// wait for worker1 to start writing rows again
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker1")
-		return cnt >= cnt1
-	}, time.Minute, time.Second)
+		return cnt > cnt1
+	}, time.Minute, time.Millisecond*100)
+	// worker2 should still be the owner.
+	require.False(t, wrk1.owner.IsOwner())
+	require.True(t, wrk2.owner.IsOwner())
 
-	// stop worker 2, worker 1 should become owner
+	// stop worker 2
 	require.NoError(t, wrk2.setRepositoryDest(ctx, ""))
+	// wait for worker2 to stop
+	eventuallyWithLock(t, wrk2, func() bool {
+		return wrk2.cancel == nil
+	})
+	// worker 1 should become owner
 	require.Eventually(t, func() bool {
 		return wrk1.owner.IsOwner()
-	}, time.Minute, time.Second)
-	// start worker 2 again
-	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
-	eventuallyWithLock(t, wrk2, func() bool { return wrk2.owner != nil })
-	require.True(t, !wrk2.owner.IsOwner())
+	}, time.Minute, time.Millisecond*100)
 
+	// start worker 2 again
+	cnt2 := getMultipleWorkerCount(tk, "worker2")
+	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
+	// wait for worker2 to start writing rows again
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker2")
-		return cnt >= cnt2
-	}, time.Minute, time.Second)
+		return cnt > cnt2
+	}, time.Minute, time.Millisecond*100)
+	// worker1 should still be the owner
+	require.True(t, wrk1.owner.IsOwner())
+	require.False(t, wrk2.owner.IsOwner())
 }
 
 func TestGlobalWorker(t *testing.T) {
@@ -301,9 +314,20 @@ func TestAdminWorkloadRepo(t *testing.T) {
 		return len(res) >= 1
 	}, time.Minute, time.Second)
 
+	// Validate that user will out Super can not execute admin command.
+	tk.MustExec(`CREATE USER 'testcheck'@'localhost';`)
+	checkTk := testkit.NewTestKit(t, store)
+	require.NoError(t, checkTk.Session().Auth(&auth.UserIdentity{Username: "testcheck", Hostname: "localhost"}, nil, nil, nil))
+	checkTk.MustExecToErr("admin create workload snapshot")
+
+	// Add super to testcheck you and retry command.
+	tk.MustExec("grant super on *.* to 'testcheck'@'localhost'")
+	checkTk.MustExec("admin create workload snapshot")
+
 	// disable the worker and it will fail
 	tk.MustExec("set @@global.tidb_workload_repository_dest=''")
 	tk.MustExecToErr("admin create workload snapshot")
+	checkTk.MustExecToErr("admin create workload snapshot")
 }
 
 func getRows(t *testing.T, tk *testkit.TestKit, cnt int, maxSecs int, query string) [][]any {
@@ -557,7 +581,7 @@ func validatePartitionsMatchExpected(ctx context.Context, t *testing.T,
 		ep[generatePartitionName(p.AddDate(0, 0, 1))] = struct{}{}
 	}
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 	require.NoError(t, err)
 	tbInfo := tbSchema.Meta()
@@ -623,15 +647,15 @@ func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
 	tbl := getTable(t, tableName, wrk)
 	createTableWithParts(ctx, t, tk, tbl, sess, partitions)
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.False(t, firstTestFails == checkTableExistsByIS(ctx, is, tbl.destTable, now))
 
-	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is = sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.NoError(t, createPartition(ctx, is, tbl, sess, now))
 
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, expectedParts))
 
-	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is = sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.True(t, checkTableExistsByIS(ctx, is, tbl.destTable, now))
 }
 
@@ -700,7 +724,7 @@ func validatePartitionDrop(ctx context.Context, now time.Time, t *testing.T,
 
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, partitions))
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	err := dropOldPartition(ctx, is, tbl, now, retention, sess)
 	if shouldErr {
 		require.Error(t, err)
@@ -868,8 +892,8 @@ func TestOwnerRandomDown(t *testing.T) {
 	testNum := 9
 
 	ctx, _, dom, addr := setupDomainAndContext(t)
-	var workers []*worker
-	for i := 0; i < workerNum; i++ {
+	workers := make([]*worker, 0, workerNum)
+	for i := range workerNum {
 		wrk := setupWorker(ctx, t, addr, dom, fmt.Sprintf("worker%d", i), true)
 		wrk.samplingInterval = 6000
 		workers = append(workers, wrk)
@@ -886,21 +910,24 @@ func TestOwnerRandomDown(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		var err error
+		found := false
 		for _, wrk := range workers {
 			if wrk.owner.IsOwner() {
+				found = true
 				_, err = wrk.getSnapID(ctx)
 				break
 			}
 		}
-		return err == nil
+
+		return found && err == nil
 	}, time.Minute, 100*time.Millisecond)
 
 	// let us randomly stop the owner
-	for j := 0; j < testNum; j++ {
+	for j := range testNum {
 		var err error
 		prevSnapID := uint64(0)
 		breakOwnerIdx := -1
-		oldOwnerIdx := -1
+		var oldOwner *worker
 
 		// stop the current owner
 		for idx, wrk := range workers {
@@ -910,11 +937,10 @@ func TestOwnerRandomDown(t *testing.T) {
 
 				if j%3 == 0 {
 					// tidb is shutdown somehow
-					wrk.stop()
-
-					require.Eventually(t, func() bool {
+					require.NoError(t, wrk.setRepositoryDest(ctx, ""))
+					eventuallyWithLock(t, wrk, func() bool {
 						return wrk.cancel == nil
-					}, time.Minute, 100*time.Millisecond)
+					})
 				} else if j%3 == 1 {
 					// immediate unexpected owner down due to bad network or crash
 					wrk.owner.CampaignCancel()
@@ -932,43 +958,47 @@ func TestOwnerRandomDown(t *testing.T) {
 					}
 				}
 
-				oldOwnerIdx = idx
+				oldOwner = wrk
 				break
 			}
 		}
 
 		// new owner elected
 		require.Eventually(t, func() bool {
-			return slice.AnyOf(workers, func(i int) bool {
-				return workers[i].cancel != nil &&
-					workers[i].owner.IsOwner() && i != oldOwnerIdx
+			return slices.ContainsFunc(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				return wrk.cancel != nil &&
+					wrk.owner.IsOwner() && wrk != oldOwner
 			})
 		}, time.Minute, 100*time.Millisecond)
 
 		// new snapshot taken
 		require.Eventually(t, func() bool {
-			return slice.AnyOf(workers, func(i int) bool {
-				if workers[i].cancel == nil {
+			return slices.ContainsFunc(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				if wrk.cancel == nil {
 					return false
 				}
-				newSnapID, err := workers[i].getSnapID(ctx)
+				newSnapID, err := wrk.getSnapID(ctx)
 				return err == nil && newSnapID > prevSnapID
 			})
 		}, time.Minute, 100*time.Millisecond)
 
 		// recover stopped owner
 		for idx, wrk := range workers {
-			if wrk.cancel == nil {
-				require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
-			}
+			require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
 			if idx == breakOwnerIdx {
 				require.Nil(t, wrk.owner.CampaignOwner(3))
 			}
 		}
 		require.Eventually(t, func() bool {
-			return slice.AllOf(workers, func(i int) bool {
-				return workers[i].cancel != nil &&
-					workers[i].owner != nil
+			return slice.AllOf(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				return wrk.cancel != nil &&
+					wrk.owner != nil
 			})
 		}, time.Minute, 100*time.Millisecond)
 	}
@@ -1006,11 +1036,11 @@ func TestRecoverSnapID(t *testing.T) {
 		return err == nil && snapID > 0
 	}, time.Minute, 100*time.Millisecond)
 
+	require.NoError(t, worker.setRepositoryDest(ctx, ""))
 	// wait for worker to stop
-	worker.stop()
-	require.Eventually(t, func() bool {
+	eventuallyWithLock(t, worker, func() bool {
 		return worker.cancel == nil
-	}, time.Second*10, time.Millisecond*100)
+	})
 
 	// setup a new etcd cluster and a new worker
 	etcd2 := setupEtcd(t)

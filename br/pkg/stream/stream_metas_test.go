@@ -133,7 +133,7 @@ func tsOfFileGroup(dfs []*backuppb.DataFileGroup) (uint64, uint64) {
 func fakeStreamBackup(s storage.ExternalStorage) error {
 	ctx := context.Background()
 	base := 0
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		dfs := fakeDataFiles(s, base, 4)
 		base += 4
 		minTS, maxTS := tsOfFile(dfs)
@@ -160,7 +160,7 @@ func fakeStreamBackup(s storage.ExternalStorage) error {
 func fakeStreamBackupV2(s storage.ExternalStorage) error {
 	ctx := context.Background()
 	base := 0
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		dfs := fakeDataFilesV2(s, base, 4)
 		base += 4
 		minTS, maxTS := tsOfFileGroup(dfs)
@@ -340,7 +340,7 @@ func TestTruncateSafepoint(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int(ts), 0)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		n := rand.Uint64()
 		require.NoError(t, SetTSToFile(ctx, l, n, TruncateSafePointFileName))
 
@@ -381,7 +381,7 @@ func TestTruncateSafepointForGCS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int(ts), 0)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		n := rand.Uint64()
 		require.NoError(t, SetTSToFile(ctx, l, n, TruncateSafePointFileName))
 

@@ -27,6 +27,7 @@ go_test(
     srcs = ["main_test.go"],
     data = glob(["testdata/**"]),
     flaky = True,
+    shard_count = 2,
     deps = [
         "//tests/llmtest/generator",
         "//tests/llmtest/testcase",

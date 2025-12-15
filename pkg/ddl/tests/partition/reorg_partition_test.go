@@ -90,7 +90,7 @@ ROW:
 	for it.Valid() {
 		foundTblID := tablecodec.DecodeTableID(it.Key())
 		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
-		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
+		// Allow 0xFF of them, See TiDBDDLJobTableID, TiDBDDLReorgTableID, TiDBDDLHistoryTableID, TiDBMDLInfoTableID
 		if it.Key()[0] == 't' && foundTblID >= 0xFFFFFFFFFF00 {
 			break
 		}

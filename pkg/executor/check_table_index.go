@@ -20,10 +20,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -39,12 +40,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/admin"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+var errCheckPartialIndexWithoutFastCheck = dbterror.ClassExecutor.NewStd(errno.ErrCheckPartialIndexWithoutFastCheck)
 
 // CheckTableExec represents a check table executor.
 // It is built from the "admin check table" statement, and it checks if the
@@ -57,7 +62,6 @@ type CheckTableExec struct {
 	indexInfos []*model.IndexInfo
 	srcs       []*IndexLookUpExecutor
 	done       bool
-	is         infoschema.InfoSchema
 	exitCh     chan struct{}
 	retCh      chan error
 	checkIndex bool
@@ -141,8 +145,11 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
-		if idx.MVIndex || idx.IsTiFlashLocalIndex() {
+		if idx.MVIndex || idx.IsColumnarIndex() {
 			continue
+		}
+		if idx.HasCondition() {
+			return errors.Trace(errCheckPartialIndexWithoutFastCheck)
 		}
 		idxNames = append(idxNames, idx.Name.O)
 	}
@@ -178,38 +185,37 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for _, src := range e.srcs {
 		taskCh <- src
 	}
-	for i := 0; i < concurrency; i++ {
-		wg.Run(func() {
-			util.WithRecovery(func() {
-				for {
-					if fail := failure.Load(); fail {
-						return
-					}
-					select {
-					case src := <-taskCh:
-						err1 := e.checkIndexHandle(ctx, src)
-						if err1 == nil && src.index.MVIndex {
-							for offset, idx := range e.indexInfos {
-								if idx.ID == src.index.ID {
-									err1 = e.checkTableRecord(ctx, offset)
-									break
-								}
+	for range concurrency {
+		wg.RunWithRecover(func() {
+			for {
+				if fail := failure.Load(); fail {
+					return
+				}
+				select {
+				case src := <-taskCh:
+					err1 := e.checkIndexHandle(ctx, src)
+					if err1 == nil && src.index.MVIndex {
+						for offset, idx := range e.indexInfos {
+							if idx.ID == src.index.ID {
+								err1 = e.checkTableRecord(ctx, offset)
+								break
 							}
 						}
-						if err1 != nil {
-							failure.Store(true)
-							logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
-							return
-						}
-					case <-e.exitCh:
-						return
-					default:
+					}
+					if err1 != nil {
+						failure.Store(true)
+						logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
 						return
 					}
+				case <-e.exitCh:
+					return
+				default:
+					return
 				}
-			}, e.handlePanic)
-		})
+			}
+		}, e.handlePanic)
 	}
+
 	wg.Wait()
 	select {
 	case err := <-e.retCh:
@@ -226,7 +232,10 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 		return err
 	}
 	if e.table.Meta().GetPartitionInfo() == nil {
-		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		idx, err := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		if err != nil {
+			return err
+		}
 		return admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, e.table, idx)
 	}
 
@@ -234,7 +243,10 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := e.table.(table.PartitionedTable).GetPartition(pid)
-		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
+		idx, err := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
+		if err != nil {
+			return err
+		}
 		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, partition, idx); err != nil {
 			return errors.Trace(err)
 		}
@@ -254,8 +266,6 @@ type FastCheckTableExec struct {
 	indexInfos []*model.IndexInfo
 	done       bool
 	is         infoschema.InfoSchema
-	err        *atomic.Pointer[error]
-	wg         sync.WaitGroup
 	contextCtx context.Context
 }
 
@@ -285,23 +295,32 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	workerPool := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
-		poolutil.CheckTable, 3, e.createWorker)
-	workerPool.Start(ctx)
+	ch := make(chan checkIndexTask)
+	dc := operator.NewSimpleDataChannel(ch)
 
-	e.wg.Add(len(e.indexInfos))
+	wctx := workerpool.NewContext(ctx)
+	op := operator.NewAsyncOperator(wctx,
+		workerpool.NewWorkerPool("checkIndex",
+			poolutil.CheckTable, 3, e.createWorker))
+	op.SetSource(dc)
+	//nolint: errcheck
+	op.Open()
+
+OUTER:
 	for i := range e.indexInfos {
-		workerPool.AddTask(checkIndexTask{indexOffset: i, err: e.err})
+		select {
+		case ch <- checkIndexTask{indexOffset: i}:
+		case <-wctx.Done():
+			break OUTER
+		}
 	}
+	close(ch)
 
-	e.wg.Wait()
-	workerPool.ReleaseAndWait()
-
-	p := e.err.Load()
-	if p == nil {
-		return nil
+	err := op.Close()
+	if opErr := wctx.OperatorErr(); opErr != nil {
+		return opErr
 	}
-	return *p
+	return err
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
@@ -323,28 +342,83 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 
 	sessVars.OptimizerUseInvisibleIndexes = true
 	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
+	if snapshot != 0 {
+		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
+		if err != nil {
+			logutil.BgLogger().Error("fail to set tidb_snapshot", zap.Error(err), zap.Uint64("snapshot ts", snapshot))
+		}
+	}
+
 	return func() {
 		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 		sessVars.MemQuotaQuery = originMemQuotaQuery
+		if snapshot != 0 {
+			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
+			if err != nil {
+				logutil.BgLogger().Error("fail to set tidb_snapshot to 0", zap.Error(err))
+			}
+		}
 	}
 }
 
+func queryToRow(ctx context.Context, se sessionctx.Context, sql string) ([]chunk.Row, error) {
+	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	return sqlexec.DrainRecordSetAndClose(ctx, rs, 4096)
+}
+
+func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string) bool {
+	rows, err := queryToRow(ctx, se, "explain "+sql)
+	if err != nil {
+		return false
+	}
+
+	isTableScan := false
+	isIndexScan := false
+	for _, row := range rows {
+		op := row.GetString(0)
+		if strings.Contains(op, "TableFullScan") {
+			isTableScan = true
+		} else if strings.Contains(op, "IndexFullScan") || strings.Contains(op, "IndexRangeScan") {
+			// It's also possible to be index range scan if the index has condition.
+			// TODO: if the planner eliminates the range in the index scan, we can remove the `IndexRangeScan` check.
+			isIndexScan = true
+		} else if strings.Contains(op, "PointGet") || strings.Contains(op, "BatchPointGet") {
+			if row.Len() > 3 {
+				accessObject := row.GetString(3)
+				// accessObject is a normalized string with components separated by ", ".
+				// Match ", index:" to identify non-clustered index paths and avoid
+				// treating ", clustered index:" (PRIMARY/handle path) as index access.
+				if strings.Contains(accessObject, ", index:") {
+					isIndexScan = true
+				}
+			}
+		}
+	}
+
+	if isTableScan || !isIndexScan {
+		return false
+	}
+	return true
+}
+
 // HandleTask implements the Worker interface.
-func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
-	defer w.e.wg.Done()
+func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) error {
+	failpoint.Inject("mockFastCheckTableError", func() {
+		failpoint.Return(errors.New("mock fast check table error"))
+	})
+
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
 
 	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
 
-	trySaveErr := func(err error) {
-		w.e.err.CompareAndSwap(nil, &err)
-	}
-
 	se, err := w.e.BaseExecutor.GetSysSession()
 	if err != nil {
-		trySaveErr(err)
-		return
+		return err
 	}
 	restoreCtx := w.initSessCtx(se)
 	defer func() {
@@ -397,16 +471,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	lookupCheckThreshold := int64(100)
 	checkOnce := false
 
-	if w.e.Ctx().GetSessionVars().SnapshotTS != 0 {
-		se.GetSessionVars().SnapshotTS = w.e.Ctx().GetSessionVars().SnapshotTS
-		defer func() {
-			se.GetSessionVars().SnapshotTS = 0
-		}()
-	}
 	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
 	if err != nil {
-		trySaveErr(err)
-		return
+		return err
 	}
 
 	times := 0
@@ -423,13 +490,17 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			whereKey = "0"
 		}
 		checkOnce = true
+		idxCondition := ""
+		if idxInfo.HasCondition() {
+			idxCondition = fmt.Sprintf("(%s) AND ", idxInfo.ConditionExprString)
+		}
 
 		tblQuery := fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
-			tblName, md5HandleAndIndexCol, groupByKey, tblName, whereKey, groupByKey)
+			"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ bit_xor(%s), %s, count(*) from %s use index() where %s(%s = 0) group by %s",
+			tblName, md5HandleAndIndexCol, groupByKey, tblName, idxCondition, whereKey, groupByKey)
 		idxQuery := fmt.Sprintf(
-			"select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
-			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, whereKey, groupByKey)
+			"select /*+ AGG_TO_COP() */ bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s (%s = 0) group by%s",
+			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, idxCondition, whereKey, groupByKey)
 
 		logutil.BgLogger().Info(
 			"fast check table by group",
@@ -443,18 +514,19 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		// compute table side checksum.
 		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
 		if err != nil {
-			trySaveErr(err)
-			return
+			return err
 		}
 		slices.SortFunc(tableChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
 		})
 
 		// compute index side checksum.
+		intest.AssertFunc(func() bool {
+			return verifyIndexSideQuery(ctx, se, idxQuery)
+		}, "index side query plan is not correct: %s", idxQuery)
 		indexChecksum, err := getCheckSum(w.e.contextCtx, se, idxQuery)
 		if err != nil {
-			trySaveErr(err)
-			return
+			return err
 		}
 		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
@@ -462,6 +534,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 		currentOffset := 0
 
+		meetError = false
 		// Every checksum in table side should be the same as the index side.
 		i := 0
 		for i < len(tableChecksum) && i < len(indexChecksum) {
@@ -504,49 +577,37 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		mod *= bucketSize
 	}
 
-	queryToRow := func(se sessionctx.Context, sql string) ([]chunk.Row, error) {
-		rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
-		if err != nil {
-			return nil, err
-		}
-		row, err := sqlexec.DrainRecordSet(ctx, rs, 4096)
-		if err != nil {
-			return nil, err
-		}
-		err = rs.Close()
-		if err != nil {
-			logutil.BgLogger().Warn("close result set failed", zap.Error(err))
-		}
-		return row, nil
-	}
-
 	if meetError {
+		idxCondition := ""
+		if idxInfo.HasCondition() {
+			idxCondition = fmt.Sprintf("(%s) AND ", idxInfo.ConditionExprString)
+		}
 		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
 		indexSQL := fmt.Sprintf(
-			"select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s",
-			handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name, groupByKey, handleColumns)
+			"select /*+ AGG_TO_COP() */ %s, %s, %s from %s use index(`%s`) where %s(%s = 0) order by %s",
+			handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name, idxCondition, groupByKey, handleColumns)
 		tableSQL := fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s",
-			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
-
-		idxRow, err := queryToRow(se, indexSQL)
+			"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ %s, %s, %s from %s use index() where %s(%s = 0) order by %s",
+			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxCondition, groupByKey, handleColumns)
+		intest.AssertFunc(func() bool {
+			return verifyIndexSideQuery(ctx, se, indexSQL)
+		}, "index side query plan is not correct: %s", indexSQL)
+		idxRow, err := queryToRow(ctx, se, indexSQL)
 		if err != nil {
-			trySaveErr(err)
-			return
+			return err
 		}
-		tblRow, err := queryToRow(se, tableSQL)
+		tblRow, err := queryToRow(ctx, se, tableSQL)
 		if err != nil {
-			trySaveErr(err)
-			return
+			return err
 		}
 
 		errCtx := w.sctx.GetSessionVars().StmtCtx.ErrCtx()
 		getHandleFromRow := func(row chunk.Row) (kv.Handle, error) {
-			handleDatum := make([]types.Datum, 0)
-			for i, t := range pkTypes {
-				handleDatum = append(handleDatum, row.GetDatum(i, t))
-			}
-			if w.table.Meta().IsCommonHandle {
+			if tblMeta.IsCommonHandle {
+				handleDatum := make([]types.Datum, 0)
+				for i, t := range pkTypes {
+					handleDatum = append(handleDatum, row.GetDatum(i, t))
+				}
 				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleDatum...)
 				err = errCtx.HandleError(err)
 				if err != nil {
@@ -610,13 +671,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			} else {
 				handle, err = getHandleFromRow(tblRow[i])
 				if err != nil {
-					trySaveErr(err)
-					return
+					return err
 				}
 				value, err := getValueFromRow(tblRow[i])
 				if err != nil {
-					trySaveErr(err)
-					return
+					return err
 				}
 				tableRecord = &consistency.RecordData{Handle: handle, Values: value}
 			}
@@ -626,13 +685,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			} else {
 				indexHandle, err := getHandleFromRow(idxRow[i])
 				if err != nil {
-					trySaveErr(err)
-					return
+					return err
 				}
 				indexValue, err := getValueFromRow(idxRow[i])
 				if err != nil {
-					trySaveErr(err)
-					return
+					return err
 				}
 				indexRecord = &consistency.RecordData{Handle: indexHandle, Values: indexValue}
 			}
@@ -658,8 +715,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 				}
 			}
 			if err != nil {
-				trySaveErr(err)
-				return
+				return err
 			}
 			i++
 			if tableRecord != nil {
@@ -669,22 +725,22 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			}
 		}
 	}
+
+	return nil
 }
 
 // Close implements the Worker interface.
-func (*checkIndexWorker) Close() {}
+func (*checkIndexWorker) Close() error {
+	return nil
+}
 
 type checkIndexTask struct {
 	indexOffset int
-	err         *atomic.Pointer[error]
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "fast_check_table", "RecoverArgs", func() {
-		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", c.indexOffset)
-		c.err.CompareAndSwap(nil, &err)
-	}, false
+func (checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "fast_check_table", "checkIndexTask", nil
 }
 
 type groupByChecksum struct {

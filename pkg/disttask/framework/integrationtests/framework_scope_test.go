@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -62,6 +63,9 @@ func checkSubtaskOnNodes(ctx context.Context, t *testing.T, taskID int64, expect
 }
 
 func TestScopeBasic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("target scope in nextgen is fixed to 'dxf_service', skip this test")
+	}
 	nodeCnt := 3
 	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
 
@@ -77,6 +81,9 @@ func TestScopeBasic(t *testing.T) {
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
 
 	// 2. one "background" role.
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_service_scope=''")
+	})
 	tk.MustExec("set global tidb_service_scope=background")
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
@@ -139,10 +146,10 @@ func generateScopeCase(nodeCnt int, scopeCnt int) targetScopeCase {
 	scope := fmt.Sprintf("scope-%d", rand.Intn(100))
 
 	nodeScopes := make([]string, nodeCnt)
-	for i := 0; i < nodeCnt-scopeCnt; i++ {
+	for i := range nodeCnt - scopeCnt {
 		nodeScopes[i] = fmt.Sprintf("scope-%d", rand.Intn(100))
 	}
-	for i := 0; i < scopeCnt; i++ {
+	for i := range scopeCnt {
 		nodeScopes[nodeCnt-scopeCnt+i] = scope
 	}
 
@@ -153,7 +160,7 @@ func generateScopeCase(nodeCnt int, scopeCnt int) targetScopeCase {
 }
 
 func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.TestKit, testCase targetScopeCase, idx int, nodeCnt int) {
-	for i := 0; i < len(testCase.nodeScopes); i++ {
+	for i := range testCase.nodeScopes {
 		tk.MustExec(fmt.Sprintf("update mysql.dist_framework_meta set role = \"%s\" where host = \"%s\"", testCase.nodeScopes[i], c.GetNodeIDByIdx(i)))
 	}
 	ch := make(chan struct{})
@@ -182,7 +189,7 @@ func TestTargetScope(t *testing.T) {
 	registerExampleTask(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, nodeCnt), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
 	caseNum := 10
-	for i := 0; i < caseNum; i++ {
+	for i := range caseNum {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
 			runTargetScopeCase(t, c, tk, generateScopeCase(nodeCnt, 5), i, nodeCnt)
 		})
@@ -190,6 +197,9 @@ func TestTargetScope(t *testing.T) {
 }
 
 func TestTiDBMaxDistTaskNodesSettings(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_max_dist_task_nodes in nextgen is not supported to be changed, skip this test")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 

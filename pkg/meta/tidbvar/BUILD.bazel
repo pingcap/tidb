@@ -1,0 +1,8 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "tidbvar",
+    srcs = ["vars.go"],
+    importpath = "github.com/pingcap/tidb/pkg/meta/tidbvar",
+    visibility = ["//visibility:public"],
+)

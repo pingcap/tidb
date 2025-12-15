@@ -18,11 +18,13 @@ package testkit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -32,6 +34,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -39,8 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statisticsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -60,12 +64,13 @@ var testKitIDGenerator atomic.Uint64
 
 // TestKit is a utility to run sql test.
 type TestKit struct {
-	require *require.Assertions
-	assert  *assert.Assertions
-	t       testing.TB
-	store   kv.Storage
-	session sessiontypes.Session
-	alloc   chunk.Allocator
+	require  *require.Assertions
+	assert   *assert.Assertions
+	t        testing.TB
+	store    kv.Storage
+	session  sessionapi.Session
+	alloc    chunk.Allocator
+	comments []any
 }
 
 // NewTestKit returns a new *TestKit.
@@ -92,7 +97,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		if ok {
 			mockSm.mu.Lock()
 			if mockSm.Conn == nil {
-				mockSm.Conn = make(map[uint64]sessiontypes.Session)
+				mockSm.Conn = make(map[uint64]sessionapi.Session)
 			}
 			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
 			mockSm.mu.Unlock()
@@ -104,7 +109,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 }
 
 // NewTestKitWithSession returns a new *TestKit.
-func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Session) *TestKit {
+func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessionapi.Session) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -115,31 +120,28 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 	}
 }
 
+// WithComments adds comments to the testkit.
+func (tk *TestKit) WithComments(comments ...any) *TestKit {
+	tk.comments = comments
+	return tk
+}
+
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
-	if intest.InTest {
-		seed := uint64(time.Now().UnixNano())
-		tk.t.Logf("RefreshSession rand seed: %d", seed)
-		rng := rand.New(rand.NewSource(int64(seed)))
-		if rng.Intn(10) < 3 { // 70% chance to run infoschema v2
-			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
-		}
-	}
-
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // SetSession set the session of testkit
-func (tk *TestKit) SetSession(session sessiontypes.Session) {
+func (tk *TestKit) SetSession(session sessionapi.Session) {
 	tk.session = session
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit
-func (tk *TestKit) Session() sessiontypes.Session {
+func (tk *TestKit) Session() sessionapi.Session {
 	return tk.session
 }
 
@@ -154,14 +156,22 @@ func (tk *TestKit) MustExec(sql string, args ...any) {
 	tk.MustExecWithContext(ctx, sql, args...)
 }
 
+// PrepareDB prepares a database for test.
+func (tk *TestKit) PrepareDB(db string) {
+	tk.MustExec("drop schema if exists " + db)
+	tk.MustExec("create schema " + db)
+	tk.MustExec("use " + db)
+}
+
 // MustExecWithContext executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...any) {
 	res, err := tk.ExecWithContext(ctx, sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
-	tk.require.NoError(err, comment)
+	cmts := append([]any{comment}, tk.comments...)
+	tk.require.NoError(err, cmts...)
 
 	if res != nil {
-		tk.require.NoError(res.Close())
+		tk.require.NoError(res.Close(), cmts...)
 	}
 }
 
@@ -225,21 +235,22 @@ func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []any,
 	tk.require.Eventually(func() bool {
 		res := tk.MustQueryWithContext(context.Background(), sql, args...)
 		return res.Equal(expected)
-	}, waitFor, tick)
+	}, waitFor, tick, tk.comments...)
 }
 
 // MustQueryToErr query the sql statement and must return Error.
 func (tk *TestKit) MustQueryToErr(sql string, args ...any) {
 	err := tk.QueryToErr(sql, args...)
-	tk.require.Error(err)
+	tk.require.Error(err, tk.comments...)
 }
 
 // MustQueryWithContext query the statements and returns result rows.
 func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...any) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	cmts := append([]any{comment}, tk.comments...)
 	rs, err := tk.ExecWithContext(ctx, sql, args...)
-	tk.require.NoError(err, comment)
-	tk.require.NotNil(rs, comment)
+	tk.require.NoError(err, cmts)
+	tk.require.NotNil(rs, cmts)
 	return tk.ResultSetToResultWithCtx(ctx, rs, comment)
 }
 
@@ -271,38 +282,19 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...any) *Re
 			ok = true
 		}
 	}
-	tk.require.True(ok)
-	return tk.MustQuery(sql, args...)
-}
-
-// MustPartitionByList checks if the result execution plan must read specific partitions by list.
-func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...any) *Result {
-	rs := tk.MustQuery("explain "+sql, args...)
-	ok := len(partitions) == 0
-	for i := range rs.rows {
-		if ok {
-			tk.require.NotContains(rs.rows[i][3], "partition:")
-		}
-		for index, partition := range partitions {
-			if !ok && strings.Contains(rs.rows[i][3], "partition:"+partition) {
-				partitions = append(partitions[:index], partitions[index+1:]...)
-			}
-		}
-	}
-	if !ok {
-		tk.require.Len(partitions, 0)
-	}
+	tk.require.True(ok, tk.comments...)
 	return tk.MustQuery(sql, args...)
 }
 
 // QueryToErr executes a sql statement and discard results.
 func (tk *TestKit) QueryToErr(sql string, args ...any) error {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	cmts := append([]any{comment}, tk.comments...)
 	res, err := tk.Exec(sql, args...)
-	tk.require.NoError(err, comment)
-	tk.require.NotNil(res, comment)
+	tk.require.NoError(err, cmts)
+	tk.require.NotNil(res, cmts)
 	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
-	tk.require.NoError(res.Close())
+	tk.require.NoError(res.Close(), cmts)
 	return resErr
 }
 
@@ -396,6 +388,10 @@ func (tk *TestKit) Exec(sql string, args ...any) (sqlexec.RecordSet, error) {
 func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 
+	// Set the command value to ComQuery, so that the process info can be updated correctly
+	tk.Session().SetCommandValue(mysql.ComQuery)
+	defer tk.Session().SetCommandValue(mysql.ComSleep)
+
 	cursorExists := tk.Session().GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists)
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
@@ -474,7 +470,7 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any)
 func (tk *TestKit) ExecToErr(sql string, args ...any) error {
 	res, err := tk.Exec(sql, args...)
 	if res != nil {
-		tk.require.NoError(res.Close())
+		tk.require.NoError(res.Close(), tk.comments...)
 	}
 	return err
 }
@@ -483,13 +479,13 @@ func (tk *TestKit) ExecToErr(sql string, args ...any) error {
 func (tk *TestKit) MustExecToErr(sql string, args ...any) {
 	res, err := tk.Exec(sql, args...)
 	if res != nil {
-		tk.require.NoError(res.Close())
+		tk.require.NoError(res.Close(), tk.comments...)
 	}
-	tk.require.Error(err)
+	tk.require.Error(err, tk.comments...)
 }
 
 // NewSession creates a new session environment for test.
-func NewSession(t testing.TB, store kv.Storage) sessiontypes.Session {
+func NewSession(t testing.TB, store kv.Storage) sessionapi.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())
@@ -536,8 +532,8 @@ func (tk *TestKit) MustContainErrMsg(sql string, errStr any) {
 // MustMatchErrMsg executes a sql statement and assert its error message matching errRx.
 func (tk *TestKit) MustMatchErrMsg(sql string, errRx any) {
 	err := tk.ExecToErr(sql)
-	tk.require.Error(err)
-	tk.require.Regexp(errRx, err.Error())
+	tk.require.Error(err, tk.comments...)
+	tk.require.Regexp(errRx, err.Error(), tk.comments...)
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
@@ -574,8 +570,8 @@ func (tk *TestKit) MustUseIndexForConnection(connID string, index string) {
 
 // CheckExecResult checks the affected rows and the insert id after executing MustExec.
 func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
-	tk.require.Equal(int64(tk.Session().AffectedRows()), affectedRows)
-	tk.require.Equal(int64(tk.Session().LastInsertID()), insertID)
+	tk.require.Equal(int64(tk.Session().AffectedRows()), affectedRows, tk.comments...)
+	tk.require.Equal(int64(tk.Session().LastInsertID()), insertID, tk.comments...)
 }
 
 // MustPointGet checks whether the plan for the sql is Point_Get.
@@ -773,4 +769,30 @@ func MockTiDBStatusPort(ctx context.Context, b *testing.B, port string) *util.Wa
 	})
 
 	return &wg
+}
+
+// LoadTableStats loads table stats from json file.
+func LoadTableStats(fileName string, dom *domain.Domain) error {
+	statsPath := filepath.Join("testdata", fileName)
+	bytes, err := os.ReadFile(statsPath)
+	if err != nil {
+		return err
+	}
+	statsTbl := &statisticsutil.JSONTable{}
+	err = json.Unmarshal(bytes, statsTbl)
+	if err != nil {
+		return err
+	}
+	statsHandle := dom.StatsHandle()
+	err = statsHandle.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), statsTbl, 0)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// MockGCSavePoint mocks a GC save point. It's used in tests that need to set TiDB snapshot.
+func (tk *TestKit) MockGCSavePoint() {
+	safePoint := "20160102-15:04:05 -0700"
+	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%s', '') ON DUPLICATE KEY UPDATE variable_value = '%s', comment=''`, safePoint, safePoint))
 }

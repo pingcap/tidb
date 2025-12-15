@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -67,7 +68,7 @@ func TestBuildDupTask(t *testing.T) {
 			nil,
 			tc.sessOpt,
 			4,
-			log.FromContext(context.Background()),
+			log.Wrap(logutil.Logger(context.Background())),
 			"test",
 			"lightning",
 		)
@@ -116,7 +117,7 @@ func TestBuildDupTask(t *testing.T) {
 		nil,
 		&encode.SessionOptions{},
 		4,
-		log.FromContext(context.Background()),
+		log.Wrap(logutil.Logger(context.Background())),
 		"test",
 		"lightning",
 	)

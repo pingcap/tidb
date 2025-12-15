@@ -16,22 +16,32 @@ package local
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
+	"net"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
-func TestIsIngestRetryable(t *testing.T) {
+func TestConvertPBError2Error(t *testing.T) {
 	region := &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
@@ -45,143 +55,148 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	metas := []*sst.SSTMeta{
-		{
-			Range: &sst.Range{
-				Start: []byte{1},
-				End:   []byte{2},
-			},
-		},
-		{
-			Range: &sst.Range{
-				Start: []byte{1, 1},
-				End:   []byte{2},
-			},
-		},
+		{Range: &sst.Range{Start: []byte{1}, End: []byte{2}}},
+		{Range: &sst.Range{Start: []byte{1, 1}, End: []byte{2}}},
 	}
-	job := regionJob{
-		stage: wrote,
-		keyRange: common.Range{
-			Start: []byte{1},
-			End:   []byte{3},
-		},
-		region: region,
+	job := &regionJob{
+		stage:    wrote,
+		keyRange: engineapi.Range{Start: []byte{1}, End: []byte{3}},
+		region:   region,
 		writeResult: &tikvWriteResult{
 			sstMeta: metas,
 		},
 	}
-	// NotLeader doesn't mean region peers are changed, so we can retry ingest.
 
-	resp := &sst.IngestResponse{
-		Error: &errorpb.Error{
-			NotLeader: &errorpb.NotLeader{
-				Leader: &metapb.Peer{Id: 2},
+	newRegion := &metapb.Region{
+		Id:       1,
+		StartKey: []byte{1},
+		EndKey:   []byte{3},
+		RegionEpoch: &metapb.RegionEpoch{
+			ConfVer: 1,
+			Version: 2,
+		},
+		Peers: []*metapb.Peer{{Id: 1}},
+	}
+
+	cases := []struct {
+		pbErr *errorpb.Error
+		res   *ingestcli.IngestAPIError
+	}{
+		// NotLeader doesn't mean region peers are changed, so we can retry ingest.
+		{pbErr: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}, res: &ingestcli.IngestAPIError{Err: errdef.ErrKVNotLeader}},
+		// EpochNotMatch means region is changed, if the new region covers the old, we can restart the writing process.
+		// Otherwise, we should restart from region scanning.
+		{
+			pbErr: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{
+				CurrentRegions: []*metapb.Region{newRegion},
+			}},
+			res: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch, NewRegion: &split.RegionInfo{
+				Region: newRegion,
+				Leader: &metapb.Peer{Id: 1},
+			}},
+		},
+		{
+			pbErr: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{CurrentRegions: []*metapb.Region{{
+				Id:          1,
+				StartKey:    []byte{1},
+				EndKey:      []byte{1, 2},
+				RegionEpoch: &metapb.RegionEpoch{ConfVer: 1, Version: 2},
+				Peers:       []*metapb.Peer{{Id: 1}},
+			}}}},
+			res: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch},
+		},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			err := ingestcli.NewIngestAPIError(c.pbErr, func(regions []*metapb.Region) *split.RegionInfo {
+				return extractRegionFromErr(job, regions)
+			})
+			require.ErrorIs(t, err, c.res.Err)
+			if c.res.NewRegion == nil {
+				require.Nil(t, err.NewRegion)
+			} else {
+				if kerneltype.IsNextGen() {
+					// it's always nil for nextgen
+					require.Nil(t, err.NewRegion)
+				} else {
+					require.EqualValues(t, c.res.NewRegion, err.NewRegion)
+					require.EqualValues(t, 2, err.NewRegion.Region.RegionEpoch.Version)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractRegionFromErrForNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only run in next gen")
+	}
+	region := &split.RegionInfo{
+		Leader: &metapb.Peer{Id: 1},
+		Region: &metapb.Region{
+			Id:       1,
+			StartKey: []byte{1},
+			EndKey:   []byte{3},
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: 1,
+				Version: 1,
 			},
 		},
 	}
-
-	clone := job
-	canContinueIngest, err := (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, needRescan, clone.stage)
-	require.Error(t, clone.lastRetryableErr)
-
-	// EpochNotMatch means region is changed, if the new region covers the old, we can restart the writing process.
-	// Otherwise, we should restart from region scanning.
-
-	resp.Error = &errorpb.Error{
-		EpochNotMatch: &errorpb.EpochNotMatch{
-			CurrentRegions: []*metapb.Region{
-				{
-					Id:       1,
-					StartKey: []byte{1},
-					EndKey:   []byte{3},
-					RegionEpoch: &metapb.RegionEpoch{
-						ConfVer: 1,
-						Version: 2,
-					},
-					Peers: []*metapb.Peer{{Id: 1}},
-				},
-			},
+	// we supply it to make sure that the correct SST metas are used when next gen,
+	// this meta is only used for classical kernel, and it resides in the newRegion.
+	metas := []*sst.SSTMeta{
+		{Range: &sst.Range{Start: []byte{1}, End: []byte{2}}},
+		{Range: &sst.Range{Start: []byte{1, 1}, End: []byte{2}}},
+	}
+	job := &regionJob{
+		stage:    wrote,
+		keyRange: engineapi.Range{Start: []byte{1}, End: []byte{3}},
+		region:   region,
+		writeResult: &tikvWriteResult{
+			sstMeta: metas,
 		},
 	}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, regionScanned, clone.stage)
-	require.Nil(t, clone.writeResult)
-	require.Equal(t, uint64(2), clone.region.Region.RegionEpoch.Version)
-	require.Error(t, clone.lastRetryableErr)
 
-	resp.Error = &errorpb.Error{
-		EpochNotMatch: &errorpb.EpochNotMatch{
-			CurrentRegions: []*metapb.Region{
-				{
-					Id:       1,
-					StartKey: []byte{1},
-					EndKey:   []byte{1, 2},
-					RegionEpoch: &metapb.RegionEpoch{
-						ConfVer: 1,
-						Version: 2,
-					},
-					Peers: []*metapb.Peer{{Id: 1}},
-				},
-			},
+	newRegion := &metapb.Region{
+		Id:       1,
+		StartKey: []byte{1},
+		EndKey:   []byte{3},
+		RegionEpoch: &metapb.RegionEpoch{
+			ConfVer: 1,
+			Version: 2,
 		},
+		Peers: []*metapb.Peer{{Id: 1}},
 	}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, needRescan, clone.stage)
-	require.Error(t, clone.lastRetryableErr)
+	require.Nil(t, extractRegionFromErr(job, []*metapb.Region{newRegion}))
+}
 
-	// TODO: in which case raft layer will drop message?
-
-	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, needRescan, clone.stage)
-	require.Error(t, clone.lastRetryableErr)
-
-	// ReadIndexNotReady means the region is changed, we need to restart from region scanning
-
-	resp.Error = &errorpb.Error{
-		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
-			Reason: "test",
-		},
+func TestGetNextStageOnIngestError(t *testing.T) {
+	cases := []struct {
+		err    error
+		region *split.RegionInfo
+		stage  jobStageTp
+	}{
+		{err: &net.DNSError{IsTimeout: true}, stage: wrote},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVNotLeader.GenWithStack("")}, stage: needRescan},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch.GenWithStack("")}, stage: needRescan},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch.GenWithStack(""), NewRegion: &split.RegionInfo{}},
+			region: &split.RegionInfo{}, stage: regionScanned},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVRaftProposalDropped.GenWithStack("")}, stage: needRescan},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVServerIsBusy.GenWithStack("")}, stage: wrote},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVRegionNotFound.GenWithStack("")}, stage: needRescan},
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVReadIndexNotReady.GenWithStack("")}, stage: needRescan},
+		// ErrKVDiskFull is not retryable, no need to test it
+		{err: &ingestcli.IngestAPIError{Err: errdef.ErrKVIngestFailed.GenWithStack("")}, stage: regionScanned},
 	}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, needRescan, clone.stage)
-	require.Error(t, clone.lastRetryableErr)
-
-	// TiKV disk full is not retryable
-
-	resp.Error = &errorpb.Error{
-		DiskFull: &errorpb.DiskFull{},
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			region, stage := getNextStageOnIngestError(c.err)
+			require.Equal(t, c.region, region)
+			require.Equal(t, c.stage, stage)
+		})
 	}
-	clone = job
-	_, err = (&clone).convertStageOnIngestError(resp)
-	require.ErrorContains(t, err, "non-retryable error")
-
-	// a general error is retryable from writing
-
-	resp.Error = &errorpb.Error{
-		StaleCommand: &errorpb.StaleCommand{},
-	}
-	clone = job
-	canContinueIngest, err = (&clone).convertStageOnIngestError(resp)
-	require.NoError(t, err)
-	require.False(t, canContinueIngest)
-	require.Equal(t, regionScanned, clone.stage)
-	require.Nil(t, clone.writeResult)
-	require.Error(t, clone.lastRetryableErr)
 }
 
 func TestRegionJobRetryer(t *testing.T) {
@@ -198,7 +213,7 @@ func TestRegionJobRetryer(t *testing.T) {
 		retryer.run()
 	}()
 
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		go func() {
 			job := &regionJob{
 				waitUntil: time.Now().Add(time.Hour),
@@ -215,7 +230,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}
 
 	job := &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -250,7 +265,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}()
 
 	job = &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -261,7 +276,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	// now retryer is sending to putBackCh, but putBackCh is blocked
 	job = &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("456"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -284,7 +299,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}()
 
 	job = &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -299,7 +314,7 @@ func TestRegionJobRetryer(t *testing.T) {
 func TestNewRegionJobs(t *testing.T) {
 	buildRegion := func(regionKeys [][]byte) []*split.RegionInfo {
 		ret := make([]*split.RegionInfo, 0, len(regionKeys)-1)
-		for i := 0; i < len(regionKeys)-1; i++ {
+		for i := range len(regionKeys) - 1 {
 			ret = append(ret, &split.RegionInfo{
 				Region: &metapb.Region{
 					StartKey: codec.EncodeBytes(nil, regionKeys[i]),
@@ -309,10 +324,10 @@ func TestNewRegionJobs(t *testing.T) {
 		}
 		return ret
 	}
-	buildJobRanges := func(jobRangeKeys [][]byte) []common.Range {
-		ret := make([]common.Range, 0, len(jobRangeKeys)-1)
-		for i := 0; i < len(jobRangeKeys)-1; i++ {
-			ret = append(ret, common.Range{
+	buildJobRanges := func(jobRangeKeys [][]byte) []engineapi.Range {
+		ret := make([]engineapi.Range, 0, len(jobRangeKeys)-1)
+		for i := range len(jobRangeKeys) - 1 {
+			ret = append(ret, engineapi.Range{
 				Start: jobRangeKeys[i],
 				End:   jobRangeKeys[i+1],
 			})
@@ -483,7 +498,7 @@ func TestStoreBalancerPick(t *testing.T) {
 		jonDone <- struct{}{}
 	}()
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-jonDone
 	}
 	checkStoreScoreZero(t, b)
@@ -593,7 +608,7 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 
 	var wg sync.WaitGroup
 	concurrentRoutines := 100
-	for i := 0; i < concurrentRoutines; i++ {
+	for i := range concurrentRoutines {
 		wg.Add(2)
 		go func(limit int) {
 			defer wg.Done()
@@ -606,4 +621,163 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestWorkerPoolWithErrors(t *testing.T) {
+	generator := func(
+		ctx context.Context,
+		jobToWorkerCh chan<- *regionJob,
+		jobWg *sync.WaitGroup,
+		mockErr bool,
+	) error {
+		counter := 0
+		for range 4 {
+			jobWg.Add(1)
+			job := &regionJob{}
+			select {
+			case jobToWorkerCh <- job:
+				counter++
+				if mockErr && counter > 2 {
+					return errors.Errorf("generator error")
+				}
+			case <-ctx.Done():
+				job.done(jobWg)
+				return nil
+			}
+		}
+		return nil
+	}
+
+	drainer := func(
+		ctx context.Context,
+		jobFromWorkerCh <-chan *regionJob,
+		jobWg *sync.WaitGroup,
+		mockErr bool,
+	) error {
+		counter := 0
+		for {
+			select {
+			case job, ok := <-jobFromWorkerCh:
+				if !ok {
+					return nil
+				}
+				job.done(jobWg)
+				counter++
+				if mockErr && counter > 2 {
+					return errors.Errorf("drainer error")
+				}
+			case <-ctx.Done():
+				return nil
+			}
+		}
+	}
+
+	type testCase struct {
+		fp               string
+		expr             string
+		mockGeneratorErr bool
+		mockDrainerErr   bool
+		wgErr            string
+		opErr            string
+	}
+
+	singleTest := func(t *testing.T, tc testCase) {
+		testfailpoint.Enable(t, tc.fp, tc.expr)
+
+		workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		jobToWorkerCh := make(chan *regionJob)
+		jobFromWorkerCh := make(chan *regionJob)
+		jobWg := &sync.WaitGroup{}
+
+		local := &Backend{
+			writeLimiter: newStoreWriteLimiter(0),
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(4),
+			},
+			tls:       &common.TLS{},
+			engineMgr: &engineManager{},
+		}
+
+		pool := getRegionJobWorkerPool(
+			workerCtx, jobWg,
+			local, nil,
+			jobToWorkerCh, jobFromWorkerCh, 1,
+		)
+
+		wctx := workerpool.NewContext(workerCtx)
+		var opErr error
+		workGroup.Go(func() error {
+			pool.Start(wctx)
+			<-wctx.Done()
+			pool.Release()
+			opErr = wctx.OperatorErr()
+			return opErr
+		})
+
+		workGroup.Go(func() error {
+			return drainer(workerCtx, jobFromWorkerCh, jobWg, tc.mockDrainerErr)
+		})
+
+		workGroup.Go(func() error {
+			if err := generator(workerCtx, jobToWorkerCh, jobWg, tc.mockGeneratorErr); err != nil {
+				return err
+			}
+			jobWg.Wait()
+			wctx.Cancel()
+			return nil
+		})
+
+		wgErr := workGroup.Wait()
+		if tc.opErr == "" {
+			require.NoError(t, opErr)
+		} else {
+			require.ErrorContains(t, opErr, tc.opErr)
+		}
+		if tc.wgErr == "" {
+			require.NoError(t, wgErr)
+		} else {
+			require.ErrorContains(t, wgErr, tc.wgErr)
+		}
+	}
+
+	tests := []testCase{
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			expr:             "return",
+			mockGeneratorErr: false,
+			mockDrainerErr:   false,
+			wgErr:            "",
+			opErr:            "",
+		},
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			expr:             "return",
+			mockGeneratorErr: false,
+			mockDrainerErr:   true,
+			wgErr:            "drainer error",
+			opErr:            "",
+		},
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			expr:             "return",
+			mockGeneratorErr: true,
+			mockDrainerErr:   false,
+			wgErr:            "generator error",
+			opErr:            "",
+		},
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/injectPanicForRegionJob",
+			expr:             "panic",
+			mockGeneratorErr: false,
+			mockDrainerErr:   false,
+			wgErr:            "region job worker panic",
+			opErr:            "region job worker panic",
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			singleTest(t, tc)
+		})
+	}
 }

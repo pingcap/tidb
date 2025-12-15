@@ -15,13 +15,14 @@
 package infoschema
 
 import (
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -38,8 +39,8 @@ type InfoCache struct {
 	// emptySchemaVersions stores schema version which has no schema_diff.
 	emptySchemaVersions map[int64]struct{}
 
-	r    autoid.Requirement
-	Data *Data
+	store tidbkv.Storage
+	Data  *Data
 
 	// first known schema version records the first known schema version, all schemas between [firstKnownSchemaVersion, latest)
 	// are known as long as we keep the DDL history correctly.
@@ -55,12 +56,12 @@ type schemaAndTimestamp struct {
 }
 
 // NewCache creates a new InfoCache.
-func NewCache(r autoid.Requirement, capacity int) *InfoCache {
+func NewCache(store tidbkv.Storage, capacity int) *InfoCache {
 	infoData := NewData()
 	return &InfoCache{
 		cache:               make([]schemaAndTimestamp, 0, capacity),
 		emptySchemaVersions: make(map[int64]struct{}),
-		r:                   r,
+		store:               store,
 		Data:                infoData,
 	}
 }
@@ -379,7 +380,7 @@ func (h *InfoCache) InsertEmptySchemaVersion(version int64) {
 		for ver := range h.emptySchemaVersions {
 			versions = append(versions, ver)
 		}
-		sort.Slice(versions, func(i, j int) bool { return versions[i] < versions[j] })
+		slices.Sort(versions)
 		for _, ver := range versions {
 			delete(h.emptySchemaVersions, ver)
 			if len(h.emptySchemaVersions) <= cap(h.cache) {
@@ -390,7 +391,7 @@ func (h *InfoCache) InsertEmptySchemaVersion(version int64) {
 }
 
 func (h *InfoCache) gcOldVersion() {
-	tikvStore, ok := h.r.Store().(helper.Storage)
+	tikvStore, ok := h.store.(helper.Storage)
 	if !ok {
 		return
 	}

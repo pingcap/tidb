@@ -204,12 +204,11 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, defaultValue, v)
 
-	// session.GetGlobalSysVar would not get the value which session.SetGlobalSysVar writes,
-	// because SetGlobalSysVar calls SetGlobalFromHook, which uses TiDBGeneralLog's SetGlobal,
-	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
+	// session.GetGlobalSysVar would not get the value which session.SetInstanceSysVar writes,
+	// because SetInstanceSysVar did not persist values into the mysql.global_variable table.
 
 	// set to "1"
-	err = se.SetGlobalSysVar(context.Background(), varName, "ON")
+	err = se.SetInstanceSysVar(context.Background(), varName, "ON")
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
@@ -217,7 +216,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 
 	// set back to "0"
-	err = se.SetGlobalSysVar(context.Background(), varName, defaultValue)
+	err = se.SetInstanceSysVar(context.Background(), varName, defaultValue)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
@@ -302,7 +301,6 @@ func TestGlobalVarAccessor(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().MaxExecutionTime)
-	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().GetMaxExecutionTime())
 	tk1.MustExec("set @@global.max_execution_time = 0")
 
 	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
@@ -391,15 +389,41 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 	for i, check := range hintChecks {
 		// common path
 		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 		// fast path
 		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 	}
+}
+
+func TestTiDBValidateTS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	// default is on
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set off
+	tk.MustExec("set global tidb_enable_ts_validation = off")
+	tk.MustQuery("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set on
+	tk.MustExec("set global tidb_enable_ts_validation = on")
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+}
+
+func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
+	require.Equal(t, time.Hour*100, vardef.AdvancerCheckPointLagLimit.Load())
 }

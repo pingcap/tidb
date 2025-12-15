@@ -59,17 +59,17 @@ func TestGCOldVersion(t *testing.T) {
 	old, err := meta.GetOldestSchemaVersion(h)
 	require.NoError(t, err)
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("alter table t1 add index i_b(b)")
 		tk.MustExec("alter table t1 drop index i_b")
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("alter table t2 add column (c int)")
 		tk.MustExec("alter table t2 drop column c")
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("truncate table t3")
 	}
 

@@ -17,6 +17,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -152,7 +153,7 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
 		instance = "unknown"
 	} else {
-		instance = fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+		instance = net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.Port), 10))
 	}
 	for _, record := range records {
 		if len(record.FailedReason) > 0 {

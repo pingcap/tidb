@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -69,7 +69,7 @@ const (
 	tableScan
 )
 
-func prepareBenchSession() (sessiontypes.Session, *domain.Domain, kv.Storage) {
+func prepareBenchSession() (sessionapi.Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
 		cfg.Instance.EnableSlowLog.Store(false)
 	})
@@ -92,7 +92,7 @@ func prepareBenchSession() (sessiontypes.Session, *domain.Domain, kv.Storage) {
 	return se, dom, store
 }
 
-func mustExecute(s sessiontypes.Session, sql string, args ...any) {
+func mustExecute(s sessionapi.Session, sql string, args ...any) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql, args...)
@@ -119,7 +119,7 @@ func drainRecordSet(ctx context.Context, rs sqlexec.RecordSet, alloc chunk.Alloc
 	}
 }
 
-func runPointSelect(b *testing.B, se sessiontypes.Session, query, expectedPlan string, enablePlanCache bool) {
+func runPointSelect(b *testing.B, se sessionapi.Session, query, expectedPlan string, enablePlanCache bool) {
 	ctx := context.Background()
 	alloc := chunk.NewAllocator()
 	if enablePlanCache {
@@ -193,14 +193,14 @@ func runPointSelect(b *testing.B, se sessiontypes.Session, query, expectedPlan s
 	}
 }
 
-func preparePointGet(se sessiontypes.Session, partitionBy string) {
+func preparePointGet(se sessionapi.Session, partitionBy string) {
 	mustExecute(se, `drop table if exists t`)
 	mustExecute(se, "CREATE TABLE t (id int primary key, d varchar(255), key (d)) "+partitionBy)
 	mustExecute(se, `insert into t (id) values (1), (8), (5000), (10000), (100000)`)
 	mustExecute(se, "analyze table t")
 }
 
-func insert1kRows(se sessiontypes.Session) {
+func insert1kRows(se sessionapi.Session) {
 	// Create 1k unique index entries, so it is cheaper with index lookup instead of table scan
 	// Range using: 10, 5000, 10000, 1000000
 	mustExecute(se, `insert into t values (1,1),  (5000,5000), (10000,10000), (99900,99900)`)
@@ -215,13 +215,13 @@ func insert1kRows(se sessiontypes.Session) {
 	mustExecute(se, "analyze table t")
 }
 
-func prepareIndexLookup(se sessiontypes.Session, partitionBy string) {
+func prepareIndexLookup(se sessionapi.Session, partitionBy string) {
 	mustExecute(se, `drop table if exists t`)
 	mustExecute(se, "CREATE TABLE t (id int, d varchar(255), key idx_id (id), key(d)) "+partitionBy)
 	insert1kRows(se)
 }
 
-func prepareTableScan(se sessiontypes.Session, partitionBy string) {
+func prepareTableScan(se sessionapi.Session, partitionBy string) {
 	mustExecute(se, `drop table if exists t`)
 	mustExecute(se, "CREATE TABLE t (id int, d varchar(255), key(d)) "+partitionBy)
 	insert1kRows(se)
@@ -523,7 +523,7 @@ func getListPartitionDef(expr string, useColumns bool) string {
 	for partID, i := range ranges {
 		vals := 256
 		partVals := make([]string, 0, vals)
-		for j := 0; j < vals; j++ {
+		for j := range vals {
 			partVals = append(partVals, strconv.Itoa(i+j))
 		}
 		if expr != "" && i == 1 {
@@ -849,7 +849,7 @@ func BenchmarkRangeColumnsPartition(b *testing.B) {
 
 // TODO: Add benchmarks for {RANGE|LIST} COLUMNS, multi columns!!!
 
-func runPreparedPointSelect(b *testing.B, se sessiontypes.Session, query string, enablePlanCache bool, args ...any) {
+func runPreparedPointSelect(b *testing.B, se sessionapi.Session, query string, enablePlanCache bool, args ...any) {
 	ctx := context.Background()
 	if enablePlanCache {
 		mustExecute(se, "set tidb_enable_prepared_plan_cache = 1")

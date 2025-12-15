@@ -107,7 +107,7 @@ func openParser(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path, chunk.FileMeta.ParquetMeta)
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +136,7 @@ func openParser(
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	colIndexes := make([]int, 0, len(permutation))
-	for i := 0; i < len(permutation); i++ {
+	for range permutation {
 		colIndexes = append(colIndexes, -1)
 	}
 	colCnt := 0

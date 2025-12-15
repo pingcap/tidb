@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
 
@@ -63,6 +65,10 @@ type SchemasReplace struct {
 	RewriteTS        uint64 // used to rewrite commit ts in meta kv.
 
 	AfterTableRewrittenFn func(deleted bool, tableInfo *model.TableInfo)
+	setRestoreTableMode   bool
+
+	// track deleted tables, maps dbID -> tableIDs
+	deletedTables map[UpstreamID]map[UpstreamID]struct{}
 }
 
 // NewTableReplace creates a TableReplace struct.
@@ -92,6 +98,7 @@ func NewSchemasReplace(
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	restoreTS uint64,
 	recordDeleteRange func(*PreDelRangeQuery),
+	setRestoreTableMode bool,
 ) *SchemasReplace {
 	globalTableIdMap := make(map[UpstreamID]DownstreamID)
 	for _, dr := range dbReplaceMap {
@@ -103,18 +110,18 @@ func NewSchemasReplace(
 				continue
 			}
 			globalTableIdMap[tblID] = tr.TableID
-			for oldpID, newpID := range tr.PartitionMap {
-				globalTableIdMap[oldpID] = newpID
-			}
+			maps.Copy(globalTableIdMap, tr.PartitionMap)
 		}
 	}
 
 	return &SchemasReplace{
-		DbReplaceMap:     dbReplaceMap,
-		delRangeRecorder: newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
-		ingestRecorder:   ingestrec.New(),
-		TiflashRecorder:  tiflashRecorder,
-		RewriteTS:        restoreTS,
+		DbReplaceMap:        dbReplaceMap,
+		delRangeRecorder:    newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
+		ingestRecorder:      ingestrec.New(),
+		TiflashRecorder:     tiflashRecorder,
+		RewriteTS:           restoreTS,
+		setRestoreTableMode: setRestoreTableMode,
+		deletedTables:       make(map[UpstreamID]map[UpstreamID]struct{}),
 	}
 }
 
@@ -167,6 +174,16 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 }
 
 func (sr *SchemasReplace) rewriteEntryForDB(e *kv.Entry, cf string) (*kv.Entry, error) {
+	rawMetaKey, err := ParseTxnMetaKeyFrom(e.Key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	dbID, err := meta.ParseDBKey(rawMetaKey.Field)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	r, err := sr.rewriteValue(
 		e.Value,
 		cf,
@@ -185,6 +202,14 @@ func (sr *SchemasReplace) rewriteEntryForDB(e *kv.Entry, cf string) (*kv.Entry, 
 	}
 	if newKey == nil {
 		return nil, nil
+	}
+
+	// track deleted databases in the same structure as deleted tables
+	if r.Deleted {
+		// add deleted database with empty table set
+		if _, ok := sr.deletedTables[dbID]; !ok {
+			sr.deletedTables[dbID] = make(map[int64]struct{})
+		}
 	}
 
 	return &kv.Entry{Key: newKey, Value: newValue}, nil
@@ -288,6 +313,14 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	if tableInfo.TTLInfo != nil {
 		tableInfo.TTLInfo.Enable = false
 	}
+	// Set TableInfo to be restore mode during log replay, will release the mode after PiTR finishes
+	if sr.setRestoreTableMode {
+		tableInfo.Mode = model.TableModeRestore
+	}
+	// Set Table Name directly to be the name at the end of the restore to avoid potential name conflicts
+	if tableReplace.Name != "" {
+		tableInfo.Name = ast.NewCIStr(tableReplace.Name)
+	}
 	if sr.AfterTableRewrittenFn != nil {
 		sr.AfterTableRewrittenFn(false, &tableInfo)
 	}
@@ -318,7 +351,15 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	}
 
 	var newTableID int64 = 0
-	newKey, err := sr.rewriteKeyForTable(e.Key, cf, meta.ParseTableKey, func(tableID int64) []byte {
+	var oldTableID int64 = 0
+	newKey, err := sr.rewriteKeyForTable(e.Key, cf, func(b []byte) (int64, error) {
+		tableID, err := meta.ParseTableKey(b)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		oldTableID = tableID
+		return tableID, nil
+	}, func(tableID int64) []byte {
 		newTableID = tableID
 		return meta.TableKey(tableID)
 	})
@@ -334,8 +375,31 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	//       for now, we rewrite key and value separately hence we cannot
 	//       get a view of (is_delete, table_id, table_info) at the same time :(.
 	//       Maybe we can extract the rewrite part from rewriteTableInfo.
-	if result.Deleted && sr.AfterTableRewrittenFn != nil {
-		sr.AfterTableRewrittenFn(true, &model.TableInfo{ID: newTableID})
+	if result.Deleted {
+		if _, ok := sr.deletedTables[dbID]; !ok {
+			sr.deletedTables[dbID] = make(map[int64]struct{})
+		}
+		sr.deletedTables[dbID][oldTableID] = struct{}{}
+		if sr.AfterTableRewrittenFn != nil {
+			sr.AfterTableRewrittenFn(true, &model.TableInfo{ID: newTableID})
+		}
+	} else if result.Put {
+		// handle the rename/exchange partition back case:
+		// 1.a. RENAME TABLE test.t1 TO test2.t1;
+		// 1.b. RENAME TABLE test2.t1 TO test.t1;
+		// 2.a. ALTER TABLE test.t_exchange_partition EXCHANGE PARTITION p_to_be_exchanged WITH TABLE test.t_non_partitioned_table;
+		// 2.b. ALTER TABLE test.t_exchange_partition EXCHANGE PARTITION p_to_be_exchanged WITH TABLE test.t_non_partitioned_table;
+		// NOTE: the table test.t1 and test.t_non_partitioned_table(id=t_non_partitioned_table) needs to remove the record from deleted
+		//       tables to make sure they are refreshed meta after database.
+		// NOTE: the table test2.t1 and test.t_non_partitioned_table(id=p_to_be_exchanged) will be filtered out so its metakv will not
+		//       be restored. Therefore no need to record them into deleted tables to refresh them.
+		if m, ok := sr.deletedTables[dbID]; ok {
+			if _, ok := m[oldTableID]; ok {
+				log.Info("remove item from deleted tables because deleted table is created again",
+					zap.Int64("upstream db id", dbID), zap.Int64("upstream table id", oldTableID))
+				delete(m, oldTableID)
+			}
+		}
 	}
 
 	return &kv.Entry{Key: newKey, Value: result.NewValue}, nil
@@ -411,6 +475,7 @@ func (sr *SchemasReplace) rewriteEntryForAutoRandomTableIDKey(e *kv.Entry, cf st
 
 type rewriteResult struct {
 	Deleted  bool
+	Put      bool
 	NewValue []byte
 }
 
@@ -425,6 +490,7 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 		return rewriteResult{
 			NewValue: newValue,
 			Deleted:  false,
+			Put:      false,
 		}, nil
 	case consts.WriteCF:
 		rawWriteCFValue := new(RawWriteCFValue)
@@ -436,17 +502,20 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 			return rewriteResult{
 				NewValue: value,
 				Deleted:  true,
+				Put:      false,
 			}, nil
 		}
 		if rawWriteCFValue.IsRollback() {
 			return rewriteResult{
 				NewValue: value,
 				Deleted:  false,
+				Put:      false,
 			}, nil
 		}
 		if !rawWriteCFValue.HasShortValue() {
 			return rewriteResult{
 				NewValue: value,
+				Put:      true,
 			}, nil
 		}
 
@@ -459,7 +528,7 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 		}
 
 		rawWriteCFValue.UpdateShortValue(shortValue)
-		return rewriteResult{NewValue: rawWriteCFValue.EncodeTo()}, nil
+		return rewriteResult{NewValue: rawWriteCFValue.EncodeTo(), Put: true}, nil
 	default:
 		panic(fmt.Sprintf("not support cf:%s", cf))
 	}
@@ -467,6 +536,11 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func
 
 func (sr *SchemasReplace) GetIngestRecorder() *ingestrec.IngestRecorder {
 	return sr.ingestRecorder
+}
+
+// GetDeletedTables returns a map of dbID to a set of tableIDs that were marked as deleted
+func (sr *SchemasReplace) GetDeletedTables() map[UpstreamID]map[UpstreamID]struct{} {
+	return sr.deletedTables
 }
 
 // RewriteMetaKvEntry uses to rewrite tableID/dbID in entry.key and entry.value

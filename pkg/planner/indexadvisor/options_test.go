@@ -188,7 +188,7 @@ func TestOptionWithRun(t *testing.T) {
 		require.Equal(t, expected, strings.Join(indexes, ","))
 	}
 
-	check(`recommend index run for 'select * from t where a=1 and b=1 and c=1'`, "idx_a_b_c")
+	check(`recommend index run for 'select * from t where a=1 and b=1 and c=1'`, "idx_a_b")
 	check(`recommend index run for 'select * from t where a=1 and b=1 and c=1' with max_index_columns=2`,
 		"idx_a_b")
 	check(`recommend index run for 'select * from t where a=1 and b=1 and c=1' with max_index_columns=1`,

@@ -17,9 +17,8 @@ package rule
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 )
 
 // BuildKeySolver is used to build key info for logical plan.
@@ -33,22 +32,10 @@ func (*BuildKeySolver) Name() string {
 }
 
 // Optimize implements base.LogicalOptRule.<1st> interface.
-func (*BuildKeySolver) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*BuildKeySolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	buildKeyInfo(p)
+	ruleutil.BuildKeyInfoPortal(p)
 	return p, planChanged, nil
 }
 
 // **************************** end implementation of LogicalOptRule interface ****************************
-
-// buildKeyInfo recursively calls base.LogicalPlan's BuildKeyInfo method.
-func buildKeyInfo(lp base.LogicalPlan) {
-	for _, child := range lp.Children() {
-		buildKeyInfo(child)
-	}
-	childSchema := make([]*expression.Schema, len(lp.Children()))
-	for i, child := range lp.Children() {
-		childSchema[i] = child.Schema()
-	}
-	lp.BuildKeyInfo(lp.Schema(), childSchema)
-}

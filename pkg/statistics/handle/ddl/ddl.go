@@ -23,10 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 type ddlHandlerImpl struct {
@@ -51,17 +53,23 @@ func NewDDLHandler(
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
-	err := h.sub.handle(ctx, sctx, s)
-	if err != nil {
+	// Ideally, we shouldn't allow any errors to be ignored, but for now, some queries can fail.
+	// Temporarily ignore the error and we need to check all queries to ensure they are correct.
+	// See more at: https://github.com/pingcap/tidb/issues/59474
+	if err := h.sub.handle(ctx, sctx, s); err != nil {
 		intest.Assert(
 			errors.ErrorEqual(err, context.Canceled) ||
 				strings.Contains(err.Error(), "mock handleTaskOnce error") ||
 				strings.Contains(err.Error(), "session pool closed"),
-			fmt.Sprintf("handle ddl event failed, err: %v", err),
+			fmt.Sprintf("handle ddl event failed, err: %+v", err),
+		)
+		statslogutil.StatsErrVerboseSampleLogger().Warn(
+			"Failed to handle DDL event",
+			zap.String("event", s.String()),
+			zap.Error(err),
 		)
 	}
-
-	return err
+	return nil
 }
 
 // DDLEventCh returns ddl events channel in handle.

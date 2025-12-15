@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -90,7 +91,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	for k, v := range vars {
 		q := fmt.Sprintf("SET SESSION %s = '%s';", k, v)
 		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
-			log.FromContext(ctx).Warn("set session variable failed, will skip this query", zap.String("query", q),
+			logutil.Logger(ctx).Warn("set session variable failed, will skip this query", zap.String("query", q),
 				zap.Error(err1))
 			delete(vars, k)
 		}
@@ -133,7 +134,7 @@ func (timgr *TiDBManager) Close() {
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
 	sql := common.SQLWithRetry{
 		DB:     timgr.db,
-		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
+		Logger: log.Wrap(logutil.Logger(ctx)).With(zap.String("table", tableName)),
 	}
 	return sql.Exec(ctx, "drop table", "DROP TABLE "+tableName)
 }
@@ -214,11 +215,11 @@ func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool
 		}
 	}
 	query.WriteString("')")
-	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
+	exec := common.SQLWithRetry{DB: db, Logger: log.Wrap(logutil.Logger(ctx))}
 	kvs, err := exec.QueryStringRows(ctx, "obtain system variables", query.String())
 	if err != nil {
 		// error is not fatal
-		log.FromContext(ctx).Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
+		logutil.Logger(ctx).Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
 	}
 
 	// convert result into a map. fill in any missing variables with default values.
@@ -246,7 +247,7 @@ func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool
 func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) (bool, error) {
 	newCollationEnabled := false
 	var newCollationVal string
-	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
+	exec := common.SQLWithRetry{DB: db, Logger: log.Wrap(logutil.Logger(ctx))}
 	err := exec.QueryRow(ctx, "obtain new collation enabled", "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'", &newCollationVal)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
@@ -265,7 +266,7 @@ func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) (bool, error) {
 // than the auto increment base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr uint64) error {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
 	base := adjustIDBase(incr)
 	var forceStr string
 	if incr > math.MaxInt64 {
@@ -296,7 +297,7 @@ func adjustIDBase(incr uint64) int64 {
 
 // AlterAutoRandom rebase the table auto random id
 func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBase uint64, maxAutoRandom uint64) error {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
 	if randomBase == maxAutoRandom+1 {
 		// insert a tuple with key maxAutoRandom
 		randomBase = maxAutoRandom

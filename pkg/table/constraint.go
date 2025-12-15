@@ -17,7 +17,7 @@ package table
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -29,7 +29,6 @@ import (
 // Constraint provides meta and map dependency describing a table constraint.
 type Constraint struct {
 	*model.ConstraintInfo
-	ConstraintExpr expression.Expression
 }
 
 // LoadCheckConstraint load check constraint
@@ -38,11 +37,7 @@ func LoadCheckConstraint(tblInfo *model.TableInfo) ([]*Constraint, error) {
 
 	constraints := make([]*Constraint, 0, len(tblInfo.Constraints))
 	for _, conInfo := range tblInfo.Constraints {
-		con, err := ToConstraint(conInfo, tblInfo)
-		if err != nil {
-			return nil, err
-		}
-		constraints = append(constraints, con)
+		constraints = append(constraints, &Constraint{conInfo})
 	}
 	return constraints, nil
 }
@@ -66,17 +61,13 @@ func removeInvalidCheckConstraintsInfo(tblInfo *model.TableInfo) {
 	tblInfo.Constraints = conInfos
 }
 
-// ToConstraint converts model.ConstraintInfo to Constraint
-func ToConstraint(constraintInfo *model.ConstraintInfo, tblInfo *model.TableInfo) (*Constraint, error) {
-	ctx := exprstatic.NewExprContext()
-	expr, err := buildConstraintExpression(ctx, constraintInfo.ExprString, "", tblInfo)
+// BuildConstraintExprWithCtx converts model.ConstraintInfo to Constraint
+func BuildConstraintExprWithCtx(ctx expression.BuildContext, constraintInfo *model.ConstraintInfo, tblInfo *model.TableInfo, dbName string) (expression.Expression, error) {
+	expr, err := buildConstraintExpression(ctx, constraintInfo.ExprString, dbName, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Constraint{
-		constraintInfo,
-		expr,
-	}, nil
+	return expr, nil
 }
 
 func buildConstraintExpression(ctx expression.BuildContext, exprString string, db string, tblInfo *model.TableInfo) (expression.Expression, error) {
@@ -232,13 +223,14 @@ func hasSpecifiedCol(cols []ast.CIStr, col ast.CIStr) bool {
 }
 
 // IfCheckConstraintExprBoolType checks whether the check expression is bool type
-func IfCheckConstraintExprBoolType(ctx expression.EvalContext, info *model.ConstraintInfo, tableInfo *model.TableInfo) error {
-	cons, err := ToConstraint(info, tableInfo)
+func IfCheckConstraintExprBoolType(ctx exprctx.ExprContext, info *model.ConstraintInfo, tableInfo *model.TableInfo) error {
+	evalCtx := ctx.GetEvalCtx()
+	expr, err := BuildConstraintExprWithCtx(ctx, info, tableInfo, evalCtx.CurrentDB())
 	if err != nil {
 		return err
 	}
-	if !mysql.HasIsBooleanFlag(cons.ConstraintExpr.GetType(ctx).GetFlag()) {
-		return dbterror.ErrNonBooleanExprForCheckConstraint.GenWithStackByArgs(cons.Name)
+	if !mysql.HasIsBooleanFlag(expr.GetType(evalCtx).GetFlag()) {
+		return dbterror.ErrNonBooleanExprForCheckConstraint.GenWithStackByArgs(info.Name)
 	}
 	return nil
 }

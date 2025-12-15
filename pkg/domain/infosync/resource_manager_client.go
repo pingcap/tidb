@@ -31,15 +31,17 @@ import (
 
 type mockResourceManagerClient struct {
 	sync.RWMutex
-	groups  map[string]*rmpb.ResourceGroup
-	eventCh chan []*meta_storagepb.Event
+	keyspaceID uint32
+	groups     map[string]*rmpb.ResourceGroup
+	eventCh    chan []*meta_storagepb.Event
 }
 
 // NewMockResourceManagerClient return a mock ResourceManagerClient for test usage.
-func NewMockResourceManagerClient() pd.ResourceManagerClient {
+func NewMockResourceManagerClient(keyspaceID uint32) pd.ResourceManagerClient {
 	mockMgr := &mockResourceManagerClient{
-		groups:  make(map[string]*rmpb.ResourceGroup),
-		eventCh: make(chan []*meta_storagepb.Event, 100),
+		keyspaceID: keyspaceID,
+		groups:     make(map[string]*rmpb.ResourceGroup),
+		eventCh:    make(chan []*meta_storagepb.Event, 100),
 	}
 	mockMgr.groups[resourcegroup.DefaultResourceGroupName] = &rmpb.ResourceGroup{
 		Name: resourcegroup.DefaultResourceGroupName,
@@ -146,7 +148,7 @@ func (*mockResourceManagerClient) LoadResourceGroups(context.Context) ([]*rmpb.R
 }
 
 func (m *mockResourceManagerClient) Watch(_ context.Context, key []byte, _ ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
-	if bytes.Equal(pd.GroupSettingsPathPrefixBytes, key) {
+	if bytes.Equal(pd.GroupSettingsPathPrefixBytes(m.keyspaceID), key) {
 		return m.eventCh, nil
 	}
 	return nil, nil

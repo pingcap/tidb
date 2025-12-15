@@ -21,11 +21,15 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,7 +86,7 @@ func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testk
 		`(partition p0 values less than (100000), partition p1 values less than (200000))`)
 	buf1 := bytes.NewBufferString("insert into " + tblName + " values (0)")
 	buf2 := bytes.NewBufferString("insert into " + tblName + " values (100000)")
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		buf1.WriteString(fmt.Sprintf(", (%v)", 2))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100002))
 		buf1.WriteString(fmt.Sprintf(", (%v)", 1))
@@ -114,7 +118,7 @@ func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit
 		buf1.WriteString(fmt.Sprintf(", (%v)", i))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100000+i))
 	}
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		buf1.WriteString(fmt.Sprintf(", (%v)", 0))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100000))
 	}
@@ -212,6 +216,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)
@@ -230,6 +235,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	rows = tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][6])
+	tk.MustExec("set @@global.tidb_enable_auto_analyze=DEFAULT")
 }
 
 func TestFMSWithAnalyzePartition(t *testing.T) {
@@ -247,7 +253,57 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+}
+
+func TestAnalyzeMetricsCounters(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	readCounter := func(counter prometheus.Counter) float64 {
+		var metric dto.Metric
+		require.NoError(t, counter.Write(&metric))
+		return metric.Counter.GetValue()
+	}
+
+	manualSucc := metrics.ManualAnalyzeCounter.WithLabelValues("succ")
+	manualFail := metrics.ManualAnalyzeCounter.WithLabelValues("failed")
+	autoSucc := metrics.AutoAnalyzeCounter.WithLabelValues("succ")
+	autoFail := metrics.AutoAnalyzeCounter.WithLabelValues("failed")
+
+	h := dom.StatsHandle()
+
+	tk.MustExec("create table t_metrics_manual(a int)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("insert into t_metrics_manual values (1),(2)")
+
+	beforeManualSucc := readCounter(manualSucc)
+	beforeManualFail := readCounter(manualFail)
+
+	tk.MustExec("analyze table t_metrics_manual")
+
+	require.Equal(t, beforeManualSucc+1, readCounter(manualSucc))
+	require.Equal(t, beforeManualFail, readCounter(manualFail))
+
+	tk.MustExec("create table t_metrics_auto(a int)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("insert into t_metrics_auto values (1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	origMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = origMinCnt
+	}()
+
+	beforeAutoSucc := readCounter(autoSucc)
+	beforeAutoFail := readCounter(autoFail)
+
+	require.True(t, h.HandleAutoAnalyze())
+
+	require.Equal(t, beforeAutoSucc+1, readCounter(autoSucc))
+	require.Equal(t, beforeAutoFail, readCounter(autoFail))
 }

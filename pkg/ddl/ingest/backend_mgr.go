@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -60,9 +59,17 @@ type BackendCtxBuilder struct {
 	etcdClient *clientv3.Client
 	importTS   uint64
 
+	// For normal checkpoint manager
 	sessPool   *sess.Pool
 	physicalID int64
-	checkDup   bool
+
+	// For distributed task checkpoint manager
+	subtaskID   int64
+	updateFunc  func(context.Context, int64, any) error
+	getFunc     func(context.Context, int64) (string, error)
+	useDistTask bool
+
+	checkDup bool
 }
 
 // WithImportDistributedLock needs a etcd client to maintain a distributed lock during partial import.
@@ -79,6 +86,21 @@ func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 ) *BackendCtxBuilder {
 	b.sessPool = sessPool
 	b.physicalID = physicalID
+	return b
+}
+
+// WithDistTaskCheckpointManagerParam is used by DXF distributed task mode.
+func (b *BackendCtxBuilder) WithDistTaskCheckpointManagerParam(
+	subtaskID int64,
+	physicalID int64,
+	updateFunc func(context.Context, int64, any) error,
+	getFunc func(context.Context, int64) (string, error),
+) *BackendCtxBuilder {
+	b.subtaskID = subtaskID
+	b.physicalID = physicalID
+	b.updateFunc = updateFunc
+	b.getFunc = getFunc
+	b.useDistTask = true
 	return b
 }
 
@@ -99,8 +121,11 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	if err != nil {
 		return nil, err
 	}
-	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
-		job.Type == model.ActionAddIndex)
+	intest.Assert(
+		job.Type == model.ActionAddPrimaryKey ||
+			job.Type == model.ActionAddIndex ||
+			job.Type == model.ActionModifyColumn,
+	)
 	intest.Assert(job.ReorgMeta != nil)
 
 	failpoint.Inject("beforeCreateLocalBackend", func() {
@@ -109,26 +134,55 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
-	var cpMgr *CheckpointManager
-	if b.sessPool != nil {
-		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
+	var cpOp CheckpointOperator
+
+	// Create checkpoint manager based on the configuration
+	if b.useDistTask {
+		// Use distributed task checkpoint manager
+		cpOp, err = NewCheckpointManagerForDistTask(
+			ctx,
+			b.subtaskID,
+			b.physicalID,
+			jobSortPath,
+			pdCli,
+			b.updateFunc,
+			b.getFunc,
+		)
 		if err != nil {
-			logutil.Logger(ctx).Warn("create checkpoint manager failed",
+			logutil.Logger(ctx).Warn("create distributed task checkpoint manager failed",
 				zap.Int64("jobID", job.ID),
+				zap.Int64("subtaskID", b.subtaskID),
 				zap.Error(err))
 			return nil, err
+		}
+	} else {
+		// Use normal checkpoint manager
+		if b.sessPool != nil {
+			cpOp, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
+			if err != nil {
+				logutil.Logger(ctx).Warn("create checkpoint manager failed",
+					zap.Int64("jobID", job.ID),
+					zap.Error(err))
+				return nil, err
+			}
 		}
 	}
 
 	var mockBackend BackendCtx
-	failpoint.InjectCall("mockNewBackendContext", b.job, cpMgr, &mockBackend)
+	// Wrap cpOp for failpoint.Call: reflect can't take a zero (nil interface) argument.
+	fpCpOp := cpOp
+	if fpCpOp == nil {
+		var nilMgr *CheckpointManager
+		fpCpOp = nilMgr // typed-nil that implements CheckpointOperator
+	}
+	failpoint.InjectCall("mockNewBackendContext", b.job, fpCpOp, &mockBackend)
 	if mockBackend != nil {
 		BackendCounterForTest.Inc()
 		return mockBackend, nil
 	}
 
 	bCtx := newBackendContext(ctx, job.ID, bd, cfg,
-		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
+		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpOp)
 
 	LitDiskRoot.Add(job.ID, bCtx)
 	BackendCounterForTest.Add(1)
@@ -144,23 +198,24 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 }
 
 // CreateLocalBackend creates a local backend for adding index.
-func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, checkDup bool) (*local.BackendConfig, *local.Backend, error) {
+func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, hasUnique, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
+	ctx = logutil.WithLogger(ctx, logutil.Logger(ctx))
 	jobSortPath, err := genJobSortPath(job.ID, checkDup)
 	if err != nil {
 		return nil, nil, err
 	}
 	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
-		job.Type == model.ActionAddIndex)
+		job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionModifyColumn)
 	intest.Assert(job.ReorgMeta != nil)
 
 	resGroupName := job.ReorgMeta.ResourceGroupName
 	concurrency := job.ReorgMeta.GetConcurrency()
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
-	hasUnique, err := hasUniqueIndex(job)
-	if err != nil {
-		return nil, nil, err
+	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, store.GetKeyspace(), concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
+	if adjustedWorkerConcurrency > 0 {
+		cfg.WorkerConcurrency.Store(int32(adjustedWorkerConcurrency))
 	}
-	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
 
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(
@@ -181,26 +236,13 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, c
 		zap.Int64("job ID", job.ID),
 		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
 		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()),
-		zap.Bool("has unique index", hasUnique))
+		zap.Bool("has unique index", hasUnique),
+		zap.Bool("checking duplicate", checkDup))
 
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	be, err := local.NewBackend(ctx, tls, *cfg, pdCli.GetServiceDiscovery())
 	return cfg, be, err
-}
-
-func hasUniqueIndex(job *model.Job) (bool, error) {
-	args, err := model.GetModifyIndexArgs(job)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	for _, a := range args.IndexArgs {
-		if a.Unique {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 const checkpointUpdateInterval = 10 * time.Minute
@@ -214,7 +256,7 @@ func newBackendContext(
 	memRoot MemRoot,
 	etcdClient *clientv3.Client,
 	initTS, importTS uint64,
-	cpMgr *CheckpointManager,
+	cpOp CheckpointOperator,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		engines:        make(map[int64]*engineInfo, 10),
@@ -228,7 +270,7 @@ func newBackendContext(
 		etcdClient:     etcdClient,
 		initTS:         initTS,
 		importTS:       importTS,
-		checkpointMgr:  cpMgr,
+		checkpointMgr:  cpOp,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx

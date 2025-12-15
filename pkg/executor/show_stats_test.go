@@ -17,10 +17,13 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -47,6 +50,51 @@ func TestShowStatsMeta(t *testing.T) {
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "t", result.Rows()[0][1])
+
+	// Create different database to test the like pattern.
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("analyze table t all columns")
+	// Test it works under different database.
+	tk.MustExec("use test")
+	// Test it is not case sensitive.
+	result = tk.MustQuery("show stats_meta like 'Test2%'")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test2", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	result = tk.MustQuery("show stats_meta like 'test2'")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test2", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+
+	// For dynamic partitioned table, we need to display the global table as well.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by range(a) (partition p0 values less than (6))")
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustExec("analyze table t all columns")
+	result = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "test", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "global", result.Rows()[0][2])
+	require.Equal(t, "test", result.Rows()[1][0])
+	require.Equal(t, "t", result.Rows()[1][1])
+	require.Equal(t, "p0", result.Rows()[1][2])
+
+	// For static partitioned table, there is no global table.
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by range(a) (partition p0 values less than (6))")
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustExec("analyze table t all columns")
+	result = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "p0", result.Rows()[0][2])
 }
 
 func TestShowStatsLocked(t *testing.T) {
@@ -103,6 +151,9 @@ func TestShowStatsHistograms(t *testing.T) {
 }
 
 func TestShowStatsBuckets(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -167,6 +218,9 @@ func TestShowStatsBucketWithDateNullValue(t *testing.T) {
 }
 
 func TestShowStatsHasNullValue(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -231,6 +285,9 @@ func TestShowStatsHasNullValue(t *testing.T) {
 }
 
 func TestShowPartitionStats(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -421,11 +478,15 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "<nil>", rows[0][8])
 	serverInfo, err := infosync.GetServerInfo()
 	require.NoError(t, err)
-	addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	addr := net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.Port), 10))
 	require.Equal(t, addr, rows[0][9])
 	require.Equal(t, "<nil>", rows[0][10])
 
 	tk.MustExec("delete from mysql.analyze_jobs")
+	if kerneltype.IsNextGen() {
+		t.Log("analyze V1 cannot support in the next gen")
+		return
+	}
 	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	rows = tk.MustQuery("show analyze status").Sort().Rows()

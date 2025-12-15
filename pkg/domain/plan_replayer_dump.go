@@ -129,6 +129,10 @@ func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tab
 			TableName: fk.RefTable.L,
 			IsView:    false,
 		}
+		// Skip already visited tables to prevent infinite recursion in case of circular foreign key definitions.
+		if _, ok := tableMap[key]; ok {
+			continue
+		}
 		tableMap[key] = struct{}{}
 		err := findFK(is, key.DBName, key.TableName, tableMap)
 		if err != nil {
@@ -228,7 +232,8 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
  |-explain.txt
 */
 func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
-	task *PlanReplayerDumpTask) (err error) {
+	task *PlanReplayerDumpTask,
+) (err error) {
 	zf := task.Zf
 	fileName := task.FileName
 	sessionVars := task.SessionVars
@@ -388,14 +393,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	} else {
 		// Dump explain
 		if err = dumpPlanReplayerExplain(sctx, zw, task, &records); err != nil {
-			return err
+			errMsgs = append(errMsgs, err.Error())
 		}
 	}
 
-	if task.DebugTrace != nil {
-		if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
-			return err
-		}
+	if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
+		return err
 	}
 
 	if len(errMsgs) > 0 {
@@ -531,7 +534,7 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 		if err != nil {
 			return err
 		}
-		tblStats := statsHandle.GetTableStats(tbl.Meta())
+		tblStats := statsHandle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 		if tblStats == nil {
 			continue
 		}
@@ -748,8 +751,6 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 				return nil, err
 			}
 		}
-		debugTrace := ctx.GetSessionVars().StmtCtx.OptimizerDebugTrace
-		debugTraces = append(debugTraces, debugTrace)
 		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], emptyAsNil)
 		if err != nil {
 			return nil, err
@@ -786,7 +787,8 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 
 // extractTableNames extracts table names from the given stmts.
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
-	execStmts []ast.StmtNode, curDB ast.CIStr) (map[tableNamePair]struct{}, error) {
+	execStmts []ast.StmtNode, curDB ast.CIStr,
+) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
 		executor: sctx.GetRestrictedSQLExecutor(),
@@ -867,7 +869,7 @@ func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet, emptyAsNi
 	sRows := make([][]string, len(rows))
 	for i, row := range rows {
 		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
+		for j := range row.Len() {
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {
@@ -911,6 +913,9 @@ func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 }
 
 func dumpDebugTrace(zw *zip.Writer, debugTraces []any) error {
+	if debugTraces == nil { // if no debug trace collected, we still create one empty file for compatibility
+		debugTraces = append(debugTraces, nil)
+	}
 	for i, trace := range debugTraces {
 		fw, err := zw.Create(fmt.Sprintf("debug_trace/debug_trace%d.json", i))
 		if err != nil {
@@ -925,6 +930,9 @@ func dumpDebugTrace(zw *zip.Writer, debugTraces []any) error {
 }
 
 func dumpOneDebugTrace(w io.Writer, debugTrace any) error {
+	if debugTrace == nil {
+		return nil
+	}
 	jsonEncoder := json.NewEncoder(w)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)

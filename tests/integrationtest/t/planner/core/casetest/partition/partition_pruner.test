@@ -257,13 +257,13 @@ create table t (a int(11) default null) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 CO
 		partition p1 values less than (2),
 		partition p2 values less than (3),
 		partition p_max values less than (maxvalue));
-explain format = 'brief' select * from t where a = 1;
-explain format = 'brief' select * from t where a = 2;
-explain format = 'brief' select * from t where a = 10;
-explain format = 'brief' select * from t where a = -1;
-explain format = 'brief' select * from t where a is NULL;
-explain format = 'brief' select * from t where a = 1.5;
-explain format = 'brief' select * from t where a in (2);
+explain format='plan_tree' select * from t where a = 1;
+explain format='plan_tree' select * from t where a = 2;
+explain format='plan_tree' select * from t where a = 10;
+explain format='plan_tree' select * from t where a = -1;
+explain format='plan_tree' select * from t where a is NULL;
+explain format='plan_tree' select * from t where a = 1.5;
+explain format='plan_tree' select * from t where a in (2);
 
 # TestIssue42135
 create database issue42135;
@@ -275,13 +275,13 @@ insert into tx2 values(1,1,1,1,1,1,501);
 analyze table tx1 all columns;
 analyze table tx2 all columns;
 select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
-explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
+explain format='plan_tree' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 drop table tx2;
 CREATE TABLE `tx2` (`ID` varchar(13), `rid` varchar(12), `a` varchar(9), `b` varchar(8), `c` longtext, `d` varchar(12), `ltype` int(5) NOT NULL) PARTITION BY LIST COLUMNS (`ltype`,d) (PARTITION `p1` VALUES IN ((501,1)), PARTITION `p2` VALUES IN ((502,1)));
 insert into tx2 values(1,1,1,1,1,1,501);
 analyze table tx2 all columns;
 select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
-explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
+explain format='plan_tree' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 
 # Test issue 50206
 create table t (a varchar(255), b int primary key nonclustered, key (a)) partition by key(b) partitions 3;
@@ -310,3 +310,39 @@ explain select * from t where b in (1,2);
 --sorted_result
 select * from t where b in (1,2) and a like '%a%';
 explain select * from t where b in (1,2) and a like '%a%';
+
+# Test issue 61726
+drop table if exists t;
+CREATE TABLE `t` (
+  `col_4` varchar(223) DEFAULT 'QKd^)QlWh#cT&3',
+  UNIQUE KEY `idx_3` (`col_4`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col_4`)
+(PARTITION `p0` VALUES LESS THAN ('+*8Ab='),
+ PARTITION `p1` VALUES LESS THAN ('959#Km%JOy2EFI'),
+ PARTITION `p2` VALUES LESS THAN ('FbL~@RpX01&CYY-%%+'),
+ PARTITION `p3` VALUES LESS THAN ('GFB'),
+ PARTITION `p4` VALUES LESS THAN (MAXVALUE));
+
+insert into t values ('u^D92@_4'), (null);
+
+# no error
+explain format='plan_tree' select * from t where col_4 in ( 'u^D92@_4' ,null );
+select * from t where col_4 in ( 'u^D92@_4' ,null );
+
+# Test issue 61965
+drop table if exists t;
+CREATE TABLE `t` (
+  `col_95` char(181) COLLATE gbk_bin NOT NULL DEFAULT 'SaMKHTyg+nlID-X3Y',
+  PRIMARY KEY (`col_95`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin
+PARTITION BY RANGE COLUMNS(`col_95`)
+(PARTITION `p0` VALUES LESS THAN ('6)nvX^uj0UGxqX'),
+ PARTITION `p1` VALUES LESS THAN ('BHSluf6'),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE));
+
+insert into t values ('58y-j)84-&Y*'), ('WNe(rS5uwmvIvFnHw'), ('j9FsMawX5uBro%$p'), ('C(#EQm@J');
+
+explain format='plan_tree' select t.col_95 as r0 from t where t.col_95 between 'Dyw=*7nigCMh' and 'Im0*7sZ' or t.col_95 in ( '58y-j)84-&Y*' ,'WNe(rS5uwmvIvFnHw' ,'j9FsMawX5uBro%$p' ,'C(#EQm@J' ) group by t.col_95  having t.col_95 between '%^2' and '38ABfC-' or t.col_95 between 'eKCAE$d2x_hxscj' and 'zcw35^ATEEp1md=L';
+select t.col_95 as r0 from t where t.col_95 between 'Dyw=*7nigCMh' and 'Im0*7sZ' or t.col_95 in ( '58y-j)84-&Y*' ,'WNe(rS5uwmvIvFnHw' ,'j9FsMawX5uBro%$p' ,'C(#EQm@J' ) group by t.col_95  having t.col_95 between '%^2' and '38ABfC-' or t.col_95 between 'eKCAE$d2x_hxscj' and 'zcw35^ATEEp1md=L';
+

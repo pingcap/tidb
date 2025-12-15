@@ -16,6 +16,7 @@ package partition
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -123,7 +124,7 @@ func TestExchangeRangeColumnsPartition(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("SELECT * FROM t1 PARTITION(%s)", p)).Sort().Check(initialResults[p].Rows())
 
 		// Check that no non-matching rows will be allowed to be exchanged
-		otherPartitions := strings.Join(append(append([]string{}, partitionNames[:i]...), partitionNames[i+1:]...), ",")
+		otherPartitions := strings.Join(slices.Concat(partitionNames[:i], partitionNames[i+1:]), ",")
 		for j := 1; j <= id; j++ {
 			res := tk.MustQuery(fmt.Sprintf("select * from t1 partition (%s) where id = %d", p, j))
 			if len(res.Rows()) > 0 {

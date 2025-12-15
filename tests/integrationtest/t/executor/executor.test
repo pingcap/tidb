@@ -1501,31 +1501,31 @@ create table t3(a int, b decimal(30,10));
 insert into t1 values (1,1),(1,1),(2,2),(3,3),(null,null);
 insert into t2 values (1,'1'),(2,'2'),(null,null),(null,'3');
 insert into t3 values (2,2.1),(3,3);
-explain format = 'brief' select * from t3 union select * from t1;
+explain format = 'plan_tree' select * from t3 union select * from t1;
 --sorted_result
 select * from t3 union select * from t1;
-explain format = 'brief' select * from t2 union all select * from t1;
+explain format = 'plan_tree' select * from t2 union all select * from t1;
 --sorted_result
 select * from t2 union all select * from t1;
-explain format = 'brief' select * from t1 except select * from t3;
+explain format = 'plan_tree' select * from t1 except select * from t3;
 --sorted_result
 select * from t1 except select * from t3;
-explain format = 'brief' select * from t1 intersect select * from t2;
+explain format = 'plan_tree' select * from t1 intersect select * from t2;
 --sorted_result
 select * from t1 intersect select * from t2;
-explain format = 'brief' select * from t1 union all select * from t2 union all select * from t3;
+explain format = 'plan_tree' select * from t1 union all select * from t2 union all select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 union all select * from t3;
-explain format = 'brief' select * from t1 union all select * from t2 except select * from t3;
+explain format = 'plan_tree' select * from t1 union all select * from t2 except select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 except select * from t3;
-explain format = 'brief' select * from t1 intersect select * from t2 intersect select * from t1;
+explain format = 'plan_tree' select * from t1 intersect select * from t2 intersect select * from t1;
 --sorted_result
 select * from t1 intersect select * from t2 intersect select * from t1;
-explain format = 'brief' select * from t1 union all select * from t2 intersect select * from t3;
+explain format = 'plan_tree' select * from t1 union all select * from t2 intersect select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 intersect select * from t3;
-explain format = 'brief' select * from t1 except select * from t2 intersect select * from t3;
+explain format = 'plan_tree' select * from t1 except select * from t2 intersect select * from t3;
 --sorted_result
 select * from t1 except select * from t2 intersect select * from t3;
 
@@ -1535,25 +1535,25 @@ set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (c1 year(4), c2 int, key(c1));
 insert into t values(2001, 1);
-explain format = 'brief' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
+explain format = 'plan_tree' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
 --sorted_result
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
 
@@ -1566,43 +1566,43 @@ create table t3 like t1;
 insert into t1 values (1),(1),(2),(3),(null);
 insert into t2 values (1),(2),(null),(null);
 insert into t3 values (2),(3);
-explain format='brief' select * from t3 union select * from t1;
+explain format='plan_tree' select * from t3 union select * from t1;
 --sorted_result
 select * from t3 union select * from t1;
-explain format='brief' select * from t2 union all select * from t1;
+explain format='plan_tree' select * from t2 union all select * from t1;
 --sorted_result
 select * from t2 union all select * from t1;
-explain format='brief' select * from t1 except select * from t3;
+explain format='plan_tree' select * from t1 except select * from t3;
 --sorted_result
 select * from t1 except select * from t3;
-explain format='brief' select * from t1 intersect select * from t2;
+explain format='plan_tree' select * from t1 intersect select * from t2;
 --sorted_result
 select * from t1 intersect select * from t2;
-explain format='brief' select * from t1 union all select * from t2 union all select * from t3;
+explain format='plan_tree' select * from t1 union all select * from t2 union all select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 union all select * from t3;
-explain format='brief' select * from t1 union all select * from t2 except select * from t3;
+explain format='plan_tree' select * from t1 union all select * from t2 except select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 except select * from t3;
-explain format='brief' select * from t1 intersect select * from t2 intersect select * from t1;
+explain format='plan_tree' select * from t1 intersect select * from t2 intersect select * from t1;
 --sorted_result
 select * from t1 intersect select * from t2 intersect select * from t1;
-explain format='brief' select * from t1 union all select * from t2 intersect select * from t3;
+explain format='plan_tree' select * from t1 union all select * from t2 intersect select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 intersect select * from t3;
-explain format='brief' select * from t1 except select * from t2 intersect select * from t3;
+explain format='plan_tree' select * from t1 except select * from t2 intersect select * from t3;
 --sorted_result
 select * from t1 except select * from t2 intersect select * from t3;
-explain format='brief' select * from t1 intersect (select * from t2 except (select * from t3));
+explain format='plan_tree' select * from t1 intersect (select * from t2 except (select * from t3));
 --sorted_result
 select * from t1 intersect (select * from t2 except (select * from t3));
-explain format='brief' select * from t1 union all (select * from t2 except select * from t3);
+explain format='plan_tree' select * from t1 union all (select * from t2 except select * from t3);
 --sorted_result
 select * from t1 union all (select * from t2 except select * from t3);
-explain format='brief' select * from t1 union (select * from t2 union all select * from t3);
+explain format='plan_tree' select * from t1 union (select * from t2 union all select * from t3);
 --sorted_result
 select * from t1 union (select * from t2 union all select * from t3);
-explain format='brief' (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
+explain format='plan_tree' (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
 --sorted_result
 (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
 
@@ -1850,7 +1850,7 @@ admin check table b;
 set @@tidb_enable_clustered_index=On;
 drop table if exists t;
 create table t (a int, b int, c int, primary key(a,b));
-explain format = 'brief' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b;
+explain format = 'plan_tree' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b;
 set @@tidb_enable_clustered_index=default;
 
 # TestExecutorBit
@@ -2562,6 +2562,8 @@ commit;
 disconnect conn1;
 disconnect conn2;
 set global tidb_txn_mode=pessimistic;
+
+select 1 for update;
 
 # TestSelectForUpdateOf
 drop table if exists t, t1;

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -89,7 +90,7 @@ func TestInfo(t *testing.T) {
 		ddl.WithStore(s),
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
-		ddl.WithSchemaLoader(dom),
+		ddl.WithSchemaLoader(dom.isSyncer),
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
@@ -127,8 +128,8 @@ func TestInfo(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/ErrorMockSessionDone"))
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 1000; i++ {
-		if dom.SchemaValidator.IsStarted() {
+	for range 1000 {
+		if dom.GetSchemaValidator().IsStarted() {
 			syncerStarted = true
 			break
 		}
@@ -152,11 +153,11 @@ func TestInfo(t *testing.T) {
 	}
 	ctx := mock.NewContext()
 	require.NoError(t, dom.ddlExecutor.CreateSchema(ctx, stmt))
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.isSyncer.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
 	// Test for RemoveServerInfo.
-	dom.info.RemoveServerInfo()
+	dom.info.ServerInfoSyncer().RemoveServerInfo()
 	infos, err = infosync.GetAllServerInfo(goCtx)
 	require.NoError(t, err)
 	require.Len(t, infos, 0)
@@ -265,6 +266,8 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		vardef.TiDBReplicaRead: "closest-adaptive",
 	}
 	dom.sysVarCache.Unlock()
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), "", nil, nil, nil, nil, nil, nil, false, nil)
+	require.NoError(t, err)
 
 	makeFailpointRes := func(v any) string {
 		bytes, err := json.Marshal(v)
@@ -272,22 +275,22 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		return fmt.Sprintf("return(`%s`)", string(bytes))
 	}
 
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s1",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone1",
 				},
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s2",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone2",
 				},
@@ -295,7 +298,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetServerInfo", makeFailpointRes(mockedAllServerInfos["s2"])))
 
 	stores := []*metapb.Store{
@@ -354,52 +357,52 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 
 	// partial matches
-	mockedAllServerInfos = map[string]*infosync.ServerInfo{
+	mockedAllServerInfos = map[string]*serverinfo.ServerInfo{
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s1",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone1",
 				},
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s2",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone2",
 				},
 			},
 		},
 		"s22": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s22",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone2",
 				},
 			},
 		},
 		"s3": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s3",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone3",
 				},
 			},
 		},
 		"s4": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s4",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone4",
 				},
@@ -407,7 +410,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		},
 	}
 	pdClient.stores = stores
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	cases := []struct {
 		id      string
 		matches bool
@@ -442,7 +445,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 
 	variable.SetEnableAdaptiveReplicaRead(true)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetServerInfo"))
 }
 
@@ -497,21 +500,4 @@ func TestIsAnalyzeTableSQL(t *testing.T) {
 	for _, tt := range tests {
 		require.True(t, isAnalyzeTableSQL(tt.sql))
 	}
-}
-
-func TestDeferFn(t *testing.T) {
-	var df deferFn
-	var a, b, c, d bool
-	df.add(func() { a = true }, time.Now().Add(50*time.Millisecond))
-	df.add(func() { b = true }, time.Now().Add(100*time.Millisecond))
-	df.add(func() { c = true }, time.Now().Add(10*time.Minute))
-	df.add(func() { d = true }, time.Now().Add(150*time.Millisecond))
-	time.Sleep(300 * time.Millisecond)
-	df.check()
-
-	require.True(t, a)
-	require.True(t, b)
-	require.False(t, c)
-	require.True(t, d)
-	require.Len(t, df.data, 1)
 }

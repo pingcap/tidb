@@ -90,10 +90,7 @@ func medianOfMediansPivot(data Interface, left, right int) int {
 		return partition5(data, left, right)
 	}
 	for i := left; i <= right; i += 5 {
-		subRight := i + 4
-		if subRight > right {
-			subRight = right
-		}
+		subRight := min(i+4, right)
 		median5 := partition5(data, i, subRight)
 		data.Swap(median5, left+(i-left)/5)
 	}

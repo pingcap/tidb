@@ -16,17 +16,17 @@ package core
 
 import (
 	"math/bits"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 type joinReorderDPSolver struct {
 	*baseSingleGroupJoinOrderSolver
-	newJoin func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan
+	newJoin func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType base.JoinType) base.LogicalPlan
 }
 
 type joinGroupEqEdge struct {
@@ -40,7 +40,7 @@ type joinGroupNonEqEdge struct {
 	expr       expression.Expression
 }
 
-func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
+func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan) (base.LogicalPlan, error) {
 	eqConds := expression.ScalarFuncs2Exprs(s.eqEdges)
 	for _, node := range joinGroup {
 		_, _, err := node.RecursiveDeriveStats(nil)
@@ -52,7 +52,6 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 			p:       node,
 			cumCost: cost,
 		})
-		tracer.appendLogicalJoinCost(node, cost)
 	}
 	adjacents := make([][]int, len(s.curJoinGroup))
 	totalEqEdges := make([]joinGroupEqEdge, 0, len(eqConds))
@@ -100,11 +99,15 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 	}
 	visited := make([]bool, len(joinGroup))
 	nodeID2VisitID := make([]int, len(joinGroup))
-	var joins []base.LogicalPlan
+	joins := make([]base.LogicalPlan, 0, len(joinGroup))
 	// BFS the tree.
-	for i := 0; i < len(joinGroup); i++ {
+	for i := range joinGroup {
 		if visited[i] {
 			continue
+		}
+		// Reset the visited ID map.
+		for i := range nodeID2VisitID {
+			nodeID2VisitID[i] = -1
 		}
 		visitID2NodeID := s.bfsGraph(i, visited, adjacents, nodeID2VisitID)
 		nodeIDMask := uint(0)
@@ -123,10 +126,10 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 			}
 			totalNonEqEdges[i].nodeIDMask = newMask
 			subNonEqEdges = append(subNonEqEdges, totalNonEqEdges[i])
-			totalNonEqEdges = append(totalNonEqEdges[:i], totalNonEqEdges[i+1:]...)
+			totalNonEqEdges = slices.Delete(totalNonEqEdges, i, i+1)
 		}
 		// Do DP on each sub graph.
-		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEqEdges, subNonEqEdges, tracer)
+		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEqEdges, subNonEqEdges)
 		if err != nil {
 			return nil, err
 		}
@@ -166,11 +169,11 @@ func (*joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents []
 //
 //	bestPlan[S:set of node] = the best one among Join(bestPlan[S1:subset of S], bestPlan[S2: S/S1])
 func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []base.LogicalPlan,
-	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge, tracer *joinReorderTrace) (base.LogicalPlan, error) {
+	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) (base.LogicalPlan, error) {
 	nodeCnt := uint(len(visitID2NodeID))
 	bestPlan := make([]*jrNode, 1<<nodeCnt)
 	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
-	for i := uint(0); i < nodeCnt; i++ {
+	for i := range nodeCnt {
 		bestPlan[1<<i] = s.curJoinGroup[visitID2NodeID[i]]
 	}
 	// Enumerate the nodeBitmap from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
@@ -199,7 +202,6 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 				return nil, err
 			}
 			curCost := s.calcJoinCumCost(join, bestPlan[sub], bestPlan[remain])
-			tracer.appendLogicalJoinCost(join, curCost)
 			if bestPlan[nodeBitmap] == nil {
 				bestPlan[nodeBitmap] = &jrNode{
 					p:       join,
@@ -218,6 +220,10 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
 	var usedEqEdges []joinGroupEqEdge
 	for _, edge := range totalEqEdges {
+		// If one of the two nodes are not in the current subgraph, skip it.
+		if oldPos2NewPos[edge.nodeIDs[0]] < 0 || oldPos2NewPos[edge.nodeIDs[1]] < 0 {
+			continue
+		}
 		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
 		rIdx := uint(oldPos2NewPos[edge.nodeIDs[1]])
 		if ((leftMask&(1<<lIdx)) > 0 && (rightMask&(1<<rIdx)) > 0) || ((leftMask&(1<<rIdx)) > 0 && (rightMask&(1<<lIdx)) > 0) {
@@ -251,7 +257,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 			eqConds = append(eqConds, newSf)
 		}
 	}
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin)
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, base.InnerJoin)
 	_, _, err := join.RecursiveDeriveStats(nil)
 	return join, err
 }
@@ -273,7 +279,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPla
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, logicalop.InnerJoin))
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, base.InnerJoin))
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}

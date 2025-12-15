@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -54,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -62,9 +65,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -181,6 +185,8 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeSetSessionStates(ctx, x)
 	case *ast.KillStmt:
 		err = e.executeKillStmt(ctx, x)
+	case *ast.RefreshStatsStmt:
+		err = e.executeRefreshStats(ctx, x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil
@@ -505,7 +511,7 @@ func (e *SimpleExec) setRoleAllExcept(ctx context.Context, s *ast.SetRoleStmt) e
 
 	filter := func(arr []*auth.RoleIdentity, f func(*auth.RoleIdentity) bool) []*auth.RoleIdentity {
 		i, j := 0, 0
-		for i = 0; i < len(arr); i++ {
+		for i = range arr {
 			if f(arr[i]) {
 				arr[j] = arr[i]
 				j++
@@ -747,9 +753,9 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 
 			// delete from activeRoles
 			if curUser == user.Username && curHost == user.Hostname {
-				for i := 0; i < len(activeRoles); i++ {
+				for i := range activeRoles {
 					if activeRoles[i].Username == role.Username && activeRoles[i].Hostname == role.Hostname {
-						activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+						activeRoles = slices.Delete(activeRoles, i, i+1)
 						break
 					}
 				}
@@ -961,12 +967,7 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1319,12 +1320,7 @@ func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host str
 	if err != nil {
 		return false, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 1)
 	if err != nil {
 		return false, err
 	}
@@ -1341,12 +1337,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1385,10 +1376,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 func getValidTime(sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
 	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
 	nowTimeS := nowTime.Unix()
-	beforeTimeS := nowTimeS - passwordReuse.passwordReuseInterval*24*int64(time.Hour/time.Second)
-	if beforeTimeS < 0 {
-		beforeTimeS = 0
-	}
+	beforeTimeS := max(nowTimeS-passwordReuse.passwordReuseInterval*24*int64(time.Hour/time.Second), 0)
 	return time.Unix(beforeTimeS, 0).Format("2006-01-02 15:04:05.999999999")
 }
 
@@ -1466,12 +1454,7 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	if err != nil {
 		return 0, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return 0, err
 	}
@@ -1492,12 +1475,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1512,12 +1490,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1540,12 +1513,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1562,12 +1530,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1589,12 +1552,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1608,12 +1566,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, vardef.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1631,10 +1584,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	}
 
 	// the maximum number of records that can be deleted.
-	canDeleteNum := passwordNum - passwordReuse.passwordHistory + 1
-	if canDeleteNum < 0 {
-		canDeleteNum = 0
-	}
+	canDeleteNum := max(passwordNum-passwordReuse.passwordHistory+1, 0)
 
 	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
 		return true, canDeleteNum, nil
@@ -2308,7 +2258,7 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 }
 
 func (e *SimpleExec) executeDropQueryWatch(s *ast.DropQueryWatchStmt) error {
-	return querywatch.ExecDropQueryWatch(e.Ctx(), s.IntValue)
+	return querywatch.ExecDropQueryWatch(e.Ctx(), s)
 }
 
 func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {
@@ -2462,9 +2412,9 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete from activeRoles
 		if s.IsDropRole {
-			for i := 0; i < len(activeRoles); i++ {
+			for i := range activeRoles {
 				if activeRoles[i].Username == user.Username && activeRoles[i].Hostname == user.Hostname {
-					activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+					activeRoles = slices.Delete(activeRoles, i, i+1)
 					break
 				}
 			}
@@ -2780,6 +2730,189 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	return err
 }
 
+func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.AssertFunc(func() bool {
+		for _, obj := range s.RefreshObjects {
+			switch obj.RefreshObjectScope {
+			case ast.RefreshObjectScopeDatabase, ast.RefreshObjectScopeTable:
+				if obj.DBName.L == "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, "Refresh stats broadcast requires database-qualified names")
+	// Note: Restore the statement to a SQL string so we can broadcast fully qualified
+	// table names to every instance. For example, `REFRESH STATS tbl` executed in
+	// database `db` must be sent as `REFRESH STATS db.tbl`; otherwise a peer without
+	// that current database would skip the table.
+	sql, err := restoreRefreshStatsSQL(s)
+	if err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to format refresh stats statement", zap.Error(err))
+		return err
+	}
+	if e.IsFromRemote {
+		if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats from remote", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		statslogutil.StatsLogger().Info("Successfully refreshed statistics from remote", zap.String("sql", sql))
+		return nil
+	}
+	if s.IsClusterWide {
+		if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast refresh stats command", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+		return nil
+	}
+	if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats on the current instance", zap.String("sql", sql), zap.Error(err))
+		return err
+	}
+	statslogutil.StatsLogger().Info("Successfully refreshed statistics on the current instance", zap.String("sql", sql))
+	return nil
+}
+
+func restoreRefreshStatsSQL(s *ast.RefreshStatsStmt) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := s.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.Assert(len(s.RefreshObjects) > 0, "RefreshObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.RefreshObjects)
+		s.Dedup()
+		return origCount == len(s.RefreshObjects)
+	}, "RefreshObjects should be deduplicated in the building phase")
+	tableIDs := make([]int64, 0, len(s.RefreshObjects))
+	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].RefreshObjectScope == ast.RefreshObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, refreshObject := range s.RefreshObjects {
+			switch refreshObject.RefreshObjectScope {
+			case ast.RefreshObjectScopeDatabase:
+				exists := is.SchemaExists(refreshObject.DBName)
+				if !exists {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				tables, err := is.SchemaTableInfos(ctx, refreshObject.DBName)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(tables) == 0 {
+					// Note: We do not warn about databases without tables because we cannot issue a warning
+					// for every such database when refreshing with `REFRESH STATS *.*`.(Technically, we can, but no point to do so.)
+					// Instead, we simply log the information to remain consistent across all cases.
+					statslogutil.StatsLogger().Info("No table in the database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				for _, table := range tables {
+					tableIDs = append(tableIDs, table.ID)
+				}
+			case ast.RefreshObjectScopeTable:
+				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
+				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+						statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+						continue
+					}
+					return errors.Trace(err)
+				}
+				if table == nil {
+					intest.Assert(false, "Table should not be nil here")
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+					statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+					continue
+				}
+				tableIDs = append(tableIDs, table.ID)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+		// If all specified databases or tables do not exist, we do nothing.
+		if len(tableIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to refresh stats")
+			return nil
+		}
+	}
+	// Note: tableIDs is empty means to refresh all tables.
+	h := domain.GetDomain(e.Ctx()).StatsHandle()
+	if s.RefreshMode != nil {
+		if *s.RefreshMode == ast.RefreshStatsModeLite {
+			return h.InitStatsLite(ctx, tableIDs...)
+		}
+		return h.InitStats(ctx, is, tableIDs...)
+	}
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	if liteInitStats {
+		return h.InitStatsLite(ctx, tableIDs...)
+	}
+	return h.InitStats(ctx, is, tableIDs...)
+}
+
+func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	broadcastExec := &tipb.Executor{
+		Tp: tipb.ExecType_TypeBroadcastQuery,
+		BroadcastQuery: &tipb.BroadcastQuery{
+			Query: &sql,
+		},
+	}
+	dagReq := &tipb.DAGRequest{}
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
+	sc := sctx.GetSessionVars().StmtCtx
+	if sc.RuntimeStatsColl != nil {
+		collExec := true
+		dagReq.CollectExecutionSummaries = &collExec
+	}
+	dagReq.Flags = sc.PushDownFlags()
+	dagReq.Executors = []*tipb.Executor{broadcastExec}
+
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.
+		SetDAGRequest(dagReq).
+		SetFromSessionVars(sctx.GetDistSQLCtx()).
+		SetFromInfoSchema(sctx.GetInfoSchema()).
+		SetStoreType(kv.TiDB).
+		// Send to all TiDB instances.
+		SetTiDBServerID(0).
+		SetStartTS(math.MaxUint64).
+		Build()
+	if err != nil {
+		return err
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, &kv.ClientSendOption{})
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return err
+	}
+
+	// Must consume & close the response, otherwise coprocessor task will leak.
+	defer func() {
+		_ = resp.Close()
+	}()
+	for {
+		subset, err := resp.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if subset == nil {
+			break // all remote tasks finished cleanly
+		}
+	}
+
+	return nil
+}
+
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:
@@ -2924,7 +3057,7 @@ func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSess
 	if err := decoder.Decode(&sessionStates); err != nil {
 		return errors.Trace(err)
 	}
-	return e.Ctx().DecodeSessionStates(ctx, e.Ctx(), &sessionStates)
+	return e.Ctx().DecodeStates(ctx, &sessionStates)
 }
 
 func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {

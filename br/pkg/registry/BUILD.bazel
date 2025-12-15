@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "registry",
+    srcs = [
+        "heartbeat.go",
+        "registration.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/registry",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/errors",
+        "//br/pkg/glue",
+        "//br/pkg/metautil",
+        "//br/pkg/utils",
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
+        "//pkg/util/table-filter",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)

@@ -14,28 +14,18 @@
 
 package collate
 
-import "github.com/pingcap/tidb/pkg/util/stringutil"
+import (
+	"unicode/utf8"
+
+	"github.com/pingcap/tidb/pkg/util/stringutil"
+)
 
 type gbkChineseCICollator struct {
 }
 
 // Compare implements Collator interface.
 func (*gbkChineseCICollator) Compare(a, b string) int {
-	a = truncateTailingSpace(a)
-	b = truncateTailingSpace(b)
-
-	r1, r2 := rune(0), rune(0)
-	ai, bi := 0, 0
-	for ai < len(a) && bi < len(b) {
-		r1, ai = decodeRune(a, ai)
-		r2, bi = decodeRune(b, bi)
-
-		cmp := int(gbkChineseCISortKey(r1)) - int(gbkChineseCISortKey(r2))
-		if cmp != 0 {
-			return sign(cmp)
-		}
-	}
-	return sign((len(a) - ai) - (len(b) - bi))
+	return compareCommon(a, b, gbkChineseCISortKey)
 }
 
 // Key implements Collator interface.
@@ -43,13 +33,27 @@ func (g *gbkChineseCICollator) Key(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gbkChineseCICollator) ImmutableKey(str string) []byte {
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
-	i := 0
+	i, rLen := 0, 0
 	r := rune(0)
 	for i < len(str) {
-		r, i = decodeRune(str, i)
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		r, rLen = utf8.DecodeRuneInString(str[i:])
+		invalid := r == utf8.RuneError && rLen == 1
+		if invalid {
+			return buf
+		}
+
+		i = i + rLen
 		u16 := gbkChineseCISortKey(r)
 		if u16 > 0xFF {
 			buf = append(buf, byte(u16>>8))
@@ -86,10 +90,10 @@ func (p *gbkChineseCIPattern) DoMatch(str string) bool {
 	})
 }
 
-func gbkChineseCISortKey(r rune) uint16 {
+func gbkChineseCISortKey(r rune) uint32 {
 	if r > 0xFFFF {
 		return 0x3F
 	}
 
-	return gbkChineseCISortKeyTable[r]
+	return uint32(gbkChineseCISortKeyTable[r])
 }

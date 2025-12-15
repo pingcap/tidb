@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 )
 
-var FilterFilesByRegion = filterFilesByRegion
+var (
+	FilterFilesByRegion = filterFilesByRegion
+)
 
 func (metaname *MetaName) Meta() Meta {
 	return metaname.meta
@@ -73,8 +75,9 @@ func (rc *LogClient) TEST_saveIDMap(
 func (rc *LogClient) TEST_initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) ([]*backuppb.PitrDBMap, error) {
-	return rc.loadSchemasMap(ctx, restoreTS)
+	return rc.loadSchemasMap(ctx, restoreTS, logCheckpointMetaManager)
 }
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.
@@ -95,6 +98,7 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 		dom:               dom,
 		unsafeSession:     se,
 		upstreamClusterID: upstreamClusterID,
+		restoreID:         0,
 		LogFileManager: &LogFileManager{
 			startTS:   startTS,
 			restoreTS: restoreTS,

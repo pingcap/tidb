@@ -44,7 +44,7 @@ func (b *builtinMonthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < input.NumRows(); i++ {
+	for i := range input.NumRows() {
 		if result.IsNull(i) {
 			continue
 		}
@@ -72,7 +72,7 @@ func (b *builtinYearSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result 
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < input.NumRows(); i++ {
+	for i := range input.NumRows() {
 		if result.IsNull(i) {
 			continue
 		}
@@ -90,7 +90,7 @@ func (b *builtinDateSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result
 		return err
 	}
 	times := result.Times()
-	for i := 0; i < len(times); i++ {
+	for i := range times {
 		if result.IsNull(i) {
 			continue
 		}
@@ -138,7 +138,7 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(ctx EvalContext, input *chunk
 	result.ReserveString(n)
 	ds := buf1.Decimals()
 	fsp := b.tp.GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -175,7 +175,7 @@ func (b *builtinSysDateWithoutFspSig) vecEvalTime(ctx EvalContext, input *chunk.
 	if err != nil {
 		return err
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		times[i] = t
 	}
 	return nil
@@ -210,7 +210,7 @@ func (b *builtinExtractDatetimeFromStringSig) vecEvalInt(ctx EvalContext, input 
 	i64s := result.Int64s()
 	ds := buf1.Times()
 	result.MergeNulls(buf, buf1)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -239,7 +239,7 @@ func (b *builtinDayNameSig) vecEvalIndex(ctx EvalContext, input *chunk.Chunk, ap
 	}
 
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			applyNull(i)
 			continue
@@ -316,7 +316,7 @@ func (b *builtinWeekDaySig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < input.NumRows(); i++ {
+	for i := range input.NumRows() {
 		if result.IsNull(i) {
 			continue
 		}
@@ -360,7 +360,7 @@ func (b *builtinTimeFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -400,7 +400,7 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(ctx EvalContext, input *chunk
 	d64s := result.GoDurations()
 	i64s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -440,7 +440,7 @@ func (b *builtinUnixTimestampCurrentSig) vecEvalInt(ctx EvalContext, input *chun
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	intRes := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		intRes[i] = intVal
 	}
 	return nil
@@ -467,7 +467,7 @@ func (b *builtinYearWeekWithoutModeSig) vecEvalInt(ctx EvalContext, input *chunk
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -512,7 +512,7 @@ func (b *builtinPeriodDiffSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	i64s := result.Int64s()
 	periods := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -543,7 +543,7 @@ func (b *builtinNowWithArgSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, 
 	times := result.Times()
 	fsps := bufFsp.Int64s()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		fsp := 0
 		if !bufFsp.IsNull(i) {
 			if fsps[i] > int64(math.MaxInt32) || fsps[i] < int64(types.MinFsp) {
@@ -595,7 +595,7 @@ func (b *builtinGetFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -664,7 +664,7 @@ func (b *builtinLastDaySig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, res
 		return err
 	}
 	times := result.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -711,7 +711,7 @@ func (b *builtinStrToDateDateSig) vecEvalTime(ctx EvalContext, input *chunk.Chun
 	result.MergeNulls(bufStrings, bufFormats)
 	times := result.Times()
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -761,7 +761,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(ctx EvalContext, input *chunk.Chu
 	times := result.Times()
 	ds := buf.Int64s()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -792,7 +792,7 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf)
 	times := result.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -849,7 +849,7 @@ func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(ctx EvalContext, input *chu
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf0, buf1)
 	times := result.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -903,7 +903,7 @@ func (b *builtinFromDaysSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, re
 	result.MergeNulls(buf)
 	ts := result.Times()
 	i64s := buf.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -930,7 +930,7 @@ func (b *builtinMicroSecondSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -960,7 +960,7 @@ func (b *builtinQuarterSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -998,7 +998,7 @@ func (b *builtinWeekWithModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	i64s := result.Int64s()
 	ds := buf1.Times()
 	ms := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf1.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -1049,7 +1049,7 @@ func (b *builtinExtractDatetimeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	i64s := result.Int64s()
 	tmIs := dt.Times()
 	var t types.Time
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1091,7 +1091,7 @@ func (b *builtinExtractDurationSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	durIs := dur.GoDurations()
 	var duration types.Duration
 	duration.Fsp = b.args[1].GetType(ctx).GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1133,7 +1133,7 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(ctx EvalContext, input *ch
 	result.MergeNulls(bufStrings, bufFormats)
 	d64s := result.GoDurations()
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1177,7 +1177,7 @@ func (b *builtinToSecondsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1213,7 +1213,7 @@ func (b *builtinMinuteSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1240,7 +1240,7 @@ func (b *builtinSecondSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1265,7 +1265,7 @@ func (b *builtinNowWithoutArgSig) vecEvalTime(ctx EvalContext, input *chunk.Chun
 	}
 	result.ResizeTime(n, false)
 	times := result.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		times[i] = nowTs
 	}
 	return nil
@@ -1316,7 +1316,7 @@ func (b *builtinMakeDateSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, re
 	years := buf1.Int64s()
 	days := buf2.Int64s()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1366,7 +1366,7 @@ func (b *builtinWeekOfYearSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1403,7 +1403,7 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(ctx EvalContext, input *chun
 	t64s := result.Times()
 	i64s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1448,7 +1448,7 @@ func (b *builtinTimeToSecSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	fsp := b.args[0].GetType(ctx).GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1495,7 +1495,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(ctx EvalContext, input *chunk.
 	hasNoZeroDateMode := sqlMode(ctx).HasNoZeroDateMode()
 	fsp := b.tp.GetDecimal()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1537,7 +1537,7 @@ func (b *builtinUTCDateSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, res
 	n := input.NumRows()
 	result.ResizeTime(n, false)
 	times := result.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		times[i] = utcDate
 	}
 	return nil
@@ -1570,7 +1570,7 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 			return handleInvalidTimeError(ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
 		}
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1603,7 +1603,7 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(ctx EvalContext, input *chun
 	}
 	defer b.bufAllocator.put(timeBuf)
 	if err := b.args[0].VecEvalTime(ctx, input, timeBuf); err != nil {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			temp, isNull, err := b.evalDecimal(ctx, input.GetRow(i))
 			if err != nil {
 				return err
@@ -1615,7 +1615,7 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(ctx EvalContext, input *chun
 		}
 	} else {
 		result.MergeNulls(timeBuf)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -1657,7 +1657,7 @@ func (b *builtinPeriodAddSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	i64s := result.Int64s()
 	result.MergeNulls(buf)
 	ns := buf.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1710,7 +1710,7 @@ func (b *builtinTimestampAddSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	result.ReserveString(n)
 	nums := buf1.Float64s()
 	ds := buf2.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1777,7 +1777,7 @@ func (b *builtinToDaysSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1882,7 +1882,7 @@ func (b *builtinHourSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1909,7 +1909,7 @@ func (b *builtinSecToTimeSig) vecEvalDuration(ctx EvalContext, input *chunk.Chun
 	result.ResizeGoDuration(n, false)
 	result.MergeNulls(buf)
 	durations := result.GoDurations()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1965,7 +1965,7 @@ func (b *builtinUTCTimeWithoutArgSig) vecEvalDuration(ctx EvalContext, input *ch
 	}
 	result.ResizeGoDuration(n, false)
 	d64s := result.GoDurations()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		d64s[i] = res.Duration
 	}
 	return nil
@@ -1998,7 +1998,7 @@ func (b *builtinDateDiffSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	args0 := buf0.Times()
 	args1 := buf1.Times()
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2037,7 +2037,7 @@ func (b *builtinCurrentDateSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk,
 	n := input.NumRows()
 	result.ResizeTime(n, false)
 	times := result.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		times[i] = timeValue
 	}
 	return nil
@@ -2056,7 +2056,7 @@ func (b *builtinMakeTimeSig) getVecIntParam(ctx EvalContext, arg Expression, inp
 		f64s := col.Float64s()
 		i64s := col.Int64s()
 		n := input.NumRows()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			i64s[i] = int64(f64s[i])
 		}
 		return nil
@@ -2095,7 +2095,7 @@ func (b *builtinMakeTimeSig) vecEvalDuration(ctx EvalContext, input *chunk.Chunk
 	durs := result.GoDurations()
 	result.MergeNulls(minutesBuf, secondsBuf)
 	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2130,7 +2130,7 @@ func (b *builtinDayOfYearSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2165,7 +2165,7 @@ func (b *builtinFromUnixTime1ArgSig) vecEvalTime(ctx EvalContext, input *chunk.C
 	ts := result.Times()
 	ds := buf.Decimals()
 	fsp := b.tp.GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2210,7 +2210,7 @@ func (b *builtinYearWeekWithModeSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	i64s := result.Int64s()
 	ds := buf1.Times()
 	ms := buf2.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2273,7 +2273,7 @@ func (b *builtinTimestampDiffSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 	i64s := result.Int64s()
 	lhs := lhsBuf.Times()
 	rhs := rhsBuf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2314,7 +2314,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 
 	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
 		var isNull bool
-		for i := 0; i < n; i++ {
+		for i := range n {
 			i64s[i], isNull, err = b.evalInt(ctx, input.GetRow(i))
 			if err != nil {
 				return err
@@ -2325,7 +2325,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 		}
 	} else {
 		result.MergeNulls(buf)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -2368,7 +2368,7 @@ func (b *builtinCurrentTime0ArgSig) vecEvalDuration(ctx EvalContext, input *chun
 	}
 	result.ResizeGoDuration(n, false)
 	durations := result.GoDurations()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		durations[i] = res.Duration
 	}
 	return nil
@@ -2393,7 +2393,7 @@ func (b *builtinTimeSig) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, re
 	result.MergeNulls(buf)
 	ds := result.GoDurations()
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2452,7 +2452,7 @@ func (b *builtinTimeLiteralSig) vecEvalDuration(ctx EvalContext, input *chunk.Ch
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
 	d64s := result.GoDurations()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		d64s[i] = b.duration.Duration
 	}
 	return nil
@@ -2471,7 +2471,7 @@ func (b *builtinMonthNameSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 
 	result.ReserveString(n)
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2514,7 +2514,7 @@ func (b *builtinDayOfWeekSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2555,7 +2555,7 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(ctx EvalContext, input *chun
 	i64s := buf.Int64s()
 	result.ResizeGoDuration(n, false)
 	durations := result.GoDurations()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		res, _, err := types.ParseDuration(tc, dur, int(i64s[i]))
 		if err != nil {
 			return err
@@ -2583,7 +2583,7 @@ func (b *builtinUTCTimestampWithoutArgSig) vecEvalTime(ctx EvalContext, input *c
 	}
 	result.ResizeTime(n, false)
 	t64s := result.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		t64s[i] = res
 	}
 	return nil
@@ -2620,7 +2620,7 @@ func (b *builtinConvertTzSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, r
 	result.MergeNulls(fromTzBuf, toTzBuf)
 	ts := result.Times()
 	var isNull bool
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2652,7 +2652,7 @@ func (b *builtinTimestamp1ArgSig) vecEvalTime(ctx EvalContext, input *chunk.Chun
 	times := result.Times()
 	tc := typeCtx(ctx)
 	var tm types.Time
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2704,7 +2704,7 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(ctx EvalContext, input *chunk.Chu
 	times := result.Times()
 	tc := typeCtx(ctx)
 	var tm types.Time
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2770,7 +2770,7 @@ func (b *builtinDayOfMonthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2816,7 +2816,7 @@ func (b *builtinAddSubDateAsStringSig) vecEvalString(ctx EvalContext, input *chu
 	result.ReserveString(n)
 
 	dateBuf.MergeNulls(intervalBuf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if dateBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -2869,7 +2869,7 @@ func (b *builtinAddSubDateDatetimeAnySig) vecEvalTime(ctx EvalContext, input *ch
 
 	result.MergeNulls(intervalBuf)
 	resDates := result.Times()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2925,7 +2925,7 @@ func (b *builtinAddSubDateDurationAnySig) vecEvalTime(ctx EvalContext, input *ch
 	resDates := result.Times()
 	iterDuration := types.Duration{Fsp: types.MaxFsp}
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -2975,7 +2975,7 @@ func (b *builtinAddSubDateDurationAnySig) vecEvalDuration(ctx EvalContext, input
 	result.MergeNulls(intervalBuf)
 	resDurations := result.GoDurations()
 	iterDuration := types.Duration{Fsp: types.MaxFsp}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}

@@ -57,28 +57,28 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
-	for i := 0; i < len(typeList); i++ {
+	for i := range typeList {
 		if typeList[i].GetCharset() == charset.CharsetBin {
 			// skip because binary charset cannot be used as key.
 			continue
 		}
-		for j := 0; j < len(typeList); j++ {
+		for j := range typeList {
 			argTypes := []*types.FieldType{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
 		}
 	}
 
-	var tests []multiArgsAggTest
+	tests := make([]multiArgsAggTest, 0, len(argCombines))
 	numRows := 5
 
-	for k := 0; k < len(argCombines); k++ {
+	for k := range argCombines {
 		entries1 := make(map[string]any)
 		entries2 := make(map[string]any)
 
 		fGenFunc := getDataGenFunc(argCombines[k][0])
 		sGenFunc := getDataGenFunc(argCombines[k][1])
 
-		for m := 0; m < numRows; m++ {
+		for m := range numRows {
 			firstArg := fGenFunc(m)
 			secondArg := sGenFunc(m)
 			keyString, _ := firstArg.ToString()
@@ -119,28 +119,28 @@ func TestJsonObjectagg(t *testing.T) {
 		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
-	for i := 0; i < len(typeList); i++ {
+	for i := range typeList {
 		if typeList[i].GetCharset() == charset.CharsetBin {
 			// skip because binary charset cannot be used as key.
 			continue
 		}
-		for j := 0; j < len(typeList); j++ {
+		for j := range typeList {
 			argTypes := []*types.FieldType{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
 		}
 	}
 
-	var tests []multiArgsAggTest
+	tests := make([]multiArgsAggTest, 0, len(argCombines))
 	numRows := 5
 
-	for k := 0; k < len(argCombines); k++ {
+	for k := range argCombines {
 		entries := make(map[string]any)
 
 		argTypes := argCombines[k]
 		fGenFunc := getDataGenFunc(argTypes[0])
 		sGenFunc := getDataGenFunc(argTypes[1])
 
-		for m := 0; m < numRows; m++ {
+		for m := range numRows {
 			firstArg := fGenFunc(m)
 			secondArg := sGenFunc(m)
 			keyString, _ := firstArg.ToString()
@@ -163,21 +163,21 @@ func TestJsonObjectagg(t *testing.T) {
 func TestMemJsonObjectagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
 	var argCombines [][]byte
-	for i := 0; i < len(typeList); i++ {
-		for j := 0; j < len(typeList); j++ {
+	for i := range typeList {
+		for j := range typeList {
 			argTypes := []byte{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
 		}
 	}
 	numRows := 5
-	for k := 0; k < len(argCombines); k++ {
+	for k := range argCombines {
 		entries := make(map[string]any)
 
 		argTypes := argCombines[k]
 		fGenFunc := getDataGenFunc(types.NewFieldType(argTypes[0]))
 		sGenFunc := getDataGenFunc(types.NewFieldType(argTypes[1]))
 
-		for m := 0; m < numRows; m++ {
+		for m := range numRows {
 			firstArg := fGenFunc(m)
 			secondArg := sGenFunc(m)
 			keyString, _ := firstArg.ToString()
@@ -209,7 +209,7 @@ func TestMemJsonObjectagg(t *testing.T) {
 func jsonMultiArgsMemDeltaGens(_ sessionctx.Context, srcChk *chunk.Chunk, dataTypes []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	m := make(map[string]bool)
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, int64(0))

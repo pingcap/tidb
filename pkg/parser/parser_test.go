@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -80,7 +81,7 @@ func TestSimple(t *testing.T) {
 
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
-		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
+		"add_columnar_replica_on_demand", "auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
 		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
@@ -1078,9 +1079,11 @@ AAAAAAAAAAAA5gm5Mg==
 		{"distribute table t1 partition(p0)", false, ""},
 		{"distribute table t1 partition(p0,p1)", false, ""},
 		{"distribute table t1 partition(p0,p1) engine = tikv", false, ""},
-		{"distribute table t1 rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` RULE = `leader` ENGINE = `tikv`"},
-		{"distribute table t1 partition(p0,p1) rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = `leader` ENGINE = `tikv`"},
-		{"distribute table t1 partition(p0) rule = learner engine = tiflash", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `learner` ENGINE = `tiflash`"},
+		{"distribute table t1 rule = 'leader-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 rule = \"leader-scatter\" engine = \"tikv\"", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0,p1) rule = 'learner-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = 'learner-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash' timeout = '30m'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash' TIMEOUT = '30m'"},
 
 		// for show distribution job(s)
 		{"show distribution jobs 1", false, ""},
@@ -1088,6 +1091,10 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show distribution jobs where id > 0", true, "SHOW DISTRIBUTION JOBS WHERE `id`>0"},
 		{"show distribution job 1 where id > 0", false, ""},
 		{"show distribution job 1", true, "SHOW DISTRIBUTION JOB 1"},
+
+		// for cancel distribution job JOBID
+		{"cancel distribution job", false, ""},
+		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
 
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
@@ -1201,6 +1208,8 @@ AAAAAAAAAAAA5gm5Mg==
 		{"query watch add SQL SIMILAR to 'select 1'", false, ""},
 		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
 		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
+		{"query watch remove resource group rg1", true, "QUERY WATCH REMOVE RESOURCE GROUP `rg1`"},
+		{"query watch remove resource group @rg", true, "QUERY WATCH REMOVE RESOURCE GROUP @`rg`"},
 		{"query watch remove", false, ""},
 
 		// for issue 34325, "replace into" with hints
@@ -1471,26 +1480,29 @@ func TestDBAStmt(t *testing.T) {
 
 func TestSetVariable(t *testing.T) {
 	table := []struct {
-		Input    string
-		Name     string
-		IsGlobal bool
-		IsSystem bool
+		Input      string
+		Name       string
+		IsGlobal   bool
+		IsInstance bool
+		IsSystem   bool
 	}{
 
 		// Set system variable xx.xx, although xx.xx isn't a system variable, the parser should accept it.
-		{"set xx.xx = 666", "xx.xx", false, true},
+		{"set xx.xx = 666", "xx.xx", false, false, true},
 		// Set session system variable xx.xx
-		{"set session xx.xx = 666", "xx.xx", false, true},
-		{"set local xx.xx = 666", "xx.xx", false, true},
-		{"set global xx.xx = 666", "xx.xx", true, true},
+		{"set session xx.xx = 666", "xx.xx", false, false, true},
+		{"set local xx.xx = 666", "xx.xx", false, false, true},
+		{"set global xx.xx = 666", "xx.xx", true, false, true},
+		{"set instance xx.xx = 666", "xx.xx", false, true, true},
 
-		{"set @@xx.xx = 666", "xx.xx", false, true},
-		{"set @@session.xx.xx = 666", "xx.xx", false, true},
-		{"set @@local.xx.xx = 666", "xx.xx", false, true},
-		{"set @@global.xx.xx = 666", "xx.xx", true, true},
+		{"set @@xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@session.xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@local.xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@global.xx.xx = 666", "xx.xx", true, false, true},
+		{"set @@instance.xx.xx = 666", "xx.xx", false, true, true},
 
 		// Set user defined variable xx.xx
-		{"set @xx.xx = 666", "xx.xx", false, false},
+		{"set @xx.xx = 666", "xx.xx", false, false, false},
 	}
 
 	p := parser.New()
@@ -1505,6 +1517,7 @@ func TestSetVariable(t *testing.T) {
 		v := setStmt.Variables[0]
 		require.Equal(t, tbl.Name, v.Name)
 		require.Equal(t, tbl.IsGlobal, v.IsGlobal)
+		require.Equal(t, tbl.IsInstance, v.IsInstance)
 		require.Equal(t, tbl.IsSystem, v.IsSystem)
 	}
 
@@ -1736,6 +1749,12 @@ func TestBuiltin(t *testing.T) {
 
 		// for cast as JSON
 		{"SELECT *, CAST(data AS JSON) FROM t;", true, "SELECT *,CAST(`data` AS JSON) FROM `t`"},
+
+		// for JSON_SUM_CRC32
+		{"SELECT *, JSON_SUM_CRC32(data AS UNSIGNED ARRAY) FROM t;", true, "SELECT *,JSON_SUM_CRC32(`data` AS UNSIGNED ARRAY) FROM `t`"},
+		{"SELECT *, JSON_SUM_CRC32(data AS DOUBLE ARRAY) FROM t;", true, "SELECT *,JSON_SUM_CRC32(`data` AS DOUBLE ARRAY) FROM `t`"},
+		{"SELECT *, JSON_SUM_CRC32(data AS DOUBLE) FROM t;", false, ""},
+		{"SELECT *, JSON_SUM_CRC32(data) FROM t;", false, ""},
 
 		// for cast as signed int, fix issue #3691.
 		{"select cast(1 as signed int);", true, "SELECT CAST(1 AS SIGNED)"},
@@ -2009,7 +2028,6 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));`, true, "SELECT IS_IPV4_MAPPED(INET6_ATON(_UTF8MB4'::10.0.5.9'))"},
 		{`SELECT IS_IPV6('10.0.5.9');`, true, "SELECT IS_IPV6(_UTF8MB4'10.0.5.9')"},
 		{`SELECT IS_USED_LOCK(@str);`, true, "SELECT IS_USED_LOCK(@`str`)"},
-		{`SELECT MASTER_POS_WAIT(@log_name, @log_pos), MASTER_POS_WAIT(@log_name, @log_pos, @timeout), MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name);`, true, "SELECT MASTER_POS_WAIT(@`log_name`, @`log_pos`),MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`),MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`, @`channel_name`)"},
 		{`SELECT NAME_CONST('myname', 14);`, true, "SELECT NAME_CONST(_UTF8MB4'myname', 14)"},
 		{`SELECT RELEASE_ALL_LOCKS();`, true, "SELECT RELEASE_ALL_LOCKS()"},
 		{`SELECT UUID();`, true, "SELECT UUID()"},
@@ -2031,7 +2049,6 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT IS_IPV4_MAPPED(INET6_ATON());`, true, "SELECT IS_IPV4_MAPPED(INET6_ATON())"},
 		{`SELECT IS_IPV6()`, true, "SELECT IS_IPV6()"},
 		{`SELECT IS_USED_LOCK();`, true, "SELECT IS_USED_LOCK()"},
-		{`SELECT MASTER_POS_WAIT();`, true, "SELECT MASTER_POS_WAIT()"},
 		{`SELECT NAME_CONST();`, true, "SELECT NAME_CONST()"},
 		{`SELECT RELEASE_ALL_LOCKS(1);`, true, "SELECT RELEASE_ALL_LOCKS(1)"},
 		{`SELECT UUID(1);`, true, "SELECT UUID(1)"},
@@ -2608,6 +2625,7 @@ func TestDDL(t *testing.T) {
 		{`create table t1 (c1 int) collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = BINARY"},
 		{`create table t1 (c1 int) collate=utf8mb4_0900_as_cs;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = UTF8MB4_0900_AS_CS"},
 		{`create table t1 (c1 int) default charset=binary collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT CHARACTER SET = BINARY DEFAULT COLLATE = BINARY"},
+		{`create table t1 (c1 int) autoextend_size=4M`, true, "CREATE TABLE `t1` (`c1` INT) AUTOEXTEND_SIZE = 4M"},
 
 		// for table option `UNION`
 		{"ALTER TABLE t_n UNION ( ), KEY_BLOCK_SIZE = 1", true, "ALTER TABLE `t_n` UNION = (), KEY_BLOCK_SIZE = 1"},
@@ -3018,6 +3036,9 @@ func TestDDL(t *testing.T) {
 		{"create table t (i int default (0))", true, "CREATE TABLE `t` (`i` INT DEFAULT 0)"},
 		{"create table t (i int default (-1))", true, "CREATE TABLE `t` (`i` INT DEFAULT -1)"},
 		{"create table t (i int default (+1))", true, "CREATE TABLE `t` (`i` INT DEFAULT +1)"},
+		// For column default expression with column reference
+		{"create table t (a int, b int, c char(33) default (b))", true, "CREATE TABLE `t` (`a` INT,`b` INT,`c` CHAR(33) DEFAULT (`b`))"},
+		{"create table t (a int, b int, c char(33) default `b`)", false, ""},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3237,20 +3258,21 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a, b))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`, `b`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((lower(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((LOWER(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a), a)) USING HNSW COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD VECTOR INDEX (a, (VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HYPO COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX (a, (VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX(`a`, (VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HYPO COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HYPO COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) ADD_COLUMNAR_REPLICA_ON_DEMAND USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) ADD_COLUMNAR_REPLICA_ON_DEMAND USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD COLUMNAR (a) USING INVERTED COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR ((a - 1)) USING INVERTED COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR (a) USING HASH COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR (a, b) USING INVERTED COMMENT 'a'", false, ""},
 		{"ALTER TABLE t ADD COLUMNAR KEY (a, b) USING INVERTED COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD COLUMNAR INDEX (a, b) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a, b) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`, `b`) USING INVERTED COMMENT 'a'"},
 		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`) USING INVERTED COMMENT 'a'"},
-		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING HYPO COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD COLUMNAR INDEX ((a - 1)) USING HYPO COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING HYPO COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`) USING HYPO COMMENT 'a'"},
+		{"ALTER TABLE t ADD COLUMNAR INDEX ((a - 1)) USING HYPO COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX((`a`-1)) USING HYPO COMMENT 'a'"},
 		{"ALTER TABLE t ADD COLUMNAR INDEX IF NOT EXISTS (a) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX IF NOT EXISTS(`a`) USING INVERTED COMMENT 'a'"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY (`t2_id`) REFERENCES `t`(`id`)"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY IF NOT EXISTS (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY IF NOT EXISTS (`t2_id`) REFERENCES `t`(`id`)"},
@@ -3424,23 +3446,22 @@ func TestDDL(t *testing.T) {
 		{"CREATE INDEX idx ON t ( a ) USING HASH INVISIBLE", true, "CREATE INDEX `idx` ON `t` (`a`) USING HASH INVISIBLE"},
 
 		// For create vector index statement
-		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", false, ""},
-		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW ", false, ""},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", false, ""},
+		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", true, "CREATE VECTOR INDEX `idx` ON `t` (`a`) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW ", true, "CREATE VECTOR INDEX `idx` ON `t` (`a`, `b`) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`)))"},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING BTREE"},
 		{"CREATE VECTOR INDEX idx ON t USING HNSW ((VEC_COSINE_DISTANCE(a)))", false, ""},
 		{"CREATE VECTOR idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", false, ""},
-		{"CREATE VECTOR INDEX idx ON t (a, (VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", false, ""},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`)), `a`) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t (a, (VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` (`a`, (VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR KEY idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
 		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX IF NOT EXISTS idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX IF NOT EXISTS `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX IF NOT EXISTS idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE HNSW", true, "CREATE VECTOR INDEX IF NOT EXISTS `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX ident TYPE HNSW ON d_n.t_n ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `ident` ON `d_n`.`t_n` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX idx USING HNSW ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
-		{"CREATE VECTOR INDEX ident ON d_n.t_n ( ident , ident ASC ) TYPE HNSW", false, ""},
-		{"CREATE UNIQUE INDEX ident USING HNSW ON d_n.t_n ( ident , ident ASC )", false, ""},
+		{"CREATE VECTOR INDEX ident ON d_n.t_n ( ident , ident ASC ) TYPE HNSW", true, "CREATE VECTOR INDEX `ident` ON `d_n`.`t_n` (`ident`, `ident`) USING HNSW"},
+		{"CREATE UNIQUE INDEX ident USING HNSW ON d_n.t_n ( ident , ident ASC )", true, "CREATE UNIQUE INDEX `ident` ON `d_n`.`t_n` (`ident`, `ident`) USING HNSW"},
 
 		// For create index with algorithm
 		{"CREATE INDEX idx ON t ( a ) ALGORITHM = DEFAULT", true, "CREATE INDEX `idx` ON `t` (`a`)"},
@@ -3898,12 +3919,12 @@ func TestDDL(t *testing.T) {
 		{"alter table t add primary key (`a`, `b`) nonclustered", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`, `b`) NONCLUSTERED"},
 
 		// for create table with vector index
-		{"create table t(a int, b vector(3), vector index(b) USING HNSW);", false, ""},
-		{"create table t(a int, b vector(3), vector index(a, b) USING HNSW);", false, ""},
-		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))) USING HNSW)"},
-		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HASH);", false, ""},
-		{"create table t(a int, b vector(3), vector index(a, (VEC_COSINE_DISTANCE(b))) USING HNSW);", false, ""},
-		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b)), a) USING HNSW);", false, ""},
+		{"create table t(a int, b vector(3), vector index(b) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX(`b`) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index(a, b) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX(`a`, `b`) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))))"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HASH);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))) USING HASH)"},
+		{"create table t(a int, b vector(3), vector index(a, (VEC_COSINE_DISTANCE(b))) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX(`a`, (VEC_COSINE_DISTANCE(`b`))) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b)), a) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`)), `a`) USING HNSW)"},
 		{"create table t(a int, b vector(3), vector index(VEC_COSINE_DISTANCE(b)) USING HNSW);", false, ""},
 		{"create table t(a int, b vector(3), vector key((VEC_COSINE_DISTANCE(b))) TYPE HNSW);", false, ""},
 		{"create table t(a int, b vector(3), vector index((b+1)) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((`b`+1)) USING HNSW)"},
@@ -4409,6 +4430,25 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints[1].Indexes, 1)
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
+	// Test INDEX_LOOKUP_PUSHDOWN
+	stmt, _, err = p.Parse("select /*+ INDEX_LOOKUP_PUSHDOWN(T1,T2), index_lookup_pushdown(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_lookup_pushdown", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	require.Len(t, hints[0].Indexes, 1)
+	require.Equal(t, "t2", hints[0].Indexes[0].L)
+
+	require.Equal(t, "index_lookup_pushdown", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 1)
+	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
+	require.Len(t, hints[1].Indexes, 1)
+	require.Equal(t, "t4", hints[1].Indexes[0].L)
+
 	// Test TIDB_SMJ
 	stmt, _, err = p.Parse("select /*+ TIDB_SMJ(T1,t2), tidb_smj(T3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
@@ -4719,6 +4759,21 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "ignore_plan_cache", hints[0].HintName.L)
 	require.Equal(t, "ignore_plan_cache", hints[1].HintName.L)
 
+	// Test WRITE_SLOW_LOG
+	stmt, _, err = p.Parse("select /*+ WRITE_SLOW_LOG(), write_slow_log() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 0)
+
+	stmt, _, err = p.Parse("select /*+ WRITE_SLOW_LOG, write_slow_log*/ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "write_slow_log", hints[0].HintName.L)
+	require.Equal(t, "write_slow_log", hints[1].HintName.L)
+
 	// Test USE_CASCADES
 	stmt, _, err = p.Parse("select /*+ USE_CASCADES(true), use_cascades(false) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
@@ -4886,19 +4941,37 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 3)
 	require.Equal(t, "leading", hints[0].HintName.L)
-	require.Len(t, hints[0].Tables, 1)
-	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	leadingList1, ok := hints[0].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList1.Items, 1)
+	hintTable1, ok := leadingList1.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t1", hintTable1.TableName.L)
 
 	require.Equal(t, "leading", hints[1].HintName.L)
-	require.Len(t, hints[1].Tables, 2)
-	require.Equal(t, "t2", hints[1].Tables[0].TableName.L)
-	require.Equal(t, "t3", hints[1].Tables[1].TableName.L)
+	leadingList2, ok := hints[1].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList2.Items, 2)
+	hintTable2, ok := leadingList2.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t2", hintTable2.TableName.L)
+	hintTable3, ok := leadingList2.Items[1].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t3", hintTable3.TableName.L)
 
 	require.Equal(t, "leading", hints[2].HintName.L)
-	require.Len(t, hints[2].Tables, 3)
-	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
-	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
-	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
+	leadingList3, ok := hints[2].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList3.Items, 3)
+	hintTable4, ok := leadingList3.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t4", hintTable4.TableName.L)
+	hintTable5, ok := leadingList3.Items[1].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t5", hintTable5.TableName.L)
+	hintTable6, ok := leadingList3.Items[2].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t6", hintTable6.TableName.L)
 
 	// Test NO_HASH_JOIN
 	stmt, _, err = p.Parse("select /*+ NO_HASH_JOIN(t1, t2), NO_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
@@ -5694,6 +5767,10 @@ func TestExplain(t *testing.T) {
 		{"EXPLAIN FORMAT = TIDB_JSON FOR CONNECTION 1", true, "EXPLAIN FORMAT = 'TIDB_JSON' FOR CONNECTION 1"},
 		{"EXPLAIN FORMAT = tidb_json SELECT 1", true, "EXPLAIN FORMAT = 'tidb_json' SELECT 1"},
 		{"EXPLAIN ANALYZE FORMAT = tidb_json SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'tidb_json' SELECT 1"},
+		{"EXPLAIN 'sqldigest'", true, "EXPLAIN FORMAT = 'row' 'sqldigest'"},
+		{"EXPLAIN ANALYZE 'sqldigest'", true, "EXPLAIN ANALYZE 'sqldigest'"},
+		{"EXPLAIN format='json' 'sqldigest'", true, "EXPLAIN FORMAT = 'json' 'sqldigest'"},
+		{"EXPLAIN ANALYZE format='json' 'sqldigest'", true, "EXPLAIN ANALYZE FORMAT = 'json' 'sqldigest'"},
 	}
 	RunTest(t, table, false)
 }
@@ -5823,9 +5900,9 @@ func TestBinding(t *testing.T) {
 		{"CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'", true, "CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'"},
 		{"set binding enabled for sql digest '1'", true, "SET BINDING ENABLED FOR SQL DIGEST '1'"},
 		{"set binding disabled for sql digest '1'", true, "SET BINDING DISABLED FOR SQL DIGEST '1'"},
-		// Show plan for a specified SQL.
-		{"show plan for 'select a from t'", true, "SHOW PLAN FOR 'select a from t'"},
-		{"show plan for '23adc8e6f62'", true, "SHOW PLAN FOR '23adc8e6f62'"},
+		// Explain explore for a specified SQL.
+		{"explain explore 'select a from t'", true, "EXPLAIN EXPLORE 'select a from t'"},
+		{"explain explore '23adc8e6f62'", true, "EXPLAIN EXPLORE '23adc8e6f62'"},
 	}
 	RunTest(t, table, false)
 
@@ -6747,7 +6824,7 @@ func TestQuotedSystemVariables(t *testing.T) {
 	p := parser.New()
 
 	st, err := p.ParseOneStmt(
-		"select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, @@session.'sql\\nmode', @@local.\"sql\\\"mode\";",
+		"select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, @@session.'sql\\nmode', @@local.\"sql\\\"mode\", @@instance.sql_mode;",
 		"",
 		"",
 	)
@@ -6790,6 +6867,13 @@ func TestQuotedSystemVariables(t *testing.T) {
 			IsSystem:      true,
 			ExplicitScope: true,
 		},
+		{
+			Name:          "sql_mode",
+			IsGlobal:      false,
+			IsSystem:      true,
+			IsInstance:    true,
+			ExplicitScope: true,
+		},
 	}
 
 	require.Len(t, ss.Fields.Fields, len(expected))
@@ -6798,6 +6882,7 @@ func TestQuotedSystemVariables(t *testing.T) {
 		comment := fmt.Sprintf("field %d, ve = %v", i, ve)
 		require.Equal(t, expected[i].Name, ve.Name, comment)
 		require.Equal(t, expected[i].IsGlobal, ve.IsGlobal, comment)
+		require.Equal(t, expected[i].IsInstance, ve.IsInstance, comment)
 		require.Equal(t, expected[i].IsSystem, ve.IsSystem, comment)
 		require.Equal(t, expected[i].ExplicitScope, ve.ExplicitScope, comment)
 	}
@@ -7010,7 +7095,7 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 
 			for i, option := range col.Options {
 				if option.Tp == 0 && option.Expr == nil && !option.Stored && option.Refer == nil {
-					col.Options = append(col.Options[:i], col.Options[i+1:]...)
+					col.Options = slices.Delete(col.Options, i, i+1)
 				}
 			}
 		}
@@ -7859,6 +7944,211 @@ func TestVector(t *testing.T) {
 		{"CREATE TABLE t (a VECTOR<DOUBLE>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<ABC>)", false, ""},
 		{"CREATE TABLE t (a VECTOR(5)<FLOAT>)", false, ""},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestExplainExplore(t *testing.T) {
+	cases := []testCase{
+		{`explain explore 'digestxxx'`, true, `EXPLAIN EXPLORE 'digestxxx'`},
+		{`explain explore select 1 from t`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t`"},
+		{`explain explore select 1 from t1, t2`, true, "EXPLAIN EXPLORE SELECT 1 FROM (`t1`) JOIN `t2`"},
+		{`explain explore select 1 from t where t1.a > (select max(a) from t2)`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
+	}
+	RunTest(t, cases, false)
+}
+
+// TestCompatMariaDB is to test for MariaDB specific table options
+func TestCompatMariaDB(t *testing.T) {
+	cases := []testCase{
+		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_CHECKSUM=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_CHECKSUM = 1"},
+		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSED=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSED = 1"},
+		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSION_LEVEL = 1"},
+		{`CREATE TABLE t (id int PRIMARY KEY) TRANSACTIONAL=0`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) TRANSACTIONAL = 0"},
+		{`CREATE TABLE t (id int PRIMARY KEY) IETF_QUOTES=YES`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) IETF_QUOTES = YES"},
+		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
+	}
+	RunTest(t, cases, false)
+}
+
+func TestSecondaryEngineAttribute(t *testing.T) {
+	table := []testCase{
+		// Valid Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'," +
+				"PARTITION p1 VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value2\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'," +
+				"PARTITION `p1` VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value2\"}')",
+		},
+
+		// Valid Table-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
+		},
+
+		// Valid Table-level and Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}' PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"partition_value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}' PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"partition_value\"}')",
+		},
+
+		// Valid Column-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}')",
+		},
+
+		// Valid: Table-level with tablespace option SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) TABLESPACE = `ts1` SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
+		},
+
+		// Valid: Index SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT,INDEX idx (id) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE='{\"key1\":\"value1\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT,INDEX `idx`(`id`) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE = '{\"key1\":\"value1\"}')",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Index-level
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Table-level with tablespace option
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Index-level
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE '{}'",
+			true,
+			"CREATE INDEX `i` ON `t` (`a`) SECONDARY_ENGINE_ATTRIBUTE = '{}'",
+		},
+
+		// Invalid CREATE INDEX syntax for SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE INDEX i ON t (a) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestPartialIndex(t *testing.T) {
+	cases := []testCase{
+		{"create table `t` (`id` int primary key,`col` int,index(`col`) where `col`>100)", true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`col` INT,INDEX(`col`) WHERE `col`>100)"},
+		{"create index `idx` on `t` (`col`) where `col`>100", true, "CREATE INDEX `idx` ON `t` (`col`) WHERE `col`>100"},
+		{"alter table `t` add index `idx`(`col`) where `col`>100", true, "ALTER TABLE `t` ADD INDEX `idx`(`col`) WHERE `col`>100"},
+	}
+	RunTest(t, cases, false)
+}
+
+func TestTableAffinityOption(t *testing.T) {
+	table := []testCase{
+		// create table with affinity option
+		{"create table t (a int) AFFINITY = 'table'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) affinity 'TABLE'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'TABLE'"},
+		{"create table t (a int) affinity 'partition'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'partition'"},
+		{"create table t (a int) AFFINITY = ''", true, "CREATE TABLE `t` (`a` INT) AFFINITY = ''"},
+		{"create table t (a int) AFFINITY 'none'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'none'"},
+		{"create table t (a int) AFFINITY 'PARTITION' partition by hash ( a ) PARTITIONS 1", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'PARTITION' PARTITION BY HASH (`a`) PARTITIONS 1"},
+		{"create table t (a int) /*T![affinity] AFFINITY = 'table'*/", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) AFFINITY 'abcd'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'abcd'"},
+
+		// alter table with affinity option
+		{"alter table t AFFINITY = 'table'", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+		{"alter table t affinity 'TABLE'", true, "ALTER TABLE `t` AFFINITY = 'TABLE'"},
+		{"alter table t /*T![affinity] affinity 'table'*/", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+
+		// invalid option
+		{"create table t (a int) AFFINITY 1", false, ""},
+		{"create table t (a int) AFFINITY = 1", false, ""},
+		{"create table t (a int) AFFINITY", false, ""},
 	}
 
 	RunTest(t, table, false)

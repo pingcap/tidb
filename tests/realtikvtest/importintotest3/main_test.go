@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -75,16 +74,17 @@ func (s *mockGCSSuite) cleanupSysTables() {
 }
 
 func (s *mockGCSSuite) prepareAndUseDB(db string) {
-	s.tk.MustExec("drop database if exists " + db)
-	s.tk.MustExec("create database " + db)
-	s.tk.MustExec("use " + db)
+	prepareAndUseDB(db, s.tk)
+}
+
+func prepareAndUseDB(db string, tk *testkit.TestKit) {
+	tk.MustExec("drop database if exists " + db)
+	tk.MustExec("create database " + db)
+	tk.MustExec("use " + db)
 }
 
 func init() {
-	// need a real PD
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Path = "127.0.0.1:2379"
-	})
+	realtikvtest.UpdateTiDBConfig()
 }
 
 func TestMain(m *testing.M) {

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -67,6 +68,12 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
+
+	// referredForeignKeyMap records all table's ReferredFKInfo.
+	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
+	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+
+	r autoid.Requirement
 }
 
 type infoSchemaMisc struct {
@@ -86,10 +93,6 @@ type infoSchemaMisc struct {
 
 	// temporaryTables stores the temporary table ids
 	temporaryTableIDs map[int64]struct{}
-
-	// referredForeignKeyMap records all table's ReferredFKInfo.
-	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
-	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
 }
 
 // SchemaAndTableName contains the lower-case schema name and table name.
@@ -100,7 +103,7 @@ type SchemaAndTableName struct {
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -166,7 +169,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -196,17 +199,18 @@ func (is *infoSchema) base() *infoSchema {
 	return is
 }
 
-func newInfoSchema() *infoSchema {
+func newInfoSchema(r autoid.Requirement) *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
-			policyMap:             map[string]*model.PolicyInfo{},
-			resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
-			ruleBundleMap:         map[int64]*placement.Bundle{},
-			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+			policyMap:        map[string]*model.PolicyInfo{},
+			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
+			ruleBundleMap:    map[int64]*placement.Bundle{},
 		},
-		schemaMap:           map[string]*schemaTables{},
-		schemaID2Name:       map[int64]string{},
-		sortedTablesBuckets: make([]sortedTables, bucketCount),
+		schemaMap:             map[string]*schemaTables{},
+		schemaID2Name:         map[int64]string{},
+		sortedTablesBuckets:   make([]sortedTables, bucketCount),
+		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		r:                     r,
 	}
 }
 
@@ -502,7 +506,7 @@ func init() {
 	}
 	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
-		Name:    util.InformationSchemaName,
+		Name:    metadef.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 	}
@@ -625,7 +629,7 @@ func (is *infoSchemaMisc) deletePolicy(name string) {
 	delete(is.policyMap, name)
 }
 
-func (is *infoSchemaMisc) addReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchema) addReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -665,7 +669,7 @@ func (is *infoSchemaMisc) addReferredForeignKeys(schema ast.CIStr, tbInfo *model
 	}
 }
 
-func (is *infoSchemaMisc) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchema) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -687,9 +691,13 @@ func (is *infoSchemaMisc) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *mo
 }
 
 // GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-func (is *infoSchemaMisc) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
 	name := SchemaAndTableName{schema: schema, table: table}
 	return is.referredForeignKeyMap[name]
+}
+
+func (is *infoSchema) GetAutoIDRequirement() autoid.Requirement {
+	return is.r
 }
 
 // SessionTables store local temporary tables

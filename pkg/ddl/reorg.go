@@ -340,6 +340,7 @@ func (rc *reorgCtx) getRowCount() int64 {
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(
+	jobCtx *jobContext,
 	reorgInfo *reorgInfo,
 	tblInfo *model.TableInfo,
 	reorgFn func() error,
@@ -381,7 +382,13 @@ func (w *worker) runReorgJob(
 		})
 	}
 
-	updateProcessTicker := time.NewTicker(5 * time.Second)
+	updateProgressInverval := 5 * time.Second
+	failpoint.Inject("updateProgressIntervalInMs", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			updateProgressInverval = time.Duration(v) * time.Millisecond
+		}
+	})
+	updateProcessTicker := time.NewTicker(updateProgressInverval)
 	defer updateProcessTicker.Stop()
 	for {
 		select {
@@ -393,7 +400,7 @@ func (w *worker) runReorgJob(
 				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
 					zap.Int64("prevTS", res.ownerTS),
 					zap.Int64("curTS", curTS))
-				return dbterror.ErrWaitReorgTimeout
+				return jobCtx.genReorgTimeoutErr()
 			}
 			// Since job is cancelled，we don't care about its partial counts.
 			// TODO(lance6716): should we also do for paused job?
@@ -404,9 +411,13 @@ func (w *worker) runReorgJob(
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
 			if err != nil {
-				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+				logutil.DDLLogger().Warn("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount), zap.Error(err))
 			} else {
-				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
+				logutil.DDLLogger().Info("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount))
 			}
 
 			// Update a job's warnings.
@@ -428,12 +439,14 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
+			failpoint.InjectCall("onRunReorgJobTimeout")
+			return jobCtx.genReorgTimeoutErr()
 		}
 	}
 }
 
 func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
-	if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge {
+	if job.ReorgMeta.ReorgTp != model.ReorgTypeIngest {
 		// Only used for the ingest mode job.
 		return nil
 	}
@@ -467,6 +480,9 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 func extractElemIDs(r *reorgInfo) []int64 {
 	elemIDs := make([]int64, 0, len(r.elements))
 	for _, elem := range r.elements {
+		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+			continue
+		}
 		elemIDs = append(elemIDs, elem.ID)
 	}
 	return elemIDs
@@ -622,6 +638,21 @@ func (r *reorgInfo) String() string {
 		"First:" + strconv.FormatBool(r.first) + "," +
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10) + "," +
 		"Ingest mode:" + strconv.FormatBool(isEnabled)
+}
+
+// UpdateConfigFromSysTbl updates the reorg config from system table.
+func (r *reorgInfo) UpdateConfigFromSysTbl(ctx context.Context) {
+	latestJob, err := r.jobCtx.sysTblMgr.GetJobByID(ctx, r.ID)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to get latest job from system table",
+			zap.Int64("jobID", r.ID), zap.Error(err))
+		return
+	}
+	if latestJob.State == model.JobStateRunning && latestJob.IsAlterable() {
+		r.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
+		r.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
+		r.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
+	}
 }
 
 func constructOneRowTableScanPB(
@@ -964,6 +995,19 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func getSplitKeysForTempIndexRanges(pid int64, elements []*meta.Element) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(elements))
+	for _, e := range elements {
+		if !bytes.Equal(e.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		tempIdxID := tablecodec.TempIndexPrefix | e.ID
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
 }
 
 func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {

@@ -22,8 +22,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -97,7 +99,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	require.NotNil(t, realJob)
 
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
 	require.NoError(t, err)
 	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
 	require.NoError(t, err)
@@ -111,7 +113,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(3)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		go func() {
 			err := bCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 			require.NoError(t, err)
@@ -161,6 +163,10 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 }
 
 func TestAddIndexPresplitIndexRegions(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF and fast reorg are always enabled on nextgen")
+	}
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -194,7 +200,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	}
 
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d);", 10000*i)
 		tk.MustExec(insertSQL)
 	}
@@ -227,7 +233,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	resetIdxID()
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 4;")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d);", 10000*i)
 		tk.MustExec(insertSQL)
 	}
@@ -256,6 +262,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 }
 
 func TestAddIndexPresplitFunctional(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

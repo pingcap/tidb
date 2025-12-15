@@ -142,6 +142,10 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
+	// PluginAuditLogBufferSize is the name of 'plugin_audit_log_buffer_size' system variable.
+	PluginAuditLogBufferSize = "plugin_audit_log_buffer_size"
+	// PluginAuditLogFlushInterval is the name of 'plugin_audit_log_flush_interval' system variable.
+	PluginAuditLogFlushInterval = "plugin_audit_log_flush_interval"
 	// TiDBEnableDDL indicates whether the tidb-server campaigns the DDL owner,
 	TiDBEnableDDL = "tidb_enable_ddl"
 	// TiDBEnableStatsOwner indicates whether the tidb-server campaigns the Stats owner,
@@ -306,6 +310,8 @@ const (
 	TiKVClientReadTimeout = "tikv_client_read_timeout"
 	// TiDBLoadBindingTimeout is the name of the 'tidb_load_binding_timeout' system variable.
 	TiDBLoadBindingTimeout = "tidb_load_binding_timeout"
+	// TiDBEnableBindingUsage is the name of the 'tidb_enable_binding_usage' system variable.
+	TiDBEnableBindingUsage = "tidb_enable_binding_usage"
 	// ReadOnly is the name of the 'read_only' system variable.
 	ReadOnly = "read_only"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.

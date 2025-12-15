@@ -134,6 +134,33 @@ func TestScatterSequentiallyRetryCnt(t *testing.T) {
 	require.Equal(t, 7, backoffer.already)
 }
 
+// TestBatchScatterRegionsRetryCnt tests the retry count of BatchScatterRegions.
+func TestBatchScatterRegionsRetryCnt(t *testing.T) {
+	mockClient := NewMockPDClientForSplit()
+	mockClient.scatterRegions.failedCount = 7
+	client := pdClient{
+		needScatterVal: true,
+		client:         mockClient,
+	}
+	client.needScatterInit.Do(func() {})
+
+	ctx := context.Background()
+	regions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id: 1,
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id: 2,
+			},
+		},
+	}
+	err := client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+}
+
 func TestScatterBackwardCompatibility(t *testing.T) {
 	mockClient := NewMockPDClientForSplit()
 	mockClient.scatterRegions.notImplemented = true
@@ -658,36 +685,6 @@ func TestRegionConsistency(t *testing.T) {
 				},
 			},
 		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("c")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"region 6's leader's store id is 0(.*?)",
-			[]*RegionInfo{
-				{
-					Leader: &metapb.Peer{
-						Id:      6,
-						StoreId: 0,
-					},
-					Region: &metapb.Region{
-						Id:          6,
-						StartKey:    codec.EncodeBytes([]byte{}, []byte("c")),
-						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
-						RegionEpoch: nil,
-					},
-				},
-				{
-					Leader: &metapb.Peer{
-						Id:      6,
-						StoreId: 0,
-					},
-					Region: &metapb.Region{
-						Id:       8,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("d")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("e")),
-					},
-				},
-			},
-		},
 	}
 	for _, ca := range cases {
 		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions)
@@ -869,20 +866,28 @@ func initKeys() [][]byte {
 func initRanges() []rtree.Range {
 	var ranges [4]rtree.Range
 	ranges[0] = rtree.Range{
-		StartKey: []byte("aaa"),
-		EndKey:   []byte("aae"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("aae"),
+		},
 	}
 	ranges[1] = rtree.Range{
-		StartKey: []byte("aae"),
-		EndKey:   []byte("aaz"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aae"),
+			EndKey:   []byte("aaz"),
+		},
 	}
 	ranges[2] = rtree.Range{
-		StartKey: []byte("ccd"),
-		EndKey:   []byte("ccf"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccd"),
+			EndKey:   []byte("ccf"),
+		},
 	}
 	ranges[3] = rtree.Range{
-		StartKey: []byte("ccf"),
-		EndKey:   []byte("ccj"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccf"),
+			EndKey:   []byte("ccj"),
+		},
 	}
 	return ranges[:]
 }
@@ -983,7 +988,7 @@ func TestSplitPoint2(t *testing.T) {
 	client := NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "g"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "g"), keyWithTablePrefix(tableID, getCharFromNumber("g", 0)))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", i)), keyWithTablePrefix(tableID, getCharFromNumber("g", i+1)))
 	}
 	client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", 256)), keyWithTablePrefix(tableID, "h"))
@@ -1025,4 +1030,45 @@ func TestSplitPoint2(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func TestRegionsNotFullyScatter(t *testing.T) {
+	mockClient := NewMockPDClientForSplit()
+	client := pdClient{
+		needScatterVal: true,
+		client:         mockClient,
+	}
+	client.needScatterInit.Do(func() {})
+	ctx := context.Background()
+
+	regions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id: 1,
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id: 2,
+			},
+		},
+	}
+	err := client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 2, mockClient.scatterRegions.regionCount)
+	require.Len(t, mockClient.scatterRegion.count, 0)
+
+	// simulate that one region is not fully scattered when scatterRegions
+	mockClient.scatterRegions.finishedPercentage = 50
+	err = client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 2+1, mockClient.scatterRegions.regionCount)
+	require.Equal(t, map[uint64]int{1: 1, 2: 1}, mockClient.scatterRegion.count)
+
+	// simulate that the regions is not fully scattered when scatterRegion
+	mockClient.scatterRegion.eachRegionFailBefore = 7
+	err = client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 2+1+1, mockClient.scatterRegions.regionCount)
+	require.Equal(t, map[uint64]int{1: 1 + 7, 2: 1 + 7}, mockClient.scatterRegion.count)
 }

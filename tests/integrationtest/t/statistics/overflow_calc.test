@@ -5,4 +5,4 @@ insert into lrr_test (col102) values(-1.704648925036604e308), (-1.68886196803535
 analyze table lrr_test;
 
 select t1.col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0 order by t1.col1;
-explain format='brief' select t1. col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0;
+explain format='plan_tree' select t1. col1, t2.col1 from lrr_test as t1 right join lrr_test as t2 on t1.col1 = t2.col1 where t1.col1 >=0;

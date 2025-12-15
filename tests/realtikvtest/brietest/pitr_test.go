@@ -135,7 +135,7 @@ type LogBackupKit struct {
 
 func NewLogBackupKit(t *testing.T) *LogBackupKit {
 	tk := initTestKit(t)
-	metaCli := streamhelper.NewMetaDataClient(domain.GetDomain(tk.Session()).EtcdClient())
+	metaCli := streamhelper.NewMetaDataClient(domain.GetDomain(tk.Session()).GetEtcdClient())
 	begin := time.Now()
 	// So the cases can finish faster...
 	tk.MustExec("set config tikv `log-backup.max-flush-interval` = '30s';")
@@ -143,6 +143,7 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 		if !t.Failed() {
 			log.Info("[TEST.LogBackupKit] success", zap.String("case", t.Name()), zap.Stringer("takes", time.Since(begin)))
 		}
+		log.Info("[TEST.LogBackupKit] fail", zap.String("case", t.Name()), zap.Stringer("takes", time.Since(begin)))
 	})
 	return &LogBackupKit{
 		tk:      tk,

@@ -115,7 +115,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		globalInnerTxnTsBox.deleteInnerTxnTS(originalTxnTS)
 	}()
 
-	for i := uint(0); i < MaxRetryCnt; i++ {
+	for i := range MaxRetryCnt {
 		txn, err = store.Begin()
 		if err != nil {
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))

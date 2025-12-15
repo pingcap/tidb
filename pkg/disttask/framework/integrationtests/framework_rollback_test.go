@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -38,6 +39,7 @@ func TestFrameworkRollback(t *testing.T) {
 		},
 	)
 
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
+	scope := handle.GetTargetScope()
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }

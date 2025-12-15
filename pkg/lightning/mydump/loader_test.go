@@ -22,20 +22,25 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	md "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xitongsys/parquet-go/parquet"
-	"github.com/xitongsys/parquet-go/writer"
+	"go.uber.org/atomic"
 )
 
 type testMydumpLoaderSuite struct {
@@ -191,7 +196,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		logger, buffer := log.MakeTestLogger()
-		logCtx := log.NewContext(ctx, logger)
+		logCtx := logutil.WithLogger(ctx, logger.Logger)
 		dbSQL := dbMeta.GetSchema(logCtx, store)
 		require.Equal(t, "CREATE DATABASE IF NOT EXISTS `db`", dbSQL)
 		for _, tblMeta := range dbMeta.Tables {
@@ -959,7 +964,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 	}, mdl.GetDatabases())
 }
 
-func TestMaxScanFilesOption(t *testing.T) {
+func TestMDLoaderSetupOption(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	memStore := storage.NewMemStorage()
@@ -971,9 +976,9 @@ func TestMaxScanFilesOption(t *testing.T) {
 	))
 	const dataFilesCount = 200
 	maxScanFilesCount := 500
-	for i := 0; i < dataFilesCount; i++ {
+	for i := range dataFilesCount {
 		require.NoError(t, memStore.WriteFile(ctx, fmt.Sprintf("/test-src/db1.tbl1.%d.sql", i),
-			[]byte(fmt.Sprintf("INSERT INTO db1.tbl1 (id, val) VALUES (%d, 'aaa%d');", i, i)),
+			fmt.Appendf(nil, "INSERT INTO db1.tbl1 (id, val) VALUES (%d, 'aaa%d');", i, i),
 		))
 	}
 	cfg := newConfigWithSourceDir("/test-src")
@@ -990,6 +995,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 
 	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
+		md.WithScanFileConcurrency(16),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, mdl)
@@ -1003,6 +1009,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 	maxScanFilesCount = 100
 	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
+		md.WithScanFileConcurrency(0),
 	)
 	require.EqualError(t, err, common.ErrTooManySourceFiles.Error())
 	require.NotNil(t, mdl)
@@ -1089,7 +1096,7 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	bf := bytes.NewBuffer(byteArray)
 	compressWriter := gzip.NewWriter(bf)
 	csvData := []byte("aaaa\n")
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		_, err = compressWriter.Write(csvData)
 		require.NoError(t, err)
 	}
@@ -1108,64 +1115,87 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
 }
 
+func TestEstimateFileSize(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
+	}()
+	fileMeta := md.SourceFileMeta{Compression: md.CompressionNone, FileSize: 100}
+	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+	fileMeta.Compression = md.CompressionGZ
+	require.Equal(t, int64(250), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+}
+
 func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
-	type row struct {
-		ID    int64  `parquet:"name=id, type=INT64"`
-		Key   string `parquet:"name=key, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
-		Value string `parquet:"name=value, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	byteArray := make([]byte, 0, 40*1024)
-	bf := bytes.NewBuffer(byteArray)
-	pwriter, err := writer.NewParquetWriterFromWriter(bf, new(row), 4)
-	require.NoError(t, err)
-	pwriter.RowGroupSize = 128 * 1024 * 1024 //128M
-	pwriter.PageSize = 8 * 1024              //8K
-	pwriter.CompressionType = parquet.CompressionCodec_SNAPPY
+	fileName := "test_1.t1.parquet"
+
+	totalRowSize := int64(0)
 	seed := time.Now().Unix()
 	t.Logf("seed: %d. To reproduce the random behaviour, manually set `rand.New(rand.NewSource(seed))`", seed)
 	rnd := rand.New(rand.NewSource(seed))
-	totalRowSize := 0
-	for i := 0; i < count; i++ {
-		kl := rnd.Intn(20) + 1
-		key := make([]byte, kl)
-		kl, err = rnd.Read(key)
-		require.NoError(t, err)
-		vl := rnd.Intn(20) + 1
-		value := make([]byte, vl)
-		vl, err = rnd.Read(value)
-		require.NoError(t, err)
-
-		totalRowSize += kl + vl + 8
-		row := row{
-			ID:    int64(i),
-			Key:   string(key[:kl]),
-			Value: string(value[:vl]),
-		}
-		err = pwriter.Write(row)
-		require.NoError(t, err)
+	pc := []md.ParquetColumn{
+		{
+			Name:      "id",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.None,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					data[i] = int64(i)
+					defLevels[i] = 1
+				}
+				totalRowSize += int64(8 * numRows)
+				return data, defLevels
+			},
+		},
+		{
+			Name:      "key",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]parquet.ByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					s := strconv.Itoa(rnd.Intn(100) + 1)
+					data[i] = parquet.ByteArray(s)
+					defLevels[i] = 1
+					totalRowSize += int64(len(s))
+				}
+				return data, defLevels
+			},
+		},
+		{
+			Name:      "value",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]parquet.ByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					s := strconv.Itoa(rnd.Intn(100) + 1)
+					data[i] = parquet.ByteArray(s)
+					defLevels[i] = 1
+					totalRowSize += int64(len(s))
+				}
+				return data, defLevels
+			},
+		},
 	}
-	err = pwriter.WriteStop()
-	require.NoError(t, err)
+	md.WriteParquetFile(s.sourceDir, fileName, pc, count)
 
-	fileName := "test_1.t1.parquet"
-	err = store.WriteFile(ctx, fileName, bf.Bytes())
-	require.NoError(t, err)
-
-	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
-		Path: fileName,
-	}, store)
-	require.NoError(t, err)
-	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
-		Path: fileName,
-	})
+	rowCount, rowSize, err := md.SampleStatisticsFromParquet(ctx, fileName, store)
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)
@@ -1182,4 +1212,45 @@ func TestSetupOptions(t *testing.T) {
 	_ = md.WithMaxScanFiles
 	_ = md.ReturnPartialResultOnError
 	_ = md.WithFileIterator
+}
+
+func TestParallelProcess(t *testing.T) {
+	var totalSize atomic.Int64
+	hdl := func(ctx context.Context, f md.RawFile) (string, error) {
+		totalSize.Add(f.Size)
+		return strings.ToLower(f.Path), nil
+	}
+
+	letters := []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	randomString := func() string {
+		b := make([]rune, 10)
+		for i := range b {
+			b[i] = letters[rand.Intn(len(letters))]
+		}
+		return string(b)
+	}
+
+	oneTest := func(length int, concurrency int) {
+		original := make([]md.RawFile, length)
+		totalSize = *atomic.NewInt64(0)
+		for i := range length {
+			original[i] = md.RawFile{Path: randomString(), Size: int64(rand.Intn(1000))}
+		}
+
+		res, err := md.ParallelProcess(context.Background(), original, concurrency, hdl)
+		require.NoError(t, err)
+
+		oneTotalSize := int64(0)
+		for i, s := range original {
+			require.Equal(t, strings.ToLower(s.Path), res[i])
+			oneTotalSize += s.Size
+		}
+		require.Equal(t, oneTotalSize, totalSize.Load())
+	}
+
+	oneTest(10, 0)
+	oneTest(10, 4)
+	oneTest(10, 16)
+	oneTest(1, 10)
+	oneTest(2, 2)
 }

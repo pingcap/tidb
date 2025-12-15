@@ -16,31 +16,29 @@ package core
 
 import (
 	"math"
+	"slices"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // HeavyFunctionNameMap stores function names that is worth to do HeavyFunctionOptimize.
@@ -57,138 +55,171 @@ var HeavyFunctionNameMap = map[string]struct{}{
 }
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
+	// since almost all current physical plan will be attached to bottom encapsulated task.
+	// we do the stats inheritance here for all the index join inner task.
+	inheritStatsFromBottomTaskForIndexJoinInner(p, t)
 	switch v := t.(type) {
-	case *CopTask:
-		if v.indexPlanFinished {
-			p.SetChildren(v.tablePlan)
-			v.tablePlan = p
+	case *physicalop.CopTask:
+		if v.IndexPlanFinished {
+			p.SetChildren(v.TablePlan)
+			v.TablePlan = p
 		} else {
-			p.SetChildren(v.indexPlan)
-			v.indexPlan = p
+			p.SetChildren(v.IndexPlan)
+			v.IndexPlan = p
 		}
-	case *RootTask:
+	case *physicalop.RootTask:
 		p.SetChildren(v.GetPlan())
 		v.SetPlan(p)
-	case *MppTask:
-		p.SetChildren(v.p)
-		v.p = p
+	case *physicalop.MppTask:
+		p.SetChildren(v.Plan())
+		v.SetPlan(p)
 	}
 	return t
 }
 
-// finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
-func (t *CopTask) finishIndexPlan() {
-	if t.indexPlanFinished {
-		return
-	}
-	t.indexPlanFinished = true
-	// index merge case is specially handled for now.
-	// We need a elegant way to solve the stats of index merge in this case.
-	if t.tablePlan != nil && t.indexPlan != nil {
-		ts := t.tablePlan.(*PhysicalTableScan)
-		originStats := ts.StatsInfo()
-		ts.SetStats(t.indexPlan.StatsInfo())
-		if originStats != nil {
-			// keep the original stats version
-			ts.StatsInfo().StatsVersion = originStats.StatsVersion
-		}
-	}
-}
-
-func (t *CopTask) getStoreType() kv.StoreType {
-	if t.tablePlan == nil {
-		return kv.TiKV
-	}
-	tp := t.tablePlan
-	for len(tp.Children()) > 0 {
-		if len(tp.Children()) > 1 {
-			return kv.TiFlash
-		}
-		tp = tp.Children()[0]
-	}
-	if ts, ok := tp.(*PhysicalTableScan); ok {
-		return ts.StoreType
-	}
-	return kv.TiKV
-}
-
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalUnionScan implements PhysicalPlan interface.
+func attach2Task4PhysicalUnionScan(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalUnionScan)
+	// when it arrives here, physical union scan will absolutely require a root task type,
+	// so convert child to root task type first.
+	task := tasks[0].ConvertToRootTask(p.SCtx())
 	// We need to pull the projection under unionScan upon unionScan.
 	// Since the projection only prunes columns, it's ok the put it upon unionScan.
-	if sel, ok := tasks[0].Plan().(*PhysicalSelection); ok {
-		if pj, ok := sel.Children()[0].(*PhysicalProjection); ok {
+	if sel, ok := task.Plan().(*physicalop.PhysicalSelection); ok {
+		if pj, ok := sel.Children()[0].(*physicalop.PhysicalProjection); ok {
 			// Convert unionScan->selection->projection to projection->unionScan->selection.
-			sel.SetChildren(pj.Children()...)
-			p.SetChildren(sel)
-			p.SetStats(tasks[0].Plan().StatsInfo())
-			rt, _ := tasks[0].(*RootTask)
-			rt.SetPlan(p)
-			pj.SetChildren(p)
-			return pj.Attach2Task(tasks...)
+			// shallow clone sel
+			clonedSel := *sel
+			clonedSel.SetChildren(pj.Children()...)
+			// set child will substitute original child slices, not an in-place change.
+			p.SetChildren(&clonedSel)
+			p.SetStats(task.Plan().StatsInfo())
+			rt := task.(*physicalop.RootTask)
+			rt.SetPlan(p) // root task plan current is p headed.
+			// shallow clone proj.
+			clonedProj := *pj
+			// set child will substitute original child slices, not an in-place change.
+			clonedProj.SetChildren(p)
+			return clonedProj.Attach2Task(task)
 		}
 	}
-	if pj, ok := tasks[0].Plan().(*PhysicalProjection); ok {
+	if pj, ok := task.Plan().(*physicalop.PhysicalProjection); ok {
 		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
 		p.SetChildren(pj.Children()...)
-		p.SetStats(tasks[0].Plan().StatsInfo())
-		rt, _ := tasks[0].(*RootTask)
+		p.SetStats(task.Plan().StatsInfo())
+		rt, _ := task.(*physicalop.RootTask)
 		rt.SetPlan(pj.Children()[0])
-		pj.SetChildren(p)
-		return pj.Attach2Task(p.BasePhysicalPlan.Attach2Task(tasks...))
+		// shallow clone proj.
+		clonedProj := *pj
+		// set child will substitute original child slices, not an in-place change.
+		clonedProj.SetChildren(p)
+		return clonedProj.Attach2Task(p.BasePhysicalPlan.Attach2Task(task))
 	}
-	p.SetStats(tasks[0].Plan().StatsInfo())
-	return p.BasePhysicalPlan.Attach2Task(tasks...)
+	p.SetStats(task.Plan().StatsInfo())
+	// once task is copTask type here, it may be converted proj + tablePlan here.
+	// then when it's connected with union-scan here, we may get as: union-scan + proj + tablePlan
+	// while proj is not allowed to be built under union-scan in execution layer currently.
+	return p.BasePhysicalPlan.Attach2Task(task)
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalApply implements PhysicalPlan interface.
+func attach2Task4PhysicalApply(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalApply)
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
-	t := &RootTask{}
+	p.SetSchema(physicalop.BuildPhysicalJoinSchema(p.JoinType, p))
+	t := &physicalop.RootTask{}
+	t.SetPlan(p)
+	// inherit left and right child's warnings.
+	t.Warnings.CopyFrom(&lTask.(*physicalop.RootTask).Warnings, &rTask.(*physicalop.RootTask).Warnings)
+	return t
+}
+
+// attach2Task4PhysicalIndexMergeJoin implements PhysicalPlan interface.
+func attach2Task4PhysicalIndexMergeJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalIndexMergeJoin)
+	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	if p.InnerChildIdx == 1 {
+		p.SetChildren(outerTask.Plan(), p.InnerPlan)
+	} else {
+		p.SetChildren(p.InnerPlan, outerTask.Plan())
+	}
+	t := &physicalop.RootTask{}
 	t.SetPlan(p)
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
+func indexHashJoinAttach2TaskV1(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.innerPlan)
+		p.SetChildren(outerTask.Plan(), p.InnerPlan)
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.Plan())
+		p.SetChildren(p.InnerPlan, outerTask.Plan())
 	}
-	t := &RootTask{}
+	t := &physicalop.RootTask{}
 	t.SetPlan(p)
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
+func indexHashJoinAttach2TaskV2(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
+	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	// only fill the wrapped physical index join is ok.
+	completePhysicalIndexJoin(&p.PhysicalIndexJoin, innerTask.(*physicalop.RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	if p.InnerChildIdx == 1 {
+		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+	} else {
+		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+	}
+	t := &physicalop.RootTask{}
+	t.SetPlan(p)
+	t.Warnings.CopyFrom(&outerTask.(*physicalop.RootTask).Warnings, &innerTask.(*physicalop.RootTask).Warnings)
+	return t
+}
+
+// attach2Task4PhysicalIndexHashJoin implements PhysicalPlan interface.
+func attach2Task4PhysicalIndexHashJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalIndexHashJoin)
+	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
+		return indexHashJoinAttach2TaskV2(p, tasks...)
+	}
+	return indexHashJoinAttach2TaskV1(p, tasks...)
+}
+
+func indexJoinAttach2TaskV1(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.innerPlan)
+		p.SetChildren(outerTask.Plan(), p.InnerPlan)
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.Plan())
+		p.SetChildren(p.InnerPlan, outerTask.Plan())
 	}
-	t := &RootTask{}
+	t := &physicalop.RootTask{}
 	t.SetPlan(p)
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+func indexJoinAttach2TaskV2(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	completePhysicalIndexJoin(p, innerTask.(*physicalop.RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.innerPlan)
+		p.SetChildren(outerTask.Plan(), innerTask.Plan())
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.Plan())
+		p.SetChildren(innerTask.Plan(), outerTask.Plan())
 	}
-	t := &RootTask{}
+	t := &physicalop.RootTask{}
 	t.SetPlan(p)
+	t.Warnings.CopyFrom(&outerTask.(*physicalop.RootTask).Warnings, &innerTask.(*physicalop.RootTask).Warnings)
 	return t
+}
+
+func attach2Task4PhysicalIndexJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalIndexJoin)
+	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
+		return indexJoinAttach2TaskV2(p, tasks...)
+	}
+	return indexJoinAttach2TaskV1(p, tasks...)
 }
 
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.
@@ -204,16 +235,35 @@ func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size f
 	return
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalHashJoin) Attach2Task(tasks ...base.Task) base.Task {
-	if p.storeTp == kv.TiFlash {
-		return p.attach2TaskForTiFlash(tasks...)
+// attach2Task4PhysicalHashJoin implements PhysicalPlan interface.
+func attach2Task4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalHashJoin)
+	if p.StoreTp == kv.TiFlash {
+		return attach2TaskForTiFlash4PhysicalHashJoin(p, tasks...)
 	}
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
-	task := &RootTask{}
+	task := &physicalop.RootTask{}
 	task.SetPlan(p)
+	task.Warnings.CopyFrom(&rTask.(*physicalop.RootTask).Warnings, &lTask.(*physicalop.RootTask).Warnings)
+	return task
+}
+
+func attach2TaskForTiFlash4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalHashJoin)
+	rTask, rok := tasks[1].(*physicalop.CopTask)
+	lTask, lok := tasks[0].(*physicalop.CopTask)
+	if !lok || !rok {
+		return attach2TaskForMpp4PhysicalHashJoin(p, tasks...)
+	}
+	rRoot := rTask.ConvertToRootTask(p.SCtx())
+	lRoot := lTask.ConvertToRootTask(p.SCtx())
+	p.SetChildren(lRoot.Plan(), rRoot.Plan())
+	p.SetSchema(physicalop.BuildPhysicalJoinSchema(p.JoinType, p))
+	task := &physicalop.RootTask{}
+	task.SetPlan(p)
+	task.Warnings.CopyFrom(&rTask.Warnings, &lTask.Warnings)
 	return task
 }
 
@@ -250,7 +300,7 @@ func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 	return true
 }
 
-func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool, bool) {
+func negotiateCommonType(lType, rType *types.FieldType) (_ *types.FieldType, _, _ bool) {
 	commonType := types.AggFieldType([]*types.FieldType{lType, rType})
 	if commonType.GetType() == mysql.TypeNewDecimal {
 		lExtend := 0
@@ -277,8 +327,8 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 	return commonType, needConvert(lType, commonType), needConvert(rType, commonType)
 }
 
-func getProj(ctx base.PlanContext, p base.PhysicalPlan) *PhysicalProjection {
-	proj := PhysicalProjection{
+func getProj(ctx base.PlanContext, p base.PhysicalPlan) *physicalop.PhysicalProjection {
+	proj := physicalop.PhysicalProjection{
 		Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
 	}.Init(ctx, p.StatsInfo(), p.QueryBlockOffset())
 	for _, col := range p.Schema().Columns {
@@ -289,7 +339,7 @@ func getProj(ctx base.PlanContext, p base.PhysicalPlan) *PhysicalProjection {
 	return proj
 }
 
-func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.Column {
+func appendExpr(p *physicalop.PhysicalProjection, expr expression.Expression) *expression.Column {
 	p.Exprs = append(p.Exprs, expr)
 
 	col := &expression.Column{
@@ -297,30 +347,31 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 		RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 	}
 	col.SetCoercibility(expr.Coercibility())
-	p.schema.Append(col)
+	p.Schema().Append(col)
 	return col
 }
 
 // TiFlash join require that partition key has exactly the same type, while TiDB only guarantee the partition key is the same catalog,
 // so if the partition key type is not exactly the same, we need add a projection below the join or exchanger if exists.
-func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*MppTask, *MppTask) {
-	lp := lTask.p
-	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
+func convertPartitionKeysIfNeed4PhysicalHashJoin(pp base.PhysicalPlan, lTask, rTask *physicalop.MppTask) (_, _ *physicalop.MppTask) {
+	p := pp.(*physicalop.PhysicalHashJoin)
+	lp := lTask.Plan()
+	if _, ok := lp.(*physicalop.PhysicalExchangeReceiver); ok {
 		lp = lp.Children()[0].Children()[0]
 	}
-	rp := rTask.p
-	if _, ok := rp.(*PhysicalExchangeReceiver); ok {
+	rp := rTask.Plan()
+	if _, ok := rp.(*physicalop.PhysicalExchangeReceiver); ok {
 		rp = rp.Children()[0].Children()[0]
 	}
 	// to mark if any partition key needs to convert
-	lMask := make([]bool, len(lTask.hashCols))
-	rMask := make([]bool, len(rTask.hashCols))
-	cTypes := make([]*types.FieldType, len(lTask.hashCols))
+	lMask := make([]bool, len(lTask.HashCols))
+	rMask := make([]bool, len(rTask.HashCols))
+	cTypes := make([]*types.FieldType, len(lTask.HashCols))
 	lChanged := false
 	rChanged := false
-	for i := range lTask.hashCols {
-		lKey := lTask.hashCols[i]
-		rKey := rTask.hashCols[i]
+	for i := range lTask.HashCols {
+		lKey := lTask.HashCols[i]
+		rKey := rTask.HashCols[i]
 		cType, lConvert, rConvert := negotiateCommonType(lKey.Col.RetType, rKey.Col.RetType)
 		if lConvert {
 			lMask[i] = true
@@ -336,7 +387,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 	if !lChanged && !rChanged {
 		return lTask, rTask
 	}
-	var lProj, rProj *PhysicalProjection
+	var lProj, rProj *physicalop.PhysicalProjection
 	if lChanged {
 		lProj = getProj(p.SCtx(), lp)
 		lp = lProj
@@ -346,11 +397,11 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 		rp = rProj
 	}
 
-	lPartKeys := make([]*property.MPPPartitionColumn, 0, len(rTask.hashCols))
-	rPartKeys := make([]*property.MPPPartitionColumn, 0, len(lTask.hashCols))
-	for i := range lTask.hashCols {
-		lKey := lTask.hashCols[i]
-		rKey := rTask.hashCols[i]
+	lPartKeys := make([]*property.MPPPartitionColumn, 0, len(rTask.HashCols))
+	rPartKeys := make([]*property.MPPPartitionColumn, 0, len(lTask.HashCols))
+	for i := range lTask.HashCols {
+		lKey := lTask.HashCols[i]
+		rKey := rTask.HashCols[i]
 		if lMask[i] {
 			cType := cTypes[i].Clone()
 			cType.SetFlag(lKey.Col.RetType.GetFlag())
@@ -368,40 +419,68 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 	}
 	// if left or right child changes, we need to add enforcer.
 	if lChanged {
-		nlTask := lTask.Copy().(*MppTask)
-		nlTask.p = lProj
-		nlTask = nlTask.enforceExchanger(&property.PhysicalProperty{
+		nlTask := lTask.Copy().(*physicalop.MppTask)
+		nlTask.SetPlan(lProj)
+		nlTask = nlTask.EnforceExchanger(&property.PhysicalProperty{
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: lPartKeys,
-		})
+		}, nil)
 		lTask = nlTask
 	}
 	if rChanged {
-		nrTask := rTask.Copy().(*MppTask)
-		nrTask.p = rProj
-		nrTask = nrTask.enforceExchanger(&property.PhysicalProperty{
+		nrTask := rTask.Copy().(*physicalop.MppTask)
+		nrTask.SetPlan(rProj)
+		nrTask = nrTask.EnforceExchanger(&property.PhysicalProperty{
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: rPartKeys,
-		})
+		}, nil)
 		rTask = nrTask
 	}
 	return lTask, rTask
 }
 
-func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
-	rTask, rok := tasks[1].(*MppTask)
-	lTask, lok := tasks[0].(*MppTask)
+func enforceExchangerByBackup4PhysicalHashJoin(pp base.PhysicalPlan, task *physicalop.MppTask, idx int, expectedCols int) *physicalop.MppTask {
+	p := pp.(*physicalop.PhysicalHashJoin)
+	if backupHashProp := p.GetChildReqProps(idx); backupHashProp != nil {
+		if len(backupHashProp.MPPPartitionCols) == expectedCols {
+			return task.EnforceExchangerImpl(backupHashProp)
+		}
+	}
+	return nil
+}
+
+func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	const (
+		left  = 0
+		right = 1
+	)
+	rTask, rok := tasks[right].(*physicalop.MppTask)
+	lTask, lok := tasks[left].(*physicalop.MppTask)
 	if !lok || !rok {
 		return base.InvalidTask
 	}
-	if p.mppShuffleJoin {
-		// protection check is case of some bugs
-		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
+	p := pp.(*physicalop.PhysicalHashJoin)
+	if p.MppShuffleJoin {
+		if len(lTask.HashCols) == 0 || len(rTask.HashCols) == 0 {
+			// if the hash columns are empty, this is very likely a bug.
 			return base.InvalidTask
 		}
-		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
+		if len(lTask.HashCols) != len(rTask.HashCols) {
+			// if the hash columns are not the same, The most likely scenario is that
+			// they have undergone exchange optimization, removing some hash columns.
+			// In this case, we need to restore them on the side that is missing.
+			if len(lTask.HashCols) < len(rTask.HashCols) {
+				lTask = enforceExchangerByBackup4PhysicalHashJoin(p, lTask, left, len(rTask.HashCols))
+			} else {
+				rTask = enforceExchangerByBackup4PhysicalHashJoin(p, rTask, right, len(lTask.HashCols))
+			}
+			if lTask == nil || rTask == nil {
+				return base.InvalidTask
+			}
+		}
+		lTask, rTask = convertPartitionKeysIfNeed4PhysicalHashJoin(p, lTask, rTask)
 	}
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	// outer task is the task that will pass its MPPPartitionType to the join result
@@ -411,8 +490,8 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	// for outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
 	outerTaskIndex := 1 - p.InnerChildIdx
-	if p.JoinType != logicalop.InnerJoin {
-		if p.JoinType == logicalop.RightOuterJoin {
+	if p.JoinType != base.InnerJoin {
+		if p.JoinType == base.RightOuterJoin {
 			outerTaskIndex = 1
 		} else {
 			outerTaskIndex = 0
@@ -423,19 +502,18 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	if outerTaskIndex == 1 {
 		outerTask = rTask
 	}
-	task := &MppTask{
-		p:        p,
-		partTp:   outerTask.partTp,
-		hashCols: outerTask.hashCols,
-	}
+	task := physicalop.NewMppTask(p,
+		outerTask.GetPartitionType(),
+		outerTask.GetHashCols(),
+		nil, rTask.GetWarnings(), lTask.GetWarnings())
 	// Current TiFlash doesn't support receive Join executors' schema info directly from TiDB.
 	// Instead, it calculates Join executors' output schema using algorithm like BuildPhysicalJoinSchema which
 	// produces full semantic schema.
 	// Thus, the column prune optimization achievements will be abandoned here.
 	// To avoid the performance issue, add a projection here above the Join operator to prune useless columns explicitly.
 	// TODO(hyb): transfer Join executors' schema to TiFlash through DagRequest, and use it directly in TiFlash.
-	defaultSchema := BuildPhysicalJoinSchema(p.JoinType, p)
-	hashColArray := make([]*expression.Column, 0, len(task.hashCols))
+	defaultSchema := physicalop.BuildPhysicalJoinSchema(p.JoinType, p)
+	hashColArray := make([]*expression.Column, 0, len(task.HashCols))
 	// For task.hashCols, these columns may not be contained in pruned columns:
 	// select A.id from A join B on A.id = B.id; Suppose B is probe side, and it's hash inner join.
 	// After column prune, the output schema of A join B will be A.id only; while the task's hashCols will be B.id.
@@ -443,13 +521,13 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	// added projection will expect B.id as input schema. So make sure hashCols are included in task.p's schema.
 	// TODO: planner should takes the hashCols attribute into consideration when perform column pruning; Or provide mechanism
 	// to constraint hashCols are always chosen inside Join's pruned schema
-	for _, hashCol := range task.hashCols {
+	for _, hashCol := range task.HashCols {
 		hashColArray = append(hashColArray, hashCol.Col)
 	}
-	if p.schema.Len() < defaultSchema.Len() {
-		if p.schema.Len() > 0 {
-			proj := PhysicalProjection{
-				Exprs: expression.Column2Exprs(p.schema.Columns),
+	if p.Schema().Len() < defaultSchema.Len() {
+		if p.Schema().Len() > 0 {
+			proj := physicalop.PhysicalProjection{
+				Exprs: expression.Column2Exprs(p.Schema().Columns),
 			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
 			proj.SetSchema(p.Schema().Clone())
@@ -466,21 +544,21 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 				constOne := expression.NewOne()
 				expr := make([]expression.Expression, 0, 1)
 				expr = append(expr, constOne)
-				proj := PhysicalProjection{
+				proj := physicalop.PhysicalProjection{
 					Exprs: expr,
 				}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
-				proj.schema = expression.NewSchema(&expression.Column{
+				proj.SetSchema(expression.NewSchema(&expression.Column{
 					UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
 					RetType:  constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-				})
+				}))
 				attachPlan2Task(proj, task)
 			} else {
-				proj := PhysicalProjection{
+				proj := physicalop.PhysicalProjection{
 					Exprs: make([]expression.Expression, 0, len(hashColArray)),
 				}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
-				clonedHashColArray := make([]*expression.Column, 0, len(task.hashCols))
+				clonedHashColArray := make([]*expression.Column, 0, len(task.HashCols))
 				for _, hashCol := range hashColArray {
 					if defaultSchema.Contains(hashCol) {
 						joinCol := defaultSchema.Columns[defaultSchema.ColumnIndex(hashCol)]
@@ -494,76 +572,20 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			}
 		}
 	}
-	p.schema = defaultSchema
+	p.SetSchema(defaultSchema)
 	return task
 }
 
-func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...base.Task) base.Task {
-	rTask, rok := tasks[1].(*CopTask)
-	lTask, lok := tasks[0].(*CopTask)
-	if !lok || !rok {
-		return p.attach2TaskForMpp(tasks...)
-	}
-	p.SetChildren(lTask.Plan(), rTask.Plan())
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
-	if !lTask.indexPlanFinished {
-		lTask.finishIndexPlan()
-	}
-	if !rTask.indexPlanFinished {
-		rTask.finishIndexPlan()
-	}
-
-	task := &CopTask{
-		tblColHists:       rTask.tblColHists,
-		indexPlanFinished: true,
-		tablePlan:         p,
-	}
-	return task
-}
-
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalMergeJoin implements PhysicalPlan interface.
+func attach2Task4PhysicalMergeJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalMergeJoin)
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
-	t := &RootTask{}
+	t := &physicalop.RootTask{}
 	t.SetPlan(p)
+	t.Warnings.CopyFrom(&rTask.(*physicalop.RootTask).Warnings, &lTask.(*physicalop.RootTask).Warnings)
 	return t
-}
-
-func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
-	newTask := &RootTask{}
-	p := PhysicalIndexLookUpReader{
-		tablePlan:        t.tablePlan,
-		indexPlan:        t.indexPlan,
-		ExtraHandleCol:   t.extraHandleCol,
-		CommonHandleCols: t.commonHandleCols,
-		expectedCnt:      t.expectCnt,
-		keepOrder:        t.keepOrder,
-	}.Init(ctx, t.tablePlan.QueryBlockOffset())
-	p.PlanPartInfo = t.physPlanPartInfo
-	setTableScanToTableRowIDScan(p.tablePlan)
-	p.SetStats(t.tablePlan.StatsInfo())
-	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
-	// the final agg would be broken. Please reference comments for the similar logic in
-	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
-	// We need to refactor these logics.
-	aggPushedDown := false
-	switch p.tablePlan.(type) {
-	case *PhysicalHashAgg, *PhysicalStreamAgg:
-		aggPushedDown = true
-	}
-
-	if t.needExtraProj && !aggPushedDown {
-		schema := t.originSchema
-		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.tablePlan.QueryBlockOffset(), nil)
-		proj.SetSchema(schema)
-		proj.SetChildren(p)
-		newTask.SetPlan(proj)
-	} else {
-		newTask.SetPlan(p)
-	}
-	return newTask
 }
 
 func extractRows(p base.PhysicalPlan) float64 {
@@ -600,32 +622,7 @@ func calcPagingCost(ctx base.PlanContext, indexPlan base.PhysicalPlan, expectCnt
 	return math.Max(pagingCst-sessVars.GetSeekFactor(nil), 0)
 }
 
-func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
-	if len(t.rootTaskConds) > 0 {
-		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.rootTaskConds, nil)
-		if err != nil {
-			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = cost.SelectionFactor
-		}
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
-		sel.fromDataSource = true
-		sel.SetChildren(newTask.GetPlan())
-		newTask.SetPlan(sel)
-	}
-}
-
-// setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
-func setTableScanToTableRowIDScan(p base.PhysicalPlan) {
-	if ts, ok := p.(*PhysicalTableScan); ok {
-		ts.SetIsChildOfIndexLookUp(true)
-	} else {
-		for _, child := range p.Children() {
-			setTableScanToTableRowIDScan(child)
-		}
-	}
-}
-
-// Attach2Task attach limit to different cases.
+// attach2Task4PhysicalLimit attach limit to different cases.
 // For Normal Index Lookup
 // 1: attach the limit to table side or index side of normal index lookup cop task. (normal case, old code, no more
 // explanation here)
@@ -641,7 +638,8 @@ func setTableScanToTableRowIDScan(p base.PhysicalPlan) {
 //
 // 4: attach the limit to the TOP of root index merge operator if there is some root condition exists for index merge
 // intersection/union case.
-func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
+func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalLimit)
 	t := tasks[0].Copy()
 	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
 	for _, expr := range p.GetPartitionBy() {
@@ -649,97 +647,97 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 	}
 
 	sunk := false
-	if cop, ok := t.(*CopTask); ok {
+	if cop, ok := t.(*physicalop.CopTask); ok {
 		suspendLimitAboveTablePlan := func() {
 			newCount := p.Offset + p.Count
-			childProfile := cop.tablePlan.StatsInfo()
+			childProfile := cop.TablePlan.StatsInfo()
 			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-			stats := util.DeriveLimitStats(childProfile, float64(newCount))
-			pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
-			pushedDownLimit.SetChildren(cop.tablePlan)
-			cop.tablePlan = pushedDownLimit
+			stats := property.DeriveLimitStats(childProfile, float64(newCount))
+			pushedDownLimit := physicalop.PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+			pushedDownLimit.SetChildren(cop.TablePlan)
+			cop.TablePlan = pushedDownLimit
 			// Don't use clone() so that Limit and its children share the same schema. Otherwise, the virtual generated column may not be resolved right.
 			pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 			t = cop.ConvertToRootTask(p.SCtx())
 		}
-		if len(cop.idxMergePartPlans) == 0 {
+		if len(cop.IdxMergePartPlans) == 0 {
 			// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 			// because handles would be reordered before being sent to table scan.
-			if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
+			if (!cop.KeepOrder || !cop.IndexPlanFinished || cop.IndexPlan == nil) && len(cop.RootTaskConds) == 0 {
 				// When limit is pushed down, we should remove its offset.
 				newCount := p.Offset + p.Count
 				childProfile := cop.Plan().StatsInfo()
 				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
 				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-				stats := util.DeriveLimitStats(childProfile, float64(newCount))
-				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
-				cop = attachPlan2Task(pushedDownLimit, cop).(*CopTask)
+				stats := property.DeriveLimitStats(childProfile, float64(newCount))
+				pushedDownLimit := physicalop.PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+				cop = attachPlan2Task(pushedDownLimit, cop).(*physicalop.CopTask)
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 				pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 			}
 			t = cop.ConvertToRootTask(p.SCtx())
-			sunk = p.sinkIntoIndexLookUp(t)
-		} else if !cop.idxMergeIsIntersection {
+			sunk = sinkIntoIndexLookUp(p, t)
+		} else if !cop.IdxMergeIsIntersection {
 			// We only support push part of the order prop down to index merge build case.
-			if len(cop.rootTaskConds) == 0 {
+			if len(cop.RootTaskConds) == 0 {
 				// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 				// because handles would be reordered before being sent to table scan.
-				if cop.indexPlanFinished && !cop.keepOrder {
+				if cop.IndexPlanFinished && !cop.KeepOrder {
 					// when the index plan is finished and index plan is not ordered, sink the limit to the index merge table side.
 					suspendLimitAboveTablePlan()
-				} else if !cop.indexPlanFinished {
-					// cop.indexPlanFinished = false indicates the table side is a pure table-scan, sink the limit to the index merge index side.
+				} else if !cop.IndexPlanFinished {
+					// cop.IndexPlanFinished = false indicates the table side is a pure table-scan, sink the limit to the index merge index side.
 					newCount := p.Offset + p.Count
-					limitChildren := make([]base.PhysicalPlan, 0, len(cop.idxMergePartPlans))
-					for _, partialScan := range cop.idxMergePartPlans {
+					limitChildren := make([]base.PhysicalPlan, 0, len(cop.IdxMergePartPlans))
+					for _, partialScan := range cop.IdxMergePartPlans {
 						childProfile := partialScan.StatsInfo()
-						stats := util.DeriveLimitStats(childProfile, float64(newCount))
-						pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+						stats := property.DeriveLimitStats(childProfile, float64(newCount))
+						pushedDownLimit := physicalop.PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 						pushedDownLimit.SetChildren(partialScan)
 						pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 						limitChildren = append(limitChildren, pushedDownLimit)
 					}
-					cop.idxMergePartPlans = limitChildren
+					cop.IdxMergePartPlans = limitChildren
 					t = cop.ConvertToRootTask(p.SCtx())
-					sunk = p.sinkIntoIndexMerge(t)
+					sunk = sinkIntoIndexMerge(p, t)
 				} else {
 					// when there are some limitations, just sink the limit upon the index merge reader.
 					t = cop.ConvertToRootTask(p.SCtx())
-					sunk = p.sinkIntoIndexMerge(t)
+					sunk = sinkIntoIndexMerge(p, t)
 				}
 			} else {
 				// when there are some root conditions, just sink the limit upon the index merge reader.
 				t = cop.ConvertToRootTask(p.SCtx())
-				sunk = p.sinkIntoIndexMerge(t)
+				sunk = sinkIntoIndexMerge(p, t)
 			}
-		} else if cop.idxMergeIsIntersection {
+		} else if cop.IdxMergeIsIntersection {
 			// In the index merge with intersection case, only the limit can be pushed down to the index merge table side.
 			// Note Difference:
 			// IndexMerge.PushedLimit is applied before table scan fetching, limiting the indexPartialPlan rows returned (it maybe ordered if orderBy items not empty)
 			// TableProbeSide sink limit is applied on the top of table plan, which will quickly shut down the both fetch-back and read-back process.
-			if len(cop.rootTaskConds) == 0 {
-				if cop.indexPlanFinished {
+			if len(cop.RootTaskConds) == 0 {
+				if cop.IndexPlanFinished {
 					// indicates the table side is not a pure table-scan, so we could only append the limit upon the table plan.
 					suspendLimitAboveTablePlan()
 				} else {
 					t = cop.ConvertToRootTask(p.SCtx())
-					sunk = p.sinkIntoIndexMerge(t)
+					sunk = sinkIntoIndexMerge(p, t)
 				}
 			} else {
 				// Otherwise, suspend the limit out of index merge reader.
 				t = cop.ConvertToRootTask(p.SCtx())
-				sunk = p.sinkIntoIndexMerge(t)
+				sunk = sinkIntoIndexMerge(p, t)
 			}
 		} else {
 			// Whatever the remained case is, we directly convert to it to root task.
 			t = cop.ConvertToRootTask(p.SCtx())
 		}
-	} else if mpp, ok := t.(*MppTask); ok {
+	} else if mpp, ok := t.(*physicalop.MppTask); ok {
 		newCount := p.Offset + p.Count
 		childProfile := mpp.Plan().StatsInfo()
-		stats := util.DeriveLimitStats(childProfile, float64(newCount))
-		pushedDownLimit := PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.QueryBlockOffset())
-		mpp = attachPlan2Task(pushedDownLimit, mpp).(*MppTask)
+		stats := property.DeriveLimitStats(childProfile, float64(newCount))
+		pushedDownLimit := physicalop.PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+		mpp = attachPlan2Task(pushedDownLimit, mpp).(*physicalop.MppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 		t = mpp.ConvertToRootTask(p.SCtx())
 	}
@@ -754,22 +752,22 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 	return attachPlan2Task(p, t)
 }
 
-func (p *PhysicalLimit) sinkIntoIndexLookUp(t base.Task) bool {
-	root := t.(*RootTask)
-	reader, isDoubleRead := root.GetPlan().(*PhysicalIndexLookUpReader)
-	proj, isProj := root.GetPlan().(*PhysicalProjection)
+func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
+	root := t.(*physicalop.RootTask)
+	reader, isDoubleRead := root.GetPlan().(*physicalop.PhysicalIndexLookUpReader)
+	proj, isProj := root.GetPlan().(*physicalop.PhysicalProjection)
 	if !isDoubleRead && !isProj {
 		return false
 	}
 	if isProj {
-		reader, isDoubleRead = proj.Children()[0].(*PhysicalIndexLookUpReader)
+		reader, isDoubleRead = proj.Children()[0].(*physicalop.PhysicalIndexLookUpReader)
 		if !isDoubleRead {
 			return false
 		}
 	}
 
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
-	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
+	ts, isTableScan := reader.TablePlan.(*physicalop.PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}
@@ -780,24 +778,28 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t base.Task) bool {
 	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
 	// So we add an extra projection to solve the problem.
 	if p.Schema().Len() != reader.Schema().Len() {
-		extraProj := PhysicalProjection{
-			Exprs: expression.Column2Exprs(p.schema.Columns),
+		extraProj := physicalop.PhysicalProjection{
+			Exprs: expression.Column2Exprs(p.Schema().Columns),
 		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
-		extraProj.SetSchema(p.schema)
+		extraProj.SetSchema(p.Schema())
 		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
 		extraProj.SetChildren(root.GetPlan())
 		root.SetPlan(extraProj)
 	}
 
-	reader.PushedLimit = &PushedDownLimit{
+	reader.PushedLimit = &physicalop.PushedDownLimit{
 		Offset: p.Offset,
 		Count:  p.Count,
 	}
-	originStats := ts.StatsInfo()
-	ts.SetStats(p.StatsInfo())
-	if originStats != nil {
-		// keep the original stats version
-		ts.StatsInfo().StatsVersion = originStats.StatsVersion
+	if originStats := ts.StatsInfo(); originStats.RowCount >= p.StatsInfo().RowCount {
+		// Only reset the table scan stats when its row estimation is larger than the limit count.
+		// When indexLookUp push down is enabled, some rows have been looked up in TiKV side,
+		// and the rows processed by the TiDB table scan may be less than the limit count.
+		ts.SetStats(p.StatsInfo())
+		if originStats != nil {
+			// keep the original stats version
+			ts.StatsInfo().StatsVersion = originStats.StatsVersion
+		}
 	}
 	reader.SetStats(p.StatsInfo())
 	if isProj {
@@ -806,24 +808,24 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t base.Task) bool {
 	return true
 }
 
-func (p *PhysicalLimit) sinkIntoIndexMerge(t base.Task) bool {
-	root := t.(*RootTask)
-	imReader, isIm := root.GetPlan().(*PhysicalIndexMergeReader)
-	proj, isProj := root.GetPlan().(*PhysicalProjection)
+func sinkIntoIndexMerge(p *physicalop.PhysicalLimit, t base.Task) bool {
+	root := t.(*physicalop.RootTask)
+	imReader, isIm := root.GetPlan().(*physicalop.PhysicalIndexMergeReader)
+	proj, isProj := root.GetPlan().(*physicalop.PhysicalProjection)
 	if !isIm && !isProj {
 		return false
 	}
 	if isProj {
-		imReader, isIm = proj.Children()[0].(*PhysicalIndexMergeReader)
+		imReader, isIm = proj.Children()[0].(*physicalop.PhysicalIndexMergeReader)
 		if !isIm {
 			return false
 		}
 	}
-	ts, ok := imReader.tablePlan.(*PhysicalTableScan)
+	ts, ok := imReader.TablePlan.(*physicalop.PhysicalTableScan)
 	if !ok {
 		return false
 	}
-	imReader.PushedLimit = &PushedDownLimit{
+	imReader.PushedLimit = &physicalop.PushedDownLimit{
 		Count:  p.Count,
 		Offset: p.Offset,
 	}
@@ -838,20 +840,20 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t base.Task) bool {
 			ts.StatsInfo().RowCount = originStats.RowCount
 		}
 	}
-	needProj := p.schema.Len() != root.GetPlan().Schema().Len()
+	needProj := p.Schema().Len() != root.GetPlan().Schema().Len()
 	if !needProj {
-		for i := 0; i < p.schema.Len(); i++ {
-			if !p.schema.Columns[i].EqualColumn(root.GetPlan().Schema().Columns[i]) {
+		for i := range p.Schema().Len() {
+			if !p.Schema().Columns[i].EqualColumn(root.GetPlan().Schema().Columns[i]) {
 				needProj = true
 				break
 			}
 		}
 	}
 	if needProj {
-		extraProj := PhysicalProjection{
-			Exprs: expression.Column2Exprs(p.schema.Columns),
+		extraProj := physicalop.PhysicalProjection{
+			Exprs: expression.Column2Exprs(p.Schema().Columns),
 		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
-		extraProj.SetSchema(p.schema)
+		extraProj.SetSchema(p.Schema())
 		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
 		extraProj.SetChildren(root.GetPlan())
 		root.SetPlan(extraProj)
@@ -859,15 +861,17 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t base.Task) bool {
 	return true
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalSort) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalSort is basic logic of Attach2Task which implements PhysicalPlan interface.
+func attach2Task4PhysicalSort(p base.PhysicalPlan, tasks ...base.Task) base.Task {
+	intest.Assert(p.(*physicalop.PhysicalSort) != nil)
 	t := tasks[0].Copy()
 	t = attachPlan2Task(p, t)
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4NominalSort implements PhysicalPlan interface.
+func attach2Task4NominalSort(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.NominalSort)
 	if p.OnlyColumn {
 		return tasks[0]
 	}
@@ -876,9 +880,7 @@ func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (*PhysicalTopN, *PhysicalTopN) {
-	var newGlobalTopN *PhysicalTopN
-
+func getPushedDownTopN(p *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, storeTp kv.StoreType) (topN, newGlobalTopN *physicalop.PhysicalTopN) {
 	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
 	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
 	// the ByItems in order to reuse the function result.
@@ -893,7 +895,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		if err != nil {
 			return nil, nil
 		}
-		newGlobalTopN = x.(*PhysicalTopN)
+		newGlobalTopN = x.(*physicalop.PhysicalTopN)
 		// the projecton's construction cannot be create if the AllowProjectionPushDown is disable.
 		if storeTp == kv.TiKV && !p.SCtx().GetSessionVars().AllowProjectionPushDown {
 			newGlobalTopN = nil
@@ -911,7 +913,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 	childProfile := childPlan.StatsInfo()
 	// Strictly speaking, for the row count of pushed down TopN, we should multiply newCount with "regionNum",
 	// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-	stats := util.DeriveLimitStats(childProfile, float64(newCount))
+	stats := property.DeriveLimitStats(childProfile, float64(newCount))
 
 	// Add a extra physicalProjection to save the distance column, a example like :
 	// select id from t order by vec_distance(vec, '[1,2,3]') limit x
@@ -953,13 +955,13 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 			bottomProjSchemaCols = append(bottomProjSchemaCols, dis.DistanceCol)
 		}
 
-		bottomProj := PhysicalProjection{
+		bottomProj := physicalop.PhysicalProjection{
 			Exprs: bottomProjExprs,
 		}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
 		bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 		bottomProj.SetChildren(childPlan)
 
-		topN := PhysicalTopN{
+		topN := physicalop.PhysicalTopN{
 			ByItems:     newByItems,
 			PartitionBy: newPartitionBy,
 			Count:       newCount,
@@ -975,16 +977,124 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		}
 		topN.SetChildren(bottomProj)
 
+		// orderByCol is the column `distanceCol`, so this explain always success.
+		orderByCol, _ := topN.ByItems[0].Expr.(*expression.Column)
+		orderByCol.Index = len(bottomProj.Exprs) - 1
+
+		// try to Check and modify plan when it is possible to not scanning vector column at all.
+		tryReturnDistanceFromIndex(topN, newGlobalTopN, childPlan, bottomProj)
+
 		return topN, newGlobalTopN
 	}
 
-	topN := PhysicalTopN{
+	topN = physicalop.PhysicalTopN{
 		ByItems:     newByItems,
 		PartitionBy: newPartitionBy,
 		Count:       newCount,
 	}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
 	return topN, newGlobalTopN
+}
+
+// tryReturnDistanceFromIndex checks whether the vector in the plan can be removed and a distance column will be added.
+// Consider this situation sql statement: select id from t order by vec_distance(vec, '[1,2,3]') limit x
+// The plan like:
+//
+// DataSource(id, vec) -> Projection1(id, vec->dis) -> TopN(by dis) -> Projection2(id)
+// └─Schema: id, vec
+//
+// In vector index, the distance result already exists, so there is no need to calculate it again in projection1.
+// We can directly read the distance result. After this Optimization, the plan will be modified to:
+//
+// DataSource(id, dis) -> TopN(by dis) -> Projection2(id)
+// └─Schema: id, dis
+func tryReturnDistanceFromIndex(local, global *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, proj *physicalop.PhysicalProjection) bool {
+	tableScan, ok := childPlan.(*physicalop.PhysicalTableScan)
+	if !ok {
+		return false
+	}
+
+	orderByCol, _ := local.ByItems[0].Expr.(*expression.Column)
+	var annQueryInfo *physicalop.ColumnarIndexExtra
+	for _, idx := range tableScan.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
+			annQueryInfo = idx
+			break
+		}
+	}
+	if annQueryInfo == nil {
+		return false
+	}
+
+	// If the vector column is only used in the VectorSearch and no where
+	// else, then it can be eliminated in TableScan.
+	if orderByCol.Index < 0 || orderByCol.Index >= len(proj.Exprs) {
+		return false
+	}
+
+	isVecColumnInUse := false
+	for idx, projExpr := range proj.Exprs {
+		if idx == orderByCol.Index {
+			// Skip the distance function projection itself.
+			continue
+		}
+		flag := expression.HasColumnWithCondition(projExpr, func(col *expression.Column) bool {
+			return col.ID == annQueryInfo.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId
+		})
+		if flag {
+			isVecColumnInUse = true
+			break
+		}
+	}
+
+	if isVecColumnInUse {
+		return false
+	}
+
+	// append distance column to the table scan
+	virtualDistanceColInfo := &model.ColumnInfo{
+		ID:        model.VirtualColVecSearchDistanceID,
+		FieldType: *types.NewFieldType(mysql.TypeFloat),
+		Offset:    len(tableScan.Columns) - 1,
+	}
+
+	virtualDistanceCol := &expression.Column{
+		UniqueID: tableScan.SCtx().GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeFloat),
+	}
+
+	// remove the vector column in order to read distance directly by virtualDistanceCol
+	vectorIdx := -1
+	for i, col := range tableScan.Columns {
+		if col.ID == annQueryInfo.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId {
+			vectorIdx = i
+			break
+		}
+	}
+	if vectorIdx == -1 {
+		return false
+	}
+
+	// set the EnableDistanceProj to modify the read process of tiflash.
+	annQueryInfo.QueryInfo.GetAnnQueryInfo().EnableDistanceProj = true
+
+	// append the distance column to the last position in columns and schema.
+	tableScan.Columns = slices.Delete(tableScan.Columns, vectorIdx, vectorIdx+1)
+	tableScan.Columns = append(tableScan.Columns, virtualDistanceColInfo)
+
+	tableScan.Schema().Columns = slices.Delete(tableScan.Schema().Columns, vectorIdx, vectorIdx+1)
+	tableScan.Schema().Append(virtualDistanceCol)
+
+	// The children of topN are currently projections. After optimization, we no longer
+	// need the projection and directly set the children to tablescan.
+	local.SetChildren(tableScan)
+
+	// modify the topN's ByItem
+	local.ByItems[0].Expr = virtualDistanceCol
+	global.ByItems[0].Expr = virtualDistanceCol
+	local.ByItems[0].Expr.(*expression.Column).Index = tableScan.Schema().Len() - 1
+
+	return true
 }
 
 // ContainHeavyFunction check if the expr contains a function that need to do HeavyFunctionOptimize. Currently this only applies
@@ -998,17 +1108,12 @@ func ContainHeavyFunction(expr expression.Expression) bool {
 	if _, ok := HeavyFunctionNameMap[sf.FuncName.L]; ok {
 		return true
 	}
-	for _, arg := range sf.GetArgs() {
-		if ContainHeavyFunction(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(sf.GetArgs(), ContainHeavyFunction)
 }
 
 // canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
 // It can be pushed to the index side when all columns used by ByItems are available from the index side and there's no prefix index column.
-func (*PhysicalTopN) canPushToIndexPlan(indexPlan base.PhysicalPlan, byItemCols []*expression.Column) bool {
+func canPushToIndexPlan(indexPlan base.PhysicalPlan, byItemCols []*expression.Column) bool {
 	// If we call canPushToIndexPlan and there's no index plan, we should go into the index merge case.
 	// Index merge case is specially handled for now. So we directly return false here.
 	// So we directly return false.
@@ -1029,7 +1134,7 @@ func (*PhysicalTopN) canPushToIndexPlan(indexPlan base.PhysicalPlan, byItemCols 
 }
 
 // canExpressionConvertedToPB checks whether each of the the expression in TopN can be converted to pb.
-func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
+func canExpressionConvertedToPB(p *physicalop.PhysicalTopN, storeTp kv.StoreType) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
@@ -1038,7 +1143,7 @@ func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
 }
 
 // containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
-func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
+func containVirtualColumn(p *physicalop.PhysicalTopN, tCols []*expression.Column) bool {
 	tColSet := make(map[int64]struct{}, len(tCols))
 	for _, tCol := range tCols {
 		if tCol.ID > 0 && tCol.VirtualExpr != nil {
@@ -1058,31 +1163,31 @@ func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
 }
 
 // canPushDownToTiKV checks whether this topN can be pushed down to TiKV.
-func (p *PhysicalTopN) canPushDownToTiKV(copTask *CopTask) bool {
-	if !p.canExpressionConvertedToPB(kv.TiKV) {
+func canPushDownToTiKV(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) bool {
+	if !canExpressionConvertedToPB(p, kv.TiKV) {
 		return false
 	}
-	if len(copTask.rootTaskConds) != 0 {
+	if len(copTask.RootTaskConds) != 0 {
 		return false
 	}
-	if !copTask.indexPlanFinished && len(copTask.idxMergePartPlans) > 0 {
-		for _, partialPlan := range copTask.idxMergePartPlans {
-			if p.containVirtualColumn(partialPlan.Schema().Columns) {
+	if !copTask.IndexPlanFinished && len(copTask.IdxMergePartPlans) > 0 {
+		for _, partialPlan := range copTask.IdxMergePartPlans {
+			if containVirtualColumn(p, partialPlan.Schema().Columns) {
 				return false
 			}
 		}
-	} else if p.containVirtualColumn(copTask.Plan().Schema().Columns) {
+	} else if containVirtualColumn(p, copTask.Plan().Schema().Columns) {
 		return false
 	}
 	return true
 }
 
 // canPushDownToTiFlash checks whether this topN can be pushed down to TiFlash.
-func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *MppTask) bool {
-	if !p.canExpressionConvertedToPB(kv.TiFlash) {
+func canPushDownToTiFlash(p *physicalop.PhysicalTopN, mppTask *physicalop.MppTask) bool {
+	if !canExpressionConvertedToPB(p, kv.TiFlash) {
 		return false
 	}
-	if p.containVirtualColumn(mppTask.Plan().Schema().Columns) {
+	if containVirtualColumn(p, mppTask.Plan().Schema().Columns) {
 		return false
 	}
 	return true
@@ -1093,30 +1198,30 @@ func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *MppTask) bool {
 // it will change plan from
 // TopN -> TableReader -> TableFullScan[cop] to
 // TopN -> TableReader -> Limit[cop] -> TableFullScan[cop] + keepOrder
-func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool) {
-	if copTsk.indexPlan != nil || copTsk.tablePlan == nil {
+func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *physicalop.CopTask) (base.Task, bool) {
+	if copTsk.IndexPlan != nil || copTsk.TablePlan == nil {
 		return nil, false
 	}
 
 	var (
-		selOnTblScan   *PhysicalSelection
+		selOnTblScan   *physicalop.PhysicalSelection
 		selSelectivity float64
-		tblScan        *PhysicalTableScan
+		tblScan        *physicalop.PhysicalTableScan
 		err            error
 		ok             bool
 	)
 
-	copTsk.tablePlan, err = copTsk.tablePlan.Clone(p.SCtx())
+	copTsk.TablePlan, err = copTsk.TablePlan.Clone(p.SCtx())
 	if err != nil {
 		return nil, false
 	}
-	finalTblScanPlan := copTsk.tablePlan
+	finalTblScanPlan := copTsk.TablePlan
 	for len(finalTblScanPlan.Children()) > 0 {
-		selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
+		selOnTblScan, _ = finalTblScanPlan.(*physicalop.PhysicalSelection)
 		finalTblScanPlan = finalTblScanPlan.Children()[0]
 	}
 
-	if tblScan, ok = finalTblScanPlan.(*PhysicalTableScan); !ok {
+	if tblScan, ok = finalTblScanPlan.(*physicalop.PhysicalTableScan); !ok {
 		return nil, false
 	}
 
@@ -1125,7 +1230,7 @@ func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool)
 		return nil, false
 	}
 
-	colsProp, ok := GetPropByOrderByItems(p.ByItems)
+	colsProp, ok := physicalop.GetPropByOrderByItems(p.ByItems)
 	if !ok {
 		return nil, false
 	}
@@ -1140,44 +1245,45 @@ func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool)
 
 	childProfile := copTsk.Plan().StatsInfo()
 	newCount := p.Offset + p.Count
-	stats := util.DeriveLimitStats(childProfile, float64(newCount))
-	pushedLimit := PhysicalLimit{
+	stats := property.DeriveLimitStats(childProfile, float64(newCount))
+	pushedLimit := physicalop.PhysicalLimit{
 		Count: newCount,
 	}.Init(p.SCtx(), stats, p.QueryBlockOffset())
-	pushedLimit.SetSchema(copTsk.tablePlan.Schema())
-	copTsk = attachPlan2Task(pushedLimit, copTsk).(*CopTask)
+	pushedLimit.SetSchema(copTsk.TablePlan.Schema())
+	copTsk = attachPlan2Task(pushedLimit, copTsk).(*physicalop.CopTask)
 	child := pushedLimit.Children()[0]
-	child.SetStats(child.StatsInfo().ScaleByExpectCnt(float64(newCount)))
+	child.SetStats(child.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), float64(newCount)))
 	if selSelectivity > 0 && selSelectivity < 1 {
 		scaledRowCount := child.StatsInfo().RowCount / selSelectivity
-		tblScan.SetStats(tblScan.StatsInfo().ScaleByExpectCnt(scaledRowCount))
+		tblScan.SetStats(tblScan.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), scaledRowCount))
 	}
 	rootTask := copTsk.ConvertToRootTask(p.SCtx())
 	return attachPlan2Task(p, rootTask), true
 }
 
 // Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
+func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalTopN)
 	t := tasks[0].Copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
-	if copTask, ok := t.(*CopTask); ok && needPushDown && copTask.getStoreType() == kv.TiDB && len(copTask.rootTaskConds) == 0 {
-		newTask, changed := p.pushLimitDownToTiDBCop(copTask)
+	if copTask, ok := t.(*physicalop.CopTask); ok && needPushDown && copTask.GetStoreType() == kv.TiDB && len(copTask.RootTaskConds) == 0 {
+		newTask, changed := pushLimitDownToTiDBCop(p, copTask)
 		if changed {
 			return newTask
 		}
 	}
-	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*physicalop.CopTask); ok && needPushDown && canPushDownToTiKV(p, copTask) && len(copTask.RootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
-		var pushedDownTopN *PhysicalTopN
-		var newGlobalTopN *PhysicalTopN
-		if !copTask.indexPlanFinished && p.canPushToIndexPlan(copTask.indexPlan, cols) {
-			pushedDownTopN, newGlobalTopN = p.getPushedDownTopN(copTask.indexPlan, copTask.getStoreType())
-			copTask.indexPlan = pushedDownTopN
+		var pushedDownTopN *physicalop.PhysicalTopN
+		var newGlobalTopN *physicalop.PhysicalTopN
+		if !copTask.IndexPlanFinished && canPushToIndexPlan(copTask.IndexPlan, cols) {
+			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.IndexPlan, copTask.GetStoreType())
+			copTask.IndexPlan = pushedDownTopN
 			if newGlobalTopN != nil {
 				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
 				// Skip TopN with partition on the root. This is a derived topN and window function
@@ -1189,9 +1295,9 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 			}
 		} else {
 			// It works for both normal index scan and index merge scan.
-			copTask.finishIndexPlan()
-			pushedDownTopN, newGlobalTopN = p.getPushedDownTopN(copTask.tablePlan, copTask.getStoreType())
-			copTask.tablePlan = pushedDownTopN
+			copTask.FinishIndexPlan()
+			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())
+			copTask.TablePlan = pushedDownTopN
 			if newGlobalTopN != nil {
 				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
 				// Skip TopN with partition on the root. This is a derived topN and window function
@@ -1202,9 +1308,9 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 				return attachPlan2Task(newGlobalTopN, rootTask)
 			}
 		}
-	} else if mppTask, ok := t.(*MppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
-		pushedDownTopN, newGlobalTopN := p.getPushedDownTopN(mppTask.p, kv.TiFlash)
-		mppTask.p = pushedDownTopN
+	} else if mppTask, ok := t.(*physicalop.MppTask); ok && needPushDown && canPushDownToTiFlash(p, mppTask) {
+		pushedDownTopN, newGlobalTopN := getPushedDownTopN(p, mppTask.Plan(), kv.TiFlash)
+		mppTask.SetPlan(pushedDownTopN)
 		if newGlobalTopN != nil {
 			rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
 			// Skip TopN with partition on the root. This is a derived topN and window function
@@ -1224,60 +1330,54 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	return attachPlan2Task(p, rootTask)
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalProjection implements PhysicalPlan interface.
+func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalProjection)
+	t := tasks[0].Copy()
+	if cop, ok := t.(*physicalop.CopTask); ok {
+		if (len(cop.RootTaskConds) == 0 && len(cop.IdxMergePartPlans) == 0) && expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, cop.GetStoreType()) {
+			copTask := attachPlan2Task(p, cop)
+			return copTask
+		}
+	} else if mpp, ok := t.(*physicalop.MppTask); ok {
+		if expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
+			p.SetChildren(mpp.Plan())
+			mpp.SetPlan(p)
+			return mpp
+		}
+	}
+	t = t.ConvertToRootTask(p.SCtx())
+	t = attachPlan2Task(p, t)
+	return t
+}
+
+// attach2Task4PhysicalExpand implements PhysicalPlan interface.
+func attach2Task4PhysicalExpand(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalExpand)
 	t := tasks[0].Copy()
 	// current expand can only be run in MPP TiFlash mode or Root Tidb mode.
 	// if expr inside could not be pushed down to tiFlash, it will error in converting to pb side.
-	if mpp, ok := t.(*MppTask); ok {
-		p.SetChildren(mpp.p)
-		mpp.p = p
+	if mpp, ok := t.(*physicalop.MppTask); ok {
+		p.SetChildren(mpp.Plan())
+		mpp.SetPlan(p)
 		return mpp
 	}
 	// For root task
 	// since expand should be in root side accordingly, convert to root task now.
 	root := t.ConvertToRootTask(p.SCtx())
 	t = attachPlan2Task(p, root)
-	if root, ok := tasks[0].(*RootTask); ok && root.IsEmpty() {
-		t.(*RootTask).SetEmpty(true)
-	}
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
-	t := tasks[0].Copy()
-	if cop, ok := t.(*CopTask); ok {
-		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, cop.getStoreType()) {
-			copTask := attachPlan2Task(p, cop)
-			return copTask
-		}
-	} else if mpp, ok := t.(*MppTask); ok {
-		if expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
-			p.SetChildren(mpp.p)
-			mpp.p = p
-			return mpp
-		}
-	}
-	t = t.ConvertToRootTask(p.SCtx())
-	t = attachPlan2Task(p, t)
-	if root, ok := tasks[0].(*RootTask); ok && root.IsEmpty() {
-		t.(*RootTask).SetEmpty(true)
-	}
-	return t
-}
-
-func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {
-	t := &MppTask{p: p}
+func attach2MppTasks4PhysicalUnionAll(p *physicalop.PhysicalUnionAll, tasks ...base.Task) base.Task {
+	t := physicalop.NewMppTask(p, property.AnyType, nil, nil, nil)
 	childPlans := make([]base.PhysicalPlan, 0, len(tasks))
 	for _, tk := range tasks {
-		if mpp, ok := tk.(*MppTask); ok && !tk.Invalid() {
+		if mpp, ok := tk.(*physicalop.MppTask); ok && !tk.Invalid() {
 			childPlans = append(childPlans, mpp.Plan())
-		} else if root, ok := tk.(*RootTask); ok && root.IsEmpty() {
 			continue
-		} else {
-			return base.InvalidTask
 		}
+		return base.InvalidTask
 	}
 	if len(childPlans) == 0 {
 		return base.InvalidTask
@@ -1286,20 +1386,21 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalUnionAll) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalUnionAll implements PhysicalPlan interface logic.
+func attach2Task4PhysicalUnionAll(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalUnionAll)
 	for _, t := range tasks {
-		if _, ok := t.(*MppTask); ok {
+		if _, ok := t.(*physicalop.MppTask); ok {
 			if p.TP() == plancodec.TypePartitionUnion {
 				// In attach2MppTasks(), will attach PhysicalUnion to mppTask directly.
 				// But PartitionUnion cannot pushdown to tiflash, so here disable PartitionUnion pushdown to tiflash explicitly.
 				// For now, return base.InvalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
 				return base.InvalidTask
 			}
-			return p.attach2MppTasks(tasks...)
+			return attach2MppTasks4PhysicalUnionAll(p, tasks...)
 		}
 	}
-	t := &RootTask{}
+	t := &physicalop.RootTask{}
 	t.SetPlan(p)
 	childPlans := make([]base.PhysicalPlan, 0, len(tasks))
 	for _, task := range tasks {
@@ -1310,9 +1411,10 @@ func (p *PhysicalUnionAll) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (sel *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
-	if mppTask, _ := tasks[0].(*MppTask); mppTask != nil { // always push to mpp task.
+// attach2Task4PhysicalSelection implements PhysicalPlan interface.
+func attach2Task4PhysicalSelection(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	sel := pp.(*physicalop.PhysicalSelection)
+	if mppTask, _ := tasks[0].(*physicalop.MppTask); mppTask != nil { // always push to mpp task.
 		if expression.CanExprsPushDown(util.GetPushDownCtx(sel.SCtx()), sel.Conditions, kv.TiFlash) {
 			return attachPlan2Task(sel, mppTask.Copy())
 		}
@@ -1321,700 +1423,100 @@ func (sel *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
 	return attachPlan2Task(sel, t)
 }
 
-// CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
-// be pushed down to coprocessor.
-func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
-	sc := sctx.GetSessionVars().StmtCtx
-	ret := true
-	reason := ""
-	pushDownCtx := util.GetPushDownCtx(sctx)
-	for _, aggFunc := range aggFuncs {
-		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
-		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
-			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
-			ret = false
-			break
-		}
-		if !aggregation.CheckAggPushDown(sctx.GetExprCtx().GetEvalCtx(), aggFunc, storeType) {
-			reason = "AggFunc `" + aggFunc.Name + "` is not supported now"
-			ret = false
-			break
-		}
-		if !expression.CanExprsPushDownWithExtraInfo(util.GetPushDownCtx(sctx), aggFunc.Args, storeType, aggFunc.Name == ast.AggFuncSum) {
-			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
-			ret = false
-			break
-		}
-		orderBySize := len(aggFunc.OrderByItems)
-		if orderBySize > 0 {
-			exprs := make([]expression.Expression, 0, orderBySize)
-			for _, item := range aggFunc.OrderByItems {
-				exprs = append(exprs, item.Expr)
-			}
-			if !expression.CanExprsPushDownWithExtraInfo(util.GetPushDownCtx(sctx), exprs, storeType, false) {
-				reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs in order-by clause"
-				ret = false
-				break
-			}
-		}
-		pb, _ := aggregation.AggFuncToPBExpr(pushDownCtx, aggFunc, storeType)
-		if pb == nil {
-			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
-			ret = false
-			break
+func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinInfo *physicalop.IndexJoinInfo, stats *property.StatsInfo) {
+	var isIndexJoin bool
+	switch p.(type) {
+	case *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *physicalop.PhysicalIndexMergeJoin:
+		isIndexJoin = true
+	default:
+	}
+	// indexJoinInfo != nil means the child Task comes from an index join inner side.
+	// !isIndexJoin means the childTask only be passed through to indexJoin as an END.
+	if !isIndexJoin && indexJoinInfo != nil {
+		switch p.(type) {
+		case *physicalop.PhysicalSelection:
+			// todo: for simplicity, we can just inherit it from child.
+			// scale(1) means a cloned stats information same as the input stats.
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
+		case *physicalop.PhysicalProjection:
+			// mainly about the rowEst, proj doesn't change that.
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
+		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
+			// todo: for simplicity, we can just inherit it from child.
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
+		case *physicalop.PhysicalUnionScan:
+			// todo: for simplicity, we can just inherit it from child.
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
+		default:
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		}
 	}
-	if ret && expression.ContainVirtualColumn(groupByItems) {
-		reason = "groupByItems contain virtual columns, which is not supported now"
-		ret = false
-	}
-	if ret && !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), groupByItems, storeType) {
-		reason = "groupByItems contain unsupported exprs"
-		ret = false
-	}
-
-	if !ret {
-		storageName := storeType.Name()
-		if storeType == kv.UnSpecified {
-			storageName = "storage layer"
-		}
-		warnErr := errors.NewNoStackError("Aggregation can not be pushed to " + storageName + " because " + reason)
-		if sc.InExplainStmt {
-			sc.AppendWarning(warnErr)
-		} else {
-			sc.AppendExtraWarning(warnErr)
-		}
-	}
-	return ret
 }
 
-// AggInfo stores the information of an Aggregation.
-type AggInfo struct {
-	AggFuncs     []*aggregation.AggFuncDesc
-	GroupByItems []expression.Expression
-	Schema       *expression.Schema
+func inheritStatsFromBottomTaskForIndexJoinInner(p base.PhysicalPlan, t base.Task) {
+	var indexJoinInfo *physicalop.IndexJoinInfo
+	switch v := t.(type) {
+	case *physicalop.CopTask:
+		indexJoinInfo = v.IndexJoinInfo
+	case *physicalop.RootTask:
+		indexJoinInfo = v.IndexJoinInfo
+	default:
+		// index join's inner side couldn't be a mppTask, leave it.
+	}
+	inheritStatsFromBottomElemForIndexJoinInner(p, indexJoinInfo, t.Plan().StatsInfo())
 }
 
-// BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
-// returns the information of partial and final agg.
-// partialIsCop means whether partial agg is a cop task. When partialIsCop is false,
-// we do not set the AggMode for partialAgg cause it may be split further when
-// building the aggregate executor(e.g. buildHashAgg will split the AggDesc further for parallel executing).
-// firstRowFuncMap is a map between partial first_row to final first_row, will be used in RemoveUnnecessaryFirstRow
-func BuildFinalModeAggregation(
-	sctx base.PlanContext, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
-	ectx := sctx.GetExprCtx().GetEvalCtx()
-
-	firstRowFuncMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
-	partial = &AggInfo{
-		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
-		GroupByItems: original.GroupByItems,
-		Schema:       expression.NewSchema(),
-	}
-	partialCursor := 0
-	final = &AggInfo{
-		AggFuncs:     make([]*aggregation.AggFuncDesc, len(original.AggFuncs)),
-		GroupByItems: make([]expression.Expression, 0, len(original.GroupByItems)),
-		Schema:       original.Schema,
-	}
-
-	partialGbySchema := expression.NewSchema()
-	// add group by columns
-	for _, gbyExpr := range partial.GroupByItems {
-		var gbyCol *expression.Column
-		if col, ok := gbyExpr.(*expression.Column); ok {
-			gbyCol = col
-		} else {
-			gbyCol = &expression.Column{
-				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-				RetType:  gbyExpr.GetType(ectx),
-			}
-		}
-		partialGbySchema.Append(gbyCol)
-		final.GroupByItems = append(final.GroupByItems, gbyCol)
-	}
-
-	// TODO: Refactor the way of constructing aggregation functions.
-	// This for loop is ugly, but I do not find a proper way to reconstruct
-	// it right away.
-
-	// group_concat is special when pushing down, it cannot take the two phase execution if no distinct but with orderBy, and other cases are also different:
-	// for example: group_concat([distinct] expr0, expr1[, order by expr2] separator ‘,’)
-	// no distinct, no orderBy: can two phase
-	// 		[final agg] group_concat(col#1,’,’)
-	// 		[part  agg] group_concat(expr0, expr1,’,’) -> col#1
-	// no distinct,  orderBy: only one phase
-	// distinct, no orderBy: can two phase
-	// 		[final agg] group_concat(distinct col#0, col#1,’,’)
-	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1
-	// distinct,  orderBy: can two phase
-	// 		[final agg] group_concat(distinct col#0, col#1, order by col#2,’,’)
-	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1; agg function: firstrow(expr2)-> col#2
-
-	for i, aggFunc := range original.AggFuncs {
-		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
-		finalAggFunc.Name = aggFunc.Name
-		finalAggFunc.OrderByItems = aggFunc.OrderByItems
-		args := make([]expression.Expression, 0, len(aggFunc.Args))
-		if aggFunc.HasDistinct {
-			/*
-				eg: SELECT COUNT(DISTINCT a), SUM(b) FROM t GROUP BY c
-
-				change from
-					[root] group by: c, funcs:count(distinct a), funcs:sum(b)
-				to
-					[root] group by: c, funcs:count(distinct a), funcs:sum(b)
-						[cop]: group by: c, a
-			*/
-			// onlyAddFirstRow means if the distinctArg does not occur in group by items,
-			// it should be replaced with a firstrow() agg function, needed for the order by items of group_concat()
-			getDistinctExpr := func(distinctArg expression.Expression, onlyAddFirstRow bool) (ret expression.Expression) {
-				// 1. add all args to partial.GroupByItems
-				foundInGroupBy := false
-				for j, gbyExpr := range partial.GroupByItems {
-					if gbyExpr.Equal(ectx, distinctArg) && gbyExpr.GetType(ectx).Equal(distinctArg.GetType(ectx)) {
-						// if the two expressions exactly the same in terms of data types and collation, then can avoid it.
-						foundInGroupBy = true
-						ret = partialGbySchema.Columns[j]
-						break
-					}
-				}
-				if !foundInGroupBy {
-					var gbyCol *expression.Column
-					if col, ok := distinctArg.(*expression.Column); ok {
-						gbyCol = col
-					} else {
-						gbyCol = &expression.Column{
-							UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-							RetType:  distinctArg.GetType(ectx),
-						}
-					}
-					// 2. add group by items if needed
-					if !onlyAddFirstRow {
-						partial.GroupByItems = append(partial.GroupByItems, distinctArg)
-						partialGbySchema.Append(gbyCol)
-						ret = gbyCol
-					}
-					// 3. add firstrow() if needed
-					if !partialIsCop || onlyAddFirstRow {
-						// if partial is a cop task, firstrow function is redundant since group by items are outputted
-						// by group by schema, and final functions use group by schema as their arguments.
-						// if partial agg is not cop, we must append firstrow function & schema, to output the group by
-						// items.
-						// maybe we can unify them sometime.
-						// only add firstrow for order by items of group_concat()
-						firstRow, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{distinctArg}, false)
-						if err != nil {
-							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
-						}
-						partial.AggFuncs = append(partial.AggFuncs, firstRow)
-						newCol, _ := gbyCol.Clone().(*expression.Column)
-						newCol.RetType = firstRow.RetTp
-						partial.Schema.Append(newCol)
-						if onlyAddFirstRow {
-							ret = newCol
-						}
-						partialCursor++
-					}
-				}
-				return ret
-			}
-
-			for j, distinctArg := range aggFunc.Args {
-				// the last arg of ast.AggFuncGroupConcat is the separator, so just put it into the final agg
-				if aggFunc.Name == ast.AggFuncGroupConcat && j+1 == len(aggFunc.Args) {
-					args = append(args, distinctArg)
-					continue
-				}
-				args = append(args, getDistinctExpr(distinctArg, false))
-			}
-
-			byItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
-			for _, byItem := range aggFunc.OrderByItems {
-				byItems = append(byItems, &util.ByItems{Expr: getDistinctExpr(byItem.Expr, true), Desc: byItem.Desc})
-			}
-
-			if aggFunc.HasDistinct && isMPPTask && aggFunc.GroupingID > 0 {
-				// keep the groupingID as it was, otherwise the new split final aggregate's ganna lost its groupingID info.
-				finalAggFunc.GroupingID = aggFunc.GroupingID
-			}
-
-			finalAggFunc.OrderByItems = byItems
-			finalAggFunc.HasDistinct = aggFunc.HasDistinct
-			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
-			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
-			// So in the push down here, we need to add a new if-condition check:
-			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
-			if aggFunc.Mode == aggregation.CompleteMode {
-				finalAggFunc.Mode = aggregation.CompleteMode
-			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
-				finalAggFunc.Mode = aggregation.Partial2Mode
-			}
-		} else {
-			if aggFunc.Name == ast.AggFuncGroupConcat && len(aggFunc.OrderByItems) > 0 {
-				// group_concat can only run in one phase if it has order by items but without distinct property
-				partial = nil
-				final = original
-				return
-			}
-			if aggregation.NeedCount(finalAggFunc.Name) {
-				// only Avg and Count need count
-				if isMPPTask && finalAggFunc.Name == ast.AggFuncCount {
-					// For MPP base.Task, the final count() is changed to sum().
-					// Note: MPP mode does not run avg() directly, instead, avg() -> sum()/(case when count() = 0 then 1 else count() end),
-					// so we do not process it here.
-					finalAggFunc.Name = ast.AggFuncSum
-				} else {
-					// avg branch
-					ft := types.NewFieldType(mysql.TypeLonglong)
-					ft.SetFlen(21)
-					ft.SetCharset(charset.CharsetBin)
-					ft.SetCollate(charset.CollationBin)
-					partial.Schema.Append(&expression.Column{
-						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-						RetType:  ft,
-					})
-					args = append(args, partial.Schema.Columns[partialCursor])
-					partialCursor++
-				}
-			}
-			if finalAggFunc.Name == ast.AggFuncApproxCountDistinct {
-				ft := types.NewFieldType(mysql.TypeString)
-				ft.SetCharset(charset.CharsetBin)
-				ft.SetCollate(charset.CollationBin)
-				ft.AddFlag(mysql.NotNullFlag)
-				partial.Schema.Append(&expression.Column{
-					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  ft,
-				})
-				args = append(args, partial.Schema.Columns[partialCursor])
-				partialCursor++
-			}
-			if aggregation.NeedValue(finalAggFunc.Name) {
-				partial.Schema.Append(&expression.Column{
-					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  original.Schema.Columns[i].GetType(ectx),
-				})
-				args = append(args, partial.Schema.Columns[partialCursor])
-				partialCursor++
-			}
-			if aggFunc.Name == ast.AggFuncAvg {
-				cntAgg := aggFunc.Clone()
-				cntAgg.Name = ast.AggFuncCount
-				exprCtx := sctx.GetExprCtx()
-				err := cntAgg.TypeInfer(exprCtx)
-				if err != nil { // must not happen
-					partial = nil
-					final = original
-					return
-				}
-				partial.Schema.Columns[partialCursor-2].RetType = cntAgg.RetTp
-				// we must call deep clone in this case, to avoid sharing the arguments.
-				sumAgg := aggFunc.Clone()
-				sumAgg.Name = ast.AggFuncSum
-				if err = sumAgg.TypeInfer4AvgSum(exprCtx.GetEvalCtx(), aggFunc.RetTp); err != nil {
-					partial = nil
-					final = original
-					return
-				}
-				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
-				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
-			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
-				newAggFunc := aggFunc.Clone()
-				newAggFunc.Name = aggFunc.Name
-				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType(ectx)
-				partial.AggFuncs = append(partial.AggFuncs, newAggFunc)
-				if aggFunc.Name == ast.AggFuncGroupConcat {
-					// append the last separator arg
-					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
-				}
-			} else {
-				// other agg desc just split into two parts
-				partialFuncDesc := aggFunc.Clone()
-				partial.AggFuncs = append(partial.AggFuncs, partialFuncDesc)
-				if aggFunc.Name == ast.AggFuncFirstRow {
-					firstRowFuncMap[partialFuncDesc] = finalAggFunc
-				}
-			}
-
-			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
-			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
-			// So in the push down here, we need to add a new if-condition check:
-			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
-			if aggFunc.Mode == aggregation.CompleteMode {
-				finalAggFunc.Mode = aggregation.FinalMode
-			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
-				finalAggFunc.Mode = aggregation.Partial2Mode
-			}
-		}
-
-		finalAggFunc.Args = args
-		finalAggFunc.RetTp = aggFunc.RetTp
-		final.AggFuncs[i] = finalAggFunc
-	}
-	partial.Schema.Append(partialGbySchema.Columns...)
-	if partialIsCop {
-		for _, f := range partial.AggFuncs {
-			f.Mode = aggregation.Partial1Mode
-		}
-	}
-	return
-}
-
-// convertAvgForMPP converts avg(arg) to sum(arg)/(case when count(arg)=0 then 1 else count(arg) end), in detail:
-// 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
-// 2.replace avg() with sum(arg)/(case when count(arg)=0 then 1 else count(arg) end) and reuse the original schema of the final aggregation.
-// If there is no avg, nothing is changed and return nil.
-func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
-	newSchema := expression.NewSchema()
-	newSchema.PKOrUK = p.schema.PKOrUK
-	newSchema.NullableUK = p.schema.NullableUK
-	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
-	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
-	exprCtx := p.SCtx().GetExprCtx()
-	// add agg functions schema
-	for i, aggFunc := range p.AggFuncs {
-		if aggFunc.Name == ast.AggFuncAvg {
-			// inset a count(column)
-			avgCount := aggFunc.Clone()
-			avgCount.Name = ast.AggFuncCount
-			err := avgCount.TypeInfer(exprCtx)
-			if err != nil { // must not happen
-				return nil
-			}
-			newAggFuncs = append(newAggFuncs, avgCount)
-			avgCountCol := &expression.Column{
-				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  avgCount.RetTp,
-			}
-			newSchema.Append(avgCountCol)
-			// insert a sum(column)
-			avgSum := aggFunc.Clone()
-			avgSum.Name = ast.AggFuncSum
-			if err = avgSum.TypeInfer4AvgSum(exprCtx.GetEvalCtx(), aggFunc.RetTp); err != nil {
-				return nil
-			}
-			newAggFuncs = append(newAggFuncs, avgSum)
-			avgSumCol := &expression.Column{
-				UniqueID: p.schema.Columns[i].UniqueID,
-				RetType:  avgSum.RetTp,
-			}
-			newSchema.Append(avgSumCol)
-			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
-			eq := expression.NewFunctionInternal(exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
-			caseWhen := expression.NewFunctionInternal(exprCtx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
-			divide := expression.NewFunctionInternal(exprCtx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
-			divide.(*expression.ScalarFunction).RetType = p.schema.Columns[i].RetType
-			exprs = append(exprs, divide)
-		} else {
-			// other non-avg agg use the old schema as it did.
-			newAggFuncs = append(newAggFuncs, aggFunc)
-			newSchema.Append(p.schema.Columns[i])
-			exprs = append(exprs, p.schema.Columns[i])
-		}
-	}
-	// no avgs
-	// for final agg, always add project due to in-compatibility between TiDB and TiFlash
-	if len(p.schema.Columns) == len(newSchema.Columns) && !p.IsFinalAgg() {
-		return nil
-	}
-	// add remaining columns to exprs
-	for i := len(p.AggFuncs); i < len(p.schema.Columns); i++ {
-		exprs = append(exprs, p.schema.Columns[i])
-	}
-	proj := PhysicalProjection{
-		Exprs:            exprs,
-		CalculateNoDelay: false,
-	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
-	proj.SetSchema(p.schema)
-
-	p.AggFuncs = newAggFuncs
-	p.schema = newSchema
-
-	return proj
-}
-
-func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTask bool) (partial, final base.PhysicalPlan) {
-	// Check if this aggregation can push down.
-	if !CheckAggCanPushCop(p.SCtx(), p.AggFuncs, p.GroupByItems, copTaskType) {
-		return nil, p.Self
-	}
-	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.SCtx(), &AggInfo{
-		AggFuncs:     p.AggFuncs,
-		GroupByItems: p.GroupByItems,
-		Schema:       p.Schema().Clone(),
-	}, true, isMPPTask)
-	if partialPref == nil {
-		return nil, p.Self
-	}
-	if p.TP() == plancodec.TypeStreamAgg && len(partialPref.GroupByItems) != len(finalPref.GroupByItems) {
-		return nil, p.Self
-	}
-	// Remove unnecessary FirstRow.
-	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.SCtx(),
-		finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
-	if copTaskType == kv.TiDB {
-		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
-		// and TiDB aggregation executor won't output the group by value,
-		// so we need add `firstrow` aggregation function to output the group by value.
-		aggFuncs, err := genFirstRowAggForGroupBy(p.SCtx(), partialPref.GroupByItems)
-		if err != nil {
-			return nil, p.Self
-		}
-		partialPref.AggFuncs = append(partialPref.AggFuncs, aggFuncs...)
-	}
-	p.AggFuncs = partialPref.AggFuncs
-	p.GroupByItems = partialPref.GroupByItems
-	p.schema = partialPref.Schema
-	partialAgg := p.Self
-	// Create physical "final" aggregation.
-	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	if p.TP() == plancodec.TypeStreamAgg {
-		finalAgg := basePhysicalAgg{
-			AggFuncs:     finalPref.AggFuncs,
-			GroupByItems: finalPref.GroupByItems,
-			MppRunMode:   p.MppRunMode,
-		}.initForStream(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), prop)
-		finalAgg.schema = finalPref.Schema
-		return partialAgg, finalAgg
-	}
-
-	finalAgg := basePhysicalAgg{
-		AggFuncs:     finalPref.AggFuncs,
-		GroupByItems: finalPref.GroupByItems,
-		MppRunMode:   p.MppRunMode,
-	}.initForHash(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), prop)
-	finalAgg.schema = finalPref.Schema
-	// partialAgg and finalAgg use the same ref of stats
-	return partialAgg, finalAgg
-}
-
-func (p *basePhysicalAgg) scale3StageForDistinctAgg() (bool, expression.GroupingSets) {
-	if p.canUse3Stage4SingleDistinctAgg() {
-		return true, nil
-	}
-	return p.canUse3Stage4MultiDistinctAgg()
-}
-
-// canUse3Stage4MultiDistinctAgg returns true if this agg can use 3 stage for multi distinct aggregation
-func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss expression.GroupingSets) {
-	if !p.SCtx().GetSessionVars().Enable3StageDistinctAgg || !p.SCtx().GetSessionVars().Enable3StageMultiDistinctAgg || len(p.GroupByItems) > 0 {
-		return false, nil
-	}
-	defer func() {
-		// some clean work.
-		if !can {
-			for _, fun := range p.AggFuncs {
-				fun.GroupingID = 0
-			}
-		}
-	}()
-	// groupingSets is alias of []GroupingSet, the below equal to = make([]GroupingSet, 0, 2)
-	groupingSets := make(expression.GroupingSets, 0, 2)
-	for _, fun := range p.AggFuncs {
-		if fun.HasDistinct {
-			if fun.Name != ast.AggFuncCount {
-				// now only for multi count(distinct x)
-				return false, nil
-			}
-			for _, arg := range fun.Args {
-				// bail out when args are not simple column, see GitHub issue #35417
-				if _, ok := arg.(*expression.Column); !ok {
-					return false, nil
-				}
-			}
-			// here it's a valid count distinct agg with normal column args, collecting its distinct expr.
-			groupingSets = append(groupingSets, expression.GroupingSet{fun.Args})
-			// groupingID now is the offset of target grouping in GroupingSets.
-			// todo: it may be changed after grouping set merge in the future.
-			fun.GroupingID = len(groupingSets)
-		} else if len(fun.Args) > 1 {
-			return false, nil
-		}
-		// banned group_concat(x order by y)
-		if len(fun.OrderByItems) > 0 || fun.Mode != aggregation.CompleteMode {
-			return false, nil
-		}
-	}
-	compressed := groupingSets.Merge()
-	if len(compressed) != len(groupingSets) {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some grouping sets should be merged"))
-		// todo arenatlx: some grouping set should be merged which is not supported by now temporarily.
-		return false, nil
-	}
-	if groupingSets.NeedCloneColumn() {
-		// todo: column clone haven't implemented.
-		return false, nil
-	}
-	if len(groupingSets) > 1 {
-		// fill the grouping ID for normal agg.
-		for _, fun := range p.AggFuncs {
-			if fun.GroupingID == 0 {
-				// the grouping ID hasn't set. find the targeting grouping set.
-				groupingSetOffset := groupingSets.TargetOne(fun.Args)
-				if groupingSetOffset == -1 {
-					// todo: if we couldn't find a existed current valid group layout, we need to copy the column out from being filled with null value.
-					p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("couldn't find a proper group set for normal agg"))
-					return false, nil
-				}
-				// starting with 1
-				fun.GroupingID = groupingSetOffset + 1
-			}
-		}
-		return true, groupingSets
-	}
-	return false, nil
-}
-
-// canUse3Stage4SingleDistinctAgg returns true if this agg can use 3 stage for distinct aggregation
-func (p *basePhysicalAgg) canUse3Stage4SingleDistinctAgg() bool {
-	num := 0
-	if !p.SCtx().GetSessionVars().Enable3StageDistinctAgg || len(p.GroupByItems) > 0 {
-		return false
-	}
-	for _, fun := range p.AggFuncs {
-		if fun.HasDistinct {
-			num++
-			if num > 1 || fun.Name != ast.AggFuncCount {
-				return false
-			}
-			for _, arg := range fun.Args {
-				// bail out when args are not simple column, see GitHub issue #35417
-				if _, ok := arg.(*expression.Column); !ok {
-					return false
-				}
-			}
-		} else if len(fun.Args) > 1 {
-			return false
-		}
-
-		if len(fun.OrderByItems) > 0 || fun.Mode != aggregation.CompleteMode {
-			return false
-		}
-	}
-	return num == 1
-}
-
-func genFirstRowAggForGroupBy(ctx base.PlanContext, groupByItems []expression.Expression) ([]*aggregation.AggFuncDesc, error) {
-	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(groupByItems))
-	for _, groupBy := range groupByItems {
-		agg, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{groupBy}, false)
-		if err != nil {
-			return nil, err
-		}
-		aggFuncs = append(aggFuncs, agg)
-	}
-	return aggFuncs, nil
-}
-
-// RemoveUnnecessaryFirstRow removes unnecessary FirstRow of the aggregation. This function can be
-// used for both LogicalAggregation and PhysicalAggregation.
-// When the select column is same with the group by key, the column can be removed and gets value from the group by key.
-// e.g
-// select a, count(b) from t group by a;
-// The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
-// Can optimize the schema to [count(b), a] , and change the index to get value.
-func RemoveUnnecessaryFirstRow(
-	sctx base.PlanContext,
-	finalGbyItems []expression.Expression,
-	partialAggFuncs []*aggregation.AggFuncDesc,
-	partialGbyItems []expression.Expression,
-	partialSchema *expression.Schema,
-	firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
-	partialCursor := 0
-	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
-	for _, aggFunc := range partialAggFuncs {
-		if aggFunc.Name == ast.AggFuncFirstRow {
-			canOptimize := false
-			for j, gbyExpr := range partialGbyItems {
-				if j >= len(finalGbyItems) {
-					// after distinct push, len(partialGbyItems) may larger than len(finalGbyItems)
-					// for example,
-					// select /*+ HASH_AGG() */ a, count(distinct a) from t;
-					// will generate to,
-					//   HashAgg root  funcs:count(distinct a), funcs:firstrow(a)"
-					//     HashAgg cop  group by:a, funcs:firstrow(a)->Column#6"
-					// the firstrow in root task can not be removed.
-					break
-				}
-				// Skip if it's a constant.
-				// For SELECT DISTINCT SQRT(1) FROM t.
-				// We shouldn't remove the firstrow(SQRT(1)).
-				if _, ok := gbyExpr.(*expression.Constant); ok {
-					continue
-				}
-				if gbyExpr.Equal(sctx.GetExprCtx().GetEvalCtx(), aggFunc.Args[0]) {
-					canOptimize = true
-					firstRowFuncMap[aggFunc].Args[0] = finalGbyItems[j]
-					break
-				}
-			}
-			if canOptimize {
-				partialSchema.Columns = append(partialSchema.Columns[:partialCursor], partialSchema.Columns[partialCursor+1:]...)
-				continue
-			}
-		}
-		partialCursor += computePartialCursorOffset(aggFunc.Name)
-		newAggFuncs = append(newAggFuncs, aggFunc)
-	}
-	return newAggFuncs
-}
-
-func computePartialCursorOffset(name string) int {
-	offset := 0
-	if aggregation.NeedCount(name) {
-		offset++
-	}
-	if aggregation.NeedValue(name) {
-		offset++
-	}
-	if name == ast.AggFuncApproxCountDistinct {
-		offset++
-	}
-	return offset
-}
-
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalStreamAgg implements PhysicalPlan interface.
+func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalStreamAgg)
 	t := tasks[0].Copy()
-	if cop, ok := t.(*CopTask); ok {
+	if cop, ok := t.(*physicalop.CopTask); ok {
 		// We should not push agg down across
 		//  1. double read, since the data of second read is ordered by handle instead of index. The `extraHandleCol` is added
 		//     if the double read needs to keep order. So we just use it to decided
 		//     whether the following plan is double read with order reserved.
 		//  2. the case that there's filters should be calculated on TiDB side.
 		//  3. the case of index merge
-		if (cop.indexPlan != nil && cop.tablePlan != nil && cop.keepOrder) || len(cop.rootTaskConds) > 0 || len(cop.idxMergePartPlans) > 0 {
+		if (cop.IndexPlan != nil && cop.TablePlan != nil && cop.KeepOrder) || len(cop.RootTaskConds) > 0 || len(cop.IdxMergePartPlans) > 0 {
 			t = cop.ConvertToRootTask(p.SCtx())
 			attachPlan2Task(p, t)
 		} else {
-			storeType := cop.getStoreType()
+			storeType := cop.GetStoreType()
 			// TiFlash doesn't support Stream Aggregation
 			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
 				return base.InvalidTask
 			}
-			partialAgg, finalAgg := p.newPartialAggregate(storeType, false)
+			partialAgg, finalAgg := p.NewPartialAggregate(storeType, false)
 			if partialAgg != nil {
-				if cop.tablePlan != nil {
-					cop.finishIndexPlan()
-					partialAgg.SetChildren(cop.tablePlan)
-					cop.tablePlan = partialAgg
+				if cop.TablePlan != nil {
+					cop.FinishIndexPlan()
+					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
+					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
+					// join inner side. note: partialAgg will share stats with finalAgg.
+					inheritStatsFromBottomElemForIndexJoinInner(partialAgg, cop.IndexJoinInfo, cop.TablePlan.StatsInfo())
+					partialAgg.SetChildren(cop.TablePlan)
+					cop.TablePlan = partialAgg
 					// If needExtraProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
 					// the schema is the same as the original DataSource schema.
 					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
 					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
 					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
 					// the partial agg, and the schema will be broken.
-					cop.needExtraProj = false
+					cop.NeedExtraProj = false
 				} else {
-					partialAgg.SetChildren(cop.indexPlan)
-					cop.indexPlan = partialAgg
+					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
+					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
+					// join inner side. note: partialAgg will share stats with finalAgg.
+					inheritStatsFromBottomElemForIndexJoinInner(partialAgg, cop.IndexJoinInfo, cop.IndexPlan.StatsInfo())
+					partialAgg.SetChildren(cop.IndexPlan)
+					cop.IndexPlan = partialAgg
 				}
 			}
+			// COP Task -> Root Task, warnings inherited inside.
 			t = cop.ConvertToRootTask(p.SCtx())
 			attachPlan2Task(finalAgg, t)
 		}
-	} else if mpp, ok := t.(*MppTask); ok {
+	} else if mpp, ok := t.(*physicalop.MppTask); ok {
 		t = mpp.ConvertToRootTask(p.SCtx())
 		attachPlan2Task(p, t)
 	} else {
@@ -2023,28 +1525,10 @@ func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-// cpuCostDivisor computes the concurrency to which we would amortize CPU cost
-// for hash aggregation.
-func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (divisor, con float64) {
-	if hasDistinct {
-		return 0, 0
-	}
-	sessionVars := p.SCtx().GetSessionVars()
-	finalCon, partialCon := sessionVars.HashAggFinalConcurrency(), sessionVars.HashAggPartialConcurrency()
-	// According to `ValidateSetSystemVar`, `finalCon` and `partialCon` cannot be less than or equal to 0.
-	if finalCon == 1 && partialCon == 1 {
-		return 0, 0
-	}
-	// It is tricky to decide which concurrency we should use to amortize CPU cost. Since cost of hash
-	// aggregation is tend to be under-estimated as explained in `attach2Task`, we choose the smaller
-	// concurrecy to make some compensation.
-	return math.Min(float64(finalCon), float64(partialCon)), float64(finalCon + partialCon)
-}
-
-func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *MppTask) base.Task {
+func attach2TaskForMpp1Phase(p *physicalop.PhysicalHashAgg, mpp *physicalop.MppTask) base.Task {
 	// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 	// only push down the original agg
-	proj := p.convertAvgForMPP()
+	proj := p.ConvertAvgForMPP()
 	attachPlan2Task(p.Self, mpp)
 	if proj != nil {
 		attachPlan2Task(proj, mpp)
@@ -2085,7 +1569,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *MppTask) base.Task {
 //   - so the num of group in replica 2 is equal to NDV(b,c)
 //
 // in a summary, the total num of group of all replica is equal to = Σ:NDV(each-grouping-set-cols, normal-group-cols)
-func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.GroupingSets, groupingIDCol *expression.Column,
+func scaleStats4GroupingSets(p *physicalop.PhysicalHashAgg, groupingSets expression.GroupingSets, groupingIDCol *expression.Column,
 	childSchema *expression.Schema, childStats *property.StatsInfo) {
 	idSets := groupingSets.AllSetsColIDs()
 	normalGbyCols := make([]*expression.Column, 0, len(p.GroupByItems))
@@ -2098,18 +1582,20 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 		}
 	}
 	sumNDV := float64(0)
+	groupingSetCols := make([]*expression.Column, 0, 4)
 	for _, groupingSet := range groupingSets {
 		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
-		groupingSetCols := groupingSet.ExtractCols()
+		groupingSetCols = groupingSet.ExtractCols(groupingSetCols)
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
-		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(p.SCtx(), groupingSetCols, childSchema, childStats)
+		groupingSetCols = groupingSetCols[:0]
 		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all
 	// change the sub-agg's stats
 	if p.StatsInfo() != nil {
 		// equivalence to a new cloned one. (cause finalAgg and partialAgg may share a same copy of stats)
-		cpStats := p.StatsInfo().Scale(1)
+		cpStats := p.StatsInfo().Scale(p.SCtx().GetSessionVars(), 1)
 		cpStats.RowCount = sumNDV
 		// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
 		for k := range cpStats.ColNDVs {
@@ -2129,7 +1615,8 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 					// when meet an id in grouping sets, skip it (cause its null) and append the rest ids to count the incrementNDV.
 					beforeLen := len(intersectionIDs)
 					intersectionIDs = append(intersectionIDs, oneGNDV.Cols[i:]...)
-					incrementNDV, _ := cardinality.EstimateColsDNVWithMatchedLenFromUniqueIDs(intersectionIDs, childSchema, childStats)
+					incrementNDV, _ := cardinality.EstimateColsDNVWithMatchedLenFromUniqueIDs(
+						p.SCtx(), intersectionIDs, childSchema, childStats)
 					newGNDV += incrementNDV
 					// restore the before intersectionIDs slice.
 					intersectionIDs = intersectionIDs[:beforeLen]
@@ -2167,8 +1654,8 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 //	             +- HashAgg count(c) #4, group by a,b,groupingID                -> partial agg
 //	                 +- Expand {<a>}, {<b>}                                     -> expand
 //	                     +- TableScan foo
-func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.PhysicalPlan, canUse3StageAgg bool,
-	groupingSets expression.GroupingSets, mpp *MppTask) (final, mid, part, proj4Part base.PhysicalPlan, _ error) {
+func adjust3StagePhaseAgg(p *physicalop.PhysicalHashAgg, partialAgg, finalAgg base.PhysicalPlan, canUse3StageAgg bool,
+	groupingSets expression.GroupingSets, mpp *physicalop.MppTask) (final, mid, part, proj4Part base.PhysicalPlan, _ error) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 
 	if !(partialAgg != nil && canUse3StageAgg) {
@@ -2183,7 +1670,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 		}
 
 		// step1: adjust middle agg.
-		middleHashAgg := clonedAgg.(*PhysicalHashAgg)
+		middleHashAgg := clonedAgg.(*physicalop.PhysicalHashAgg)
 		distinctPos := 0
 		middleSchema := expression.NewSchema()
 		schemaMap := make(map[int64]*expression.Column, len(middleHashAgg.AggFuncs))
@@ -2203,10 +1690,10 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 			}
 			middleSchema.Append(col)
 		}
-		middleHashAgg.schema = middleSchema
+		middleHashAgg.SetSchema(middleSchema)
 
 		// step2: adjust final agg.
-		finalHashAgg := finalAgg.(*PhysicalHashAgg)
+		finalHashAgg := finalAgg.(*physicalop.PhysicalHashAgg)
 		finalAggDescs := make([]*aggregation.AggFuncDesc, 0, len(finalHashAgg.AggFuncs))
 		for i, fun := range finalHashAgg.AggFuncs {
 			newArgs := make([]expression.Expression, 0, 1)
@@ -2238,11 +1725,11 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 	// enforce Expand operator above the children.
 	// physical plan is enumerated without children from itself, use mpp subtree instead p.children.
 	// scale(len(groupingSets)) will change the NDV, while Expand doesn't change the NDV and groupNDV.
-	stats := mpp.p.StatsInfo().Scale(float64(1))
+	stats := mpp.Plan().StatsInfo().Scale(p.SCtx().GetSessionVars(), float64(1))
 	stats.RowCount = stats.RowCount * float64(len(groupingSets))
-	physicalExpand := PhysicalExpand{
+	physicalExpand := physicalop.PhysicalExpand{
 		GroupingSets: groupingSets,
-	}.Init(p.SCtx(), stats, mpp.p.QueryBlockOffset())
+	}.Init(p.SCtx(), stats, mpp.Plan().QueryBlockOffset())
 	// generate a new column as groupingID to identify which this row is targeting for.
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
@@ -2251,8 +1738,8 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 		RetType:  tp,
 	}
 	// append the physical expand op with groupingID column.
-	physicalExpand.SetSchema(mpp.p.Schema().Clone())
-	physicalExpand.schema.Append(groupingIDCol.(*expression.Column))
+	physicalExpand.SetSchema(mpp.Plan().Schema().Clone())
+	physicalExpand.Schema().Append(groupingIDCol.(*expression.Column))
 	physicalExpand.GroupingIDCol = groupingIDCol.(*expression.Column)
 	// attach PhysicalExpand to mpp
 	attachPlan2Task(physicalExpand, mpp)
@@ -2262,7 +1749,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	cloneHashAgg := clonedAgg.(*PhysicalHashAgg)
+	cloneHashAgg := clonedAgg.(*physicalop.PhysicalHashAgg)
 	// Clone(), it will share same base-plan elements from the finalAgg, including id,tp,stats. Make a new one here.
 	cloneHashAgg.Plan = baseimpl.NewBasePlan(cloneHashAgg.SCtx(), cloneHashAgg.TP(), cloneHashAgg.QueryBlockOffset())
 	cloneHashAgg.SetStats(finalAgg.StatsInfo()) // reuse the final agg stats here.
@@ -2272,17 +1759,17 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 	// customized proj here rather than depending on postOptimize to insert a blunt one for us.
 	//
 	// proj4Partial output all the base col from lower op + caseWhen proj cols.
-	proj4Partial := new(PhysicalProjection).Init(p.SCtx(), mpp.p.StatsInfo(), mpp.p.QueryBlockOffset())
-	for _, col := range mpp.p.Schema().Columns {
+	proj4Partial := new(physicalop.PhysicalProjection).Init(p.SCtx(), mpp.Plan().StatsInfo(), mpp.Plan().QueryBlockOffset())
+	for _, col := range mpp.Plan().Schema().Columns {
 		proj4Partial.Exprs = append(proj4Partial.Exprs, col)
 	}
-	proj4Partial.SetSchema(mpp.p.Schema().Clone())
+	proj4Partial.SetSchema(mpp.Plan().Schema().Clone())
 
-	partialHashAgg := partialAgg.(*PhysicalHashAgg)
+	partialHashAgg := partialAgg.(*physicalop.PhysicalHashAgg)
 	partialHashAgg.GroupByItems = append(partialHashAgg.GroupByItems, groupingIDCol)
-	partialHashAgg.schema.Append(groupingIDCol.(*expression.Column))
+	partialHashAgg.Schema().Append(groupingIDCol.(*expression.Column))
 	// it will create a new stats for partial agg.
-	partialHashAgg.scaleStats4GroupingSets(groupingSets, groupingIDCol.(*expression.Column), proj4Partial.Schema(), proj4Partial.StatsInfo())
+	scaleStats4GroupingSets(partialHashAgg, groupingSets, groupingIDCol.(*expression.Column), proj4Partial.Schema(), proj4Partial.StatsInfo())
 	for _, fun := range partialHashAgg.AggFuncs {
 		if !fun.HasDistinct {
 			// for normal agg phase1, we should also modify them to target for specified group data.
@@ -2321,10 +1808,10 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 		}
 		middleSchema.Append(col)
 	}
-	middleHashAgg.schema = middleSchema
+	middleHashAgg.SetSchema(middleSchema)
 
 	// step3: adjust final agg
-	finalHashAgg := finalAgg.(*PhysicalHashAgg)
+	finalHashAgg := finalAgg.(*physicalop.PhysicalHashAgg)
 	finalAggDescs := make([]*aggregation.AggFuncDesc, 0, len(finalHashAgg.AggFuncs))
 	for i, fun := range finalHashAgg.AggFuncs {
 		newArgs := make([]expression.Expression, 0, 1)
@@ -2353,35 +1840,35 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 	return finalHashAgg, middleHashAgg, partialHashAgg, proj4Partial, nil
 }
 
-func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
+func attach2TaskForMpp(p *physicalop.PhysicalHashAgg, tasks ...base.Task) base.Task {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 
 	t := tasks[0].Copy()
-	mpp, ok := t.(*MppTask)
+	mpp, ok := t.(*physicalop.MppTask)
 	if !ok {
 		return base.InvalidTask
 	}
 	switch p.MppRunMode {
-	case Mpp1Phase:
+	case physicalop.Mpp1Phase:
 		// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 		// only push down the original agg
-		proj := p.convertAvgForMPP()
+		proj := p.ConvertAvgForMPP()
 		attachPlan2Task(p, mpp)
 		if proj != nil {
 			attachPlan2Task(proj, mpp)
 		}
 		return mpp
-	case Mpp2Phase:
+	case physicalop.Mpp2Phase:
 		// TODO: when partition property is matched by sub-plan, we actually needn't do extra an exchange and final agg.
-		proj := p.convertAvgForMPP()
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		proj := p.ConvertAvgForMPP()
+		partialAgg, finalAgg := p.NewPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
 			return base.InvalidTask
 		}
 		attachPlan2Task(partialAgg, mpp)
 		partitionCols := p.MppPartitionCols
 		if len(partitionCols) == 0 {
-			items := finalAgg.(*PhysicalHashAgg).GroupByItems
+			items := finalAgg.(*physicalop.PhysicalHashAgg).GroupByItems
 			partitionCols = make([]*property.MPPPartitionColumn, 0, len(items))
 			for _, expr := range items {
 				col, ok := expr.(*expression.Column)
@@ -2394,11 +1881,11 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 				})
 			}
 		}
-		if partialHashAgg, ok := partialAgg.(*PhysicalHashAgg); ok && len(partitionCols) != 0 {
-			partialHashAgg.tiflashPreAggMode = p.SCtx().GetSessionVars().TiFlashPreAggMode
+		if partialHashAgg, ok := partialAgg.(*physicalop.PhysicalHashAgg); ok && len(partitionCols) != 0 {
+			partialHashAgg.TiflashPreAggMode = p.SCtx().GetSessionVars().TiFlashPreAggMode
 		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
-		newMpp := mpp.enforceExchangerImpl(prop)
+		newMpp := mpp.EnforceExchangerImpl(prop)
 		if newMpp.Invalid() {
 			return newMpp
 		}
@@ -2408,30 +1895,30 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			attachPlan2Task(proj, newMpp)
 		}
 		return newMpp
-	case MppTiDB:
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
+	case physicalop.MppTiDB:
+		partialAgg, finalAgg := p.NewPartialAggregate(kv.TiFlash, false)
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
 		t = mpp.ConvertToRootTask(p.SCtx())
 		attachPlan2Task(finalAgg, t)
 		return t
-	case MppScalar:
+	case physicalop.MppScalar:
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
-		if !mpp.needEnforceExchanger(prop) {
+		if !property.NeedEnforceExchanger(mpp.GetPartitionType(), mpp.HashCols, prop, nil) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.
-			return p.attach2TaskForMpp1Phase(mpp)
+			return attach2TaskForMpp1Phase(p, mpp)
 		}
 		// On the other hand: try to split the mppScalar agg into multi phases agg **down** to multi nodes since data already distributed across nodes.
 		// we have to check it before the content of p has been modified
-		canUse3StageAgg, groupingSets := p.scale3StageForDistinctAgg()
-		proj := p.convertAvgForMPP()
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		canUse3StageAgg, groupingSets := p.Scale3StageForDistinctAgg()
+		proj := p.ConvertAvgForMPP()
+		partialAgg, finalAgg := p.NewPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
 			return base.InvalidTask
 		}
 
-		final, middle, partial, proj4Partial, err := p.adjust3StagePhaseAgg(partialAgg, finalAgg, canUse3StageAgg, groupingSets, mpp)
+		final, middle, partial, proj4Partial, err := adjust3StagePhaseAgg(p, partialAgg, finalAgg, canUse3StageAgg, groupingSets, mpp)
 		if err != nil {
 			return base.InvalidTask
 		}
@@ -2447,7 +1934,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		}
 
 		if middle != nil && canUse3StageAgg {
-			items := partial.(*PhysicalHashAgg).GroupByItems
+			items := partial.(*physicalop.PhysicalHashAgg).GroupByItems
 			partitionCols := make([]*property.MPPPartitionColumn, 0, len(items))
 			for _, expr := range items {
 				col, ok := expr.(*expression.Column)
@@ -2461,25 +1948,25 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			}
 
 			exProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
-			newMpp := mpp.enforceExchanger(exProp)
+			newMpp := mpp.EnforceExchanger(exProp, nil)
 			attachPlan2Task(middle, newMpp)
 			mpp = newMpp
-			if partialHashAgg, ok := partial.(*PhysicalHashAgg); ok && len(partitionCols) != 0 {
-				partialHashAgg.tiflashPreAggMode = p.SCtx().GetSessionVars().TiFlashPreAggMode
+			if partialHashAgg, ok := partial.(*physicalop.PhysicalHashAgg); ok && len(partitionCols) != 0 {
+				partialHashAgg.TiflashPreAggMode = p.SCtx().GetSessionVars().TiFlashPreAggMode
 			}
 		}
 
 		// prop here still be the first generated single-partition requirement.
-		newMpp := mpp.enforceExchanger(prop)
+		newMpp := mpp.EnforceExchanger(prop, nil)
 		attachPlan2Task(final, newMpp)
 		if proj == nil {
-			proj = PhysicalProjection{
+			proj = physicalop.PhysicalProjection{
 				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
 			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 			for _, col := range p.Schema().Columns {
 				proj.Exprs = append(proj.Exprs, col)
 			}
-			proj.SetSchema(p.schema)
+			proj.SetSchema(p.Schema())
 		}
 		attachPlan2Task(proj, newMpp)
 		return newMpp
@@ -2488,28 +1975,37 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	}
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalHashAgg) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalHashAgg implements the PhysicalPlan interface.
+func attach2Task4PhysicalHashAgg(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalHashAgg)
 	t := tasks[0].Copy()
-	if cop, ok := t.(*CopTask); ok {
-		if len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0 {
-			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+	if cop, ok := t.(*physicalop.CopTask); ok {
+		if len(cop.RootTaskConds) == 0 && len(cop.IdxMergePartPlans) == 0 {
+			copTaskType := cop.GetStoreType()
+			partialAgg, finalAgg := p.NewPartialAggregate(copTaskType, false)
 			if partialAgg != nil {
-				if cop.tablePlan != nil {
-					cop.finishIndexPlan()
-					partialAgg.SetChildren(cop.tablePlan)
-					cop.tablePlan = partialAgg
+				if cop.TablePlan != nil {
+					cop.FinishIndexPlan()
+					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
+					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
+					// join inner side. note: partialAgg will share stats with finalAgg.
+					inheritStatsFromBottomElemForIndexJoinInner(partialAgg, cop.IndexJoinInfo, cop.TablePlan.StatsInfo())
+					partialAgg.SetChildren(cop.TablePlan)
+					cop.TablePlan = partialAgg
 					// If needExtraProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
 					// the schema is the same as the original DataSource schema.
 					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
 					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
 					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
 					// the partial agg, and the schema will be broken.
-					cop.needExtraProj = false
+					cop.NeedExtraProj = false
 				} else {
-					partialAgg.SetChildren(cop.indexPlan)
-					cop.indexPlan = partialAgg
+					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
+					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
+					// join inner side. note: partialAgg will share stats with finalAgg.
+					inheritStatsFromBottomElemForIndexJoinInner(partialAgg, cop.IndexJoinInfo, cop.IndexPlan.StatsInfo())
+					partialAgg.SetChildren(cop.IndexPlan)
+					cop.IndexPlan = partialAgg
 				}
 			}
 			// In `newPartialAggregate`, we are using stats of final aggregation as stats
@@ -2524,20 +2020,20 @@ func (p *PhysicalHashAgg) Attach2Task(tasks ...base.Task) base.Task {
 			t = cop.ConvertToRootTask(p.SCtx())
 			attachPlan2Task(p, t)
 		}
-	} else if _, ok := t.(*MppTask); ok {
-		return p.attach2TaskForMpp(tasks...)
+	} else if _, ok := t.(*physicalop.MppTask); ok {
+		return attach2TaskForMpp(p, tasks...)
 	} else {
 		attachPlan2Task(p, t)
 	}
 	return t
 }
 
-func (p *PhysicalWindow) attach2TaskForMPP(mpp *MppTask) base.Task {
+func attach2TaskForMPP4PhysicalWindow(p *physicalop.PhysicalWindow, mpp *physicalop.MppTask) base.Task {
 	// FIXME: currently, tiflash's join has different schema with TiDB,
 	// so we have to rebuild the schema of join and operators which may inherit schema from join.
 	// for window, we take the sub-plan's schema, and the schema generated by windowDescs.
 	columns := p.Schema().Clone().Columns[len(p.Schema().Columns)-len(p.WindowFuncDescs):]
-	p.schema = expression.MergeSchema(mpp.Plan().Schema(), expression.NewSchema(columns...))
+	p.SetSchema(expression.MergeSchema(mpp.Plan().Schema(), expression.NewSchema(columns...)))
 
 	failpoint.Inject("CheckMPPWindowSchemaLength", func() {
 		if len(p.Schema().Columns) != len(mpp.Plan().Schema().Columns)+len(p.WindowFuncDescs) {
@@ -2548,44 +2044,46 @@ func (p *PhysicalWindow) attach2TaskForMPP(mpp *MppTask) base.Task {
 	return attachPlan2Task(p, mpp)
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalWindow) Attach2Task(tasks ...base.Task) base.Task {
-	if mpp, ok := tasks[0].Copy().(*MppTask); ok && p.storeTp == kv.TiFlash {
-		return p.attach2TaskForMPP(mpp)
+func attach2Task4PhysicalWindow(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalWindow)
+	if mpp, ok := tasks[0].Copy().(*physicalop.MppTask); ok && p.StoreTp == kv.TiFlash {
+		return attach2TaskForMPP4PhysicalWindow(p, mpp)
 	}
 	t := tasks[0].ConvertToRootTask(p.SCtx())
 	return attachPlan2Task(p.Self, t)
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalCTEStorage implements the PhysicalPlan interface.
+func attach2Task4PhysicalCTEStorage(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalCTEStorage)
 	t := tasks[0].Copy()
-	if mpp, ok := t.(*MppTask); ok {
+	if mpp, ok := t.(*physicalop.MppTask); ok {
 		p.SetChildren(t.Plan())
-		return &MppTask{
-			p:           p,
-			partTp:      mpp.partTp,
-			hashCols:    mpp.hashCols,
-			tblColHists: mpp.tblColHists,
-		}
+		nt := physicalop.NewMppTask(p,
+			mpp.GetPartitionType(), mpp.GetHashCols(),
+			mpp.GetTblColHists(), mpp.GetWarnings())
+		return nt
 	}
 	t.ConvertToRootTask(p.SCtx())
 	p.SetChildren(t.Plan())
-	ta := &RootTask{}
+	ta := &physicalop.RootTask{}
 	ta.SetPlan(p)
+	ta.Warnings.CopyFrom(&t.(*physicalop.RootTask).Warnings)
 	return ta
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalSequence) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalSequence implements PhysicalSequence.Attach2Task.
+func attach2Task4PhysicalSequence(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalSequence)
+
 	for _, t := range tasks {
-		_, isMpp := t.(*MppTask)
+		_, isMpp := t.(*physicalop.MppTask)
 		if !isMpp {
 			return tasks[len(tasks)-1]
 		}
 	}
 
-	lastTask := tasks[len(tasks)-1].(*MppTask)
+	lastTask := tasks[len(tasks)-1].(*physicalop.MppTask)
 
 	children := make([]base.PhysicalPlan, 0, len(tasks))
 	for _, t := range tasks {
@@ -2594,24 +2092,23 @@ func (p *PhysicalSequence) Attach2Task(tasks ...base.Task) base.Task {
 
 	p.SetChildren(children...)
 
-	mppTask := &MppTask{
-		p:           p,
-		partTp:      lastTask.partTp,
-		hashCols:    lastTask.hashCols,
-		tblColHists: lastTask.tblColHists,
-	}
-	return mppTask
-}
-
-func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.PhysicalPlan) {
-	switch x := mppPlan.(type) {
-	case *PhysicalTableScan:
-		p.TableScanAndPartitionInfos = append(p.TableScanAndPartitionInfos, tableScanAndPartitionInfo{x, x.PlanPartInfo})
-	default:
-		for _, ch := range mppPlan.Children() {
-			collectPartitionInfosFromMPPPlan(p, ch)
+	mppTask := physicalop.NewMppTask(p, lastTask.GetPartitionType(), lastTask.GetHashCols(), lastTask.GetTblColHists(), nil)
+	tmpWarnings := make([]*physicalop.SimpleWarnings, 0, len(tasks))
+	for _, t := range tasks {
+		if mpp, ok := t.(*physicalop.MppTask); ok {
+			tmpWarnings = append(tmpWarnings, &mpp.Warnings)
+			continue
+		}
+		if root, ok := t.(*physicalop.RootTask); ok {
+			tmpWarnings = append(tmpWarnings, &root.Warnings)
+			continue
+		}
+		if cop, ok := t.(*physicalop.CopTask); ok {
+			tmpWarnings = append(tmpWarnings, &cop.Warnings)
 		}
 	}
+	mppTask.Warnings.CopyFrom(tmpWarnings...)
+	return mppTask
 }
 
 func collectRowSizeFromMPPPlan(mppPlan base.PhysicalPlan) (rowSize float64) {
@@ -2622,83 +2119,11 @@ func collectRowSizeFromMPPPlan(mppPlan base.PhysicalPlan) (rowSize float64) {
 }
 
 func accumulateNetSeekCost4MPP(p base.PhysicalPlan) (cost float64) {
-	if ts, ok := p.(*PhysicalTableScan); ok {
+	if ts, ok := p.(*physicalop.PhysicalTableScan); ok {
 		return float64(len(ts.Ranges)) * float64(len(ts.Columns)) * ts.SCtx().GetSessionVars().GetSeekFactor(ts.Table)
 	}
 	for _, c := range p.Children() {
 		cost += accumulateNetSeekCost4MPP(c)
 	}
 	return
-}
-
-func tryExpandVirtualColumn(p base.PhysicalPlan) {
-	if ts, ok := p.(*PhysicalTableScan); ok {
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-		return
-	}
-	for _, child := range p.Children() {
-		tryExpandVirtualColumn(child)
-	}
-}
-
-func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
-	switch prop.MPPPartitionTp {
-	case property.AnyType:
-		return false
-	case property.BroadcastType:
-		return true
-	case property.SinglePartitionType:
-		return t.partTp != property.SinglePartitionType
-	default:
-		if t.partTp != property.HashType {
-			return true
-		}
-		// TODO: consider equalivant class
-		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
-		if len(prop.MPPPartitionCols) != len(t.hashCols) {
-			return true
-		}
-		for i, col := range prop.MPPPartitionCols {
-			if !col.Equal(t.hashCols[i]) {
-				return true
-			}
-		}
-		return false
-	}
-}
-
-func (t *MppTask) enforceExchanger(prop *property.PhysicalProperty) *MppTask {
-	if !t.needEnforceExchanger(prop) {
-		return t
-	}
-	return t.Copy().(*MppTask).enforceExchangerImpl(prop)
-}
-
-func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask {
-	if collate.NewCollationEnabled() && !t.p.SCtx().GetSessionVars().HashExchangeWithNewCollation && prop.MPPPartitionTp == property.HashType {
-		for _, col := range prop.MPPPartitionCols {
-			if types.IsString(col.Col.RetType.GetType()) {
-				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
-				return &MppTask{}
-			}
-		}
-	}
-	ctx := t.p.SCtx()
-	sender := PhysicalExchangeSender{
-		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
-		HashCols:     prop.MPPPartitionCols,
-	}.Init(ctx, t.p.StatsInfo())
-
-	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
-		sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
-	}
-
-	sender.SetChildren(t.p)
-	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo())
-	receiver.SetChildren(sender)
-	return &MppTask{
-		p:        receiver,
-		partTp:   prop.MPPPartitionTp,
-		hashCols: prop.MPPPartitionCols,
-	}
 }

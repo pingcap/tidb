@@ -25,9 +25,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -56,7 +59,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	lastStepStats := make([]string, 0, 10)
 	var startKey, endKey dbkv.Key
 
-	closeFn := func(s *WriterSummary) {
+	onWriterClose := func(s *WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
@@ -76,13 +79,13 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		SetBlockSize(memSizeLimit).
-		SetOnCloseFunc(closeFn).
+		SetOnCloseFunc(onWriterClose).
 		Build(memStore, "/test", "0")
 
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
@@ -117,11 +120,15 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
+	kvSize := 0
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
+		key := []byte(uuid.New().String())
+		val := []byte("56789")
+		kvSize += len(key) + len(val)
 		kvs[i] = common.KvPair{
-			Key: []byte(uuid.New().String()),
-			Val: []byte("56789"),
+			Key: key,
+			Val: val,
 		}
 	}
 
@@ -134,7 +141,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. merge step
-	datas, stats, err := GetAllFileNames(ctx, memStore, "")
+	datas, stats, err := getKVAndStatFilesByScan(ctx, memStore, "test")
 	require.NoError(t, err)
 
 	dataGroup, _ := splitDataAndStatFiles(datas, stats)
@@ -143,7 +150,9 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	lastStepStats := make([]string, 0, 10)
 	var startKey, endKey dbkv.Key
 
-	closeFn := func(s *WriterSummary) {
+	collector := &execute.TestCollector{}
+
+	onWriterClose := func(s *WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
@@ -161,27 +170,40 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	mergeMemSize := (rand.Intn(10) + 1) * 100
 	// use random mergeMemSize to test different memLimit of writer.
 	// reproduce one bug, see https://github.com/pingcap/tidb/issues/49590
-	bufSizeBak := defaultReadBufferSize
+	bufSizeBak := DefaultReadBufferSize
 	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
-		defaultReadBufferSize = bufSizeBak
+		DefaultReadBufferSize = bufSizeBak
 		defaultOneWriterMemSizeLimit = memLimitBak
 	})
-	defaultReadBufferSize = 100
+	DefaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
+
 	for _, group := range dataGroup {
-		require.NoError(t, MergeOverlappingFiles(
-			ctx,
-			group,
+		wctx := workerpool.NewContext(ctx)
+		op := NewMergeOperator(
+			wctx,
 			memStore,
 			int64(5*size.MB),
 			"/test2",
 			mergeMemSize,
-			closeFn,
+			onWriterClose,
+			collector,
 			1,
 			true,
+			engineapi.OnDuplicateKeyIgnore,
+		)
+
+		require.NoError(t, MergeOverlappingFiles(
+			wctx,
+			group,
+			1,
+			op,
 		))
 	}
+
+	require.EqualValues(t, kvCnt, collector.Rows.Load())
+	require.EqualValues(t, kvSize, collector.Bytes.Load())
 
 	// 3. read and sort step
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
@@ -227,7 +249,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),

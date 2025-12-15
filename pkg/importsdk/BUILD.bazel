@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "importsdk",
+    srcs = ["sdk.go"],
+    importpath = "github.com/pingcap/tidb/pkg/importsdk",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/storage",
+        "//pkg/lightning/config",
+        "//pkg/lightning/log",
+        "//pkg/lightning/mydump",
+        "//pkg/parser/mysql",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "importsdk_test",
+    timeout = "short",
+    srcs = ["sdk_test.go"],
+    embed = [":importsdk"],
+    flaky = True,
+    shard_count = 9,
+    deps = [
+        "//pkg/lightning/config",
+        "//pkg/lightning/log",
+        "//pkg/lightning/mydump",
+        "//pkg/parser/mysql",
+        "//pkg/util/table-filter",
+        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+    ],
+)

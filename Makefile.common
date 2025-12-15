@@ -15,6 +15,7 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
 GOMODCACHE ?= $(shell go env GOMODCACHE)
+GOOS ?= $(shell go env GOOS)
 P=8
 
 # Ensure GOPATH is set before running build process.
@@ -27,14 +28,26 @@ CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
-GO              := GO111MODULE=on go
-BUILD_FLAG	:= -tags codes
+BUILD_TAGS          := codes
+CHECK_BUILD_TAGS    := deadlock,enableassert
+UNIT_TEST_TAGS      := deadlock,intest
+REAL_TIKV_TEST_TAGS := deadlock,intest
 GOEXPERIMENT=
 ifeq ("${ENABLE_FIPS}", "1")
-	BUILD_FLAG = -tags codes,boringcrypto
+	BUILD_TAGS  := $(BUILD_TAGS),boringcrypto
 	GOEXPERIMENT = GOEXPERIMENT=boringcrypto
 endif
-GOBUILD         := $(GOEXPERIMENT) $(GO) build $(BUILD_FLAG)
+
+ifeq ("${NEXT_GEN}", "1")
+	BUILD_TAGS := $(BUILD_TAGS),nextgen
+	CHECK_BUILD_TAGS := $(CHECK_BUILD_TAGS),nextgen
+	UNIT_TEST_TAGS := $(UNIT_TEST_TAGS),nextgen
+	REAL_TIKV_TEST_TAGS := $(REAL_TIKV_TEST_TAGS),nextgen
+endif
+
+GO              := GO111MODULE=on go
+GOBUILD_NO_TAGS := $(GOEXPERIMENT) $(GO) build
+GOBUILD         := $(GOBUILD_NO_TAGS) -tags $(BUILD_TAGS)
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
@@ -121,8 +134,8 @@ DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(shell git
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GoVersion=$(shell go version)"
 
-DUMPLING_GOBUILD := CGO_ENABLED=1 GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
-DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOBUILD := CGO_ENABLED=1 ${GO} build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOTEST  := CGO_ENABLED=1 ${GO} test -ldflags '$(DUMPLING_LDFLAGS)'
 
 TEST_COVERAGE_DIR := "test_coverage"
 
@@ -132,5 +145,7 @@ ifneq ("$(CI)", "")
 	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
 endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
-
+TIDB_SERVER_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server
+IMPORTER_PATH := ./bazel-bin/cmd/importer/importer_/importer
+TIDB_SERVER_CHECK_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server_check
 NOGO_FLAG=true

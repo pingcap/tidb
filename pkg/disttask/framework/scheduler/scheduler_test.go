@@ -24,6 +24,8 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -70,7 +72,7 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
 			switch task.Step {
 			case proto.StepInit:
-				for i := 0; i < subtaskCnt; i++ {
+				for range subtaskCnt {
 					metas = append(metas, []byte{'1'})
 				}
 				logutil.BgLogger().Info("progress step init")
@@ -88,17 +90,22 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	return mockScheduler
 }
 
-func MockSchedulerManager(t *testing.T, ctrl *gomock.Controller, pool *pools.ResourcePool, ext scheduler.Extension, cleanup scheduler.CleanUpRoutine) (*scheduler.Manager, *storage.TaskManager) {
+func MockSchedulerManager(store kv.Storage, pool *pools.ResourcePool, ext scheduler.Extension, cleanup scheduler.CleanUpRoutine) (*scheduler.Manager, *storage.TaskManager) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			mockScheduler := scheduler.NewBaseScheduler(ctx, task, param)
 			mockScheduler.Extension = ext
 			return mockScheduler
 		})
+	if cleanup != nil {
+		scheduler.RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() scheduler.CleanUpRoutine {
+			return cleanup
+		})
+	}
 	return sch, mgr
 }
 
@@ -119,7 +126,7 @@ func TestTaskFailInManager(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "handle_test")
 
-	schManager, mgr := MockSchedulerManager(t, ctrl, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
+	schManager, mgr := MockSchedulerManager(store, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			mockScheduler := mock.NewMockScheduler(ctrl)
@@ -130,7 +137,7 @@ func TestTaskFailInManager(t *testing.T) {
 	defer schManager.Stop()
 
 	// unknown task type
-	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, "", 0, proto.ExtraParams{}, nil)
+	taskID, err := mgr.CreateTask(ctx, "test", "test-type", "", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -140,7 +147,7 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 
 	// scheduler init error
-	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, 1, "", 0, proto.ExtraParams{}, nil)
+	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -171,9 +178,10 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler")
-
-	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), nil)
-	require.NoError(t, mgr.InitMeta(ctx, ":4000", "background"))
+	keyspace := store.GetKeyspace()
+	scope := handle.GetTargetScope()
+	sch, mgr := MockSchedulerManager(store, pool, getNumberExampleSchedulerExt(ctrl), nil)
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", scope))
 	sch.Start()
 	defer func() {
 		sch.Stop()
@@ -214,8 +222,8 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
-	for i := 0; i < taskCnt; i++ {
-		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, "background", 0, proto.ExtraParams{}, nil)
+	for i := range taskCnt {
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, keyspace, 0, scope, 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
@@ -225,7 +233,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	checkSubtaskCnt(tasks, taskIDs)
 	// test parallelism control
 	if taskCnt == 1 {
-		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, "background", 0, proto.ExtraParams{}, nil)
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, keyspace, 0, scope, 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
 		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.
@@ -274,7 +282,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			require.NoError(t, err)
 		}
 	} else if isPauseAndResume {
-		for i := 0; i < taskCnt; i++ {
+		for i := range taskCnt {
 			found, err := mgr.PauseTask(ctx, fmt.Sprintf("%d", i))
 			require.True(t, found)
 			require.NoError(t, err)
@@ -286,7 +294,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			}
 		}
 		checkGetTaskState(proto.TaskStatePaused)
-		for i := 0; i < taskCnt; i++ {
+		for i := range taskCnt {
 			found, err := mgr.ResumeTask(ctx, fmt.Sprintf("%d", i))
 			require.True(t, found)
 			require.NoError(t, err)
@@ -394,6 +402,7 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 }
 
 func TestIsCancelledErr(t *testing.T) {
+	require.False(t, scheduler.IsCancelledErr(nil))
 	require.False(t, scheduler.IsCancelledErr(errors.New("some err")))
 	require.False(t, scheduler.IsCancelledErr(context.Canceled))
 	require.True(t, scheduler.IsCancelledErr(errors.New("cancelled by user")))
@@ -406,7 +415,8 @@ func TestManagerScheduleLoop(t *testing.T) {
 	defer ctrl.Finish()
 	mockScheduler := mock.NewMockScheduler(ctrl)
 
-	_ = testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t)
+	keyspace := store.GetKeyspace()
 	require.Eventually(t, func() bool {
 		taskMgr, err := storage.GetTaskManager()
 		return err == nil && taskMgr != nil
@@ -418,17 +428,9 @@ func TestManagerScheduleLoop(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, taskMgr)
 
-	// in this test, we only test scheduler manager, so we add a subtask takes 16
-	// slots to avoid reserve by slots, and make sure below test cases works.
-	serverInfos, err := infosync.GetAllServerInfo(ctx)
-	require.NoError(t, err)
-	for _, s := range serverInfos {
-		execID := disttaskutil.GenerateExecID(s)
-		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.SubtaskStatePending, proto.TaskTypeExample, 16)
-	}
 	concurrencies := []int{4, 6, 16, 2, 4, 4}
-	waitChannels := make(map[string](chan struct{}))
-	for i := 0; i < len(concurrencies); i++ {
+	waitChannels := make(map[string]chan struct{})
+	for i := range concurrencies {
 		waitChannels[fmt.Sprintf("key/%d", i)] = make(chan struct{})
 	}
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
@@ -459,10 +461,6 @@ func TestManagerScheduleLoop(t *testing.T) {
 			return mockScheduler
 		},
 	)
-	for i := 0; i < len(concurrencies); i++ {
-		_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, concurrencies[i], "", 0, proto.ExtraParams{}, []byte("{}"))
-		require.NoError(t, err)
-	}
 	getRunningTaskKeys := func() []string {
 		tasks, err := taskMgr.GetTasksInStates(ctx, proto.TaskStateRunning)
 		require.NoError(t, err)
@@ -473,34 +471,77 @@ func TestManagerScheduleLoop(t *testing.T) {
 		slices.Sort(taskKeys)
 		return taskKeys
 	}
-	require.Eventually(t, func() bool {
-		taskKeys := getRunningTaskKeys()
-		return err == nil && len(taskKeys) == 4 &&
-			taskKeys[0] == "key/0" && taskKeys[1] == "key/1" &&
-			taskKeys[2] == "key/3" && taskKeys[3] == "key/4"
-	}, time.Second*10, time.Millisecond*100)
-	// finish the first task
-	close(waitChannels["key/0"])
-	require.Eventually(t, func() bool {
-		taskKeys := getRunningTaskKeys()
-		return err == nil && len(taskKeys) == 4 &&
-			taskKeys[0] == "key/1" && taskKeys[1] == "key/3" &&
-			taskKeys[2] == "key/4" && taskKeys[3] == "key/5"
-	}, time.Second*10, time.Millisecond*100)
-	// finish the second task
-	close(waitChannels["key/1"])
-	require.Eventually(t, func() bool {
-		taskKeys := getRunningTaskKeys()
-		return err == nil && len(taskKeys) == 4 &&
-			taskKeys[0] == "key/2" && taskKeys[1] == "key/3" &&
-			taskKeys[2] == "key/4" && taskKeys[3] == "key/5"
-	}, time.Second*10, time.Millisecond*100)
-	// close others
-	for i := 2; i < len(concurrencies); i++ {
-		close(waitChannels[fmt.Sprintf("key/%d", i)])
-	}
-	require.Eventually(t, func() bool {
-		taskKeys := getRunningTaskKeys()
-		return err == nil && len(taskKeys) == 0
-	}, time.Second*10, time.Millisecond*100)
+
+	t.Run("in classic kernel, reserve by strips", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("this test is for classic kernel only")
+		}
+		// in this test, we only test scheduler manager, so we add a subtask takes 16
+		// slots to avoid reserve by slots, and make sure below test cases works.
+		serverInfos, err := infosync.GetAllServerInfo(ctx)
+		require.NoError(t, err)
+		for _, s := range serverInfos {
+			execID := disttaskutil.GenerateExecID(s)
+			testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.SubtaskStatePending, proto.TaskTypeExample, 16)
+		}
+		for i := range concurrencies {
+			_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, keyspace, concurrencies[i], "", 1, proto.ExtraParams{}, []byte("{}"))
+			require.NoError(t, err)
+		}
+		require.Eventually(t, func() bool {
+			taskKeys := getRunningTaskKeys()
+			return slices.Equal(taskKeys, []string{"key/0", "key/1", "key/3", "key/4"})
+		}, time.Second*10, time.Millisecond*100)
+		// finish the first task, task 'key/5' can be scheduled now
+		waitChannels["key/0"] <- struct{}{}
+		require.Eventually(t, func() bool {
+			taskKeys := getRunningTaskKeys()
+			return slices.Equal(taskKeys, []string{"key/1", "key/3", "key/4", "key/5"})
+		}, time.Second*10, time.Millisecond*100)
+		// finish the second task, task 'key/2' can be scheduled now
+		// note, we don't preempt task 'key/3'/'key/4'/'key/5' even if 'key/2' reserves
+		// all slots, as schedule doesn't take too much resource, it's task executor
+		// that will be preempted.
+		waitChannels["key/1"] <- struct{}{}
+		require.Eventually(t, func() bool {
+			taskKeys := getRunningTaskKeys()
+			return slices.Equal(taskKeys, []string{"key/2", "key/3", "key/4", "key/5"})
+		}, time.Second*10, time.Millisecond*100)
+		// close others
+		for i := 2; i < len(concurrencies); i++ {
+			waitChannels[fmt.Sprintf("key/%d", i)] <- struct{}{}
+		}
+		require.Eventually(t, func() bool {
+			taskKeys := getRunningTaskKeys()
+			return len(taskKeys) == 0
+		}, time.Second*10, time.Millisecond*100)
+	})
+
+	t.Run("in nextgen kernel, start scheduler without reserve slots", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("this test is for nextgen kernel only")
+		}
+		for i := range concurrencies {
+			_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, keyspace, concurrencies[i], "", 1, proto.ExtraParams{}, []byte("{}"))
+			require.NoError(t, err)
+		}
+		// even with 1 node, all tasks can be scheduled, as cluster controller
+		// will scale node resource to meet the requirement.
+		require.Eventually(t, func() bool {
+			taskKeys := getRunningTaskKeys()
+			return slices.Equal(taskKeys, []string{"key/0", "key/1", "key/2", "key/3", "key/4", "key/5"})
+		}, time.Second*10, time.Millisecond*100)
+		status, err2 := handle.GetScheduleStatus(ctx)
+		require.NoError(t, err2)
+		require.Equal(t, 6, status.TaskQueue.ScheduledCount)
+		require.Equal(t, 3, status.TiDBWorker.RequiredCount)
+		// finish tasks
+		for i := range len(concurrencies) {
+			waitChannels[fmt.Sprintf("key/%d", i)] <- struct{}{}
+		}
+		require.Eventually(t, func() bool {
+			taskKeys := getRunningTaskKeys()
+			return len(taskKeys) == 0
+		}, time.Second*10, time.Millisecond*100)
+	})
 }

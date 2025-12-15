@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +33,7 @@ func TestConcurrentMap(t *testing.T) {
 	// Using go routines insert 1000 entries into the map.
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iterations/2; i++ {
+		for i := range iterations / 2 {
 			// Add entry to map.
 			m.Insert(uint64(i%mod), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
 		}
@@ -50,7 +49,7 @@ func TestConcurrentMap(t *testing.T) {
 	wg.Wait()
 
 	// check whether i exist in the map, surely
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		found := false
 		for en, ok := m.Get(uint64(i % mod)); en != nil; en = en.Next {
 			require.True(t, ok)
@@ -70,17 +69,21 @@ func TestConcurrentMap(t *testing.T) {
 
 func TestConcurrentMapMemoryUsage(t *testing.T) {
 	m := newConcurrentMap()
-	var iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen
-	var memUsage int64
+	memUsage := int64(0)
+	for _, s := range m {
+		s.items.MockSeedForTest(4992862800126241206)
+		memUsage += int64(s.items.Bytes)
+	}
+	var iterations = 1024 * 10
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	// Using go routines insert 1000 entries into the map.
 	go func() {
 		defer wg.Done()
 		var memDelta int64
-		for i := 0; i < iterations/2; i++ {
+		for i := range iterations / 2 {
 			// Add entry to map.
-			memDelta += m.Insert(uint64(i*ShardCount), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
+			memDelta += m.Insert(uint64(i), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
 		}
 		atomic.AddInt64(&memUsage, memDelta)
 	}()
@@ -90,13 +93,16 @@ func TestConcurrentMapMemoryUsage(t *testing.T) {
 		var memDelta int64
 		for i := iterations / 2; i < iterations; i++ {
 			// Add entry to map.
-			memDelta += m.Insert(uint64(i*ShardCount), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
+			memDelta += m.Insert(uint64(i), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
 		}
 		atomic.AddInt64(&memUsage, memDelta)
 	}()
 	wg.Wait()
 
-	// The first bucket memory usage will be recorded in concurrentMapHashTable, here only test the memory delta.
-	require.Equal(t, int64(1023)*hack.DefBucketMemoryUsageForMapIntToPtr, memUsage)
-	require.Equal(t, int64(10), m.getShard(0).bInMap)
+	require.Equal(t, int64(283840), memUsage)
+	realSize := int64(0)
+	for _, s := range m {
+		realSize += int64(s.items.RealBytes())
+	}
+	require.Equal(t, int64(376320), realSize)
 }

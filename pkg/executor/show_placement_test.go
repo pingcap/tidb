@@ -505,7 +505,7 @@ func TestShowPlacementHandleRegionStatus(t *testing.T) {
 	defer recoverCli()
 
 	mockGetState := func(tblName, partition string, state string) *mock.Call {
-		is := tk.Session().GetDomainInfoSchema()
+		is := tk.Session().GetLatestInfoSchema()
 		tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblID := tbl.ID

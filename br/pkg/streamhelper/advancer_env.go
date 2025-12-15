@@ -25,6 +25,11 @@ import (
 const (
 	logBackupServiceID    = "log-backup-coordinator"
 	logBackupSafePointTTL = 24 * time.Hour
+
+	// dialTimeOut is the timeout for establishing the connection to a TiKV.
+	// when TiKV was disconnected, the request may not be positive rejected but get stuck,
+	// which may make the remaining task in a tick fail.
+	dialTimeOut = 8 * time.Second
 )
 
 // Env is the interface required by the advancer.
@@ -149,7 +154,7 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 	if err != nil {
 		return nil, err
 	}
-	return clusterEnv{
+	env := clusterEnv{
 		clis: utils.NewStoreManager(pdCli, keepalive.ClientParameters{
 			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
@@ -157,7 +162,10 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner:      PDRegionScanner{Client: pdCli},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
-	}, nil
+	}
+
+	env.clis.DialTimeout = dialTimeOut
+	return env, nil
 }
 
 type LogBackupService interface {

@@ -3,9 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "backup",
     srcs = [
-        "check.go",
         "client.go",
-        "metrics.go",
+        "limit.go",
         "schema.go",
         "store.go",
     ],
@@ -30,9 +29,11 @@ go_library(
         "//pkg/distsql",
         "//pkg/kv",
         "//pkg/meta",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/statistics/handle",
         "//pkg/statistics/util",
+        "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/table-filter",
         "@com_github_google_btree//:btree",
@@ -44,7 +45,6 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
-        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_client_go_v2//util",
@@ -61,6 +61,7 @@ go_test(
     timeout = "short",
     srcs = [
         "client_test.go",
+        "limit_test.go",
         "main_test.go",
         "schema_test.go",
         "store_test.go",
@@ -68,7 +69,7 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-    shard_count = 15,
+    shard_count = 18,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb/mock",

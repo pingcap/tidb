@@ -41,7 +41,7 @@ func (b *builtinTimeIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if buf.IsNull(i) {
 			i64s[i] = 1
 		} else {
@@ -59,7 +59,7 @@ func (b *builtinLogicOrSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk,
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	x := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		res, isNull, err := b.evalInt(ctx, input.GetRow(i))
 		if err != nil {
 			return err
@@ -97,7 +97,7 @@ func (b *builtinLogicOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	i64s := result.Int64s()
 	arg1s := buf.Int64s()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		isNull0 := result.IsNull(i)
 		isNull1 := buf.IsNull(i)
 		// Because buf is used to store the conversion of args[0] in place, it could
@@ -140,7 +140,7 @@ func (b *builtinBitOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		arg0s[i] |= arg1s[i]
 	}
 	return nil
@@ -166,7 +166,7 @@ func (b *builtinDecimalIsFalseSig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
 
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		isNull := buf.IsNull(i)
 		if b.keepNull && isNull {
 			result.SetNull(i, true)
@@ -191,7 +191,7 @@ func (b *builtinIntIsFalseSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 		return err
 	}
 	i64s := result.Int64s()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		isNull := result.IsNull(i)
 		if b.keepNull && isNull {
 			continue
@@ -220,7 +220,7 @@ func (b *builtinUnaryMinusRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chu
 
 	n := input.NumRows()
 	f64s := result.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		f64s[i] = -f64s[i]
 	}
 	return nil
@@ -236,7 +236,7 @@ func (b *builtinBitNegSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	}
 	n := input.NumRows()
 	args := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		args[i] = ^args[i]
 	}
 	return nil
@@ -253,7 +253,7 @@ func (b *builtinUnaryMinusDecimalSig) vecEvalDecimal(ctx EvalContext, input *chu
 
 	n := input.NumRows()
 	decs := result.Decimals()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -272,7 +272,7 @@ func (b *builtinIntIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	}
 
 	i64s := result.Int64s()
-	for i := 0; i < len(i64s); i++ {
+	for i := range i64s {
 		if result.IsNull(i) {
 			i64s[i] = 1
 			result.SetNull(i, false)
@@ -301,7 +301,7 @@ func (b *builtinRealIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if buf.IsNull(i) {
 			i64s[i] = 1
 		} else {
@@ -330,7 +330,7 @@ func (b *builtinUnaryNotRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -351,7 +351,7 @@ func (b *builtinLogicAndSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	x := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		res, isNull, err := b.evalInt(ctx, input.GetRow(i))
 		if err != nil {
 			return err
@@ -389,7 +389,7 @@ func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	i64s := result.Int64s()
 	arg1 := buf1.Int64s()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		isNull0 := result.IsNull(i)
 		if !isNull0 && i64s[i] == 0 {
 			result.SetNull(i, false)
@@ -434,7 +434,7 @@ func (b *builtinBitXorSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		arg0s[i] ^= arg1s[i]
 	}
 	return nil
@@ -464,7 +464,7 @@ func (b *builtinLogicXorSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	// Returns NULL if either operand is NULL.
 	// See https://dev.mysql.com/doc/refman/5.7/en/logical-operators.html#operator_xor
 	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -499,7 +499,7 @@ func (b *builtinBitAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		arg0s[i] &= arg1s[i]
 	}
 	return nil
@@ -523,7 +523,7 @@ func (b *builtinRealIsFalseSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
 	bufF64s := buf.Float64s()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		isNull := buf.IsNull(i)
 		if b.keepNull && isNull {
 			result.SetNull(i, true)
@@ -549,7 +549,7 @@ func (b *builtinUnaryMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 	n := input.NumRows()
 	args := result.Int64s()
 	if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -559,7 +559,7 @@ func (b *builtinUnaryMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 			args[i] = -args[i]
 		}
 	} else {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if result.IsNull(i) {
 				continue
 			}
@@ -591,7 +591,7 @@ func (b *builtinUnaryNotDecimalSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -615,7 +615,7 @@ func (b *builtinUnaryNotIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	}
 
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -646,7 +646,7 @@ func (b *builtinDecimalIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if buf.IsNull(i) {
 			i64s[i] = 1
 		} else {
@@ -676,7 +676,7 @@ func (b *builtinLeftShiftSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		arg0s[i] = int64(uint64(arg0s[i]) << uint64(arg1s[i]))
 	}
 	return nil
@@ -702,7 +702,7 @@ func (b *builtinRightShiftSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		arg0s[i] = int64(uint64(arg0s[i]) >> uint64(arg1s[i]))
 	}
 	return nil
@@ -726,7 +726,7 @@ func (b *builtinRealIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	result.ResizeInt64(numRows, false)
 	f64s := buf.Float64s()
 	i64s := result.Int64s()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		isNull := buf.IsNull(i)
 		if b.keepNull && isNull {
 			result.SetNull(i, true)
@@ -760,7 +760,7 @@ func (b *builtinDecimalIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
 
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		isNull := buf.IsNull(i)
 		if b.keepNull && isNull {
 			result.SetNull(i, true)
@@ -785,7 +785,7 @@ func (b *builtinIntIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 		return err
 	}
 	i64s := result.Int64s()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		isNull := result.IsNull(i)
 		if b.keepNull && isNull {
 			continue
@@ -818,7 +818,7 @@ func (b *builtinDurationIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if buf.IsNull(i) {
 			i64s[i] = 1
 		} else {

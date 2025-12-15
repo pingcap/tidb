@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "schstatus",
+    srcs = [
+        "status.go",
+        "tune.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/schstatus",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "schstatus_test",
+    timeout = "short",
+    srcs = ["status_test.go"],
+    embed = [":schstatus"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

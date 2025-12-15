@@ -139,10 +139,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cznic/mathutil"
-	"github.com/cznic/sortutil"
-	"github.com/cznic/strutil"
+	"modernc.org/mathutil"
 	parser "modernc.org/parser/yacc"
+	"modernc.org/sortutil"
+	"modernc.org/strutil"
 	"modernc.org/y"
 )
 
@@ -833,7 +833,7 @@ import __yyfmt__ "fmt"
 	}
 }
 
-func mustFormat(f strutil.Formatter, format string, args ...interface{}) {
+func mustFormat(f strutil.Formatter, format string, args ...any) {
 	_, err := f.Format(format, args...)
 	if err != nil {
 		log.Fatalf("format error %v", err)

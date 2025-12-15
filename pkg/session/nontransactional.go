@@ -33,7 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -74,13 +75,20 @@ func (j job) String(redacted string) string {
 }
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
-func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session) (sqlexec.RecordSet, error) {
+func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session) (sqlexec.RecordSet, error) {
 	sessVars := se.GetSessionVars()
 	originalReadStaleness := se.GetSessionVars().ReadStaleness
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	sessVars.ReadStaleness = 0
+	// NT-DML should not use the bulk DML mode.
+	originalBulkDMLEnabled := sessVars.BulkDMLEnabled
+	sessVars.BulkDMLEnabled = false
+	// NT-DML is used to be large and unusual, so we don't mix it with other DMLs, give it the prefix "NTDML-".
+	stmtType := fmt.Sprintf("NTDML-%s", ast.GetStmtLabel(stmt.DMLStmt))
+	ctx = stmtctx.WithStmtLabel(ctx, stmtType)
 	defer func() {
 		sessVars.ReadStaleness = originalReadStaleness
+		sessVars.BulkDMLEnabled = originalBulkDMLEnabled
 	}()
 	nodeW := resolve.NewNodeW(stmt)
 	err := core.Preprocess(ctx, se, nodeW)
@@ -131,7 +139,7 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 //
 // Note: this is not a comprehensive check.
 // We do this to help user prevent some easy mistakes, at an acceptable maintenance cost.
-func checkConstraintWithShardColumn(se sessiontypes.Session, stmt *ast.NonTransactionalDMLStmt,
+func checkConstraintWithShardColumn(se sessionapi.Session, stmt *ast.NonTransactionalDMLStmt,
 	tableName *ast.TableName, shardColumnInfo *model.ColumnInfo, tableSources []*ast.TableSource) error {
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.UpdateStmt:
@@ -150,7 +158,7 @@ func checkConstraintWithShardColumn(se sessiontypes.Session, stmt *ast.NonTransa
 }
 
 // shard column should not be updated.
-func checkUpdateShardColumn(se sessiontypes.Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
+func checkUpdateShardColumn(se sessionapi.Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
 	tableName *ast.TableName, tableSources []*ast.TableSource, isUpdate bool) error {
 	// if the table has alias, the alias is used in assignments, and we should use aliased name to compare
 	aliasedShardColumnTableName := tableName.Name.L
@@ -180,7 +188,7 @@ func checkUpdateShardColumn(se sessiontypes.Session, assignments []*ast.Assignme
 	return nil
 }
 
-func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session) error {
+func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session) error {
 	sessVars := se.GetSessionVars()
 	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
 		return errors.Errorf("non-transactional DML can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
@@ -258,7 +266,7 @@ func checkReadClauses(limit *ast.Limit, order *ast.OrderByClause) error {
 
 // single-threaded worker. work on the key range [start, end]
 func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
-	tableName *resolve.TableNameW, se sessiontypes.Session, originalCondition ast.ExprNode) ([]string, error) {
+	tableName *resolve.TableNameW, se sessionapi.Session, originalCondition ast.ExprNode) ([]string, error) {
 	// prepare for the construction of statement
 	var shardColumnRefer *resolve.ResultField
 	var shardColumnType types.FieldType
@@ -333,7 +341,7 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 	return splitStmts, nil
 }
 
-func doOneJob(ctx context.Context, job *job, totalJobCount int, options statementBuildInfo, se sessiontypes.Session, dryRun bool) string {
+func doOneJob(ctx context.Context, job *job, totalJobCount int, options statementBuildInfo, se sessionapi.Session, dryRun bool) string {
 	var whereCondition ast.ExprNode
 
 	if job.start.IsNull() {
@@ -423,7 +431,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 		}
 	})
 	if err != nil {
-		logutil.Logger(ctx).Error("Non-transactional DML SQL failed", zap.String("job", dmlSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
+		logutil.Logger(ctx).Info("Non-transactional DML SQL failed", zap.String("job", dmlSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
 		job.err = err
 	} else {
 		logutil.Logger(ctx).Info("Non-transactional DML SQL finished successfully", zap.Int("jobID", job.jobID),
@@ -435,7 +443,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	return ""
 }
 
-func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session,
+func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session,
 	selectSQL string, shardColumnInfo *model.ColumnInfo, memTracker *memory.Tracker) ([]job, error) {
 	var shardColumnCollate string
 	if shardColumnInfo != nil {
@@ -447,6 +455,15 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	// A NT-DML is not a SELECT. We ignore the SelectLimit for selectSQL so that it can read all values.
 	originalSelectLimit := se.GetSessionVars().SelectLimit
 	se.GetSessionVars().SelectLimit = math.MaxUint64
+	// save original max execution time, note it uses MaxExecutionTime instead of GetMaxExecutionTime on purpose
+	// because GetMaxExecutionTime may return 0 when current StmtCtx is not in select query, while we need to
+	// restore the exact value of MaxExecutionTime.
+	originalMaxExecutionTime := se.GetSessionVars().MaxExecutionTime
+	// A NT-DML is not read-only, so we disable max execution time for it.
+	se.GetSessionVars().MaxExecutionTime = 0
+	defer func() {
+		se.GetSessionVars().MaxExecutionTime = originalMaxExecutionTime
+	}()
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	rss, err := se.Execute(ctx, selectSQL)
 	se.GetSessionVars().SelectLimit = originalSelectLimit
@@ -521,7 +538,15 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 		currentStart = *currentStart.Clone()
 	}
 
-	return jobs, nil
+	failpoint.Inject("CheckMaxExecutionTime", func(val failpoint.Value) {
+		if val.(bool) {
+			if se.GetSessionVars().MaxExecutionTime > 0 {
+				err = errors.New("injected max execution time exceeded error")
+			}
+		}
+	})
+
+	return jobs, err
 }
 
 func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size int, tracker *memory.Tracker) []job {
@@ -530,7 +555,7 @@ func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size i
 	return jobs
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, resolveCtx *resolve.Context, se sessiontypes.Session) (
+func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, resolveCtx *resolve.Context, se sessionapi.Session) (
 	*ast.TableName, string, *model.ColumnInfo, []*ast.TableSource, error) {
 	// only use the first table
 	join, ok := stmt.DMLStmt.TableRefsJoin()
@@ -577,7 +602,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, resolveCtx *resolve.Conte
 	return tableName, selectSQL, shardColumnInfo, tableSources, nil
 }
 
-func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session, tableSources []*ast.TableSource,
+func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session, tableSources []*ast.TableSource,
 	leftMostTableName *ast.TableName, leftMostTableSource *ast.TableSource) (
 	*model.ColumnInfo, *ast.TableName, error) {
 	var indexed bool

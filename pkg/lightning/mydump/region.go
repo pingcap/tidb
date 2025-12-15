@@ -22,10 +22,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -167,6 +168,8 @@ type DataDivideConfig struct {
 	// we need it read row-count for parquet, and to read line terminator to split large CSV files
 	Store     storage.ExternalStorage
 	TableMeta *MDTableMeta
+	// whether to skip reading parquet row count
+	SkipParquetRowCount bool
 
 	// only used when split large CSV files.
 	StrictFormat           bool
@@ -236,12 +239,11 @@ func MakeTableRegions(
 				sizes   []float64
 				err     error
 			)
-			dataFileSize := info.FileMeta.FileSize
 			if info.FileMeta.Type == SourceTypeParquet {
 				regions, sizes, err = makeParquetFileRegion(egCtx, cfg, info)
 			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 				info.FileMeta.Compression == CompressionNone &&
-				dataFileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
+				info.FileMeta.FileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
 				// If a csv file is overlarge, we need to split it into multiple regions.
 				// Note: We can only split a csv file whose format is strict.
 				// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
@@ -253,7 +255,7 @@ func MakeTableRegions(
 				regions, sizes, err = MakeSourceFileRegion(egCtx, cfg, info)
 			}
 			if err != nil {
-				log.FromContext(egCtx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
+				logutil.Logger(egCtx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
 				return err
 			}
 			result := fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}
@@ -288,7 +290,7 @@ func MakeTableRegions(
 
 	batchSize := CalculateBatchSize(float64(cfg.EngineDataSize), meta.IsRowOrdered, float64(meta.TotalSize))
 
-	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
+	logutil.Logger(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
 		zap.Int64("MaxChunkSize", cfg.MaxChunkSize),
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Float64("BatchSize", batchSize),
@@ -351,7 +353,7 @@ func MakeSourceFileRegion(
 		regionSize = fi.FileMeta.RealSize
 	}
 	if regionSize > tableRegionSizeWarningThreshold {
-		log.FromContext(ctx).Warn(
+		logutil.Logger(ctx).Warn(
 			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
 			zap.String("file", fi.FileMeta.Path),
 			zap.Int64("size", regionSize))
@@ -366,22 +368,37 @@ func makeParquetFileRegion(
 	cfg *DataDivideConfig,
 	dataFile FileInfo,
 ) ([]*TableRegion, []float64, error) {
-	numberRows := dataFile.FileMeta.Rows
-	var err error
-	// for safety
-	if numberRows <= 0 {
-		numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta)
-		if err != nil {
+	var (
+		numberRows = dataFile.FileMeta.Rows
+		err        error
+	)
+	if !cfg.SkipParquetRowCount {
+		if numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta); err != nil {
 			return nil, nil, err
 		}
+	} else {
+		if numberRows <= 0 {
+			numberRows = dataFile.FileMeta.FileSize
+		}
+
+		failpoint.Inject("mockParquetRowCount", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				numberRows = int64(v)
+			}
+		})
 	}
+
+	// endOffset is used to indicate the read range of the file.
+	// For Parquet files, we don't support file split and always read
+	// until the end of the file. As the numberRows maybe underestimated,
+	// we set endOffset to math.MaxInt64.
 	region := &TableRegion{
 		DB:       cfg.TableMeta.DB,
 		Table:    cfg.TableMeta.Name,
 		FileMeta: dataFile.FileMeta,
 		Chunk: Chunk{
 			Offset:       0,
-			EndOffset:    numberRows,
+			EndOffset:    math.MaxInt64,
 			RealOffset:   0,
 			PrevRowIDMax: 0,
 			RowIDMax:     numberRows,
@@ -430,10 +447,7 @@ func SplitLargeCSV(
 			columns = parser.Columns()
 		}
 		startOffset, _ = parser.Pos()
-		endOffset = startOffset + maxRegionSize
-		if endOffset > dataFile.FileMeta.FileSize {
-			endOffset = dataFile.FileMeta.FileSize
-		}
+		endOffset = min(startOffset+maxRegionSize, dataFile.FileMeta.FileSize)
 		_ = parser.Close()
 	}
 	divisor := int64(cfg.ColumnCnt)
@@ -465,7 +479,7 @@ func SplitLargeCSV(
 					_ = parser.Close()
 					return nil, nil, err
 				}
-				log.FromContext(ctx).Warn("file contains no terminator at end",
+				logutil.Logger(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
 					zap.String("terminator", cfg.CSV.LinesTerminatedBy))
 				pos = dataFile.FileMeta.FileSize

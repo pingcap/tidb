@@ -652,13 +652,14 @@ func TestLocalResource(t *testing.T) {
 
 	// 2. source-size is bigger than disk-size, with default disk-quota will trigger a critical error
 	rc.checkTemplate = NewSimpleTemplate()
+	rc.cfg.TikvImporter.DiskQuota = config.ByteSize(4 * 1024)
 	estimatedSizeResult.SizeWithIndex = 4096
 	err = rc.localResource(ctx)
 	require.NoError(t, err)
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
 	require.Equal(t, 1, tmpl.criticalFailedCount)
-	require.Equal(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB, please set `tikv-importer.disk-quota` to a smaller value than 2KiB or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports", tmpl.criticalMsgs[0])
+	require.Equal(t, "local disk space is insufficient to meet the configured disk-quota. Available space: 2KiB, Configured disk-quota: 4KiB. Please increase the available disk space or adjust the tikv-importer.disk-quota setting to a value lower than the available space and try again", tmpl.criticalMsgs[0])
 
 	// 3. source-size is bigger than disk-size, with a vaild disk-quota will trigger a warning
 	rc.checkTemplate = NewSimpleTemplate()
@@ -670,4 +671,15 @@ func TestLocalResource(t *testing.T) {
 	require.Equal(t, 1, tmpl.warnFailedCount)
 	require.Equal(t, 0, tmpl.criticalFailedCount)
 	require.Equal(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota (size: 1KiB) to finish imports, which may slow down import", tmpl.normalMsgs[1])
+
+	// 4. disk-quota set to 0: Warning log triggered, but import still passes
+	rc.checkTemplate = NewSimpleTemplate()
+	rc.cfg.TikvImporter.DiskQuota = 0
+	estimatedSizeResult.SizeWithIndex = 1000
+	err = rc.localResource(ctx)
+	require.NoError(t, err)
+	tmpl = rc.checkTemplate.(*SimpleTemplate)
+	require.Equal(t, 1, tmpl.warnFailedCount)
+	require.Equal(t, 0, tmpl.criticalFailedCount)
+	require.Equal(t, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB", tmpl.normalMsgs[1])
 }

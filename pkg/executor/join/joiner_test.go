@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -38,12 +38,12 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
-	ctx.BindDomain(domain.NewMockDomain())
+	ctx.BindDomainAndSchValidator(domain.NewMockDomain(), nil)
 	return ctx
 }
 
 func TestRequiredRows(t *testing.T) {
-	joinTypes := []logicalop.JoinType{logicalop.InnerJoin, logicalop.LeftOuterJoin, logicalop.RightOuterJoin}
+	joinTypes := []base.JoinType{base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin}
 	lTypes := [][]byte{
 		{mysql.TypeLong},
 		{mysql.TypeFloat},
@@ -78,7 +78,7 @@ func TestRequiredRows(t *testing.T) {
 				fields = append(fields, lfields...)
 				result := chunk.New(fields, maxChunkSize, maxChunkSize)
 
-				for i := 0; i < 10; i++ {
+				for range 10 {
 					required := rand.Int()%maxChunkSize + 1
 					result.SetRequiredRows(required, maxChunkSize)
 					result.Reset()

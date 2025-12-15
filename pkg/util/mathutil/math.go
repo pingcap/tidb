@@ -15,10 +15,10 @@
 package mathutil
 
 import (
+	"cmp"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"golang.org/x/exp/constraints"
 )
 
 // Architecture and/or implementation specific integer limits and bit widths.
@@ -69,7 +69,7 @@ func IsFinite(f float64) bool {
 }
 
 // Clamp restrict a value to a certain interval.
-func Clamp[T constraints.Ordered](n, minv, maxv T) T {
+func Clamp[T cmp.Ordered](n, minv, maxv T) T {
 	if n >= maxv {
 		return maxv
 	} else if n <= minv {

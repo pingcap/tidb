@@ -206,7 +206,8 @@ func TestLongBinaryPlan(t *testing.T) {
 	tk.MustExec("drop table if exists th")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 1000;")
-	tk.MustQuery("select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i")
+	// find the test is not stable enough, so we use a sleep to make sure the query can be logged in slow log.
+	tk.MustQuery("select sleep(0.3), count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i")
 
 	result := testdata.ConvertRowsToStrings(tk.MustQuery("select binary_plan from information_schema.slow_query " +
 		`where query like "%th t1 join th t2 join th t3%" and query not like "%like%" ` +

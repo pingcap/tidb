@@ -42,9 +42,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// MockDMLExecutionStateBeforeImport is a failpoint to mock the DML execution state before import.
-var MockDMLExecutionStateBeforeImport func()
-
 // BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
 	// Register create a new engineInfo for each index ID and register it to the
@@ -111,7 +108,7 @@ type litBackendCtx struct {
 	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
-	checkpointMgr   *CheckpointManager
+	checkpointMgr   CheckpointOperator
 	etcdClient      *clientv3.Client
 	initTS          uint64
 	importTS        uint64
@@ -160,7 +157,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 }
 
 func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	dupeController := bc.backend.GetDupeController(bc.cfg.WorkerConcurrency, nil)
+	dupeController := bc.backend.GetDupeController(bc.cfg.GetWorkerConcurrency(), nil)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode:     mysql.ModeStrictAllTables,
 		SysVars:     bc.sysVars,
@@ -220,11 +217,7 @@ func (bc *litBackendCtx) Ingest(ctx context.Context) error {
 		defer release()
 	}
 
-	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
-		if MockDMLExecutionStateBeforeImport != nil {
-			MockDMLExecutionStateBeforeImport()
-		}
-	})
+	failpoint.InjectCall("beforeBackendIngest")
 
 	err = bc.unsafeImportAndResetAllEngines(ctx)
 	if err != nil {
@@ -277,7 +270,7 @@ func (bc *litBackendCtx) unsafeImportAndResetAllEngines(ctx context.Context) err
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInfo) error {
-	logger := log.FromContext(bc.ctx).With(
+	logger := log.Wrap(logutil.Logger(bc.ctx)).With(
 		zap.Stringer("engineUUID", ei.uuid),
 	)
 	logger.Info(LitInfoUnsafeImport,
@@ -367,7 +360,7 @@ func (bc *litBackendCtx) Close() {
 // NextStartKey implements CheckpointOperator interface.
 func (bc *litBackendCtx) NextStartKey() tikv.Key {
 	if bc.checkpointMgr != nil {
-		return bc.checkpointMgr.NextKeyToProcess()
+		return bc.checkpointMgr.NextStartKey()
 	}
 	return nil
 }
@@ -383,34 +376,39 @@ func (bc *litBackendCtx) TotalKeyCount() int {
 // AddChunk implements CheckpointOperator interface.
 func (bc *litBackendCtx) AddChunk(id int, endKey tikv.Key) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.Register(id, endKey)
+		bc.checkpointMgr.AddChunk(id, endKey)
 	}
 }
 
 // UpdateChunk implements CheckpointOperator interface.
 func (bc *litBackendCtx) UpdateChunk(id int, count int, done bool) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.UpdateTotalKeys(id, count, done)
+		bc.checkpointMgr.UpdateChunk(id, count, done)
 	}
 }
 
 // FinishChunk implements CheckpointOperator interface.
 func (bc *litBackendCtx) FinishChunk(id int, count int) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.UpdateWrittenKeys(id, count)
+		bc.checkpointMgr.FinishChunk(id, count)
 	}
 }
 
 // GetImportTS implements CheckpointOperator interface.
 func (bc *litBackendCtx) GetImportTS() uint64 {
 	if bc.checkpointMgr != nil {
-		return bc.checkpointMgr.GetTS()
+		return bc.checkpointMgr.GetImportTS()
 	}
 	return bc.importTS
 }
 
 // AdvanceWatermark implements CheckpointOperator interface.
-func (bc *litBackendCtx) AdvanceWatermark(imported bool) error {
+func (bc *litBackendCtx) AdvanceWatermark(imported bool) (err error) {
+	failpoint.Inject("ddlIngestFailOnceBeforeCheckpointUpdated", func() {
+		if imported {
+			failpoint.Return(errors.New("failpoint: ddlIngestFailOnceBeforeCheckpointUpdated"))
+		}
+	})
 	if bc.checkpointMgr != nil {
 		return bc.checkpointMgr.AdvanceWatermark(imported)
 	}

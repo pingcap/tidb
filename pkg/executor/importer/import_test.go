@@ -26,19 +26,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
+	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -52,7 +52,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{
 		DataSourceType: DataSourceTypeQuery,
 	}
-	plan.initDefaultOptions(10)
+	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 2, plan.ThreadCnt)
 
 	plan = &Plan{
@@ -62,7 +62,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
-	plan.initDefaultOptions(1)
+	plan.initDefaultOptions(context.Background(), 1, nil)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
 	require.Equal(t, 1, plan.ThreadCnt)
@@ -72,10 +72,15 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
-	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, config.DefaultBatchSize, plan.MaxEngineSize)
+	} else {
+		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	}
+
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
-	plan.initDefaultOptions(10)
+	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
 }
 
@@ -189,11 +194,17 @@ func TestAdjustOptions(t *testing.T) {
 	plan.adjustOptions(16)
 	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+	require.False(t, plan.DisableTiKVImportMode)
 
 	plan.ThreadCnt = 100000000
 	plan.DataSourceType = DataSourceTypeQuery
 	plan.adjustOptions(16)
 	require.Equal(t, 32, plan.ThreadCnt)
+	require.False(t, plan.DisableTiKVImportMode)
+
+	plan.CloudStorageURI = "s3://bucket/path"
+	plan.adjustOptions(16)
+	require.True(t, plan.DisableTiKVImportMode)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -208,15 +219,6 @@ func TestAdjustDiskQuota(t *testing.T) {
 	require.Equal(t, int64(1638), adjustDiskQuota(2000, d, logutil.BgLogger()))
 }
 
-func TestGetMsgFromBRError(t *testing.T) {
-	var berr error = berrors.ErrStorageInvalidConfig
-	require.Equal(t, "[BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "invalid external storage config", GetMsgFromBRError(berr))
-	berr = errors.Annotatef(berr, "some message about error reason")
-	require.Equal(t, "some message about error reason: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "some message about error reason", GetMsgFromBRError(berr))
-}
-
 func TestASTArgsFromStmt(t *testing.T) {
 	stmt := "IMPORT INTO tb (a, é) FROM 'gs://test-load/test.tsv';"
 	stmtNode, err := parser.New().ParseOneStmt(stmt, "latin1", "latin1_bin")
@@ -228,22 +230,6 @@ func TestASTArgsFromStmt(t *testing.T) {
 	importIntoStmt := stmtNode.(*ast.ImportIntoStmt)
 	require.Equal(t, astArgs.ColumnAssignments, importIntoStmt.ColumnAssignments)
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
-}
-
-func TestGetFileRealSize(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
-	require.NoError(t, err)
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
-	}()
-	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
-	c := &LoadDataController{logger: log.L()}
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
-	fileMeta.Compression = mydump.CompressionGZ
-	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
-	require.NoError(t, err)
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 }
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -301,32 +287,53 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	c := &LoadDataController{
 		Plan: &Plan{},
 	}
-	cfg := c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	cfg := c.getLocalBackendCfg("", "http://1.1.1.1:1234", "/tmp")
 	require.Equal(t, "http://1.1.1.1:1234", cfg.PDAddr)
 	require.Equal(t, "/tmp", cfg.LocalStoreDir)
 	require.True(t, cfg.DisableAutomaticCompactions)
 	require.Zero(t, cfg.RaftKV2SwitchModeDuration)
 
 	c.Plan.IsRaftKV2 = true
-	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	cfg = c.getLocalBackendCfg("", "http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
 
-func TestGetBackendWorkerConcurrency(t *testing.T) {
-	c := &LoadDataController{
-		Plan: &Plan{
-			ThreadCnt: 3,
-		},
+func TestInitCompressedFiles(t *testing.T) {
+	username, err := user.Current()
+	require.NoError(t, err)
+	if username.Name == "root" {
+		t.Skip("it cannot run as root")
 	}
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.CloudStorageURI = "xxx"
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.ThreadCnt = 123
-	require.Equal(t, 246, c.getBackendWorkerConcurrency())
+	tempDir := t.TempDir()
+	ctx := context.Background()
+
+	for i := range 2048 {
+		fileName := filepath.Join(tempDir, fmt.Sprintf("test_%d.csv.gz", i))
+		require.NoError(t, os.WriteFile(fileName, []byte{}, 0o644))
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return(250)`)
+	c := LoadDataController{
+		Plan: &Plan{
+			Format:         DataFormatCSV,
+			InImportInto:   true,
+			Charset:        &defaultCharacterSet,
+			LineFieldsInfo: newDefaultLineFieldsInfo(),
+			FieldNullDef:   defaultFieldNullDef,
+			Parameters:     &ImportParameters{},
+		},
+		logger: zap.NewExample(),
+	}
+
+	c.Path = filepath.Join(tempDir, "*.gz")
+	require.NoError(t, c.InitDataFiles(ctx))
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("nextgen doesn't support import from server disk")
+	}
 	username, err := user.Current()
 	require.NoError(t, err)
 	if username.Name == "root" {
@@ -341,8 +348,12 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.WriteFile(fileName2, []byte{}, 0o644))
 	c := LoadDataController{
 		Plan: &Plan{
-			Format:       DataFormatCSV,
-			InImportInto: true,
+			Format:         DataFormatCSV,
+			InImportInto:   true,
+			Charset:        &defaultCharacterSet,
+			LineFieldsInfo: newDefaultLineFieldsInfo(),
+			FieldNullDef:   defaultFieldNullDef,
+			Parameters:     &ImportParameters{},
 		},
 		logger: zap.NewExample(),
 	}
@@ -358,12 +369,12 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, c.InitDataFiles(ctx))
 
 	var allData []string
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		fileName := fmt.Sprintf("server-%d.csv", i)
 		var content []byte
 		rowCnt := 2
-		for j := 0; j < rowCnt; j++ {
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", i*rowCnt+j, i*rowCnt+j))...)
+		for j := range rowCnt {
+			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", i*rowCnt+j, i*rowCnt+j)...)
 			allData = append(allData, fmt.Sprintf("%d test-%d", i*rowCnt+j, i*rowCnt+j))
 		}
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), content, 0o644))
@@ -436,11 +447,82 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 		gotPath = append(gotPath, f.Path)
 	}
 	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
+
+	testcases := []struct {
+		fileNames    []string
+		expectFormat string
+	}{
+		{
+			expectFormat: DataFormatCSV,
+			fileNames:    []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz", "file1.CSV.GZIP", "file1.CSV.gzip", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"},
+		},
+		{
+			expectFormat: DataFormatSQL,
+			fileNames:    []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zstd", "file2.sql.zst", "file2.sql.zst", "file2.sql.snappy"},
+		},
+		{
+			expectFormat: DataFormatParquet,
+			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy"},
+		},
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+	for _, testcase := range testcases {
+		for _, fileName := range testcase.fileNames {
+			c.Format = DataFormatAuto
+			c.Path = path.Join(tempDir, fileName)
+			err = os.WriteFile(c.Path, []byte{}, 0o644)
+			require.NoError(t, err)
+			require.NoError(t, c.InitDataFiles(ctx))
+			require.Equal(t, testcase.expectFormat, c.Format)
+		}
+	}
 }
 
 func TestGetDataSourceType(t *testing.T) {
 	require.Equal(t, DataSourceTypeQuery, getDataSourceType(&plannercore.ImportInto{
-		SelectPlan: &plannercore.PhysicalSelection{},
+		SelectPlan: &physicalop.PhysicalSelection{},
 	}))
 	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
+}
+func TestParseFileType(t *testing.T) {
+	testCases := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		// Basic file extensions
+		{name: "sql extension", path: "test.sql", expected: DataFormatSQL},
+		{name: "parquet extension", path: "data.parquet", expected: DataFormatParquet},
+		{name: "csv extension", path: "file.csv", expected: DataFormatCSV},
+		{name: "no extension", path: "noext", expected: DataFormatCSV},
+		// Single compression extension
+		{name: "sql with gz", path: "test.sql.gz", expected: DataFormatSQL},
+		{name: "parquet with zstd", path: "data.parquet.zst", expected: DataFormatParquet},
+		{name: "csv with snappy", path: "file.csv.snappy", expected: DataFormatCSV},
+		// Edge cases after removing compression
+		{name: "only compression extension", path: "file.gz", expected: DataFormatCSV},
+		{name: "non-recognized extension after compression", path: "document.txt.gz", expected: DataFormatCSV},
+		// Case insensitivity
+		{name: "uppercase extension", path: "TEST.SQL.GZ", expected: DataFormatSQL},
+		{name: "mixed case extension", path: "file.PARQUET.zst", expected: DataFormatParquet},
+		// Multiple dots in filename
+		{name: "multiple dots in name", path: "backup.file.sql.gz", expected: DataFormatSQL},
+		{name: "hidden file with compression", path: ".hidden.sql.gz", expected: DataFormatSQL},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := parseFileType(tc.path)
+			require.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+func TestGetDefMaxEngineSize(t *testing.T) {
+	if kerneltype.IsClassic() {
+		require.Equal(t, config.ByteSize(500*units.GiB), getDefMaxEngineSize())
+	} else {
+		require.Equal(t, config.ByteSize(100*units.GiB), getDefMaxEngineSize())
+	}
 }

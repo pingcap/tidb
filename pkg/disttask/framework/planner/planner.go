@@ -15,8 +15,7 @@
 package planner
 
 import (
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 )
 
@@ -29,26 +28,24 @@ func NewPlanner() *Planner {
 }
 
 // Run runs the distribute plan.
-func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
-	taskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return 0, err
-	}
-
+func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan, taskMgr *storage.TaskManager) (int64, error) {
 	taskMeta, err := plan.ToTaskMeta()
 	if err != nil {
 		return 0, err
 	}
 
-	return taskManager.CreateTaskWithSession(
+	targetScope := handle.GetTargetScope()
+
+	return taskMgr.CreateTaskWithSession(
 		planCtx.Ctx,
 		planCtx.SessionCtx,
 		planCtx.TaskKey,
 		planCtx.TaskType,
+		planCtx.Keyspace,
 		planCtx.ThreadCnt,
-		config.GetGlobalConfig().Instance.TiDBServiceScope,
+		targetScope,
 		planCtx.MaxNodeCnt,
-		proto.ExtraParams{},
+		plan.GetTaskExtraParams(),
 		taskMeta,
 	)
 }

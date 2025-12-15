@@ -21,10 +21,12 @@ import (
 	"io"
 	"os"
 	"path"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
@@ -185,23 +187,23 @@ func TestSetLevel(t *testing.T) {
 }
 
 func TestSlowQueryLoggerAndGeneralLoggerCreation(t *testing.T) {
-	var prop *log.ZapProperties
 	var err error
+	var l *zap.Logger
 	for i := range 2 {
 		level := "Error"
 		conf := NewLogConfig(level, DefaultLogFormat, "", "", EmptyFileLogConfig, false)
 		if i == 0 {
-			_, prop, err = newSlowQueryLogger(conf)
+			l, _, err = newSlowQueryLogger(conf)
 		} else {
-			_, prop, err = newGeneralLogger(conf)
+			l, _, err = newGeneralLogger(conf)
 		}
 		// assert after init logger, the original conf is not changed
 		require.Equal(t, conf.Level, level)
 		require.NoError(t, err)
 		// logger doesn't use the level of the global log config, and the
 		// level should be equals to InfoLevel.
-		require.NotEqual(t, conf.Level, prop.Level.String())
-		require.True(t, prop.Level.Level() == zapcore.InfoLevel)
+		require.NotEqual(t, conf.Level, l.Level().String())
+		require.True(t, l.Level() == zapcore.InfoLevel)
 
 		level = "warn"
 		name := "test.log"
@@ -224,6 +226,62 @@ func TestSlowQueryLoggerAndGeneralLoggerCreation(t *testing.T) {
 			require.Equal(t, fileConf.FileLogConfig, generalConf.File)
 		}
 	}
+}
+
+func getWriteSyncerViaReflection(core *log.TextIOCore) (*zapcore.WriteSyncer, error) {
+	val := reflect.ValueOf(core).Elem()
+
+	outField := val.FieldByName("out")
+	if !outField.IsValid() {
+		return nil, fmt.Errorf("field 'out' not found in TextIOCore")
+	}
+
+	var out *zapcore.WriteSyncer
+	if outField.Type().AssignableTo(reflect.TypeOf((*zapcore.WriteSyncer)(nil)).Elem()) {
+		out = (*zapcore.WriteSyncer)(unsafe.Pointer(outField.UnsafeAddr()))
+	}
+
+	return out, nil
+}
+
+func TestSlowQueryLoggerAndGeneralUseSameLogFileName(t *testing.T) {
+	fileName := t.TempDir() + "a.log"
+	fileConf := FileLogConfig{
+		log.FileLogConfig{
+			Filename:   fileName,
+			MaxSize:    10,
+			MaxDays:    10,
+			MaxBackups: 10,
+		},
+	}
+	level := "info"
+	// Use same log file for all logs
+	conf := NewLogConfig(level, DefaultLogFormat, "", "", fileConf, false)
+	require.NoError(t, InitLogger(conf))
+
+	SlowQueryLogger.Info("123")
+	GeneralLogger.Info("GENERAL LOG", zap.Int("test", 123))
+
+	slowLogSyncer, err := getWriteSyncerViaReflection(SlowQueryLogger.Core().(*log.TextIOCore))
+	require.NoError(t, err)
+	require.NotNil(t, slowLogSyncer)
+
+	generalLogSyncer, err := getWriteSyncerViaReflection(GeneralLogger.Core().(*log.TextIOCore))
+	require.NoError(t, err)
+	require.NotNil(t, generalLogSyncer)
+
+	// use the same `WriteSyncer`
+	require.Equal(t, generalLogSyncer, slowLogSyncer)
+
+	f, err := os.Open(fileName)
+	require.NoError(t, err)
+
+	b := make([]byte, 1024)
+	n, err := f.Read(b)
+	require.NoError(t, err)
+	// contains slow log and general log.
+	require.True(t, strings.Contains(string(b[:n]), "# Time"))
+	require.True(t, strings.Contains(string(b[:n]), "GENERAL LOG"))
 }
 
 func TestCompressedLog(t *testing.T) {

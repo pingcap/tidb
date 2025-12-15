@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"cmp"
+	"maps"
 	"math"
 	"math/bits"
 	"slices"
@@ -26,7 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -57,16 +59,6 @@ func Selectivity(
 	retStatsNodes []*StatsNode,
 	err error,
 ) {
-	var exprStrs []string
-	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ctx)
-		exprStrs = expression.ExprsToStringsForDisplay(ctx.GetExprCtx().GetEvalCtx(), exprs)
-		debugtrace.RecordAnyValuesWithNames(ctx, "Input Expressions", exprStrs)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(ctx, "Result", result)
-			debugtrace.LeaveContextCommon(ctx)
-		}()
-	}
 	// If the table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.RealtimeCount == 0 || len(exprs) == 0 {
 		return 1, nil, nil
@@ -78,25 +70,18 @@ func Selectivity(
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
 		ret = pseudoSelectivity(ctx, coll, exprs)
-		if sc.EnableOptimizerCETrace {
-			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
-				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
-		}
+		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
 		return ret, nil, nil
 	}
 
 	var nodes []*StatsNode
-	var remainedExprStrs []string
 	remainedExprs := make([]expression.Expression, 0, len(exprs))
 
 	// Deal with the correlated column.
-	for i, expr := range exprs {
+	for _, expr := range exprs {
 		c := isColEqCorCol(expr)
 		if c == nil {
 			remainedExprs = append(remainedExprs, expr)
-			if sc.EnableOptimizerDebugTrace {
-				remainedExprStrs = append(remainedExprStrs, exprStrs[i])
-			}
 			continue
 		}
 
@@ -109,14 +94,10 @@ func Selectivity(
 		} else {
 			sel = 1.0 / pseudoEqualRate
 		}
-		if sc.EnableOptimizerDebugTrace {
-			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.StringWithCtx(ctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable), "Selectivity", sel)
-		}
 		ret *= sel
 	}
 
-	extractedCols := make([]*expression.Column, 0, coll.ColNum())
-	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
+	extractedCols := slices.Collect(maps.Values(expression.ExtractColumnsMapFromExpressions(nil, remainedExprs...)))
 	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
@@ -124,6 +105,11 @@ func Selectivity(
 		return a.ID == b.ID
 	})
 	for _, col := range extractedCols {
+		if col.IsHidden && col.VirtualExpr != nil {
+			// For expression index, only the index stats should be used,
+			// column stats can be ignored.
+			continue
+		}
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {
@@ -133,20 +119,23 @@ func Selectivity(
 				return 0, nil, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
+			var cnt float64
+			var cntEst statistics.RowEstimate
 			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
-				var cnt float64
-				cnt, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
+				cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges, true)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
+				cnt = cntEst.Est
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
-			cnt, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
+			cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges, false)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
+			cnt = cntEst.Est
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 		} else if !col.IsHidden {
 			// TODO: We are able to remove this path if we remove the async stats load.
@@ -202,12 +191,12 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, corrCnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
+			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			selectivity := cnt / float64(coll.RealtimeCount)
-			corrSelectivity := corrCnt / float64(coll.RealtimeCount)
+			countResult.DivideAll(float64(coll.RealtimeCount))
+			selectivity, minSelectivity, maxSelectivity := countResult.Est, countResult.MinEst, countResult.MaxEst
 			nodes = append(nodes, &StatsNode{
 				Tp:                       IndexType,
 				ID:                       id,
@@ -215,7 +204,8 @@ func Selectivity(
 				Ranges:                   ranges,
 				numCols:                  len(idxStats.Info.Columns),
 				Selectivity:              selectivity,
-				CorrSelectivity:          corrSelectivity,
+				MinSelectivity:           minSelectivity,
+				MaxSelectivity:           maxSelectivity,
 				partCover:                partCover,
 				minAccessCondsForDNFCond: minAccessCondsForDNFCond,
 			})
@@ -224,8 +214,6 @@ func Selectivity(
 	usedSets := GetUsableSetsByGreedy(nodes)
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
-	// curExpr records covered expressions by now. It's for cardinality estimation tracing.
-	var curExpr []expression.Expression
 
 	for _, set := range usedSets {
 		mask &^= set.mask
@@ -235,29 +223,7 @@ func Selectivity(
 		// of the extracted access conditions, we multiply another selectionFactor for the residual
 		// conditions.
 		if set.partCover {
-			ret *= selectionFactor
-		}
-		if sc.EnableOptimizerCETrace {
-			// Tracing for the expression estimation results after applying this StatsNode.
-			for i := range remainedExprs {
-				if set.mask&(1<<uint64(i)) > 0 {
-					curExpr = append(curExpr, remainedExprs[i])
-				}
-			}
-			expr := expression.ComposeCNFCondition(ctx.GetExprCtx(), curExpr...)
-			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
-		} else if sc.EnableOptimizerDebugTrace {
-			var strs []string
-			for i := range remainedExprs {
-				if set.mask&(1<<uint64(i)) > 0 {
-					strs = append(strs, remainedExprStrs[i])
-				}
-			}
-			debugtrace.RecordAnyValuesWithNames(ctx,
-				"Expressions", strs,
-				"Selectivity", set.Selectivity,
-				"partial cover", set.partCover,
-			)
+			ret *= ctx.GetSessionVars().SelectivityFactor
 		}
 	}
 
@@ -301,7 +267,7 @@ func Selectivity(
 
 	// Try to cover remaining Constants
 	for i, c := range notCoveredConstants {
-		if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), []expression.Expression{c}) {
+		if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), c) {
 			continue
 		}
 		if c.Value.IsNull() {
@@ -361,16 +327,10 @@ OUTER:
 			curSelectivity, _, err := Selectivity(ctx, coll, cnfItems, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-				curSelectivity = selectionFactor
+				curSelectivity = ctx.GetSessionVars().SelectivityFactor
 			}
 
 			selectivity = selectivity + curSelectivity - selectivity*curSelectivity
-		}
-		if sc.EnableOptimizerCETrace {
-			// Tracing for the expression estimation results of this DNF.
-			ceTraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.RealtimeCount))
-		} else if sc.EnableOptimizerDebugTrace {
-			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", selectivity)
 		}
 
 		if selectivity != 0 {
@@ -378,18 +338,12 @@ OUTER:
 			mask &^= 1 << uint64(i)
 			delete(notCoveredDNF, i)
 		}
-		if sc.EnableOptimizerCETrace {
-			// Tracing for the expression estimation results after applying the DNF estimation result.
-			curExpr = append(curExpr, remainedExprs[i])
-			expr := expression.ComposeCNFCondition(ctx.GetExprCtx(), curExpr...)
-			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
-		}
 	}
 
 	// Try to cover remaining string matching functions by evaluating the expressions with TopN to estimate.
 	if ctx.GetSessionVars().EnableEvalTopNEstimationForStrMatch() {
 		for i, scalarCond := range notCoveredStrMatch {
-			ok, sel, err := GetSelectivityByFilter(ctx, coll, []expression.Expression{scalarCond})
+			ok, sel, err := GetSelectivityByFilter(ctx, coll, scalarCond)
 			if err != nil {
 				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -399,12 +353,9 @@ OUTER:
 			ret *= sel
 			mask &^= 1 << uint64(i)
 			delete(notCoveredStrMatch, i)
-			if sc.EnableOptimizerDebugTrace {
-				debugtrace.RecordAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", sel)
-			}
 		}
 		for i, scalarCond := range notCoveredNegateStrMatch {
-			ok, sel, err := GetSelectivityByFilter(ctx, coll, []expression.Expression{scalarCond})
+			ok, sel, err := GetSelectivityByFilter(ctx, coll, scalarCond)
 			if err != nil {
 				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -414,9 +365,6 @@ OUTER:
 			ret *= sel
 			mask &^= 1 << uint64(i)
 			delete(notCoveredNegateStrMatch, i)
-			if sc.EnableOptimizerDebugTrace {
-				debugtrace.RecordAnyValuesWithNames(ctx, "Expression", remainedExprStrs[i], "Selectivity", sel)
-			}
 		}
 	}
 
@@ -427,7 +375,7 @@ OUTER:
 	if mask > 0 {
 		minSelectivity := 1.0
 		if len(notCoveredConstants) > 0 || len(notCoveredDNF) > 0 || len(notCoveredOtherExpr) > 0 {
-			minSelectivity = math.Min(minSelectivity, selectionFactor)
+			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().SelectivityFactor)
 		}
 		if len(notCoveredStrMatch) > 0 {
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetStrMatchDefaultSelectivity())
@@ -436,15 +384,16 @@ OUTER:
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity())
 		}
 		ret *= minSelectivity
-		if sc.EnableOptimizerDebugTrace {
-			debugtrace.RecordAnyValuesWithNames(ctx, "Default Selectivity", minSelectivity)
-		}
+		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
 	}
 
-	if sc.EnableOptimizerCETrace {
-		// Tracing for the expression estimation results after applying the default selectivity.
-		totalExpr := expression.ComposeCNFCondition(ctx.GetExprCtx(), remainedExprs...)
-		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
+	if !fixcontrol.GetBoolWithDefault(
+		ctx.GetSessionVars().GetOptimizerFixControlMap(),
+		fixcontrol.Fix47400,
+		false,
+	) {
+		// Don't allow the result to be less than 1 row
+		ret = max(ret, 1.0/float64(coll.RealtimeCount))
 	}
 	return ret, nodes, nil
 }
@@ -504,12 +453,11 @@ func CalcTotalSelectivityForMVIdxPath(
 					break
 				}
 			}
-			cols := expression.ExtractColumnsFromExpressions(
-				nil,
-				path.AccessConds,
+			cols := expression.ExtractColumnsMapFromExpressions(
 				func(column *expression.Column) bool {
 					return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
 				},
+				path.AccessConds...,
 			)
 			// If we can't find the virtual column from the access conditions, it's the case 2.
 			if len(cols) == 0 {
@@ -545,10 +493,12 @@ type StatsNode struct {
 	mask int64
 	// Selectivity indicates the Selectivity of this column/index.
 	Selectivity float64
-	// CorrSelectivity indicates the Selectivity of this column/index with correlated column.
-	// That is - it is the selectivity assuming the most filtering index column only, and all other
-	// columns are correlated with this column.
-	CorrSelectivity float64
+	// MinSelectivity indicates the Selectivity of this column/index for the least rows that can qualify.
+	// It takes into account situations that would decrease the row count, such as fully independent columns.
+	MinSelectivity float64
+	// MaxSelectivity indicates the Selectivity of this column/index for the most rows that can qualify.
+	// It takes into account situations that would increase the row count, such as correlated columns.
+	MaxSelectivity float64
 	// numCols is the number of columns contained in the index or column(which is always 1).
 	numCols int
 	// partCover indicates whether the bit in the mask is for a full cover or partial cover. It is only true
@@ -582,6 +532,49 @@ func compareType(l, r int) int {
 }
 
 const unknownColumnID = math.MinInt64
+
+// staleLastBucketThreshold is the threshold for detecting stale last bucket estimates.
+// If the last bucket's count is less than 30% of the average bucket count, we consider
+// it potentially stale.
+const staleLastBucketThreshold = 0.3
+
+// valueAwareRowAddedThreshold is the minimum ratio of newly added rows relative to
+// the average value count required to trigger the stale bucket heuristic.
+// If new rows >= (avgValueCount * threshold), we consider applying the heuristic.
+const valueAwareRowAddedThreshold = 0.5
+
+// IsLastBucketEndValueUnderrepresented detects when the last value (upper bound) of the last bucket
+// has a suspiciously low count that may be stale due to concentrated writes after ANALYZE.
+func IsLastBucketEndValueUnderrepresented(sctx planctx.PlanContext, hg *statistics.Histogram, val types.Datum,
+	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64) bool {
+	if modifyCount <= 0 || len(hg.Buckets) == 0 || histNDV <= 0 {
+		return false
+	}
+
+	// This represents data changes since ANALYZE - we use absolute difference as a proxy for
+	// activity level since we cannot distinguish between inserts, deletes, and updates
+	newRowsAdded := hg.AbsRowCountDifference(realtimeRowCount)
+
+	// Calculate average count per distinct value
+	avgValueCount := hg.NotNullCount() / histNDV
+
+	// Only apply heuristic when new rows are significant relative to average value count
+	if newRowsAdded < avgValueCount*valueAwareRowAddedThreshold {
+		return false
+	}
+
+	// Use LocateBucket to check if this value is at the last bucket's upper bound
+	_, bucketIdx, inBucket, matchLastValue := hg.LocateBucket(sctx, val)
+
+	// Check if this is the last bucket's upper bound value (end value)
+	isLastBucketEndValue := (bucketIdx == len(hg.Buckets)-1) && inBucket && matchLastValue
+	if !isLastBucketEndValue {
+		return false
+	}
+
+	// If count is much less than average value count, it's likely underrepresented
+	return histCnt < avgValueCount*staleLastBucketThreshold
+}
 
 // getConstantColumnID receives two expressions and if one of them is column and another is constant, it returns the
 // ID of the column.
@@ -741,6 +734,24 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 	return nil
 }
 
+// findPrefixOfIndex will find columns in index by checking the unique id.
+// So it will return at once no matching column is found.
+func findPrefixOfIndex(cols []*expression.Column, idxColIDs []int64) []*expression.Column {
+	retCols := make([]*expression.Column, 0, len(idxColIDs))
+idLoop:
+	for _, id := range idxColIDs {
+		for _, col := range cols {
+			if col.UniqueID == id {
+				retCols = append(retCols, col)
+				continue idLoop
+			}
+		}
+		// If no matching column is found, just return.
+		return retCols
+	}
+	return retCols
+}
+
 // findPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
 // So it will return at once no matching column is found.
 func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, idxColIDs []int64,
@@ -762,7 +773,7 @@ func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, 
 		}
 		return retCols
 	}
-	return expression.FindPrefixOfIndex(cols, idxColIDs)
+	return findPrefixOfIndex(cols, idxColIDs)
 }
 
 func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, rangeType ranger.RangeType,
@@ -847,24 +858,26 @@ func getMaskAndSelectivityForMVIndex(
 
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
-func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters []expression.Expression) (ok bool, selectivity float64, err error) {
+func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
 	//   (3) and this column is not a "new collation" string column so that we're able to restore values from the stats.
-	for _, filter := range filters {
-		if expression.IsMutableEffectsExpr(filter) {
-			return false, 0, nil
-		}
+	if expression.IsMutableEffectsExpr(filters) {
+		return false, 0, nil
 	}
 	if expression.ContainCorrelatedColumn(filters) {
 		return false, 0, nil
 	}
-	cols := expression.ExtractColumnsFromExpressions(nil, filters, nil)
+	cols := expression.ExtractColumnsMapFromExpressions(nil, filters)
 	if len(cols) != 1 {
 		return false, 0, nil
 	}
-	col := cols[0]
+	var col *expression.Column
+	for _, c := range cols {
+		col = c
+		break
+	}
 	tp := col.RetType
 	if types.IsString(tp.GetType()) && collate.NewCollationEnabled() && !collate.IsBinCollation(tp.GetCollate()) {
 		return false, 0, nil
@@ -933,7 +946,7 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 			}
 			c.AppendDatum(0, &val)
 		}
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(c), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -950,7 +963,7 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(hist.Bounds), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -984,7 +997,7 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	c.Reset()
 	c.AppendNull(0)
 	selected = selected[:0]
-	selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
+	selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(c), selected)
 	if err != nil || len(selected) != 1 || !selected[0] {
 		nullSel = 0
 	} else {
@@ -1018,25 +1031,6 @@ func findAvailableStatsForCol(sctx planctx.PlanContext, coll *statistics.HistCol
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
 func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, idx *statistics.Index, bytes []byte,
 	usedColsLen int, idxPointRange *ranger.Range) (result float64, err error) {
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			var idxName string
-			if idx != nil && idx.Info != nil {
-				idxName = idx.Info.Name.O
-			}
-			debugtrace.RecordAnyValuesWithNames(
-				sctx,
-				"Index Name", idxName,
-				"Encoded", bytes,
-				"UsedColLen", usedColsLen,
-				"Range", idxPointRange.String(),
-				"Result", result,
-				"error", err,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
 	coverAll := len(idx.Info.Columns) == usedColsLen
 	// In this case, the row count is at most 1.
 	if idx.Info.Unique && coverAll {
@@ -1081,14 +1075,7 @@ func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl
 // and has the same distribution with analyzed rows, which means each unique value should have the
 // same number of rows(Tot/NDV) of it.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+func outOfRangeEQSelectivity(_ planctx.PlanContext, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
 	increaseRowCount := realtimeRowCount - columnRowCount
 	if increaseRowCount <= 0 {
 		return 0 // it must be 0 since the histogram contains the whole data
@@ -1106,6 +1093,7 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 // outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
 // and the searched value does not appear in the topN
 func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64, modifyCount int64) (result float64) {
+	// TODO: align or merge this out-of-range-est methods with `Histogram.OutOfRangeRowCount`.
 	// If the table hasn't been modified, it's safe to return 0.
 	if modifyCount == 0 {
 		return 0
@@ -1122,7 +1110,7 @@ func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increa
 	if newRows < 0 {
 		newRows = min(notNullCount, realtimeRowCount)
 	}
-	// if no NDV - derive an NDV using sqrt
+	// if no NDV - derive an NDV using sqrt, this could happen for unanalyzed tables
 	if ndv <= 0 {
 		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
 	} else {
@@ -1130,6 +1118,13 @@ func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increa
 		// the caller of the function
 		ndv *= increaseFactor
 	}
+	// If topN represents all NDV values, the NDV should be relatively small.
+	// Small NDV could cause extremely inaccurate result, use `outOfRangeBetweenRate` to smooth the result.
+	// For example, TopN = {(value:1, rows: 10000), (2, 10000), (3, 10000)} and newRows = 15000, we should assume most
+	// newly added rows are 1, 2 or 3. Then for an out-of-range estimation like `where col=9999`, the result should be
+	// close to 0, but if we still use the original NDV, the result could be extremely large: 15000/3 = 5000.
+	// See #64137 for a concrete example.
+	ndv = max(ndv, float64(outOfRangeBetweenRate)) // avoid inaccurate estimate caused by small NDV
 	return max(1, newRows/ndv)
 }
 
@@ -1145,23 +1140,6 @@ func crossValidationSelectivity(
 	crossValidationSelectivity float64,
 	err error,
 ) {
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			var idxName string
-			if idx != nil && idx.Info != nil {
-				idxName = idx.Info.Name.O
-			}
-			debugtrace.RecordAnyValuesWithNames(
-				sctx,
-				"Index Name", idxName,
-				"minRowCount", minRowCount,
-				"crossValidationSelectivity", crossValidationSelectivity,
-				"error", err,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
 	minRowCount = math.MaxFloat64
 	cols := coll.Idx2ColUniqueIDs[idx.ID]
 	crossValidationSelectivity = 1.0
@@ -1184,10 +1162,11 @@ func crossValidationSelectivity(
 			Collators:   []collate.Collator{idxPointRange.Collators[i]},
 		}
 
-		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+		rowCountEst, err := getColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
 		if err != nil {
 			return 0, 0, err
 		}
+		rowCount := rowCountEst.Est
 		crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
 
 		if rowCount < minRowCount {

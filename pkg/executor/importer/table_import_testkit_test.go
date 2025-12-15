@@ -22,33 +22,19 @@ import (
 	"github.com/pingcap/failpoint"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 )
-
-type storeHelper struct {
-	kvStore tidbkv.Storage
-}
-
-func (*storeHelper) GetTS(_ context.Context) (physical, logical int64, err error) {
-	return 0, 0, nil
-}
-
-func (s *storeHelper) GetTiKVCodec() tikv.Codec {
-	return s.kvStore.GetCodec()
-}
-
-var _ local.StoreHelper = (*storeHelper)(nil)
 
 func checkImportDirEmpty(t *testing.T) {
 	tidbCfg := tidb.GetGlobalConfig()
@@ -93,7 +79,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 				ID:   dbInfo.ID,
 			},
 		},
-		SelectPlan: &plannercore.PhysicalSelection{},
+		SelectPlan: &physicalop.PhysicalSelection{},
 	}.Init(tk.Session().GetPlanCtx()), table)
 	require.NoError(t, err)
 	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})
@@ -102,21 +88,30 @@ func TestImportFromSelectCleanup(t *testing.T) {
 		ctx,
 		controller,
 		"11",
-		&storeHelper{kvStore: store},
+		store,
 	)
 	require.NoError(t, err)
-	ch := make(chan importer.QueryRow)
-	ti.SetSelectedRowCh(ch)
+	ch := make(chan importer.QueryChunk)
+	ti.SetSelectedChunkCh(ch)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		defer close(ch)
-		for i := 1; i <= 3; i++ {
-			ch <- importer.QueryRow{
-				ID: int64(i),
-				Data: []types.Datum{
-					types.NewIntDatum(int64(i)),
-				},
-			}
+		fields := make([]*types.FieldType, 0, 3)
+		fields = append(fields, types.NewFieldType(mysql.TypeLong))
+		chk := chunk.New(fields, 2, 2)
+		chk.AppendInt64(0, int64(1))
+		chk.AppendInt64(0, int64(2))
+		ch <- importer.QueryChunk{
+			Fields:      fields,
+			Chk:         chk,
+			RowIDOffset: 0,
+		}
+		chk = chunk.New(fields, 1, 1)
+		chk.AppendInt64(0, int64(3))
+		ch <- importer.QueryChunk{
+			Fields:      fields,
+			Chk:         chk,
+			RowIDOffset: 2,
 		}
 	})
 	_, err = ti.ImportSelectedRows(ctx, tk.Session())
