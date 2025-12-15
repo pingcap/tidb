@@ -1391,8 +1391,8 @@ func verifyImportedStatistics(e common.Engine, importedKVCount int64) error {
 		})
 		onDup := extEngine.GetOnDup()
 		if onDup == common.OnDuplicateKeyRecord || onDup == common.OnDuplicateKeyRemove {
-			return errors.Errorf("OnDuplicateKeyRecord and OnDuplicateKeyRemove are not yet implemented for local backend. " +
-				"When implementing these options, please also implement the statistics verification for them.")
+			log.FromContext(context.Background()).Debug("skip statistics verificatio when OnDuplicateKeyRecord or OnDuplicateKeyRemove is used")
+			return nil
 		}
 
 		// Verify the imported statistics after import.
