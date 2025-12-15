@@ -610,7 +610,7 @@ func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
 
 func TestIndexChangeWithModifyColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (b int, c varchar(100) collate utf8mb4_unicode_ci)")
