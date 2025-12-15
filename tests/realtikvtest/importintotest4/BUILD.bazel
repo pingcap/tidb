@@ -5,6 +5,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "cloud_sdk_test.go",
+        "conflict_resolution_test.go",
         "global_sort_test.go",
         "import_summary_test.go",
         "main_test.go",
@@ -23,9 +24,11 @@ go_test(
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
+        "//pkg/disttask/importinto/conflictedkv",
         "//pkg/executor/importer",
         "//pkg/importsdk",
         "//pkg/kv",
+        "//pkg/lightning/backend/external",
         "//pkg/lightning/config",
         "//pkg/lightning/mydump",
         "//pkg/planner/core",
@@ -44,6 +47,8 @@ go_test(
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//opt",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
         "@org_uber_go_atomic//:atomic",
     ],
 )

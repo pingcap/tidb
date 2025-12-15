@@ -102,7 +102,9 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 	// mode at cleanup stage, but we mostly won't wait for cleanup, so the t might
 	// still in Import mode and cause case flaky, so we use a random schema name
 	// here.
-	s.prepareAndUseDB(fmt.Sprintf("conflicts%d", rand.Int()))
+	dbName := fmt.Sprintf("conflicts%d", rand.Int())
+	s.T().Log("use database:", dbName)
+	s.prepareAndUseDB(dbName)
 	s.tk.MustExec(tblSQL)
 
 	sortStorageURI := fmt.Sprintf("gs://sorted?endpoint=%s", gcsEndpoint)
