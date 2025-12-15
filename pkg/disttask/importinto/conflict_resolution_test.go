@@ -116,7 +116,6 @@ type conflictedKVHandleContext struct {
 	conflictedKVInfo importinto.KVGroupConflictInfos
 }
 
-// subtask *proto.Subtask, stepExecFac func (int64, tidbkv.Storage, *importinto.TaskMeta, *zap.Logger) execute.StepExecutor
 func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 	t.Helper()
 	tempDir := t.TempDir()
