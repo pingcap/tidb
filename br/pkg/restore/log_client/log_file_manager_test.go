@@ -23,6 +23,7 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -55,7 +56,7 @@ func wr(start, end uint64, minBegin uint64) *backuppb.DataFileInfo {
 		MinTs:                 start,
 		MaxTs:                 end,
 		MinBeginTsInDefaultCf: minBegin,
-		Cf:                    stream.WriteCF,
+		Cf:                    consts.WriteCF,
 	}
 }
 
@@ -66,7 +67,7 @@ func dr(start, end uint64) *backuppb.DataFileInfo {
 		Path:  fmt.Sprintf("write-%06d", id),
 		MinTs: start,
 		MaxTs: end,
-		Cf:    stream.DefaultCF,
+		Cf:    consts.DefaultCF,
 	}
 }
 
@@ -235,6 +236,8 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 			RestoreTS: c.endTS,
 			Storage:   loc,
 
+			MigrationsBuilder:         logclient.NewMigrationBuilder(0, c.startTS, c.endTS),
+			Migrations:                emptyMigrations(),
 			MetadataDownloadBatchSize: 32,
 		}
 		cli, err := logclient.CreateLogFileManager(ctx, init)
@@ -244,7 +247,7 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 		req.NoError(err)
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
-			actualStoreIDs = append(actualStoreIDs, meta.StoreId)
+			actualStoreIDs = append(actualStoreIDs, meta.Meta().StoreId)
 		}
 		expectedStoreIDs := make([]int64, 0, len(c.expected))
 		for _, meta := range c.expected {
@@ -469,6 +472,8 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 			RestoreTS: end,
 			Storage:   loc,
 
+			MigrationsBuilder:         logclient.NewMigrationBuilder(0, start, end),
+			Migrations:                emptyMigrations(),
 			MetadataDownloadBatchSize: 32,
 		})
 		req.NoError(err)
@@ -487,15 +492,8 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 				),
 			).Item
 		} else {
-			var counter *int
-			if c.DMLFileCount != nil {
-				counter = new(int)
-			}
-			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx, counter)
+			data, err := fm.LoadDDLFiles(ctx)
 			req.NoError(err)
-			if counter != nil {
-				req.Equal(*c.DMLFileCount, *counter)
-			}
 			r = data
 		}
 		dataFileInfoMatches(t, r, c.Requires...)
@@ -528,6 +526,8 @@ func TestFilterDataFiles(t *testing.T) {
 		RestoreTS: 10,
 		Storage:   loc,
 
+		MigrationsBuilder:         logclient.NewMigrationBuilder(0, 0, 10),
+		Migrations:                emptyMigrations(),
 		MetadataDownloadBatchSize: 32,
 	})
 	req.NoError(err)
@@ -536,7 +536,9 @@ func TestFilterDataFiles(t *testing.T) {
 		m2(wr(1, 1, 1), wr(2, 2, 2), wr(3, 3, 3), wr(4, 4, 4), wr(5, 5, 5)),
 		m2(wr(1, 1, 1), wr(2, 2, 2)),
 	}
-	metaIter := iter.FromSlice(metas)
+	metaIter := iter.Map(iter.FromSlice(metas), func(meta logclient.Meta) *logclient.MetaName {
+		return logclient.NewMetaName(meta, "")
+	})
 	files := iter.CollectAll(ctx, fm.FilterDataFiles(metaIter)).Item
 	check := func(file *logclient.LogDataFileInfo, metaKey string, goff, foff int) {
 		req.Equal(file.MetaDataGroupName, metaKey)
@@ -617,8 +619,8 @@ func TestReadAllEntries(t *testing.T) {
 	data, file := generateKvData()
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 	{
-		file.Cf = stream.WriteCF
-		kvEntries, nextKvEntries, err := fm.ReadAllEntries(ctx, file, 50)
+		file.Cf = consts.WriteCF
+		kvEntries, nextKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
 		require.NoError(t, err)
 		require.Equal(t, []*logclient.KvEntryWithTS{
 			encodekvEntryWithTS("mDDL", 37),
@@ -630,8 +632,8 @@ func TestReadAllEntries(t *testing.T) {
 		}, nextKvEntries)
 	}
 	{
-		file.Cf = stream.DefaultCF
-		kvEntries, nextKvEntries, err := fm.ReadAllEntries(ctx, file, 50)
+		file.Cf = consts.DefaultCF
+		kvEntries, nextKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
 		require.NoError(t, err)
 		require.Equal(t, []*logclient.KvEntryWithTS{
 			encodekvEntryWithTS("mDDL", 27),

@@ -33,7 +33,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -352,6 +351,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+		EnableAsyncBatchGet:   c.Performance.EnableAsyncBatchGet,
 	}
 }
 
@@ -468,13 +468,6 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 		return errors.New("Invalid value for bool type: " + str)
 	}
 	return nil
-}
-
-// LogBackup is the config for log backup service.
-// For now, it includes the embed advancer.
-type LogBackup struct {
-	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
-	Enabled  bool                 `toml:"enabled" json:"enabled"`
 }
 
 // Log is the log section of config.
@@ -769,6 +762,9 @@ type Performance struct {
 
 	// Deprecated: this config will not have any effect
 	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
+
+	// EnableAsyncBatchGet indicates whether to use async API when sending batch-get requests.
+	EnableAsyncBatchGet bool `toml:"enable-async-batch-get" json:"enable-async-batch-get"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -1027,6 +1023,7 @@ var defaultConf = Config{
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
 		ConcurrentlyInitStats:             true,
+		EnableAsyncBatchGet:               false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

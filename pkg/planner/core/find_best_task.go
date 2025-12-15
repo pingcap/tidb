@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -679,6 +680,7 @@ type candidatePath struct {
 	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
 	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
 	isMatchProp       bool
+	indexJoinCols     int // how many index columns are used in access conditions in this IndexJoin.
 }
 
 func compareBool(l, r bool) int {
@@ -726,8 +728,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
-	lhsFullMatch := isFullIndexMatch(lhs)
-	rhsFullMatch := isFullIndexMatch(rhs)
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
@@ -755,7 +755,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
-	if (lhsPseudo || rhsPseudo) && !tablePseudo { // At least one index doesn't have statistics
+	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
+		(lhsEqOrInCount > 0 || rhsEqOrInCount > 0) { // At least one index has equal/IN predicates
+		lhsFullMatch := isFullIndexMatch(lhs)
+		rhsFullMatch := isFullIndexMatch(rhs)
 		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount, preferRange)
 		if pseudoResult > 0 && totalSum >= 0 {
 			return pseudoResult, lhsPseudo
@@ -796,14 +799,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
 	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-		if lhs.path.Index != nil {
+		if !lhs.path.IsTablePath() && lhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
 				lhsPseudo = false // We have statistics for the lhs index
 			} else {
 				lhsPseudo = true
 			}
 		}
-		if rhs.path.Index != nil {
+		if !rhs.path.IsTablePath() && rhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
 				rhsPseudo = false // We have statistics on the rhs index
 			} else {
@@ -1168,6 +1171,22 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
+	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
+	// cherry-pick from the master: false instead of property.PropNotMatched in PR#63958
+	candidate.isMatchProp = false
+	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	// AccessConds could miss some predicates since the DataSource can't see join predicates.
+	// For example, `where t1.a=t2.a and t2.b=1`, `t1=a=t2.a` is not pushed down to t2's accessConds since it's a join
+	// predicate. We need to set columns used as join keys to accessCondsColMap/indexCondsColMap manually.
+	for i := range indexJoinCols {
+		candidate.accessCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+	}
+	return candidate
+}
+
 func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	// since the all index path alternative paths is collected and undetermined, and we should determine a possible and concrete path for this prop.
 	possiblePath, match := matchPropForIndexMergeAlternatives(ds, path, prop)
@@ -1276,10 +1295,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 				}
 			}
-			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
-				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+
+			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+			indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+				if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
@@ -1338,6 +1358,15 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 }
 
 func (c *candidatePath) equalPredicateCount() int {
+	if c.indexJoinCols > 0 { // this candidate path is for Index Join
+		// Specially handle indexes under Index Join, since these indexes can't see the join key themselves, we can't
+		// use path.EqOrInCondCount here.
+		// For example, for "where t1.a=t2.a and t2.b=1" and index "idx(t2, a, b)", since the DataSource of t2 can't
+		// see the join key "t1.a=t2.a", it only considers "t2.b=1" as access condition, so its EqOrInCondCount is 0,
+		// but actually it should be 2.
+		return c.indexJoinCols
+	}
+
 	// Exit if this isn't a DNF condition or has no access conditions
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return c.path.EqOrInCondCount
@@ -2222,6 +2251,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 		}
 		cop.tablePlan = ts
+		cop.indexLookUpPushDown = candidate.path.IsIndexLookUpPushDown
 	}
 	task = cop
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {

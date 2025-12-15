@@ -223,8 +223,9 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 // CopTask is a task that runs in a distributed kv store.
 // TODO: In future, we should split copTask to indexTask and tableTask.
 type CopTask struct {
-	indexPlan base.PhysicalPlan
-	tablePlan base.PhysicalPlan
+	indexPlan           base.PhysicalPlan
+	tablePlan           base.PhysicalPlan
+	indexLookUpPushDown bool
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.

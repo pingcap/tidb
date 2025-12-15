@@ -40,6 +40,7 @@ go_library(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//util/async",
         "@com_github_tikv_pd_client//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//metadata",

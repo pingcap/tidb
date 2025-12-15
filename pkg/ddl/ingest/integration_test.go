@@ -37,7 +37,7 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	assertLastNDDLUseIngest := func(n int) {
 		tk.MustExec("admin check table t;")
@@ -85,7 +85,7 @@ func TestIngestError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set global tidb_enable_dist_task = 0")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -124,12 +124,12 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("set global tidb_enable_dist_task = 0")
 
 	t.Run("Mock panic on scan record operator", func(t *testing.T) {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(*model.DDLReorgMeta) {
 			panic("mock panic")
 		})
 		tk.MustExec("drop table if exists t;")
@@ -151,7 +151,7 @@ func TestAddIndexSetInternalSessions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("set global tidb_enable_dist_task = 0;")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
@@ -162,7 +162,7 @@ func TestAddIndexSetInternalSessions(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(startTS uint64) {
 		expectInternalTS = append(expectInternalTS, startTS)
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(*model.DDLReorgMeta) {
 		mgr := tk.Session().GetSessionManager()
 		actualInternalTS = mgr.GetInternalSessionStartTSList()
 	})
@@ -177,7 +177,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
@@ -203,16 +203,15 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
 	require.True(t, cancelled)
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
-	ok, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
-	require.NoError(t, err)
-	require.True(t, ok)
+	cnt := ingest.LitDiskRoot.Count()
+	require.Equal(t, 0, cnt)
 }
 
 func TestIngestPartitionRowCount(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec(`create table t (a int, b int, c int as (b+10), d int as (b+c),
 		primary key (a) clustered) partition by range (a) (
@@ -233,7 +232,7 @@ func TestAddIndexIngestClientError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("CREATE TABLE t1 (f1 json);")
 	tk.MustExec(`insert into t1(f1) values (cast("null" as json));`)
@@ -244,7 +243,7 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
@@ -259,16 +258,15 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 		}
 	})
 	tk.MustGetErrCode("alter table t add index idx1(c1)", errno.ErrCancelledDDLJob)
-	available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
-	require.NoError(t, err)
-	require.True(t, available)
+	cnt := ingest.LitDiskRoot.Count()
+	require.Equal(t, 0, cnt)
 }
 
 func TestAddIndexIngestTimezone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("SET time_zone = '-06:00';")
 	tk.MustExec("create table t (`src` varchar(48),`t` timestamp,`timezone` varchar(100));")
@@ -290,7 +288,7 @@ func TestAddIndexIngestMultiSchemaChange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values(1, 1), (2, 2);")
@@ -321,7 +319,7 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk.MustExec("create table t(id int primary key, b int, k int);")
 	tk.MustExec("insert into t values (1, 1, 1);")
@@ -329,28 +327,23 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	var runDML bool
 	var errDML error
-
-	ingest.MockExecAfterWriteRow = func() {
-		if runDML {
-			return
-		}
-		_, errDML = tk1.Exec("insert into t values (2, 1, 2);")
-		runDML = true
-	}
-
+	var once sync.Once
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow", func() {
+		once.Do(func() {
+			_, errDML = tk1.Exec("insert into t values (2, 1, 2);")
+		})
+	})
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 
 	require.NoError(t, errDML)
-	require.True(t, runDML)
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1", "2 1 2"))
 }
 
 func TestMultiSchemaAddIndexMerge(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
@@ -382,7 +375,7 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 
 func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -415,7 +408,7 @@ func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 
 func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_dist_task = off;")
@@ -453,7 +446,7 @@ func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
 
 func TestAddGlobalIndexInIngest(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -508,7 +501,7 @@ func TestAddGlobalIndexInIngest(t *testing.T) {
 
 func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -535,7 +528,7 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 
 func TestAddIndexValidateRangesFailed(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -549,7 +542,7 @@ func TestAddIndexValidateRangesFailed(t *testing.T) {
 
 func TestModifyColumnWithMultipleIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testcases := []struct {
@@ -586,7 +579,7 @@ func TestModifyColumnWithMultipleIndex(t *testing.T) {
 
 func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testcases := []struct {

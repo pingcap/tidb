@@ -1336,6 +1336,7 @@ func (a *ExecStmt) logAudit() {
 			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
 			}
+			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, a.retryCount > 0 || sessVars.RetryInfo.Retrying)
 			if intest.InTest && (cmdBin == mysql.ComStmtPrepare ||
 				cmdBin == mysql.ComStmtExecute || cmdBin == mysql.ComStmtClose) {
 				intest.Assert(ctx.Value(plugin.PrepareStmtIDCtxKey) != nil, "prepare statement id should not be nil")
@@ -1756,6 +1757,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
+		StorageKV:         stmtCtx.IsTiKV.Load(),
+		StorageMPP:        stmtCtx.IsTiFlash.Load(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
