@@ -137,6 +137,11 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 			totalConflictedRowCnt += len(conflictedRows)
 		}
 		s.EqualValues(totalRowCount-len(resultRows), totalConflictedRowCnt)
+		if totalConflictedRowCnt > 0 {
+			s.Contains(result[0][9], fmt.Sprintf("%d conflicted rows", totalConflictedRowCnt))
+		}
+	} else {
+		s.Contains(result[0][9], "Too many conflicted rows, checksum skipped")
 	}
 
 	return int64(jobID)

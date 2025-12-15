@@ -596,12 +596,14 @@ func updateTaskSummary(
 				if subtaskMeta.TooManyConflictsFromIndex {
 					// in this case, we can't get the exact conflicted row count, so we
 					// keep the original.
+					taskMeta.Summary.TooManyConflicts = true
 					continue
 				}
 				conflictedRowCnt += uint64(subtaskMeta.ConflictedRowCount)
 			}
 			// 'left row count' = 'encoded row count' - 'conflicted row count'
 			taskMeta.Summary.ImportedRows -= int64(conflictedRowCnt)
+			taskMeta.Summary.ConflictRowCnt = conflictedRowCnt
 		}
 	}
 
