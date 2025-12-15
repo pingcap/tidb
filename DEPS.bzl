@@ -5542,13 +5542,13 @@ def go_deps():
         name = "com_github_petermattis_goid",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/petermattis/goid",
-        sha256 = "3f47ab8e5713c36ec5b4295956a5ef012a192bc19198ae1b6591408c061e97ab",
-        strip_prefix = "github.com/petermattis/goid@v0.0.0-20240813172612-4fcff4a6cae7",
+        sha256 = "9bf0da79dd558ac6695d99ae547993fb34502eb255ce7cc6494fb03131b959c2",
+        strip_prefix = "github.com/petermattis/goid@v0.0.0-20250813065127-a731cc31b4fe",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20240813172612-4fcff4a6cae7.zip",
-            "http://ats.apps.svc/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20240813172612-4fcff4a6cae7.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20240813172612-4fcff4a6cae7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20240813172612-4fcff4a6cae7.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20250813065127-a731cc31b4fe.zip",
+            "http://ats.apps.svc/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20250813065127-a731cc31b4fe.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20250813065127-a731cc31b4fe.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20250813065127-a731cc31b4fe.zip",
         ],
     )
     go_repository(
@@ -6218,13 +6218,13 @@ def go_deps():
         name = "com_github_sasha_s_go_deadlock",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/sasha-s/go-deadlock",
-        sha256 = "b927f67dd9a6dc183bac7249c019775e689aee67dc52bfa53354137139d722a1",
-        strip_prefix = "github.com/sasha-s/go-deadlock@v0.3.5",
+        sha256 = "3fc61a5bf78d5d069069dc3d531dfff4ac90406bdf28943d11cb5a3faaf77fc8",
+        strip_prefix = "github.com/sasha-s/go-deadlock@v0.3.6",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-            "http://ats.apps.svc/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.6.zip",
+            "http://ats.apps.svc/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.6.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.6.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.6.zip",
         ],
     )
     go_repository(
