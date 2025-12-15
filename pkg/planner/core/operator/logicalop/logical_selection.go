@@ -16,7 +16,6 @@ package logicalop
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 
 	"github.com/pingcap/errors"
