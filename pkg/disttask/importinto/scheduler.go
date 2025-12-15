@@ -574,29 +574,20 @@ func updateTaskSummary(
 	case proto.ImportStepWriteAndIngest:
 		taskMeta.Summary.IngestSummary = p.summary
 	case proto.ImportStepPostProcess:
-		if taskMeta.Plan.IsLocalSort() {
-			subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
-			if err != nil {
-				return errors.Trace(err)
-			}
+		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
+		if err != nil {
+			return errors.Trace(err)
+		}
 
-			for _, subtaskSummary := range subtaskSummaries {
-				taskMeta.Summary.ImportedRows += subtaskSummary.RowCnt.Load()
-			}
-		} else {
-			subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, proto.ImportStepWriteAndIngest)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			for _, subtaskSummary := range subtaskSummaries {
-				taskMeta.Summary.ImportedRows += subtaskSummary.RowCnt.Load()
-			}
+		for _, subtaskSummary := range subtaskSummaries {
+			taskMeta.Summary.ImportedRows += subtaskSummary.RowCnt.Load()
+		}
+		if taskMeta.Plan.IsGlobalSort() {
 			metas, err := handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepCollectConflicts)
 			if err != nil {
 				return err
 			}
-			var conflictedRowDueToIndex uint64
+			var conflictedRowCnt uint64
 			for _, bs := range metas {
 				var subtaskMeta CollectConflictsStepMeta
 				if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
@@ -607,10 +598,10 @@ func updateTaskSummary(
 					// keep the original.
 					continue
 				}
-				conflictedRowDueToIndex += uint64(subtaskMeta.ConflictedRowCount) - uint64(subtaskMeta.RecordedDataKVConflicts)
+				conflictedRowCnt += uint64(subtaskMeta.ConflictedRowCount)
 			}
-			// 'left row count' = 'ingested data KV count' - 'conflicted row count due to index conflict only'
-			taskMeta.Summary.ImportedRows -= int64(conflictedRowDueToIndex)
+			// 'left row count' = 'encoded row count' - 'conflicted row count'
+			taskMeta.Summary.ImportedRows -= int64(conflictedRowCnt)
 		}
 	}
 
