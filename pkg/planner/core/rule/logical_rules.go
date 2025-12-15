@@ -36,11 +36,11 @@ const (
 	FlagPushDownAgg
 	FlagDeriveTopNFromWindow
 	FlagPredicateSimplification
+	FlagOuterJoinToSemiJoin
 	FlagPushDownTopN
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
 	FlagPruneColumnsAgain
-	FlagOuterJoinToSemiJoin
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
 	FlagEmptySelectionEliminator

@@ -101,11 +101,11 @@ var optRuleList = []base.LogicalOptRule{
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
 	&rule.PredicateSimplification{},
+	&rule.OuterJoinToSemiJoin{},
 	&PushDownTopNOptimizer{},
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
 	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
-	&rule.OuterJoinToSemiJoin{},
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},

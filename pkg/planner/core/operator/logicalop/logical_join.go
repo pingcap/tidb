@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"iter"
 	"maps"
 	"math"
 	"math/bits"
@@ -265,63 +266,120 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
+// filterOutNullEQIter4ConvertAntiJoin is to iterate all equal conditions except NullEQ ones.
+func filterOutNullEQIter4ConvertAntiJoin(sf []*expression.ScalarFunction) iter.Seq[*expression.ScalarFunction] {
+	return func(yield func(*expression.ScalarFunction) bool) {
+		for _, s := range sf {
+			if s.FuncName.L == ast.NullEQ {
+				continue
+			}
+			if !yield(s) {
+				// yield will retun false if the calling
+				// range loop has exited/stopped
+				return
+			}
+		}
+	}
+}
+
+// filterOutOtherCondition4ConvertAntiJoin is to iterate all other conditions except GT, GE, LE, LT, NE ones.
+func filterOutOtherCondition4ConvertAntiJoin(sf []expression.Expression) iter.Seq[expression.Expression] {
+	return func(yield func(expression.Expression) bool) {
+		for _, s := range sf {
+			if sf, ok := s.(*expression.ScalarFunction); ok {
+				if sf.FuncName.L == ast.NullEQ {
+					continue
+				}
+				switch sf.FuncName.L {
+				case ast.GT, ast.GE, ast.LE, ast.LT, ast.NE:
+					args := sf.GetArgs()
+					_, ok1 := args[0].(*expression.Column)
+					_, ok2 := args[1].(*expression.Column)
+					if ok1 && ok2 {
+						if !yield(s) {
+							// yield will retun false if the calling
+							// range loop has exited/stopped
+							return
+						}
+					}
+				default:
+				}
+			}
+		}
+	}
+}
+
 // CanConvertAntiJoin is used in outer-join-to-semi-join rule.
 func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema) (proj *LogicalProjection, selConditionColInOuter bool) {
 	if len(ret) != 1 || len(p.EqualConditions) == 0 {
 		return nil, false
 	}
+	if _, ok := p.Self().(*LogicalApply); ok {
+		return nil, false
+	}
+	innerChildIdx := 0
 	switch p.JoinType {
 	case base.LeftOuterJoin:
-		inner := p.children[0]
-		innerSch := inner.Schema()
-		outerSchSet := intset.NewFastIntSet()
-		expression.ExtractColumnsSetFromExpressions(&outerSchSet, func(c *expression.Column) bool {
-			return !innerSch.Contains(c)
-		}, expression.Column2Exprs(p.Schema().Columns)...)
-		joinOuterKeySch := intset.NewFastIntSet()
-		expression.ExtractColumnsSetFromExpressions(&joinOuterKeySch, func(c *expression.Column) bool {
-			return outerSchSet.Has(int(c.UniqueID))
-		}, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-		expression.ExtractColumnsSetFromExpressions(&joinOuterKeySch, func(c *expression.Column) bool {
-			return outerSchSet.Has(int(c.UniqueID))
-		}, p.OtherConditions...)
-
-		var sf *expression.ScalarFunction
-		var ok bool
-		if sf, ok = ret[0].(*expression.ScalarFunction); !ok {
-			return nil, false
-		}
-		if sf.FuncName.L != ast.IsNull {
-			return nil, false
-		}
-		args := sf.GetArgs()
-		if len(args) == 1 {
-			// It is a Not expression. then we check whether it has a IsNull expression.
-			if isNullcol, ok := args[0].(*expression.Column); ok {
-				// column in IsNull expression is from the outer side columns.
-				selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
-				// selection's schema doesn't contain the outer side columns.
-				selOutputColInOuter := slices.ContainsFunc(selectSch.Columns, func(column *expression.Column) bool {
-					return outerSchSet.Has(int(column.UniqueID))
-				})
-				if selConditionColInOuter && selOutputColInOuter {
-					projExprs := make([]expression.Expression, 0, len(selectSch.Columns))
-					for _, c := range selectSch.Columns {
-						if outerSchSet.Has(int(c.UniqueID)) {
-							projExprs = append(projExprs, expression.NewNull())
-						} else {
-							projExprs = append(projExprs, c)
-						}
-					}
-					proj = LogicalProjection{Exprs: projExprs}.Init(p.SCtx(), p.QueryBlockOffset())
-					proj.SetSchema(selectSch.Clone())
-				}
-			}
-		}
-		return proj, selConditionColInOuter
+		innerChildIdx = 0
+	case base.RightOuterJoin:
+		innerChildIdx = 1
 	default:
 		return nil, false
 	}
+	inner := p.children[innerChildIdx]
+	innerSch := inner.Schema()
+	outerSchSet := intset.NewFastIntSet()
+
+	expression.ExtractColumnsSetFromExpressions(&outerSchSet, func(c *expression.Column) bool {
+		return !innerSch.Contains(c)
+	}, expression.Column2Exprs(p.Schema().Columns)...)
+	joinOuterKeySch := intset.NewFastIntSet()
+	for s := range filterOutNullEQIter4ConvertAntiJoin(p.EqualConditions) {
+		expression.ExtractColumnsSetFromExpressions(&joinOuterKeySch, func(c *expression.Column) bool {
+			return outerSchSet.Has(int(c.UniqueID))
+		}, s)
+	}
+	for s := range filterOutOtherCondition4ConvertAntiJoin(p.OtherConditions) {
+		expression.ExtractColumnsSetFromExpressions(&joinOuterKeySch, func(c *expression.Column) bool {
+			return outerSchSet.Has(int(c.UniqueID))
+		}, s)
+	}
+	if joinOuterKeySch.Len() == 0 {
+		return nil, false
+	}
+	var sf *expression.ScalarFunction
+	var ok bool
+	if sf, ok = ret[0].(*expression.ScalarFunction); !ok {
+		return nil, false
+	}
+	if sf.FuncName.L != ast.IsNull {
+		return nil, false
+	}
+	args := sf.GetArgs()
+	if len(args) == 1 {
+		// It is a Not expression. then we check whether it has a IsNull expression.
+		if isNullcol, ok := args[0].(*expression.Column); ok {
+			// column in IsNull expression is from the outer side columns.
+			selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
+			// selection's schema doesn't contain the outer side columns.
+			selOutputColInOuter := slices.ContainsFunc(selectSch.Columns, func(column *expression.Column) bool {
+				return outerSchSet.Has(int(column.UniqueID))
+			})
+			if selConditionColInOuter && selOutputColInOuter {
+				projExprs := make([]expression.Expression, 0, len(selectSch.Columns))
+				for _, c := range selectSch.Columns {
+					if outerSchSet.Has(int(c.UniqueID)) {
+						projExprs = append(projExprs, expression.NewNull())
+					} else {
+						projExprs = append(projExprs, c)
+					}
+				}
+				proj = LogicalProjection{Exprs: projExprs}.Init(p.SCtx(), p.QueryBlockOffset())
+				proj.SetSchema(selectSch.Clone())
+			}
+		}
+	}
+	return proj, selConditionColInOuter
 }
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
