@@ -5461,21 +5461,16 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.popTableHints()
 	}()
 
-	b.inUpdateStmt = true
-	b.isForUpdateRead = true
-
-	if update.With != nil {
-		l := len(b.outerCTEs)
-		defer func() {
-			b.outerCTEs = b.outerCTEs[:l]
-		}()
-		_, err := b.buildWith(ctx, update.With)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs, false)
+	p, oldSchemaLen, err := b.buildDMLSelectPlan(
+		ctx,
+		update.With,
+		update.TableRefs.TableRefs,
+		update.Where,
+		update.Order,
+		update.Limit,
+		update.TableRefs.TableRefs.Right == nil,
+		true,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -5493,46 +5488,107 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 
-	oldSchemaLen := p.Schema().Len()
-	if update.Where != nil {
-		p, err = b.buildSelection(ctx, p, update.Where, nil)
-		if err != nil {
-			return nil, err
-		}
+	utlr := &updatableTableListResolver{
+		resolveCtx: b.resolveCtx,
 	}
-	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		if update.TableRefs.TableRefs.Right == nil {
-			// buildSelectLock is an optimization that can reduce RPC call.
-			// We only need do this optimization for single table update which is the most common case.
-			// When TableRefs.Right is nil, it is single table update.
-			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
-				LockType: ast.SelectLockForUpdate,
-			})
-			if err != nil {
-				return nil, err
-			}
+	update.Accept(utlr)
+
+	return b.buildUpdatePlan(ctx, p, oldSchemaLen, utlr.updatableTableList, update.List, update.IgnoreErr)
+}
+
+// buildDMLSelectPlan builds the common select plan for DML statements (UPDATE, DELETE).
+// It handles WITH clause, builds the result set from TableRefs, WHERE clause, pessimistic lock,
+// ORDER BY, and LIMIT.
+func (b *PlanBuilder) buildDMLSelectPlan(
+	ctx context.Context,
+	with *ast.WithClause,
+	tableRefs *ast.Join,
+	where ast.ExprNode,
+	orderBy *ast.OrderByClause,
+	limit *ast.Limit,
+	isSingleTable bool,
+	isUpdate bool,
+) (p base.LogicalPlan, oldSchemaLen int, err error) {
+	if isUpdate {
+		b.inUpdateStmt = true
+	} else {
+		b.inDeleteStmt = true
+	}
+	b.isForUpdateRead = true
+
+	if with != nil {
+		l := len(b.outerCTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:l]
+		}()
+		_, err := b.buildWith(ctx, with)
+		if err != nil {
+			return nil, 0, err
 		}
 	}
 
-	if update.Order != nil {
-		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
-		if err != nil {
-			return nil, err
-		}
+	// Build the result set from TableRefs
+	p, err = b.buildResultSetNode(ctx, tableRefs, false)
+	if err != nil {
+		return nil, 0, err
 	}
-	if update.Limit != nil {
-		p, err = b.buildLimit(p, update.Limit)
+
+	oldSchemaLen = p.Schema().Len()
+
+	// Build WHERE clause
+	if where != nil {
+		p, err = b.buildSelection(ctx, p, where, nil)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
+	// buildSelectLock is an optimization that can reduce RPC call.
+	// We only need do this optimization for single table operation which is the most common case.
+	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic && isSingleTable {
+		p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
+			LockType: ast.SelectLockForUpdate,
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	// Build ORDER BY
+	if orderBy != nil {
+		p, err = b.buildSort(ctx, p, orderBy.Items, nil, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	// Build LIMIT
+	if limit != nil {
+		p, err = b.buildLimit(p, limit)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	return p, oldSchemaLen, nil
+}
+
+// buildUpdatePlan builds the Update physical plan from a select plan.
+func (b *PlanBuilder) buildUpdatePlan(
+	ctx context.Context,
+	p base.LogicalPlan,
+	oldSchemaLen int,
+	tableList []*ast.TableName,
+	assignList []*ast.Assignment,
+	ignoreErr bool,
+) (base.Plan, error) {
 	// Add project to freeze the order of output columns.
 	proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
 	proj.SetOutputNames(make(types.NameSlice, len(p.OutputNames())))
 	copy(proj.OutputNames(), p.OutputNames())
 	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
+	// Remove _tidb_commit_ts columns from projection
 	for i := len(proj.OutputNames()) - 1; i >= 0; i-- {
 		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
 			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
@@ -5543,11 +5599,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	proj.SetChildren(p)
 	p = proj
 
-	utlr := &updatableTableListResolver{
-		resolveCtx: b.resolveCtx,
-	}
-	update.Accept(utlr)
-	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, utlr.updatableTableList, update.List, p)
+	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, tableList, assignList, p)
 	if err != nil {
 		return nil, err
 	}
@@ -5556,10 +5608,11 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt := physicalop.Update{
 		OrderedList:               orderedList,
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
-		VirtualAssignmentsOffset:  len(update.List),
-		IgnoreError:               update.IgnoreErr,
+		VirtualAssignmentsOffset:  len(assignList),
+		IgnoreError:               ignoreErr,
 	}.Init(b.ctx)
 	updt.SetOutputNames(p.OutputNames())
+
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved. (^flagEliminateProjection should also be applied in postOptimize)
 	updt.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag&^rule.FlagEliminateProjection, p)
@@ -5844,78 +5897,8 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base.Plan, error) {
-	b.pushSelectOffset(0)
-	b.pushTableHints(ds.TableHints, 0)
-	defer func() {
-		b.popSelectOffset()
-		// table hints are only visible in the current DELETE statement.
-		b.popTableHints()
-	}()
-
-	b.inDeleteStmt = true
-	b.isForUpdateRead = true
-
-	if ds.With != nil {
-		l := len(b.outerCTEs)
-		defer func() {
-			b.outerCTEs = b.outerCTEs[:l]
-		}()
-		_, err := b.buildWith(ctx, ds.With)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs, false)
-	if err != nil {
-		return nil, err
-	}
-	oldLen := p.Schema().Len()
-
-	// For explicit column usage, should use the all-public columns.
-	if ds.Where != nil {
-		p, err = b.buildSelection(ctx, p, ds.Where, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		if !ds.IsMultiTable {
-			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
-				LockType: ast.SelectLockForUpdate,
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	if ds.Order != nil {
-		p, err = b.buildSort(ctx, p, ds.Order.Items, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if ds.Limit != nil {
-		p, err = b.buildLimit(p, ds.Limit)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// If the delete is non-qualified it does not require Select Priv
-	if ds.Where == nil && ds.Order == nil {
-		b.popVisitInfo()
-	}
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
-
-	del := physicalop.Delete{
-		IsMultiTable: ds.IsMultiTable,
-		IgnoreErr:    ds.IgnoreErr,
-	}.Init(b.ctx)
-
 	localResolveCtx := resolve.NewContext()
 	// Collect visitInfo.
 	if ds.Tables != nil {
@@ -5990,6 +5973,39 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
 	}
+
+	b.pushSelectOffset(0)
+	b.pushTableHints(ds.TableHints, 0)
+	defer func() {
+		b.popSelectOffset()
+		// table hints are only visible in the current DELETE statement.
+		b.popTableHints()
+	}()
+
+	p, oldLen, err := b.buildDMLSelectPlan(
+		ctx,
+		ds.With,
+		ds.TableRefs.TableRefs,
+		ds.Where,
+		ds.Order,
+		ds.Limit,
+		!ds.IsMultiTable,
+		false, // isUpdate = false (this is DELETE)
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// If the delete is non-qualified it does not require Select Priv
+	if ds.Where == nil && ds.Order == nil {
+		b.popVisitInfo()
+	}
+
+	del := physicalop.Delete{
+		IsMultiTable: ds.IsMultiTable,
+		IgnoreErr:    ds.IgnoreErr,
+	}.Init(b.ctx)
+
 	handleColsMap := b.handleHelper.tailMap()
 	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, p.Schema())
 	if err != nil {
