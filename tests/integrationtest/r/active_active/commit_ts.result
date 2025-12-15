@@ -71,9 +71,7 @@ insert into t value (1,1,1) on duplicate key update a = _tidb_commit_ts;
 select * from t;
 a	b	c
 TSO	1	1
-set @@tidb_translate_softdelete_sql = false;
 delete from t;
-set @@tidb_translate_softdelete_sql = true;
 insert into t (a,b,c,_tidb_softdelete_time) values (2,2,2, now()) on duplicate key update a = _tidb_commit_ts;
 explain format = 'brief' select * from t;
 id	estRows	task	access object	operator info

@@ -5906,9 +5906,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
 	localResolveCtx := resolve.NewContext()
-	// softDeleteTables collects tables that have soft delete enabled.
-	// It's only used when SoftDeleteRewrite is enabled.
-	var softDeleteTables []*resolve.TableNameW
 	var tablesToDelete []*ast.TableName
 	// Collect visitInfo.
 	if ds.Tables != nil {
@@ -5958,10 +5955,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tnW.DBInfo.Name.L, tb.Name.L, "", authErr)
-			// Check for soft delete tables when SoftDeleteRewrite is enabled.
-			if sessionVars.SoftDeleteRewrite && tableInfo.SoftdeleteInfo != nil {
-				softDeleteTables = append(softDeleteTables, tnW)
-			}
 		}
 	} else {
 		// Delete from a, b, c, d.
@@ -5986,20 +5979,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, v.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
-			// Check for soft delete tables when SoftDeleteRewrite is enabled.
-			if sessionVars.SoftDeleteRewrite && tblW.TableInfo.SoftdeleteInfo != nil {
-				softDeleteTables = append(softDeleteTables, tblW)
-			}
 		}
-	}
-
-	// If soft delete tables exist and SoftDeleteRewrite is enabled, rewrite DELETE as UPDATE.
-	if len(softDeleteTables) > 0 && sessionVars.SoftDeleteRewrite {
-		// When SoftDeleteRewrite is enabled, if any table has soft delete, all tables must have soft delete.
-		if len(softDeleteTables) != len(tablesToDelete) {
-			return nil, errors.Errorf("cannot mix soft delete and non-soft delete tables in DELETE statement")
-		}
-		return b.buildDeleteAsUpdate(ctx, ds, softDeleteTables)
 	}
 
 	b.pushSelectOffset(0)
