@@ -662,7 +662,7 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 				}
 			}
 		}
-		allFTSFuncIsCovered := false
+		allFTSFuncIsCovered := true
 		tmpMatchedExprSet.Clear()
 	checkExprForIndexLoop:
 		for i, cond := range ds.PushedDownConds {
@@ -671,14 +671,14 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFunc bool) error {
 				// If this expression can not be calculated at TiCI side, check whether it has fts function.
 				// If yes, we should skip this index path.
 				if expression.ContainsFullTextSearchFn(cond) {
-					allFTSFuncIsCovered = true
+					allFTSFuncIsCovered = false
 					break checkExprForIndexLoop
 				}
 				continue
 			}
 			tmpMatchedExprSet.Insert(i)
 		}
-		if allFTSFuncIsCovered {
+		if !allFTSFuncIsCovered {
 			continue
 		}
 		// We get here means this index can cover all FTS functions.
