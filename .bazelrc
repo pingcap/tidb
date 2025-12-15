@@ -6,7 +6,6 @@ run:ci --color=yes
 
 build --announce_rc
 build --experimental_guard_against_concurrent_changes
-build --experimental_remote_merkle_tree_cache
 build --java_language_version=17
 build --java_runtime_version=17
 build --tool_java_language_version=17
