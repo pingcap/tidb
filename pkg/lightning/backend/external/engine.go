@@ -33,11 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/metrics"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
->>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -324,25 +320,6 @@ func (e *Engine) loadRangeBatch(ctx context.Context, jobKeys [][]byte, outCh cha
 	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
-<<<<<<< HEAD
-=======
-	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
-		kvs := make([]KVPair, 0)
-		kvs = append(kvs, KVPair{[]byte{}, []byte{}})
-		data := e.buildIngestData(kvs, nil)
-		data.IncRef()
-		select {
-		case <-ctx.Done():
-			failpoint.Return(ctx.Err())
-		case outCh <- engineapi.DataAndRanges{
-			Data: data,
-		}:
-			e.activeIngestDataFlags = append(e.activeIngestDataFlags, data.released)
-			failpoint.Return(nil)
-		}
-	})
-
->>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
@@ -611,7 +588,7 @@ func (e *Engine) ID() string {
 }
 
 // GetOnDup returns the OnDuplicateKey action for this engine.
-func (e *Engine) GetOnDup() engineapi.OnDuplicateKey {
+func (e *Engine) GetOnDup() common.OnDuplicateKey {
 	return e.onDup
 }
 

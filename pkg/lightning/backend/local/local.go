@@ -1380,7 +1380,7 @@ func (local *Backend) executeJob(
 // verifyImportedStatistics verifies the imported statistics for external engines.
 // It checks if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used (which are not yet implemented),
 // and verifies that the imported KV count matches the expected one.
-func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
+func verifyImportedStatistics(e common.Engine, importedKVCount int64) error {
 	// Check if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used.
 	// These options are not yet implemented for local backend, so we skip
 	// the statistics verification and return an error to remind future
@@ -1390,7 +1390,7 @@ func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
 			failpoint.Return(nil)
 		})
 		onDup := extEngine.GetOnDup()
-		if onDup == engineapi.OnDuplicateKeyRecord || onDup == engineapi.OnDuplicateKeyRemove {
+		if onDup == common.OnDuplicateKeyRecord || onDup == common.OnDuplicateKeyRemove {
 			return errors.Errorf("OnDuplicateKeyRecord and OnDuplicateKeyRemove are not yet implemented for local backend. " +
 				"When implementing these options, please also implement the statistics verification for them.")
 		}
@@ -1521,16 +1521,12 @@ func (local *Backend) ImportEngine(
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
-<<<<<<< HEAD
-		log.FromContext(ctx).Info("import engine success",
-=======
 
 		if err := verifyImportedStatistics(e, importedLength); err != nil {
 			return err
 		}
 
-		tidblogutil.Logger(ctx).Info("import engine success",
->>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
+		log.FromContext(ctx).Info("import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),
 			zap.Int64("kvs", lfLength),

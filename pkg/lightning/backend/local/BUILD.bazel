@@ -159,6 +159,7 @@ go_test(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",

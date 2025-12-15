@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -64,11 +65,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/http"
-<<<<<<< HEAD
-=======
-	"github.com/tikv/pd/client/opt"
-	atomic2 "go.uber.org/atomic"
->>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -2294,24 +2290,11 @@ func (r *recordScanRegionsHook) AfterScanRegions(infos []*split.RegionInfo, err 
 }
 
 func TestExternalEngine(t *testing.T) {
-<<<<<<< HEAD
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize")
-	})
-=======
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipOnDuplicateKeyCheck", "return(true)")
->>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
 	ctx := context.Background()
 	dir := t.TempDir()
 	storageURI := "file://" + filepath.ToSlash(dir)
@@ -2599,7 +2582,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 	ctx := context.Background()
 	local := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: *atomic2.NewInt32(2),
+			WorkerConcurrency: 2,
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
 		splitCli: initTestSplitClient([][]byte{[]byte("a"), []byte("z")}, nil),
@@ -2618,15 +2601,13 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 		},
 	}
 
-	// Create multiple jobs: some empty, some with data
-	// Empty jobs will finish quickly, but the ingestData should not be cleaned
-	// until all jobs are done.
-	jobRanges := []engineapi.Range{
-		{Start: []byte("a"), End: []byte("b")}, // empty job
-		{Start: []byte("b"), End: []byte("c")}, // job with data
-		{Start: []byte("c"), End: []byte("d")}, // job with data
-		{Start: []byte("d"), End: []byte("e")}, // empty job
-		{Start: []byte("e"), End: []byte("f")}, // empty job
+	// Create multiple jobs
+	jobRanges := []common.Range{
+		{Start: []byte("a"), End: []byte("b")},
+		{Start: []byte("b"), End: []byte("c")},
+		{Start: []byte("c"), End: []byte("d")},
+		{Start: []byte("d"), End: []byte("e")},
+		{Start: []byte("e"), End: []byte("f")},
 	}
 
 	// Use fakeRegionJobs to inject jobs
@@ -2654,7 +2635,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
-								result: &tikvWriteResult{emptyJob: true},
+								result: &tikvWriteResult{},
 								err:    nil,
 							},
 						},
@@ -2678,7 +2659,6 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 						{
 							write: injectedWriteBehaviour{
 								result: &tikvWriteResult{
-									emptyJob:   false,
 									count:      1,
 									totalBytes: 2,
 									sstMeta:    []*sst.SSTMeta{{}},
@@ -2707,7 +2687,6 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 						{
 							write: injectedWriteBehaviour{
 								result: &tikvWriteResult{
-									emptyJob:   false,
 									count:      1,
 									totalBytes: 2,
 									sstMeta:    []*sst.SSTMeta{{}},
@@ -2735,7 +2714,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
-								result: &tikvWriteResult{emptyJob: true},
+								result: &tikvWriteResult{},
 								err:    nil,
 							},
 						},
@@ -2758,7 +2737,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 					injected: []injectedBehaviour{
 						{
 							write: injectedWriteBehaviour{
-								result: &tikvWriteResult{emptyJob: true},
+								result: &tikvWriteResult{},
 								err:    nil,
 							},
 						},
@@ -2794,24 +2773,13 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 			receivedJobs = append(receivedJobs, job)
 			receivedMu.Unlock()
 
-			// Simulate fast processing of empty jobs - they finish immediately
-			// The key point is: even if empty jobs finish quickly and call done(),
-			// the ingestData should not be cleaned because other jobs still hold references
-			if job.writeResult != nil && job.writeResult.emptyJob {
-				// Empty job finishes quickly - this simulates the bug scenario
-				// where empty jobs finish before other jobs are processed
-				job.convertStageTo(ingested)
-				job.done(&jobWg)
-			} else {
-				// For non-empty jobs, verify that ingestData is still accessible
-				// This is the critical check: even after empty jobs finished,
-				// non-empty jobs should still be able to access ingestData
-				require.False(t, data.IsCleaned(), "ingestData should not be cleaned while non-empty jobs are still processing")
+			// This is the critical check: even after empty jobs finished,
+			// non-empty jobs should still be able to access ingestData
+			require.False(t, data.IsCleaned(), "ingestData should not be cleaned while non-empty jobs are still processing")
 
-				// Simulate processing the non-empty job
-				job.convertStageTo(ingested)
-				job.done(&jobWg)
-			}
+			// Simulate processing the non-empty job
+			job.convertStageTo(ingested)
+			job.done(&jobWg)
 		}
 	}()
 
@@ -2836,21 +2804,21 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 	require.True(t, data.GetRefCount() == 0, "ref count should be 0 after all jobs are done")
 }
 
-// mockEngineWithData is a mock engine that implements engineapi.Engine
+// mockEngineWithData is a mock engine that implements common.Engine
 type mockEngineWithData struct {
-	data   engineapi.IngestData
-	ranges []engineapi.Range
+	data   common.IngestData
+	ranges []common.Range
 }
 
 func (m *mockEngineWithData) ID() string {
 	return "mock-engine"
 }
 
-func (m *mockEngineWithData) LoadIngestData(ctx context.Context, ch chan<- engineapi.DataAndRanges) error {
+func (m *mockEngineWithData) LoadIngestData(ctx context.Context, ch chan<- common.DataAndRanges) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case ch <- engineapi.DataAndRanges{
+	case ch <- common.DataAndRanges{
 		Data:         m.data,
 		SortedRanges: m.ranges,
 	}:
@@ -2867,8 +2835,8 @@ func (m *mockEngineWithData) ImportedStatistics() (importedKVSize int64, importe
 	return 0, 0
 }
 
-func (m *mockEngineWithData) ConflictInfo() engineapi.ConflictInfo {
-	return engineapi.ConflictInfo{
+func (m *mockEngineWithData) ConflictInfo() common.ConflictInfo {
+	return common.ConflictInfo{
 		Count: 0,
 		Files: nil,
 	}
