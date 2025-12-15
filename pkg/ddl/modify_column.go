@@ -85,6 +85,7 @@ func getModifyColumnType(
 	sqlMode mysql.SQLMode) byte {
 	newCol := args.Column
 	if noReorgDataStrict(tblInfo, oldCol, args.Column) {
+		// It's not NULL->NOTNULL change
 		if !isNullToNotNullChange(oldCol, newCol) {
 			return model.ModifyTypeNoReorg
 		}
@@ -96,18 +97,24 @@ func getModifyColumnType(
 		return model.ModifyTypeReorg
 	}
 
-	if !sqlMode.HasStrictMode() {
-		return model.ModifyTypeReorg
-	}
-
 	// FIXME(joechenrh): handle partition and TiFlash replica case
 	if tblInfo.Partition != nil || tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
 		return model.ModifyTypeReorg
 	}
 
+	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(true)
+		}
+	})
+
 	// FIXME(joechenrh): remove this when resolve stats problem.
 	if (isIntegerChange(oldCol, args.Column) && mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
 		(isCharChange(oldCol, args.Column) && !collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
+		return model.ModifyTypeReorg
+	}
+
+	if !sqlMode.HasStrictMode() {
 		return model.ModifyTypeReorg
 	}
 
@@ -760,7 +767,6 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 }
 
 func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	// Signed/unsigned change for integer types need index reorg.
 	if isIntegerChange(oldCol, changingCol) {
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
@@ -779,13 +785,7 @@ func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 }
 
 func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			failpoint.Return(true)
-		}
-	})
-
-	// Integer are guaranteed to not need row reorg.
+	// Integer changes can skip reorg
 	if isIntegerChange(oldCol, changingCol) {
 		return false
 	}
@@ -795,10 +795,7 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 		return true
 	}
 
-	// We have checked charset before, so only need to check binary string here.
-	if types.IsBinaryStr(&oldCol.FieldType) && types.IsBinaryStr(&changingCol.FieldType) {
-		return oldCol.GetFlen() != changingCol.GetFlen()
-	}
+	// We have checked charset before, only need to check binary string, which needs padding.
 	return types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType)
 }
 
