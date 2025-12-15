@@ -108,6 +108,12 @@ type PhysicalIndexScan struct {
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
+
+	// MaxCountAfterAccess is an upper bound on CountAfterAccess, accounting for risks that could
+	// lead to underestimation, such as assuming independence between non-index columns.
+	// Case MaxCountAfterAccess > 0 : we've encountered risky scenarios and have a potential greater row count estimation
+	// Default MaxCountAfterAccess = 0 : we have not identified risks that could lead to greater row count
+	MaxCountAfterAccess float64
 }
 
 // FullRange represent used all partitions.
@@ -639,22 +645,23 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool) *PhysicalIndexScan {
 	idx := path.Index
 	is := PhysicalIndexScan{
-		Table:            ds.TableInfo,
-		TableAsName:      ds.TableAsName,
-		DBName:           ds.DBName,
-		Columns:          sliceutil.DeepClone(ds.Columns),
-		Index:            idx,
-		IdxCols:          path.IdxCols,
-		IdxColLens:       path.IdxColLens,
-		AccessCondition:  path.AccessConds,
-		Ranges:           path.Ranges,
-		DataSourceSchema: ds.Schema(),
-		IsPartition:      ds.PartitionDefIdx != nil,
-		PhysicalTableID:  ds.PhysicalTableID,
-		TblColHists:      ds.TblColHists,
-		PkIsHandleCol:    ds.GetPKIsHandleCol(),
-		ConstColsByCond:  path.ConstCols,
-		Prop:             prop,
+		Table:               ds.TableInfo,
+		TableAsName:         ds.TableAsName,
+		DBName:              ds.DBName,
+		Columns:             sliceutil.DeepClone(ds.Columns),
+		Index:               idx,
+		IdxCols:             path.IdxCols,
+		IdxColLens:          path.IdxColLens,
+		AccessCondition:     path.AccessConds,
+		Ranges:              path.Ranges,
+		DataSourceSchema:    ds.Schema(),
+		IsPartition:         ds.PartitionDefIdx != nil,
+		PhysicalTableID:     ds.PhysicalTableID,
+		TblColHists:         ds.TblColHists,
+		PkIsHandleCol:       ds.GetPKIsHandleCol(),
+		ConstColsByCond:     path.ConstCols,
+		Prop:                prop,
+		MaxCountAfterAccess: path.MaxCountAfterAccess,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	rowCount := path.CountAfterAccess
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)

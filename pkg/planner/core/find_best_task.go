@@ -838,9 +838,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
-	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
+	lhsPseudo, rhsPseudo := false, false
 	if statsTbl != nil {
-		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
 	}
 	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
@@ -872,7 +871,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
-	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
+	if (lhsPseudo || rhsPseudo) && // At least one index doesn't have statistics
 		(lhsEqOrInCount > 0 || rhsEqOrInCount > 0) { // At least one index has equal/IN predicates
 		lhsFullMatch := isFullIndexMatch(lhs)
 		rhsFullMatch := isFullIndexMatch(rhs)

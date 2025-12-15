@@ -1201,6 +1201,43 @@ func getCardinality(operator base.PhysicalPlan, costFlag uint64) float64 {
 	return rows
 }
 
+// getMaxCountAfterAccess returns the MaxCountAfterAccess for the operator, which represents
+// an upper bound on CountAfterAccess accounting for risks that could lead to underestimation.
+func getMaxCountAfterAccess(operator base.PhysicalPlan, costFlag uint64) float64 {
+	if hasCostFlag(costFlag, costusage.CostFlagUseTrueCardinality) {
+		// For runtime stats, MaxCountAfterAccess is not available, return 0
+		// (MaxCountAfterAccess defaults to 0 when not set)
+		return 0
+	}
+	// Try to get MaxCountAfterAccess from scan operators that store it
+	switch p := operator.(type) {
+	case *physicalop.PhysicalTableScan:
+		return p.MaxCountAfterAccess
+	case *physicalop.PhysicalIndexScan:
+		return p.MaxCountAfterAccess
+	case *physicalop.PhysicalIndexReader:
+		// Traverse to IndexPlan to find the underlying scan operator
+		return getMaxCountAfterAccess(p.IndexPlan, costFlag)
+	case *physicalop.PhysicalTableReader:
+		// Traverse to TablePlan to find the underlying scan operator
+		return getMaxCountAfterAccess(p.TablePlan, costFlag)
+	default:
+		// For other operators, recursively check children
+		if len(operator.Children()) > 0 {
+			// Return the max of all children's MaxCountAfterAccess
+			maxVal := 0.0
+			for _, child := range operator.Children() {
+				childMax := getMaxCountAfterAccess(child, costFlag)
+				if childMax > maxVal {
+					maxVal = childMax
+				}
+			}
+			return maxVal
+		}
+		return 0
+	}
+}
+
 // estimateNetSeekCost calculates the net seek cost for the plan.
 // for TiKV, it's len(access-range) * seek-factor,
 // and for TiFlash, it's len(access-range) * len(access-column) * seek-factor.

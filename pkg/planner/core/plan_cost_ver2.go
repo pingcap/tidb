@@ -310,9 +310,11 @@ func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property
 	}
 
 	rows := getCardinality(p.TablePlan, option.CostFlag)
+	maxRows := getMaxCountAfterAccess(p.TablePlan, option.CostFlag)
 	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+	concurrency = min(concurrency, maxRows)
 	childType := property.CopSingleReadTaskType
 	if p.StoreType == kv.TiFlash { // mpp protocol
 		childType = property.MppTaskType
@@ -354,6 +356,7 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 	}
 
 	indexRows := getCardinality(p.IndexPlan, option.CostFlag)
+	indexMaxRows := getMaxCountAfterAccess(p.IndexPlan, option.CostFlag)
 	tableRows := getCardinality(p.TablePlan, option.CostFlag)
 
 	if p.PushedLimit != nil { // consider pushed down limit clause
@@ -367,6 +370,7 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	requestFactor := getTaskRequestFactorVer2(p, taskType)
 	distConcurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+	distConcurrency = min(distConcurrency, indexMaxRows)
 	doubleReadConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupConcurrency())
 
 	// index-side
