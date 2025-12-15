@@ -54,7 +54,9 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	}
 	startTS := txn.StartTS()
 	failpoint.InjectCall("wrapInBeginRollbackStartTS", startTS)
-	return f(startTS)
+	err = f(startTS)
+	failpoint.InjectCall("wrapInBeginRollbackAfterFn")
+	return err
 }
 
 func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {

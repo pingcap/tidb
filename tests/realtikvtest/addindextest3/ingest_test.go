@@ -472,8 +472,24 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 
 	ingest.ForceSyncFlagForTest = true
 	tk.MustExec("alter table t add index idx_test(b);")
+<<<<<<< HEAD
 	ingest.ForceSyncFlagForTest = false
+=======
+>>>>>>> f2534055f29 (ddl: send result chunks to writers after scan task complete (#62014))
 	tk.MustExec("update t set b = b + 1;")
+
+	counter := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(uint64) {
+		counter++
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackAfterFn", func() {
+		counter--
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
+		assert.Equal(t, counter, 0)
+	})
+	tk.MustExec("alter table t add index idx_test2(b);")
+	ingest.ForceSyncFlagForTest.Store(false)
 }
 
 func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
