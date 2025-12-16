@@ -1,0 +1,139 @@
+drop table if exists tp1, tp2;
+set @@tidb_scatter_region='table';
+create table tp1 (a int primary key, b int, c int, key b(b), key c(c) global) partition by hash(a) partitions 4;
+insert into tp1 values (1, 10, 10), (2, 9, 20), (3, 8, 30), (4, 7, 40), (5, 6, 50), (6, 5, 60);
+explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 and a > 1 limit 3;
+id	estRows	task	access object	operator info
+IndexLookUp_17	3.00	root	partition:all	limit embedded(offset:0, count:3)
+├─LocalIndexLookUp_19(Build)	3.00	cop[tikv]		index handle offsets:[1]
+│ ├─Limit_16(Build)	3.00	cop[tikv]		offset:0, count:3
+│ │ └─Selection_15	14.05	cop[tikv]		gt(executor__index_lookup_pushdown_partition.tp1.a, 1)
+│ │   └─IndexRangeScan_13	42.14	cop[tikv]	table:tp1, index:b(b)	range:[-inf,10), keep order:false, stats:pseudo
+│ └─TableRowIDScan_18(Probe)	3.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 and a > 1 limit 3;
+a	b	c
+4	7	40
+5	6	50
+2	9	20
+explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 order by a limit 3;
+id	estRows	task	access object	operator info
+TopN_10	3.00	root		executor__index_lookup_pushdown_partition.tp1.a, offset:0, count:3
+└─IndexLookUp_19	3.00	root	partition:all	
+  ├─LocalIndexLookUp_21(Build)	3.00	cop[tikv]		index handle offsets:[1]
+  │ ├─TopN_18(Build)	3.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.a, offset:0, count:3
+  │ │ └─IndexRangeScan_16	3323.33	cop[tikv]	table:tp1, index:b(b)	range:[-inf,10), keep order:false, stats:pseudo
+  │ └─TableRowIDScan_20(Probe)	3.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+  └─TableRowIDScan_17(Probe)	0.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 order by a limit 3;
+a	b	c
+2	9	20
+3	8	30
+4	7	40
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+hint-only
+explain select * from tp1 where b=20;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:tp1, index:b(b)	range:[20,20], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	10.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+set @@tidb_index_lookup_pushdown_policy='force';
+explain select * from tp1 where b=20;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:tp1, index:b(b)	range:[20,20], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+set @@tidb_index_lookup_pushdown_policy='affinity-force';
+explain select * from tp1 where b=20;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:tp1, index:b(b)	range:[20,20], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	10.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+alter table tp1 affinity = 'partition';
+explain select * from tp1 where b=20;
+id	estRows	task	access object	operator info
+IndexLookUp_8	10.00	root	partition:all	
+├─LocalIndexLookUp_10(Build)	10.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:tp1, index:b(b)	range:[20,20], keep order:false, stats:pseudo
+│ └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+set @@tidb_index_lookup_pushdown_policy='hint-only';
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+hint-only
+explain select /*+ index_lookup_pushdown(tp1, c) */ * from tp1;
+id	estRows	task	access object	operator info
+TableReader_6	10000.00	root	partition:all	data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, the global index in partition table is not supported
+create table tp2 (
+id1 varchar(32),
+id2 int,
+a int,
+b int,
+primary key (id1, id2),
+index a(a)
+)
+PARTITION BY RANGE COLUMNS (id1) (
+PARTITION p0 VALUES LESS THAN ('c'),
+PARTITION p1 VALUES LESS THAN ('e'),
+PARTITION p2 VALUES LESS THAN ('g'),
+PARTITION p3 VALUES LESS THAN MAXVALUE
+);
+insert into tp2 values
+('a', 1, 99, 10),
+('b', 2, 88, 20),
+('c', 3, 77, 30),
+('d', 4, 66, 40),
+('e', 5, 55, 50),
+('f', 6, 44, 60),
+('g', 7, 33, 70),
+('h', 8, 22, 80);
+explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 where a > 33 limit 5;
+id	estRows	task	access object	operator info
+IndexLookUp_16	5.00	root	partition:all	limit embedded(offset:0, count:5)
+├─LocalIndexLookUp_18(Build)	5.00	cop[tikv]		index handle offsets:[1]
+│ ├─Limit_15(Build)	5.00	cop[tikv]		offset:0, count:5
+│ │ └─IndexRangeScan_13	5.00	cop[tikv]	table:tp2, index:a(a)	range:(33,+inf], keep order:false, stats:pseudo
+│ └─TableRowIDScan_17(Probe)	5.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 where a > 33 limit 5;
+id1	id2	a	b
+a	1	99	10
+b	2	88	20
+c	3	77	30
+d	4	66	40
+e	5	55	50
+explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 partition (p1);
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root	partition:p1	
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:tp2, index:a(a)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 partition (p1);
+id1	id2	a	b
+c	3	77	30
+d	4	66	40
+create table tp3 (a int, b int, c int, key b(b)) partition by hash(a) partitions 4;
+insert into tp3 values (1, 10, 10), (2, 9, 20), (3, 8, 30), (4, 7, 40), (5, 6, 50), (6, 5, 60);
+explain select /*+ index_lookup_pushdown(tp3, b) */ * from tp3;
+id	estRows	task	access object	operator info
+IndexLookUp_7	10000.00	root	partition:all	
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:tp3, index:b(b)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:tp3	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:tp3	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(tp3, b) */ * from tp3;
+a	b	c
+4	7	40
+1	10	10
+5	6	50
+2	9	20
+6	5	60
+3	8	30
+set @@tidb_scatter_region=default;

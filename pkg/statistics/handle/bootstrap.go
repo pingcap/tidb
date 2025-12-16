@@ -163,7 +163,9 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 			}
 		} else {
-			table.ColAndIdxExistenceMap.InsertCol(id, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			// Column stats can be synthesized when adding a column with default values, which keeps statsVer at 0 but
+			// still records NDV/null counts, so mark them as existing whenever any value is present.
+			table.ColAndIdxExistenceMap.InsertCol(id, statistics.IsColumnAnalyzedOrSynthesized(statsVer, ndv, nullCount))
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
@@ -281,7 +283,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				StatsVer:   statsVer,
 			}
 			table.SetCol(hist.ID, col)
-			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statistics.IsColumnAnalyzedOrSynthesized(statsVer, ndv, nullCount))
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)

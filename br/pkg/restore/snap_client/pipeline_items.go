@@ -631,7 +631,9 @@ func (rc *SnapClient) registerWaitTiFlashReady(
 	}
 	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
 	for _, store := range tikvStats.Stores {
-		if engine.IsTiFlashHTTPResp(&store.Store) {
+		// Note that only TiFlash write nodes need to be polled under NextGen kernel.
+		// TiFlash compute nodes under NextGen kernel do not hold any Regions data, so it is excluded here.
+		if engine.IsTiFlashWriteHTTPResp(&store.Store) {
 			tiFlashStores[store.Store.ID] = store
 		}
 	}

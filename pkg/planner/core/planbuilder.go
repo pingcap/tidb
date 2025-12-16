@@ -1182,13 +1182,13 @@ func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *m
 	return indexInfo != nil && !indexInfo.IsColumnarIndex()
 }
 
-func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
+func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo, suppressWarning bool) bool {
 	unSupportedReason := ""
 	sessionVars := ctx.GetSessionVars()
-	if tblInfo.IsCommonHandle {
-		unSupportedReason = "common handle table is not supported"
-	} else if tblInfo.Partition != nil {
-		unSupportedReason = "partition table is not supported"
+	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion < 1 {
+		unSupportedReason = "common handle table with old encoding version is not supported"
+	} else if index.Global {
+		unSupportedReason = "the global index in partition table is not supported"
 	} else if tblInfo.TempTableType != model.TempTableNone {
 		unSupportedReason = "temporary table is not supported"
 	} else if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
@@ -1206,10 +1206,27 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	}
 
 	if unSupportedReason != "" {
-		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
+		if !suppressWarning {
+			ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
+		}
 		return false
 	}
 	return true
+}
+
+func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
+	policy := ctx.GetSessionVars().IndexLookUpPushDownPolicy
+	switch policy {
+	case vardef.IndexLookUpPushDownPolicyForce:
+	case vardef.IndexLookUpPushDownPolicyAffinityForce:
+		if tblInfo.Affinity == nil {
+			// No affinity info, should not auto push down the index look up.
+			return false
+		}
+	default:
+		return false
+	}
+	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
@@ -1251,6 +1268,23 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
 
+	// When NO_INDEX_LOOKUP_PUSHDOWN hint is specified, we should set `forceNoIndexLookUpPushDown = true` to avoid
+	// using index look up push down even if other hint or system variable `tidb_index_lookup_pushdown_policy`
+	// tries to enable it.
+	forceNoIndexLookUpPushDown := false
+	if len(tableHints.NoIndexLookUpPushDown) > 0 {
+		for _, h := range tableHints.NoIndexLookUpPushDown {
+			if h.Match(&hint.HintedTable{
+				DBName:  dbName,
+				TblName: tblName,
+			}) {
+				h.Matched = true
+				forceNoIndexLookUpPushDown = true
+				break
+			}
+		}
+	}
+
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			// Filter out invisible index, because they are not visible for optimizer
@@ -1287,6 +1321,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				continue
 			}
 			path := &util.AccessPath{Index: index}
+			if !forceNoIndexLookUpPushDown && checkAutoForceIndexLookUpPushDown(ctx, tblInfo, index) {
+				path.IndexLookUpPushDownBy = util.IndexLookUpPushDownBySysVar
+			}
 			publicPaths = append(publicPaths, path)
 		}
 	}
@@ -1401,10 +1438,17 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				// Currently we only support to hint the index look up push down for comment-style sql hints.
 				// So only i >= indexHintsLen may have the hints here.
 				if _, ok := indexLookUpPushDownHints[i]; ok {
-					if !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index) {
+					if forceNoIndexLookUpPushDown {
+						ctx.GetSessionVars().StmtCtx.SetHintWarning(
+							"hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified",
+						)
 						continue
 					}
-					path.IsIndexLookUpPushDown = true
+
+					if !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index, false) {
+						continue
+					}
+					path.IndexLookUpPushDownBy = util.IndexLookUpPushDownByHint
 				}
 			}
 			available = append(available, path)
@@ -1662,7 +1706,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 	commonInfos, commonCols, hasCommonCols := tryGetCommonHandleCols(tbl, fullExprCols)
 	idxColInfos := getIndexColumnInfos(tblInfo, idx)
 	idxColSchema := getIndexColsSchema(tblInfo, idx, fullExprCols)
-	idxCols, idxColLens := expression.IndexInfo2PrefixCols(idxColInfos, idxColSchema.Columns, idx)
+	idxCols, idxColLens := util.IndexInfo2PrefixCols(idxColInfos, idxColSchema.Columns, idx)
 	pseudoHistColl := statistics.PseudoHistColl(physicalID, false)
 	is := physicalop.PhysicalIndexScan{
 		Table:            tblInfo,
@@ -1795,7 +1839,7 @@ func tryGetCommonHandleCols(t table.Table, allColSchema *expression.Schema) ([]*
 		return nil, nil, false
 	}
 	pk := tables.FindPrimaryIndex(tblInfo)
-	commonHandleCols, _ := expression.IndexInfo2FullCols(tblInfo.Columns, allColSchema.Columns, pk)
+	commonHandleCols, _ := util.IndexInfo2FullCols(tblInfo.Columns, allColSchema.Columns, pk)
 	commonHandelColInfos := tables.TryGetCommonPkColumns(t)
 	return commonHandelColInfos, commonHandleCols, true
 }
@@ -5814,13 +5858,6 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
-		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
-			origin := stmtCtx.EnableOptimizeTrace
-			stmtCtx.EnableOptimizeTrace = true
-			defer func() {
-				stmtCtx.EnableOptimizeTrace = origin
-			}()
-		}
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
 		if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)

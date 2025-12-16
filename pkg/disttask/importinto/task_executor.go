@@ -108,6 +108,9 @@ func getTableImporter(
 		return nil, err
 	}
 
+	failpoint.Inject("createTableImporterForTest", func() {
+		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), store))
+	})
 	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
@@ -184,10 +187,15 @@ func (s *importStepExecutor) Processed(_, rowCnt int64) {
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
-	var dataKVFiles, indexKVFiles atomic.Int64
+	var (
+		dataKVFiles, indexKVFiles atomic.Int64
+		accessRec                 = &recording.AccessStats{}
+		objStore                  storage.ExternalStorage
+	)
 	defer func() {
 		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
-			zap.Int64("index-kv-files", indexKVFiles.Load()))
+			zap.Int64("index-kv-files", indexKVFiles.Load()),
+			zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	bs := subtask.Meta
@@ -197,10 +205,6 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		return errors.Trace(err)
 	}
 
-	var (
-		accessRec = &recording.AccessStats{}
-		objStore  storage.ExternalStorage
-	)
 	if s.tableImporter.IsGlobalSort() {
 		var err3 error
 		accessRec, objStore, err3 = handle.NewObjStoreWithRecording(ctx, s.tableImporter.CloudStorageURI)
@@ -425,7 +429,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err)
+		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	var mu sync.Mutex
@@ -439,7 +443,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
 	partSize := m.dataKVPartSize
-	if sm.KVGroup != dataKVGroup {
+	if sm.KVGroup != external.DataKVGroup {
 		partSize = m.indexKVPartSize
 	}
 
@@ -521,7 +525,7 @@ type ingestCollector struct {
 
 func (c *ingestCollector) Processed(bytes, rowCnt int64) {
 	c.summary.Bytes.Add(bytes)
-	if c.kvGroup == dataKVGroup {
+	if c.kvGroup == external.DataKVGroup {
 		c.summary.RowCnt.Add(rowCnt)
 	}
 	// since the region job might be retried, this value might be larger than
@@ -580,7 +584,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err)
+		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
@@ -638,7 +642,7 @@ func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *pr
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
-	if subtaskMeta.KVGroup != dataKVGroup {
+	if subtaskMeta.KVGroup != external.DataKVGroup {
 		return nil
 	}
 
