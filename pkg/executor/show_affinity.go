@@ -55,15 +55,16 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 
 	for _, result := range tableInfoResults {
 		dbName := result.DBName.O
-		// Apply field filter for database name
-		if fieldFilter != "" && result.DBName.L != fieldFilter {
-			continue
-		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(result.DBName.L) {
-			continue
-		}
 
 		for _, tblInfo := range result.TableInfos {
 			if tblInfo.Affinity == nil {
+				continue
+			}
+
+			// Apply field filter for table name
+			if fieldFilter != "" && tblInfo.Name.L != fieldFilter {
+				continue
+			} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(tblInfo.Name.L) {
 				continue
 			}
 

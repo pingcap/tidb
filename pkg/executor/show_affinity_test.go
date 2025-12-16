@@ -99,24 +99,36 @@ func TestShowAffinity(t *testing.T) {
 		require.NotEqual(t, "t3", row[1]) // t3 should not appear
 	}
 
-	// Test 5: Test LIKE filter
-	tk.MustExec("create database db2")
-	defer tk.MustExec("drop database if exists db2")
-	tk.MustExec("create table db2.t1 (id int) affinity='table'")
-	defer tk.MustExec("drop table if exists db2.t1")
+	// Test 5: Test LIKE filter by table name
+	tk.MustExec("create table affinity_test (id int) affinity='table'")
+	defer tk.MustExec("drop table if exists affinity_test")
 
-	// Filter by database name using LIKE
-	result = tk.MustQuery("show affinity like 'db2'")
+	// First, verify all tables are present
+	result = tk.MustQuery("show affinity")
+	rows = result.Rows()
+	require.Greater(t, len(rows), 0, "should have at least one table with affinity")
+
+	// Filter by exact table name using LIKE
+	result = tk.MustQuery("show affinity like 't1'")
+	rows = result.Rows()
+	if len(rows) > 0 {
+		require.Equal(t, "t1", rows[0][1]) // row[1] is table_name
+	}
+
+	result = tk.MustQuery("show affinity like 'affinity_test'")
+	rows = result.Rows()
+	require.Equal(t, 1, len(rows), "should match exactly one table")
+	require.Equal(t, "affinity_test", rows[0][1]) // Should match affinity_test table
+
+	// Test wildcard pattern - should match t1, t2 (and its partitions)
+	result = tk.MustQuery("show affinity like 't%'")
 	rows = result.Rows()
 	require.Greater(t, len(rows), 0)
 	for _, row := range rows {
-		require.Equal(t, "db2", row[0])
-	}
-
-	result = tk.MustQuery("show affinity like 'test'")
-	rows = result.Rows()
-	for _, row := range rows {
-		require.Equal(t, "test", row[0])
+		// All returned tables should start with 't'
+		tableName := row[1].(string)
+		require.True(t, len(tableName) > 0 && tableName[0] == 't',
+			"table name should start with 't', got: %s", tableName)
 	}
 }
 
