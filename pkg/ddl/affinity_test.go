@@ -148,8 +148,7 @@ func checkAffinityGroupsInPD(t *testing.T, do *domain.Domain, dbName, tbName str
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMutator(txn)
-		_ = tt
+		_ = meta.NewMutator(txn)
 
 		check := &affinityGroupCheck{
 			tableID:     tblInfo.Meta().ID,
