@@ -2627,20 +2627,16 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLAction = model.ActionNone
 
 		// Create new affinity groups first (critical operation - must succeed)
-		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+		if tblInfo.Affinity != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 		}
 
 		// Delete old affinity groups (best-effort cleanup - ignore errors)
 		if tblInfo.Affinity != nil {
-			oldAffinityTable := &model.TableInfo{
-				ID:        tblInfo.ID,
-				Name:      tblInfo.Name,
-				Affinity:  tblInfo.Affinity,
-				Partition: &model.PartitionInfo{Definitions: oldDefinitions},
-			}
-			if err := deleteTableAffinityGroupsInPD(jobCtx, oldAffinityTable, oldDefinitions); err != nil {
+			if err := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, oldDefinitions); err != nil {
 				logutil.DDLLogger().Error("failed to delete old partition affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
 			}
 		}

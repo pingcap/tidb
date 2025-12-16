@@ -155,10 +155,10 @@ func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo,
 
 // batchDeleteTableAffinityGroups deletes affinity groups for multiple tables in PD.
 // This is used for DROP DATABASE to clean up all table affinity groups at once.
-// Deletion failures are logged but don't fail the operation (best-effort cleanup).
-func batchDeleteTableAffinityGroups(jobCtx *jobContext, tables []*model.TableInfo) {
+// Returns error to let the caller decide whether to continue or fail.
+func batchDeleteTableAffinityGroups(jobCtx *jobContext, tables []*model.TableInfo) error {
 	if len(tables) == 0 {
-		return
+		return nil
 	}
 
 	ctx := jobCtx.stepCtx
@@ -168,17 +168,14 @@ func batchDeleteTableAffinityGroups(jobCtx *jobContext, tables []*model.TableInf
 	for _, tblInfo := range tables {
 		groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
 		if err != nil {
-			logutil.DDLLogger().Warn("failed to build affinity group definitions, but operation will continue",
-				zap.Error(err),
-				zap.Int64("tableID", tblInfo.ID))
-			continue
+			return errors.Trace(err)
 		}
 		for id := range groups {
 			groupIDs[id] = struct{}{}
 		}
 	}
 	if len(groupIDs) == 0 {
-		return
+		return nil
 	}
 
 	ids := make([]string, 0, len(groupIDs))
@@ -187,11 +184,7 @@ func batchDeleteTableAffinityGroups(jobCtx *jobContext, tables []*model.TableInf
 	}
 
 	logutil.DDLLogger().Info("deleting affinity groups for batch tables", zap.Strings("groupIDs", ids))
-	if err := infosync.DeleteAffinityGroupsWithDefaultRetry(ctx, ids); err != nil {
-		logutil.DDLLogger().Warn("failed to delete affinity groups for batch tables, but operation will continue",
-			zap.Error(err),
-			zap.Strings("groupIDs", ids))
-	}
+	return infosync.DeleteAffinityGroupsWithDefaultRetry(ctx, ids)
 }
 
 // BuildAffinityGroupDefinitionsForTest is exported for testing.

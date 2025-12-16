@@ -588,18 +588,19 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
 
 	// Create new affinity groups first (critical operation - must succeed)
-	if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	if tblInfo.Affinity != nil {
+		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	// Delete old affinity groups (best-effort cleanup - ignore errors)
-	var oldPartitions []model.PartitionDefinition
-	if pi := oldTblInfo.GetPartitionInfo(); pi != nil {
-		oldPartitions = pi.Definitions
-	}
-	if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, oldPartitions); err != nil {
-		logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+	// TRUNCATE TABLE: always try to delete old table's affinity groups
+	if oldTblInfo.Affinity != nil {
+		if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
+			logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+		}
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job)
@@ -1767,14 +1768,20 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	tblInfo.Affinity = args.Affinity
 
 	// Create new affinity groups first (critical operation - must succeed)
-	if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	if tblInfo.Affinity != nil {
+		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	// Delete old affinity groups (best-effort cleanup - ignore errors)
-	if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
-		logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+	// ALTER TABLE AFFINITY: only delete when old table had affinity configuration
+	// This ensures 'ALTER TABLE AFFINITY = 'none'' correctly cleans up stale affinity groups
+	if oldTblInfo.Affinity != nil {
+		if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
+			logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+		}
 	}
 
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
