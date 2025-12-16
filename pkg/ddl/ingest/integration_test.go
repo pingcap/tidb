@@ -607,3 +607,43 @@ func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
 		})
 	}
 }
+
+func TestIndexChangeWithModifyColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (b int, c varchar(100) collate utf8mb4_unicode_ci)")
+	tk.MustExec("insert t values (1, 'aa'), (2, 'bb'), (3, 'cc');")
+
+	tkddl := testkit.NewTestKit(t, store)
+	tkddl.MustExec("use test")
+
+	var checkErr error
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	runModifyColumn := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateNone:
+			if runModifyColumn {
+				return
+			}
+			runModifyColumn = true
+			go func() {
+				_, checkErr = tkddl.Exec("alter table t modify column c varchar(120) default 'aaaaa' collate utf8mb4_general_ci first;")
+				wg.Done()
+			}()
+		default:
+			return
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(c);")
+	wg.Wait()
+	require.ErrorContains(t, checkErr, "when index is defined")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t;")
+}
