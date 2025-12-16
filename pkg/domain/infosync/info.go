@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -987,6 +988,38 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	return nil
 }
 
+// getLimitedStack returns a limited stack trace string, keeping only the first maxDepth frames.
+// This helps avoid overly long log messages while preserving essential call information.
+func getLimitedStack(maxDepth int) string {
+	if maxDepth <= 0 {
+		maxDepth = 10 // default to 10 frames
+	}
+	pc := make([]uintptr, maxDepth+5)
+	n := runtime.Callers(2, pc) // skip runtime.Callers and getLimitedStack
+	if n == 0 {
+		return ""
+	}
+	pc = pc[:n]
+	frames := runtime.CallersFrames(pc)
+	var buf strings.Builder
+	count := 0
+	for {
+		frame, more := frames.Next()
+		if count >= maxDepth {
+			if more {
+				buf.WriteString("\n... (stack truncated)")
+			}
+			break
+		}
+		buf.WriteString(fmt.Sprintf("\n%s", frame.Function))
+		count++
+		if !more {
+			break
+		}
+	}
+	return buf.String()
+}
+
 // StoreInternalSession is the entry function for store an internal session to Manager.
 // return whether the session is stored successfully.
 func StoreInternalSession(se any) bool {
@@ -1002,6 +1035,7 @@ func StoreInternalSession(se any) bool {
 	if sctx, ok := se.(sessionctx.Context); ok {
 		fields = append(fields, requestSourceFieldsForLog(sctx)...)
 	}
+	fields = append(fields, zap.String("stack", getLimitedStack(10)))
 	logutil.BgLogger().Info("store internal session to manager", fields...)
 	sm.StoreInternalSession(se)
 	return true
