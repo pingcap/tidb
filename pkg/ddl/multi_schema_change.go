@@ -40,7 +40,11 @@ func skipReorgAndAnalyzeForSubJob(jobCtx *jobContext, tblInfo *model.TableInfo, 
 
 	job.SnapshotVer = v.Ver
 	// Although reorg is done by parent job, we still set the ReorgTp here.
-	job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+	// And we ignore the error from here because reorg is done by parent job.
+	if _, err := pickBackfillType(job); err != nil {
+		job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
+	}
+	job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 	job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 	checkAndMarkNonRevertible(job)
 

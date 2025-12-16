@@ -1013,7 +1013,6 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 
 				if job.MultiSchemaInfo != nil {
-					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
 				}
 
@@ -1226,7 +1225,6 @@ func (w *worker) doModifyColumnIndexReorg(
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
 			case model.ReorgStageModifyColumnRecreateIndex:
 				if job.MultiSchemaInfo != nil {
-					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
 				}
 				var done bool

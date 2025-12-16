@@ -1716,13 +1716,11 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 		return model.ReorgTypeTxn, nil
 	}
 	if ingest.LitInitialized {
-		if job.ReorgMeta.UseCloudStorage {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
-			return model.ReorgTypeIngest, nil
-		}
-		if err := ingest.LitDiskRoot.PreCheckUsage(); err != nil {
-			logutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
-			return model.ReorgTypeNone, err
+		if !job.ReorgMeta.UseCloudStorage {
+			if err := ingest.LitDiskRoot.PreCheckUsage(); err != nil {
+				logutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
+				return model.ReorgTypeNone, err
+			}
 		}
 		job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
 		return model.ReorgTypeIngest, nil
