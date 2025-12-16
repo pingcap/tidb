@@ -16,9 +16,9 @@ package executor_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -134,7 +134,7 @@ func TestShowAffinityColumns(t *testing.T) {
 	is := tk.Session().GetLatestInfoSchema()
 	tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	groupID := fmt.Sprintf("_tidb_t_%d", tbl.ID)
+	groupID := ddl.GetTableAffinityGroupID(tbl.ID)
 
 	// Step 3: Set up mock PD client
 	mockCli := &mockPDCliForAffinity{}
@@ -198,7 +198,7 @@ func TestShowAffinityNullStatus(t *testing.T) {
 	is := tk.Session().GetLatestInfoSchema()
 	tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	groupID := fmt.Sprintf("_tidb_t_%d", tbl.ID)
+	groupID := ddl.GetTableAffinityGroupID(tbl.ID)
 
 	// Step 3: Set up mock PD client
 	mockCli := &mockPDCliForAffinity{}

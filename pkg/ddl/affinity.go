@@ -28,6 +28,18 @@ import (
 	"go.uber.org/zap"
 )
 
+// GetTableAffinityGroupID returns the affinity group ID for a table.
+// Format: "_tidb_t_{tableID}"
+func GetTableAffinityGroupID(tableID int64) string {
+	return fmt.Sprintf("_tidb_t_%d", tableID)
+}
+
+// GetPartitionAffinityGroupID returns the affinity group ID for a partition.
+// Format: "_tidb_pt_{tableID}_p{partitionID}"
+func GetPartitionAffinityGroupID(tableID, partitionID int64) string {
+	return fmt.Sprintf("_tidb_pt_%d_p%d", tableID, partitionID)
+}
+
 func buildAffinityGroupKeyRange(codec tikv.Codec, physicalID int64) pdhttp.AffinityGroupKeyRange {
 	startKey := tablecodec.EncodeTablePrefix(physicalID)
 	endKey := tablecodec.EncodeTablePrefix(physicalID + 1)
@@ -51,7 +63,7 @@ func buildAffinityGroupDefinitions(codec tikv.Codec, tblInfo *model.TableInfo, p
 
 	switch tblInfo.Affinity.Level {
 	case ast.TableAffinityLevelTable:
-		groupID := fmt.Sprintf("_tidb_t_%d", tblInfo.ID)
+		groupID := GetTableAffinityGroupID(tblInfo.ID)
 		return map[string][]pdhttp.AffinityGroupKeyRange{
 			groupID: {buildAffinityGroupKeyRange(codec, tblInfo.ID)},
 		}, nil
@@ -61,17 +73,17 @@ func buildAffinityGroupDefinitions(codec tikv.Codec, tblInfo *model.TableInfo, p
 			definitions = tblInfo.Partition.Definitions
 		}
 		if len(definitions) == 0 {
-			return nil, errors.Errorf("partition affinity requires partition definitions for table %s", tblInfo.Name.O)
+			return nil, errors.Errorf("partition affinity requires partition definitions for table %s (ID: %d), table metadata may be corrupted", tblInfo.Name.O, tblInfo.ID)
 		}
 
 		groups := make(map[string][]pdhttp.AffinityGroupKeyRange, len(definitions))
 		for _, def := range definitions {
-			groupID := fmt.Sprintf("_tidb_pt_%d_p%d", tblInfo.ID, def.ID)
+			groupID := GetPartitionAffinityGroupID(tblInfo.ID, def.ID)
 			groups[groupID] = []pdhttp.AffinityGroupKeyRange{buildAffinityGroupKeyRange(codec, def.ID)}
 		}
 		return groups, nil
 	default:
-		return nil, errors.Errorf("invalid affinity level: %s", tblInfo.Affinity.Level)
+		return nil, errors.Errorf("invalid affinity level: %s for table %s (ID: %d)", tblInfo.Affinity.Level, tblInfo.Name.O, tblInfo.ID)
 	}
 }
 
@@ -119,6 +131,7 @@ func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo)
 // deleteTableAffinityGroupsInPD deletes affinity groups for a table in PD.
 // This is a best-effort cleanup operation. Failures are logged but the operation continues.
 // Used by: DROP TABLE, ALTER TABLE AFFINITY = ”, TRUNCATE TABLE, TRUNCATE PARTITION.
+// TODO: add gc for unused affinity groups, which is similar to the placement rules.
 func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
 	if tblInfo == nil || tblInfo.Affinity == nil {
 		return nil

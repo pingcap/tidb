@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -51,7 +52,6 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 		groupID       string
 	}
 	var infos []tablePartitionInfo
-	groupIDs := make([]string, 0)
 
 	for _, result := range tableInfoResults {
 		dbName := result.DBName.O
@@ -69,26 +69,24 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 
 			switch tblInfo.Affinity.Level {
 			case ast.TableAffinityLevelTable:
-				groupID := fmt.Sprintf("_tidb_t_%d", tblInfo.ID)
+				groupID := ddl.GetTableAffinityGroupID(tblInfo.ID)
 				infos = append(infos, tablePartitionInfo{
 					dbName:        dbName,
 					tableName:     tblInfo.Name.O,
 					partitionName: "",
 					groupID:       groupID,
 				})
-				groupIDs = append(groupIDs, groupID)
 
 			case ast.TableAffinityLevelPartition:
 				if tblInfo.Partition != nil {
 					for _, def := range tblInfo.Partition.Definitions {
-						groupID := fmt.Sprintf("_tidb_pt_%d_p%d", tblInfo.ID, def.ID)
+						groupID := ddl.GetPartitionAffinityGroupID(tblInfo.ID, def.ID)
 						infos = append(infos, tablePartitionInfo{
 							dbName:        dbName,
 							tableName:     tblInfo.Name.O,
 							partitionName: def.Name.O,
 							groupID:       groupID,
 						})
-						groupIDs = append(groupIDs, groupID)
 					}
 				}
 			}
@@ -98,6 +96,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 	// Get affinity group states from PD
 	// Use GetAllAffinityGroupStates to directly query PD client (similar to GetReplicationState)
 	// This bypasses the manager layer to allow test mocking with SetPDHttpCliForTest
+	// TODO: update it after pd support batch get
 	allAffinityStates, err := infosync.GetAllAffinityGroupStates(ctx)
 	if err != nil {
 		return errors.Trace(err)

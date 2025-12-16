@@ -53,7 +53,7 @@ func TestAffinityBuildGroupDefinitionsTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
 
-	ranges := groups["_tidb_t_123"]
+	ranges := groups[ddl.GetTableAffinityGroupID(123)]
 	require.Len(t, ranges, 1)
 	require.Equal(t, pdhttp.AffinityGroupKeyRange{
 		StartKey: append([]byte("k:"), tablecodec.EncodeTablePrefix(123)...),
@@ -80,11 +80,11 @@ func TestAffinityBuildGroupDefinitionsPartition(t *testing.T) {
 	require.Equal(t, []pdhttp.AffinityGroupKeyRange{{
 		StartKey: append([]byte("k:"), tablecodec.EncodeTablePrefix(1)...),
 		EndKey:   append([]byte("k:"), tablecodec.EncodeTablePrefix(2)...),
-	}}, groups["_tidb_pt_50_p1"])
+	}}, groups[ddl.GetPartitionAffinityGroupID(50, 1)])
 	require.Equal(t, []pdhttp.AffinityGroupKeyRange{{
 		StartKey: append([]byte("k:"), tablecodec.EncodeTablePrefix(3)...),
 		EndKey:   append([]byte("k:"), tablecodec.EncodeTablePrefix(4)...),
-	}}, groups["_tidb_pt_50_p3"])
+	}}, groups[ddl.GetPartitionAffinityGroupID(50, 3)])
 }
 
 func TestAffinityBuildGroupDefinitionsPartitionMissing(t *testing.T) {
@@ -114,11 +114,11 @@ func (c *affinityGroupCheck) check(t *testing.T) {
 	var groupIDs []string
 	if len(c.partitionIDs) == 0 {
 		// Non-partitioned table
-		groupIDs = []string{fmt.Sprintf("_tidb_t_%d", c.tableID)}
+		groupIDs = []string{ddl.GetTableAffinityGroupID(c.tableID)}
 	} else {
 		// Partitioned table
 		for _, partID := range c.partitionIDs {
-			groupIDs = append(groupIDs, fmt.Sprintf("_tidb_pt_%d_p%d", c.tableID, partID))
+			groupIDs = append(groupIDs, ddl.GetPartitionAffinityGroupID(c.tableID, partID))
 		}
 	}
 
@@ -201,7 +201,7 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("drop table t1")
 	// Verify affinity groups are deleted
 	ctx := context.Background()
-	groups, err := infosync.GetAffinityGroups(ctx, []string{fmt.Sprintf("_tidb_t_%d", t1ID)})
+	groups, err := infosync.GetAffinityGroups(ctx, []string{ddl.GetTableAffinityGroupID(t1ID)})
 	require.NoError(t, err)
 	require.Empty(t, groups, "affinity groups should be deleted after dropping table")
 
@@ -216,7 +216,7 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("truncate table t2")
 	checkAffinityGroupsInPD(t, dom, "test", "t2", true)
 	// Old table ID's affinity group should be deleted
-	groups, err = infosync.GetAffinityGroups(ctx, []string{fmt.Sprintf("_tidb_t_%d", oldTableID)})
+	groups, err = infosync.GetAffinityGroups(ctx, []string{ddl.GetTableAffinityGroupID(oldTableID)})
 	require.NoError(t, err)
 	require.Empty(t, groups, "old table's affinity groups should be deleted after truncate")
 
@@ -232,7 +232,7 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("alter table tp2 truncate partition p0")
 	checkAffinityGroupsInPD(t, dom, "test", "tp2", true)
 	// Old partition's affinity group should be deleted
-	groups, err = infosync.GetAffinityGroups(ctx, []string{fmt.Sprintf("_tidb_pt_%d_p%d", tblInfo.Meta().ID, oldPartitionID)})
+	groups, err = infosync.GetAffinityGroups(ctx, []string{ddl.GetPartitionAffinityGroupID(tblInfo.Meta().ID, oldPartitionID)})
 	require.NoError(t, err)
 	require.Empty(t, groups, "old partition's affinity group should be deleted after truncate partition")
 
@@ -270,10 +270,10 @@ func TestAffinityDropDatabase(t *testing.T) {
 
 	ctx := context.Background()
 	groupIDs := make([]string, 0, 2+len(tp1Info.Meta().Partition.Definitions))
-	groupIDs = append(groupIDs, fmt.Sprintf("_tidb_t_%d", t1Info.Meta().ID))
-	groupIDs = append(groupIDs, fmt.Sprintf("_tidb_t_%d", t2Info.Meta().ID))
+	groupIDs = append(groupIDs, ddl.GetTableAffinityGroupID(t1Info.Meta().ID))
+	groupIDs = append(groupIDs, ddl.GetTableAffinityGroupID(t2Info.Meta().ID))
 	for _, def := range tp1Info.Meta().Partition.Definitions {
-		groupIDs = append(groupIDs, fmt.Sprintf("_tidb_pt_%d_p%d", tp1Info.Meta().ID, def.ID))
+		groupIDs = append(groupIDs, ddl.GetPartitionAffinityGroupID(tp1Info.Meta().ID, def.ID))
 	}
 
 	groups, err := infosync.GetAffinityGroups(ctx, groupIDs)
