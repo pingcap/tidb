@@ -122,7 +122,7 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
-	pipe, err := r.buildExternalStorePipeline(wctx, subtask.ID, sm, concurrency)
+	pipe, err := r.buildExternalStorePipeline(wctx, subtask.TaskID, subtask.ID, sm, concurrency)
 	if err != nil {
 		return err
 	}
@@ -381,6 +381,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 
 func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	wctx *workerpool.Context,
+	taskID int64,
 	subtaskID int64,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
@@ -416,7 +417,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		d.store,
 		r.cloudStorageURI,
 		r.d.sessPool,
-		r.job.ID,
+		taskID,
 		subtaskID,
 		tbl,
 		r.indexes,
