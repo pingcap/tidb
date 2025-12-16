@@ -707,6 +707,23 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = nil
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = make([]*model.FKInfo, 0)
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
 	tableInfo = &model.TableInfo{
 		TempTableType: model.TempTableGlobal,
 		State:         model.StatePublic,
@@ -740,7 +757,7 @@ func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
 	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"revision":0}`
-	require.Equal(t, string(b), expect)
+	require.Equal(t, expect, string(b))
 }
 
 func TestTableNameExtract(t *testing.T) {

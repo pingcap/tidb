@@ -74,7 +74,6 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 			return err
 		}
 	}
-
 	redactCloudStorageURI(ctx, task, &taskMeta)
 	return nil
 }

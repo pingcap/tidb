@@ -26,9 +26,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
@@ -62,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -106,7 +109,7 @@ const (
 	//
 	// default false for local sort, true for global sort.
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
-	cloudStorageURIOption       = "cloud_storage_uri"
+	cloudStorageURIOption       = ast.CloudStorageURI
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
@@ -220,6 +223,10 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
+	// Location is used to convert time type for parquet, see
+	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
+	Location *time.Location
+
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
 	// it might be nil when using LOAD DATA and no charset is specified.
@@ -293,7 +300,12 @@ type LoadDataController struct {
 	// if there's NO column list clause in SQL statement, then it's table's columns
 	// else it's user defined list.
 	FieldMappings []*FieldMapping
-	// see InsertValues.InsertColumns
+	// InsertColumns the columns stated in the SQL statement to insert.
+	// as IMPORT INTO have 2 place to state columns, in column-vars and in set clause,
+	// so it's computed from both clauses:
+	//  - append columns from column-vars to InsertColumns
+	//  - append columns from left hand fo set clause to InsertColumns
+	// similar to InsertValues.InsertColumns.
 	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
@@ -423,6 +435,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		FieldNullDef:   []string{`\N`},
 		LineFieldsInfo: lineFieldsInfo,
 
+		Location:         userSctx.GetSessionVars().Location(),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
@@ -850,6 +863,21 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	return nil
 }
 
+func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []string) {
+	tableCols := e.Table.VisibleCols()
+	mappings := make([]*FieldMapping, 0, len(tableCols))
+	names := make([]string, 0, len(tableCols))
+	for _, v := range tableCols {
+		// Data for generated column is generated from the other rows rather than from the parsed data.
+		fieldMapping := &FieldMapping{
+			Column: v,
+		}
+		mappings = append(mappings, fieldMapping)
+		names = append(names, v.Name.O)
+	}
+	return mappings, names
+}
+
 // initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
 // the slice's order is the same as the order of the input fields.
 // Returns a slice of same ordered column names without user defined variable names.
@@ -858,15 +886,7 @@ func (e *LoadDataController) initFieldMappings() []string {
 	tableCols := e.Table.VisibleCols()
 
 	if len(e.ColumnsAndUserVars) == 0 {
-		for _, v := range tableCols {
-			// Data for generated column is generated from the other rows rather than from the parsed data.
-			fieldMapping := &FieldMapping{
-				Column: v,
-			}
-			e.FieldMappings = append(e.FieldMappings, fieldMapping)
-			columns = append(columns, v.Name.O)
-		}
-
+		e.FieldMappings, columns = e.tableVisCols2FieldMappings()
 		return columns
 	}
 
@@ -996,38 +1016,71 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	} else {
 		u.Path = ""
 	}
-	s, err := e.initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	s, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
 	if err != nil {
 		return err
 	}
 	e.dataStore = s
 
 	if e.IsGlobalSort() {
-		target := "cloud storage"
-		cloudStorageURL, err3 := storage.ParseRawURL(e.Plan.CloudStorageURI)
+		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target,
-				err3.Error())
+			return err3
 		}
-		s, err = e.initExternalStore(ctx, cloudStorageURL, target)
-		if err != nil {
-			return err
-		}
-		e.GlobalSortStore = s
+		e.GlobalSortStore = store
 	}
 	return nil
 }
-func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
+
+// GetSortStore gets the sort store.
+func GetSortStore(ctx context.Context, url string) (storage.ExternalStorage, error) {
+	u, err := storage.ParseRawURL(url)
+	target := "cloud storage"
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err.Error())
+	}
+	return initExternalStore(ctx, u, target)
+}
+
+func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
-		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
 	s, err := storage.NewWithDefaultOpt(ctx, b)
 	if err != nil {
-		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
+		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, errors.GetErrStackMsg(err))
 	}
 	return s, nil
+}
+
+func estimateCompressionRatio(
+	ctx context.Context,
+	filePath string,
+	fileSize int64,
+	tp mydump.SourceType,
+	store storage.ExternalStorage,
+) (float64, error) {
+	if tp != mydump.SourceTypeParquet {
+		return 1.0, nil
+	}
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2.0, nil)
+		}
+	})
+	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	if err != nil {
+		return 1.0, err
+	}
+	// No row in the file, use 2.0 as default compression ratio.
+	if rowSize == 0 || rows == 0 {
+		return 2.0, nil
+	}
+
+	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
+	return compressionRatio, nil
 }
 
 // InitDataFiles initializes the data store and files.
@@ -1080,7 +1133,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	s := e.dataStore
-	var totalSize int64
+	var (
+		totalSize        int64
+		compressionRatio = 1.0
+	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	// check glob pattern is present in filename.
 	idx := strings.IndexAny(fileNameKey, "*[")
@@ -1089,14 +1145,19 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	if idx == -1 {
 		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
 		if err2 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the file location is correct")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the file location is correct")
 		}
 		defer func() {
 			terror.Log(fileReader.Close())
 		}()
 		size, err3 := fileReader.Seek(0, io.SeekEnd)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "failed to read file size by seek")
+		}
+		sourceType = e.getSourceType()
+		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
@@ -1106,6 +1167,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Type:        sourceType,
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1133,13 +1195,23 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				totalSize += size
 				return nil
 			}); err != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
 
 		var err error
+		var once sync.Once
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				var err2 error
+				once.Do(func() {
+					sourceType = e.getSourceType()
+					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+				})
+				if err2 != nil {
+					return nil, err2
+				}
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1148,6 +1220,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 				}
 				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
@@ -1180,7 +1253,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
 				if err2 != nil {
-					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the INFILE path is correct")
 				}
 				return fileReader, nil
 			},
@@ -1240,6 +1313,7 @@ func (e *LoadDataController) GetParser(
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {
@@ -1360,7 +1434,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.ThreadCnt,
+		WorkerConcurrency:      *atomic.NewInt32(int32(e.ThreadCnt)),
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
@@ -1400,24 +1474,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 type JobImportResult struct {
 	Affected uint64
 	Warnings []contextutil.SQLWarn
-}
-
-// GetMsgFromBRError get msg from BR error.
-// TODO: add GetMsg() to errors package to replace this function.
-// see TestGetMsgFromBRError for more details.
-func GetMsgFromBRError(err error) string {
-	if err == nil {
-		return ""
-	}
-	if berr, ok := err.(*errors.Error); ok {
-		return berr.GetMsg()
-	}
-	raw := err.Error()
-	berrMsg := errors.Cause(err).Error()
-	if len(raw) <= len(berrMsg)+len(": ") {
-		return raw
-	}
-	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.

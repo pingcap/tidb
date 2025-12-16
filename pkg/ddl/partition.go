@@ -3732,7 +3732,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
-		return w.reorgPartitionDataAndIndex(jobCtx.stepCtx, reorgTbl, reorgInfo)
+		return w.reorgPartitionDataAndIndex(jobCtx, reorgTbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -4012,7 +4012,7 @@ func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
 }
 
 func (w *worker) reorgPartitionDataAndIndex(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) (err error) {
@@ -4027,7 +4027,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		err = w.updatePhysicalTableRow(ctx, t, reorgInfo)
+		err = w.updatePhysicalTableRow(jobCtx.stepCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4086,7 +4086,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 	pi := t.Meta().GetPartitionInfo()
 	if _, err = findNextPartitionID(reorgInfo.PhysicalTableID, pi.AddingDefinitions); err == nil {
 		// Now build all the indexes in the new partitions.
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4150,7 +4150,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 		}
 	}
 	if _, err = findNextNonTouchedPartitionID(reorgInfo.PhysicalTableID, pi); err == nil {
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

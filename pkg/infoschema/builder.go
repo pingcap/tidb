@@ -102,6 +102,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return applyExchangeTablePartition(b, m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
+	case model.ActionRefreshMeta:
+		return applyRefreshMeta(b, m, diff)
 	default:
 		return applyDefaultAction(b, m, diff)
 	}
@@ -109,6 +111,143 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 
 func (b *Builder) applyCreateTables(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
+}
+
+// equalPlacementPolicy compares two placement policy references for equality
+func equalPlacementPolicy(a, b *model.PolicyRefInfo) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.ID == b.ID && a.Name.L == b.Name.L
+}
+
+// applyRefreshMeta handles schema and table operations during PITR restore.
+//
+// IMPORTANT: This function relies on BR (Backup & Restore) to send operations in a specific sequence:
+// 1. Delete tables first
+// 2. Delete schemas second
+// 3. Create/Update new schemas third
+// 4. Create/Update new tables fourth
+//
+// This sequence is critical because:
+//   - If schemas are deleted before their tables, the table deletion operations will fail
+//     since the schema context is needed to properly clean up table metadata
+//   - Schema creation must happen before table creation to provide the proper context
+func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	schemaID := diff.SchemaID
+	tableID := diff.TableID
+	oldSchemaID := diff.SchemaID
+	oldTableID := diff.TableID
+
+	// Schema operation
+	if tableID == 0 {
+		dbInfo, err := m.GetDatabase(schemaID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// Schema doesn't exist in kv, drop it from infoschema.
+		if dbInfo == nil {
+			schemaDiff := &model.SchemaDiff{
+				Version:       diff.Version,
+				Type:          model.ActionDropSchema,
+				SchemaID:      schemaID,
+				OldSchemaID:   oldSchemaID,
+				OldTableID:    oldTableID,
+				IsRefreshMeta: true,
+			}
+			return applyDropSchema(b, schemaDiff), nil
+		}
+
+		// Schema exists in kv but not in infoschema, create it to infoschema
+		if _, ok := b.schemaByID(schemaID); !ok {
+			schemaDiff := &model.SchemaDiff{
+				Version:       diff.Version,
+				Type:          model.ActionCreateSchema,
+				SchemaID:      schemaID,
+				OldSchemaID:   oldSchemaID,
+				OldTableID:    oldTableID,
+				IsRefreshMeta: true,
+			}
+			if err := applyCreateSchema(b, m, schemaDiff); err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			currentSchema, _ := b.schemaByID(schemaID)
+
+			needsCharsetUpdate := currentSchema.Charset != dbInfo.Charset || currentSchema.Collate != dbInfo.Collate
+			needsPlacementUpdate := !equalPlacementPolicy(currentSchema.PlacementPolicyRef, dbInfo.PlacementPolicyRef)
+
+			if needsCharsetUpdate {
+				charsetDiff := &model.SchemaDiff{
+					Version:       diff.Version,
+					Type:          model.ActionModifySchemaCharsetAndCollate,
+					SchemaID:      schemaID,
+					OldSchemaID:   oldSchemaID,
+					OldTableID:    oldTableID,
+					IsRefreshMeta: true,
+				}
+				if err := applyModifySchemaCharsetAndCollate(b, m, charsetDiff); err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+
+			if needsPlacementUpdate {
+				placementDiff := &model.SchemaDiff{
+					Version:       diff.Version,
+					Type:          model.ActionModifySchemaDefaultPlacement,
+					SchemaID:      schemaID,
+					OldSchemaID:   oldSchemaID,
+					OldTableID:    oldTableID,
+					IsRefreshMeta: true,
+				}
+				if err := applyModifySchemaDefaultPlacement(b, m, placementDiff); err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
+		return nil, nil
+	}
+
+	// Table operation - check if database exists in infoschema first
+	// if not just return, since infoschema is consistent, if schema is gone then all tables must have gone.
+	if _, ok := b.schemaByID(schemaID); !ok {
+		return nil, nil
+	}
+
+	// Check if table exists in kv
+	tableInfo, err := m.GetTable(schemaID, tableID)
+	if err != nil && !meta.ErrDBNotExists.Equal(err) {
+		return nil, errors.Trace(err)
+	}
+
+	// Table not exists in kv, drop it from infoschema
+	if tableInfo == nil {
+		schemaDiff := &model.SchemaDiff{
+			Version:       diff.Version,
+			Type:          model.ActionDropTable,
+			SchemaID:      schemaID,
+			TableID:       tableID,
+			OldSchemaID:   oldSchemaID,
+			OldTableID:    oldTableID,
+			IsRefreshMeta: true,
+		}
+		return applyDropTableOrPartition(b, m, schemaDiff)
+	}
+	// default update table
+	schemaDiff := &model.SchemaDiff{
+		Version:       diff.Version,
+		Type:          model.ActionCreateTable,
+		SchemaID:      schemaID,
+		TableID:       tableID,
+		OldSchemaID:   oldSchemaID,
+		OldTableID:    oldTableID,
+		IsRefreshMeta: true,
+	}
+	return applyDefaultAction(b, m, schemaDiff)
 }
 
 func applyTruncateTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
@@ -344,6 +483,12 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
+		// directly return if this action is initiated by refreshMeta DDL (only used by BR). In the BR case, we don't
+		// care about ON DELETE/UPDATE CASCADE so doesn't need to go through the below logic. The most important
+		// thing in BR is that we might not have DB key so if we go through, m.GetTable will error out.
+		if diff.IsRefreshMeta {
+			return
+		}
 
 		// Still keep the table in infoschema until when the state of table reaches StateNone. This is because
 		// the `ON DELETE/UPDATE CASCADE` function of foreign key may need to find the table in infoschema. Not
@@ -1054,4 +1199,17 @@ func tableBucketIdx(tableID int64) int {
 
 func tableIDIsValid(tableID int64) bool {
 	return tableID > 0
+}
+
+// schemaByID returns schema by ID, respecting the enableV2 flag
+func (b *Builder) schemaByID(id int64) (*model.DBInfo, bool) {
+	var dbInfo *model.DBInfo
+	var ok bool
+
+	if b.enableV2 {
+		dbInfo, ok = b.infoschemaV2.SchemaByID(id)
+	} else {
+		dbInfo, ok = b.infoSchema.SchemaByID(id)
+	}
+	return dbInfo, ok
 }

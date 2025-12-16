@@ -1559,3 +1559,49 @@ func TestLoadStatsForBitColumn(t *testing.T) {
 		tk.MustExec("drop table " + tableName)
 	}
 }
+
+func TestStatsCacheShouldNotCacheSystemTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.MustExec("analyze table t")
+
+	h := dom.StatsHandle()
+	require.Equal(t, 1, h.Len())
+
+	// These commands should list all tables and must not pollute the stats cache.
+	tk.MustExec("show stats_meta")
+	tk.MustExec("show stats_healthy")
+	require.Equal(t, 1, h.Len())
+	require.NotZero(t, h.GetSystemDBIDCacheLenForTest())
+	h.Clear()
+	require.Zero(t, h.GetSystemDBIDCacheLenForTest())
+}
+
+func TestStatsCacheShouldNotCacheTemporaryTable(t *testing.T) {
+	// Local temporary tables.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table t(a int)")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.MustExec("select * from t")
+
+	h := dom.StatsHandle()
+	require.Equal(t, 0, h.Len())
+
+	// Global temporary tables.
+	tk.MustExec("create global temporary table gt(a int) on commit delete rows")
+	tk.MustExec("insert into gt values(1),(2),(3)")
+	tk.MustExec("select * from gt")
+
+	require.Equal(t, 0, h.Len())
+
+	// Analyze tables.
+	tk.MustExec("analyze table t")
+	require.Equal(t, 1, h.Len())
+	tk.MustExec("analyze table gt")
+	require.Equal(t, 2, h.Len())
+}

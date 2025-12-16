@@ -17,9 +17,11 @@ package ddl_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -39,7 +41,7 @@ import (
 
 func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	sch, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
+	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -53,7 +55,8 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
 	tk.MustExec("insert into tp1 values (1, 0), (11, 0), (101, 0), (1001, 0);")
-	task := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false)
+	task, server := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false)
+	require.Nil(t, server)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -87,7 +90,8 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	/// 2. test non partition table.
 	// 2.1 empty table
 	tk.MustExec("create table t1(id int primary key, v int)")
-	task = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
+	task, server = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
+	require.Nil(t, server)
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
@@ -97,7 +101,8 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
-	task = createAddIndexTask(t, dom, "test", "t2", proto.Backfill, false)
+	task, server = createAddIndexTask(t, dom, "test", "t2", proto.Backfill, false)
+	require.Nil(t, server)
 	// 2.2.1 stepInit
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
@@ -157,12 +162,13 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
-	task := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
+	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
+	require.NotNil(t, server)
 
 	sch := schManager.MockScheduler(task)
-	ext, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
+	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
-	ext.(*ddl.BackfillingSchedulerExt).GlobalSort = true
+	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
 	sch.Extension = ext
 
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", task.Meta)
@@ -269,7 +275,7 @@ func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{Step: proto.StepInit},
 	}
-	ext := &ddl.BackfillingSchedulerExt{}
+	ext := &ddl.LitBackfillScheduler{}
 
 	// 1. local mode
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.StepDone} {
@@ -277,7 +283,7 @@ func TestGetNextStep(t *testing.T) {
 		task.Step = nextStep
 	}
 	// 2. global sort mode
-	ext = &ddl.BackfillingSchedulerExt{GlobalSort: true}
+	ext = &ddl.LitBackfillScheduler{GlobalSort: true}
 	task.Step = proto.StepInit
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest} {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
@@ -290,8 +296,18 @@ func createAddIndexTask(t *testing.T,
 	dbName,
 	tblName string,
 	taskType proto.TaskType,
-	useGlobalSort bool) *proto.Task {
+	useGlobalSort bool) (*proto.Task, *fakestorage.Server) {
 	db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr(dbName))
+	var (
+		gcsHost = "127.0.0.1"
+		gcsPort = uint16(4443)
+		// for fake gcs server, we must use this endpoint format
+		// NOTE: must end with '/'
+		gcsEndpointFormat = "http://%s:%d/storage/v1/"
+		gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
+		server            *fakestorage.Server
+	)
+
 	require.True(t, ok)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
 	require.NoError(t, err)
@@ -315,7 +331,20 @@ func createAddIndexTask(t *testing.T,
 		EleTypeKey: meta.IndexElementKey,
 	}
 	if useGlobalSort {
-		taskMeta.CloudStorageURI = "gs://sort-bucket"
+		var err error
+		opt := fakestorage.Options{
+			Scheme:     "http",
+			Host:       gcsHost,
+			Port:       gcsPort,
+			PublicHost: gcsHost,
+		}
+		server, err = fakestorage.NewServerWithOptions(opt)
+		t.Cleanup(func() {
+			server.Stop()
+		})
+		require.NoError(t, err)
+		server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+		taskMeta.CloudStorageURI = fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
 	}
 
 	taskMetaBytes, err := json.Marshal(taskMeta)
@@ -334,7 +363,7 @@ func createAddIndexTask(t *testing.T,
 		StateUpdateTime: time.Now(),
 	}
 
-	return task
+	return task, server
 }
 
 func TestBackfillTaskMetaVersion(t *testing.T) {

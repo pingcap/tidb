@@ -2,8 +2,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "importintotest4_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
+        "conflict_resolution_test.go",
         "global_sort_test.go",
         "main_test.go",
         "split_file_test.go",
@@ -13,7 +14,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
-        "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
@@ -24,10 +24,14 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
+        "//tests/realtikvtest/testutils",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_atomic//:atomic",
     ],
 )

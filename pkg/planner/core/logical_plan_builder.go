@@ -3674,10 +3674,11 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
-	currentDB := b.ctx.GetSessionVars().CurrentDB
-	warnHandler := b.ctx.GetSessionVars().StmtCtx
+	sessionVars := b.ctx.GetSessionVars()
+	currentDB := sessionVars.CurrentDB
+	warnHandler := sessionVars.StmtCtx
 	planHints, subQueryHintFlags, err := h.ParsePlanHints(hints, currentLevel, currentDB,
-		b.hintProcessor, b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder,
+		b.hintProcessor, sessionVars.StmtCtx.StraightJoinOrder,
 		b.subQueryCtx == handlingInSubquery,
 		b.subQueryCtx == handlingExistsSubquery, b.subQueryCtx == notHandlingSubquery, warnHandler)
 	if err != nil {

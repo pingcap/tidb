@@ -1769,3 +1769,23 @@ IndexReader	6666.67	root		index:IndexRangeScan
 └─IndexRangeScan	6666.67	cop[tikv]	table:tt, index:a(a)	range:[-inf,10), [15,15], (20,+inf], keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	IndexMerge is inapplicable
+drop table if exists t1;
+create table t1(id int primary key, a int, b int, v int, index idx_a(a), unique key idx_b(b));
+explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_a) */ * from t1;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	8061	Optimizer hint INDEX_LOOKUP_PUSH_DOWN is not supported by TiDB and is ignored
+explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_a) */ * from t1 where a=2;
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_a(a)	range:[2,2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	8061	Optimizer hint INDEX_LOOKUP_PUSH_DOWN is not supported by TiDB and is ignored
+explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_b) */ * from t1 where b=3;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t1, index:idx_b(b)	
+Level	Code	Message
+Warning	8061	Optimizer hint INDEX_LOOKUP_PUSH_DOWN is not supported by TiDB and is ignored

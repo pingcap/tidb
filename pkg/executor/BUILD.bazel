@@ -111,6 +111,7 @@ go_library(
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/importinto",
+        "//pkg/disttask/operator",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errctx",
@@ -490,6 +491,7 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_fn//:fn",
         "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/diagnosticspb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_pingcap_kvproto//pkg/errorpb",
@@ -513,6 +515,7 @@ go_test(
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
 )

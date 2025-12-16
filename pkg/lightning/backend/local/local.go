@@ -52,13 +52,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -405,8 +406,11 @@ type BackendConfig struct {
 	MaxConnPerStore int
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
-	// concurrency of generateJobForRange and import(write & ingest) workers
-	WorkerConcurrency int
+	// concurrency is used in these places:
+	// 1. generateJobForRange parallelism, only for local engine.
+	// 2. data size loaded from LoadIngestData, only for external engine.
+	// 3. region job worker pool size
+	WorkerConcurrency atomic.Int32
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
@@ -456,7 +460,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		WorkerConcurrency:           *atomic.NewInt32(int32(cfg.TikvImporter.RangeConcurrency) * 2),
 		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
@@ -481,6 +485,16 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 
 func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
+}
+
+// GetWorkerConcurrency gets the current concurrency of the backend
+func (c *BackendConfig) GetWorkerConcurrency() int {
+	return int(c.WorkerConcurrency.Load())
+}
+
+// SetWorkerConcurrency sets the current concurrency of the backend
+func (c *BackendConfig) SetWorkerConcurrency(concurrency int) {
+	c.WorkerConcurrency.Store(int32(concurrency))
 }
 
 // Backend is a local backend.
@@ -1053,7 +1067,7 @@ func (local *Backend) generateAndSendJob(
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRanges)
-	conn := local.WorkerConcurrency
+	conn := int(local.WorkerConcurrency.Load())
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
@@ -1084,8 +1098,13 @@ func (local *Backend) generateAndSendJob(
 						}
 						return err
 					}
+					// we need to increase the ref count before sending jobs to
+					// jobToWorkerCh, in case some job finished quickly and decrease
+					// the ref count to zero and cause the data being released.
 					for _, job := range jobs {
 						job.ref(jobWg)
+					}
+					for _, job := range jobs {
 						select {
 						case <-egCtx.Done():
 							// this job is not put into jobToWorkerCh
@@ -1182,87 +1201,6 @@ func (local *Backend) generateJobForRange(
 	return jobs, nil
 }
 
-// startWorker creates a worker that reads from the job channel and processes.
-// startWorker will return nil if it's expected to stop, where the cases are all
-// jobs are finished or the context canceled because other components report
-// error. It will return not nil error when it actively stops. startWorker must
-// call job.done() if it does not put the job into jobOutCh.
-func (local *Backend) startWorker(
-	ctx context.Context,
-	jobInCh, jobOutCh chan *regionJob,
-	afterExecuteJob func([]*metapb.Peer),
-	jobWg *sync.WaitGroup,
-) error {
-	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case job, ok := <-jobInCh:
-			if !ok {
-				return nil
-			}
-
-			var peers []*metapb.Peer
-			// in unit test, we may not have the real peers
-			if job.region != nil && job.region.Region != nil {
-				peers = job.region.Region.GetPeers()
-			}
-			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
-			err := local.executeJob(ctx, job)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
-
-			if afterExecuteJob != nil {
-				afterExecuteJob(peers)
-			}
-			switch job.stage {
-			case regionScanned, wrote, ingested:
-				select {
-				case <-ctx.Done():
-					job.done(jobWg)
-					return nil
-				case jobOutCh <- job:
-				}
-			case needRescan:
-				jobs, err2 := local.generateJobForRange(
-					ctx,
-					job.ingestData,
-					[]common.Range{job.keyRange},
-					job.regionSplitSize,
-					job.regionSplitKeys,
-				)
-				if err2 != nil {
-					// Don't need to put the job back to retry, because generateJobForRange
-					// has done the retry internally. Here just done for the "needRescan"
-					// job and exit directly.
-					job.done(jobWg)
-					return err2
-				}
-				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				newJobCnt := len(jobs) - 1
-				for newJobCnt > 0 {
-					job.ref(jobWg)
-					newJobCnt--
-				}
-				for _, j := range jobs {
-					j.lastRetryableErr = job.lastRetryableErr
-					select {
-					case <-ctx.Done():
-						j.done(jobWg)
-						// don't exit here, we mark done for each job and exit in the outer loop
-					case jobOutCh <- j:
-					}
-				}
-			}
-
-			if err != nil {
-				return err
-			}
-		}
-	}
-}
-
 func (*Backend) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
 	// io.EOF is not retryable in normal case
@@ -1315,6 +1253,11 @@ func (local *Backend) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
+	failpoint.Inject("mockRunJobSucceed", func(_ failpoint.Value) {
+		job.convertStageTo(regionScanned)
+		failpoint.Return(nil)
+	})
+
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
 			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
@@ -1332,6 +1275,8 @@ func (local *Backend) executeJob(
 			}
 		}
 	}
+
+	failpoint.InjectCall("modifyRunningGlobalSortSpeed")
 
 	for {
 		err := local.writeToTiKV(ctx, job)
@@ -1370,6 +1315,50 @@ func (local *Backend) executeJob(
 		job.keyRange.Start = job.writeResult.remainingStartKey
 		job.convertStageTo(regionScanned)
 	}
+}
+
+// verifyImportedStatistics verifies the imported statistics for external engines.
+// It checks if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used (which are not yet implemented),
+// and verifies that the imported KV count matches the expected one.
+func verifyImportedStatistics(e common.Engine, importedKVCount int64) error {
+	// Check if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used.
+	// These options are not yet implemented for local backend, so we skip
+	// the statistics verification and return an error to remind future
+	// implementers to add support for this check.
+	if extEngine, ok := e.(*external.Engine); ok {
+		failpoint.Inject("skipOnDuplicateKeyCheck", func(_ failpoint.Value) {
+			failpoint.Return(nil)
+		})
+		onDup := extEngine.GetOnDup()
+		if onDup == common.OnDuplicateKeyRecord || onDup == common.OnDuplicateKeyRemove {
+			log.FromContext(context.Background()).Debug("skip statistics verificatio when OnDuplicateKeyRecord or OnDuplicateKeyRemove is used")
+			return nil
+		}
+
+		// Verify the imported statistics after import.
+		// For external engine, use the total number of KVs loaded in LoadIngestData
+		// (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
+		expectedKVCount := extEngine.GetTotalLoadedKVsCount()
+		if importedKVCount != expectedKVCount {
+			return errors.Errorf("imported length mismatch, expected %d, got %d", expectedKVCount, importedKVCount)
+		}
+	}
+	return nil
+}
+
+// GetExternalEngine returns the external engine by uuid.
+// If the engine is not found or not an external engine, it returns nil.
+// It's used to dynamically update the resource used by the external engine
+func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
+	e, ok := local.engineMgr.getExternalEngine(engineUUID)
+	if !ok {
+		return nil
+	}
+	ext, ok := e.(*external.Engine)
+	if !ok {
+		return nil
+	}
+	return ext
 }
 
 // ImportEngine imports an engine to TiKV.
@@ -1487,6 +1476,11 @@ func (local *Backend) ImportEngine(
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
+
+		if err := verifyImportedStatistics(e, importedLength); err != nil {
+			return err
+		}
+
 		log.FromContext(ctx).Info("import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),
@@ -1510,12 +1504,16 @@ func (local *Backend) doImport(
 	regionSplitSize, regionSplitKeyCnt int64,
 ) error {
 	/*
-	 [prepareAndSendJob]---jobToWorkerCh->[storeBalancer(optional)]->[workers]
-	                     ^                                             |
-	                     |                                     jobFromWorkerCh
-	                     |                                             |
-	                     |                                             v
-	               [regionJobRetryer]<-------------[dispatchJobGoroutine]-->done
+	 ┌─────────────────┐                   ┌─────────────┐   ┌────────────┐
+	 │prepareAndSendJob├───jobToWorkerCh──→│storeBalancer├──→│ workerpool │
+	 └─────────────────┘         ↑         └─────────────┘   └─────┬──────┘
+	                             │            (optional)           ↓
+	                             │                          jobFromWorkerCh
+	                             │                                 │
+	                             │                                 ↓
+	                    ┌────────┴─────────┐                ┌──────┴────────┐
+	                    │ regionJobRetryer │←───────────────┤  dispatcher   │──→done
+	                    └──────────────────┘                └───────────────┘
 	*/
 
 	// Above is the happy path workflow of region jobs. A job is generated by
@@ -1525,34 +1523,46 @@ func (local *Backend) doImport(
 	// use jobWg to wait for all jobs to be finished.
 	//
 	// To handle the error case, we still maintain the invariant, but the workflow
-	// becomes a bit more complex. When an error occurs, the owner components of a
-	// job need to convert the job to "done" state, or send all its owned jobs to
-	// next components. The exit order is important because if the next component is
+	// becomes a bit more complex. When an error occurs, the corresponding component
+	// need to convert the job to "done" state, or send all its owned jobs to next
+	// components. The exit order is important because if the next component is
 	// exited before the owner component, deadlock will happen.
 	//
-	// All components are spawned by workGroup so the main goroutine can wait all
-	// components to exit. Component exit order in happy path is:
+	// All components (except worker pool) are spawned by workGroup so the main goroutine
+	// can wait all components to exit. Worker pool uses the subcontext of workerCtx, so it
+	// can perceive the error from other components. Besides, it will also spawn a goroutine
+	// in the workGroup to notify the error from itself.
+	//
+	// The exit order in happy path is:
 	//
 	// 1. prepareAndSendJob is finished, its goroutine will wait all jobs are
-	// finished by jobWg.Wait(). Then it will exit and close the output channel of
-	// workers.
+	// finished by jobWg.Wait(). Then the worker pool will be closed, and close
+	// the output channel of this pool while quit the internal goroutine.
 	//
-	// 2. one-by-one, when every component see its input channel is closed, it knows
-	// the workflow is finished. It will exit and (except for workers) close the
-	// output channel which is the input channel of the next component.
+	// 2. one-by-one, when each component see its input channel is closed, it knows
+	// the workflow is finished. It will exit and close the output channel which is the
+	// input channel of the next component.
 	//
 	// 3. Now all components are exited, the main goroutine can exit after
 	// workGroup.Wait().
 	//
 	// Component exit order in error case is:
 	//
-	// 1. The error component exits and causes workGroup's context to be canceled.
+	// 1. Error occurs in worker pool
+	//      1.1 The subcontext will be canceled and cause its goroutine to exit.
+	//      1.2 The error is then broadcasted to the workGroup.
+	//      1.3 All other components exit due to canceled context. No need to close channels.
 	//
-	// 2. All other components will exit because of the canceled context. No need to
-	// close channels.
-	//
-	// 3. the main goroutine can see the error and exit after workGroup.Wait().
+	// 2. Error occurs in other components (e.g. retryer, dispatcher)
+	//      2.1 The error component exits and causes workGroup's context to be canceled.
+	//      2.2 All other components will exit because of the canceled context. No need to
+	//          close channels.
+	//      2.3 The worker pool will exit due to the canceled context too, we also need to
+	//          wait these workers to exit in the main goroutine.
+	//      2.4 The main goroutine can see the error and exit after workGroup.Wait().
+
 	var (
+		// workGroup is used to run all components in the workflow.
 		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
@@ -1640,21 +1650,26 @@ func (local *Backend) doImport(
 		}
 	})
 
+	pool := getRegionJobWorkerPool(
+		workerCtx, &jobWg,
+		local, balancer,
+		jobToWorkerCh, jobFromWorkerCh,
+	)
+	wctx := workerpool.NewContext(workerCtx)
+
+	if e, ok := engine.(*external.Engine); ok {
+		e.SetWorkerPool(pool)
+	}
+
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
 
-	for i := 0; i < local.WorkerConcurrency; i++ {
-		workGroup.Go(func() error {
-			toCh := jobToWorkerCh
-			var afterExecuteJob func([]*metapb.Peer)
-			if balancer != nil {
-				toCh = balancer.innerJobToWorkerCh
-				afterExecuteJob = balancer.releaseStoreLoad
-			}
-			return local.startWorker(workerCtx, toCh, jobFromWorkerCh, afterExecuteJob, &jobWg)
-		})
-	}
+	workGroup.Go(func() error {
+		pool.Start(wctx)
+		<-wctx.Done()
+		return wctx.OperatorErr()
+	})
 
 	failpoint.Label("afterStartWorker")
 
@@ -1686,7 +1701,10 @@ func (local *Backend) doImport(
 				return allZero
 			})
 		}
-		close(jobFromWorkerCh)
+
+		// Close the pool, as well as the channel.
+		wctx.Cancel()
+		pool.Release()
 		return nil
 	})
 
@@ -1708,27 +1726,42 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
 }
 
+// GetExternalEngineConflictInfo returns conflict info of some engine.
+func (local *Backend) GetExternalEngineConflictInfo(engineUUID uuid.UUID) common.ConflictInfo {
+	return local.engineMgr.getExternalEngineConflictInfo(engineUUID)
+}
+
 // ResetEngine reset the engine and reclaim the space.
 func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, false)
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
-// invalid. Caller must use SetTSAfterResetEngine to set a valid TS before import
+// invalid. Caller must use SetTSBeforeImportEngine to set a valid TS before import
 // the engine.
 func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, true)
 }
 
-// SetTSAfterResetEngine allocates a new TS for the engine after it's reset.
+// SetTSBeforeImportEngine allocates a new TS for the engine before it is imported.
 // This is typically called after persisting the chosen TS of the engine to make
 // sure TS is not changed after task failover.
-func (local *Backend) SetTSAfterResetEngine(engineUUID uuid.UUID, ts uint64) error {
+func (local *Backend) SetTSBeforeImportEngine(ctx context.Context, engineUUID uuid.UUID, ts uint64) error {
 	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
 	if e == nil {
-		return errors.Errorf("engine %s not found in SetTSAfterResetEngine", engineUUID.String())
+		return errors.Errorf("engine %s not found in SetTSBeforeImportEngine", engineUUID.String())
 	}
 	defer e.unlock()
+	if ts == 0 {
+		p, l, err := local.pdCli.GetTS(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		failpoint.Inject("afterSetTSBeforeImportEngine", func(_ failpoint.Value) {
+			failpoint.Return(errors.Errorf("mock err"))
+		})
+		ts = oracle.ComposeTS(p, l)
+	}
 	e.engineMeta.TS = ts
 	return e.saveEngineMeta()
 }

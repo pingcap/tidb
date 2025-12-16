@@ -194,6 +194,8 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	Mode TableMode `json:"mode,omitempty"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
@@ -219,7 +221,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	nt := *t
 	nt.Columns = make([]*ColumnInfo, len(t.Columns))
 	nt.Indices = make([]*IndexInfo, len(t.Indices))
-	nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
+	nt.ForeignKeys = nil
 
 	for i := range t.Columns {
 		nt.Columns[i] = t.Columns[i].Clone()
@@ -229,8 +231,11 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.Indices[i] = t.Indices[i].Clone()
 	}
 
-	for i := range t.ForeignKeys {
-		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+	if len(t.ForeignKeys) > 0 {
+		nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
+		for i := range t.ForeignKeys {
+			nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+		}
 	}
 
 	if t.Partition != nil {
@@ -648,6 +653,38 @@ func (t TableLockState) String() string {
 		return "public"
 	default:
 		return "none"
+	}
+}
+
+// TableMode is the state for table mode, it's a table level metadata for prevent
+// table read/write during importing(import into) or BR restoring.
+// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
+// return error.
+// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
+// Now allow switching between the same table modes, and not allow convert between
+// TableModeImport and TableModeRestore
+type TableMode byte
+
+const (
+	// TableModeNormal means the table is in normal mode.
+	TableModeNormal TableMode = iota
+	// TableModeImport means the table is in import mode.
+	TableModeImport
+	// TableModeRestore means the table is in restore mode.
+	TableModeRestore
+)
+
+// String implements fmt.Stringer interface.
+func (t TableMode) String() string {
+	switch t {
+	case TableModeNormal:
+		return "Normal"
+	case TableModeImport:
+		return "Import"
+	case TableModeRestore:
+		return "Restore"
+	default:
+		return ""
 	}
 }
 
