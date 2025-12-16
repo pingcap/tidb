@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -144,6 +145,10 @@ func testRandomFail(t *testing.T, ctx *mock.Context, joinType base.JoinType, par
 }
 
 func TestOuterJoinSpillBasic(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()
@@ -200,6 +205,10 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 }
 
 func TestOuterJoinSpillWithSel(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()
@@ -250,6 +259,10 @@ func TestOuterJoinSpillWithSel(t *testing.T) {
 }
 
 func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()
@@ -309,6 +322,10 @@ func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 
 // Hash join executor may be repeatedly closed and opened
 func TestOuterJoinUnderApplyExec(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()
@@ -355,6 +372,10 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 }
 
 func TestFallBackAction(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	leftDataSource, rightDataSource, info, newRootExceedAction := prepareSimpleHashJoinEnv(testFuncName)
@@ -368,6 +389,10 @@ func TestFallBackAction(t *testing.T) {
 }
 
 func TestIssue59377(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	leftDataSource, rightDataSource, info, _ := prepareSimpleHashJoinEnv(testFuncName)
@@ -391,6 +416,10 @@ func TestIssue59377(t *testing.T) {
 }
 
 func TestHashJoinRandomFail(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()
