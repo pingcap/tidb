@@ -58,10 +58,17 @@ fmt: ## Format Go code using gofmt
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w -r 'interface{} -> any' $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
+# On macOS, CGO is required for gosigar package to generate export data properly
+ifeq ($(GOOS),darwin)
+CGO_ENABLED_FOR_LINT := 1
+else
+CGO_ENABLED_FOR_LINT := 0
+endif
+
 .PHONY: check-static
 check-static: ## Run static code analysis checks
 check-static: tools/bin/golangci-lint
-	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
+	GO111MODULE=on CGO_ENABLED=$(CGO_ENABLED_FOR_LINT) tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
 .PHONY: check-file-perm
 check-file-perm:
