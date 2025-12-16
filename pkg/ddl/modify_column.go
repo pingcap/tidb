@@ -1011,6 +1011,12 @@ func (w *worker) doModifyColumnTypeWithData(
 				if !done {
 					return ver, err
 				}
+
+				if job.MultiSchemaInfo != nil {
+					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
+					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
+				}
+
 				if len(changingIdxs) > 0 {
 					job.SnapshotVer = 0
 					job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
@@ -1018,10 +1024,6 @@ func (w *worker) doModifyColumnTypeWithData(
 					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 				}
 			case model.ReorgStageModifyColumnRecreateIndex:
-				if job.MultiSchemaInfo != nil {
-					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
-					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
-				}
 				var done bool
 				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxs)
 				if !done {
@@ -1100,7 +1102,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
-			return ver, errors.Errorf(errMsg)
+			return ver, errors.Errorf("%s", errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
@@ -1224,6 +1226,7 @@ func (w *worker) doModifyColumnIndexReorg(
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
 			case model.ReorgStageModifyColumnRecreateIndex:
 				if job.MultiSchemaInfo != nil {
+					job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
 				}
 				var done bool
@@ -1291,7 +1294,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
-			return ver, errors.Errorf(errMsg)
+			return ver, errors.Errorf("%s", errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", oldIdxInfos[0].State)

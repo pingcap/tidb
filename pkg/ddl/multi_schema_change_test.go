@@ -1019,3 +1019,11 @@ func assertMultiSchema(t *testing.T, job *model.Job, subJobLen int) {
 	assert.NotNil(t, job.MultiSchemaInfo, job)
 	assert.Len(t, job.MultiSchemaInfo.SubJobs, subJobLen, job)
 }
+
+func TestXxx(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int, b int, index i1(a));")
+	tk.MustExec("alter table t modify column a int unsigned, add index i2(b);")
+}

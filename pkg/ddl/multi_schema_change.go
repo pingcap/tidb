@@ -41,7 +41,7 @@ func skipReorgAndAnalyzeForSubJob(jobCtx *jobContext, tblInfo *model.TableInfo, 
 	job.SnapshotVer = v.Ver
 	// Although reorg is done by parent job, we still set the ReorgTp here.
 	job.ReorgMeta.ReorgTp = model.ReorgTypeIngest
-	job.ReorgMeta.Stage = model.AnalyzeStateSkipped
+	job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 	checkAndMarkNonRevertible(job)
 
 	return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -52,47 +52,49 @@ func skipReorgAndAnalyzeForSubJob(jobCtx *jobContext, tblInfo *model.TableInfo, 
 func (w *worker) reorgAndAnalyzeForMultiSchemaChange(
 	jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo,
 ) (finished bool, ver int64, err error) {
-	switch job.ReorgMeta.Stage {
-	case model.ReorgStageNone:
-		job.SnapshotVer = 0
-		job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		return false, ver, err
-	case model.ReorgStageModifyColumnRecreateIndex:
-
-	}
-
 	switch job.ReorgMeta.AnalyzeState {
 	case model.AnalyzeStateNone:
-		if !checkNeedReorg(tblInfo) {
-			logutil.DDLLogger().Info("analyze skipped or finished for multi-schema change",
-				zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
-			return false, 0, nil
-		}
-
-		dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
-		if err != nil {
-			return false, 0, errors.Trace(err)
-		}
-
-		tbl, err := getTable(jobCtx.getAutoIDRequirement(), dbInfo.ID, tblInfo)
-		if err != nil {
-			return false, ver, errors.Trace(err)
-		}
-
-		buildIndexes := make([]*model.IndexInfo, 0)
-		for _, idx := range tblInfo.Indices {
-			if idx.State == model.StateWriteReorganization {
-				buildIndexes = append(buildIndexes, idx)
+		switch job.ReorgMeta.Stage {
+		case model.ReorgStageNone:
+			if checkNeedReorg(tblInfo) {
+				job.SnapshotVer = 0
+				job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
+				logutil.DDLLogger().Info("multi-schema change ready to reorg index",
+					zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
+			} else {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+				logutil.DDLLogger().Info("multi-schema change skip reorg index",
+					zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
 			}
-		}
 
-		done, ver, err := doReorgWorkForCreateIndex(w, jobCtx, job, tbl, buildIndexes)
-		if done {
-			checkAndUpdateNeedAnalyze(job, tblInfo)
-		}
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			return false, ver, err
+		case model.ReorgStageModifyColumnRecreateIndex:
+			dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
+			if err != nil {
+				return false, ver, errors.Trace(err)
+			}
 
-		return false, ver, err
+			tbl, err := getTable(jobCtx.getAutoIDRequirement(), dbInfo.ID, tblInfo)
+			if err != nil {
+				return false, ver, errors.Trace(err)
+			}
+
+			buildIndexes := make([]*model.IndexInfo, 0)
+			for _, idx := range tblInfo.Indices {
+				if idx.State == model.StateWriteReorganization {
+					buildIndexes = append(buildIndexes, idx)
+				}
+			}
+			done, ver, err := doReorgWorkForCreateIndex(w, jobCtx, job, tbl, buildIndexes)
+			if done {
+				checkAndUpdateNeedAnalyze(job, tblInfo)
+			}
+			return false, ver, err
+		default:
+			intest.Assert(false, "shouldn't reach here")
+			return false, ver, err
+		}
 	case model.AnalyzeStateRunning:
 		w.startAnalyzeAndWait(job, tblInfo)
 		return false, ver, err
