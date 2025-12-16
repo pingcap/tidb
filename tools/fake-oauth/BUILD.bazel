@@ -9,7 +9,6 @@ go_library(
 
 go_binary(
     name = "fake-oauth",
-    cgo = True,  #keep
     embed = [":fake-oauth_lib"],
     visibility = ["//visibility:public"],
 )

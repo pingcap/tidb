@@ -9,7 +9,6 @@ go_library(
 
 go_binary(
     name = "xprog",
-    cgo = True,  #keep
     embed = [":xprog_lib"],
     visibility = ["//visibility:public"],
 )

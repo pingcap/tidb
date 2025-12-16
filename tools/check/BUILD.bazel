@@ -17,7 +17,6 @@ go_library(
 
 go_binary(
     name = "ut-server",
-    cgo = True,  #keep
     embed = [":ut_lib"],
     visibility = ["//visibility:public"],
 )
