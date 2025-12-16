@@ -2524,10 +2524,22 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncCommit, Value: BoolToOnOff(DefTiDBEnableAsyncCommit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAsyncCommit = TiDBOptOn(val)
 		return nil
+	}, Validation: func(_ *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+		// validation for shared lock release only.
+		if TiDBOptOn(normalizedValue) {
+			return "", errors.NewNoStackError("tidb_enable_async_commit is not compatible with shared lock yet")
+		}
+		return normalizedValue, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnable1PC, Value: BoolToOnOff(DefTiDBEnable1PC), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.Enable1PC = TiDBOptOn(val)
 		return nil
+	}, Validation: func(_ *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+		// validation for shared lock release only.
+		if TiDBOptOn(normalizedValue) {
+			return "", errors.NewNoStackError("tidb_enable_1pc is not compatible with shared lock yet")
+		}
+		return normalizedValue, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBGuaranteeLinearizability, Value: BoolToOnOff(DefTiDBGuaranteeLinearizability), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.GuaranteeLinearizability = TiDBOptOn(val)
@@ -3058,6 +3070,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionFairLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PessimisticTransactionFairLocking = TiDBOptOn(val)
 		return nil
+	}, Validation: func(_ *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+		// validation for shared lock release only.
+		if TiDBOptOn(normalizedValue) {
+			return "0", errors.New("tidb_pessimistic_transaction_fair_locking is not compatible with shared lock yet")
+		}
+		return normalizedValue, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheForParamLimit, Value: BoolToOnOff(DefTiDBEnablePlanCacheForParamLimit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePlanCacheForParamLimit = TiDBOptOn(val)
