@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -305,14 +306,12 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 
 	// Get buffer from pool and ensure it has enough capacity
-	hashPtr := planCacheKeyBufPool.Get().(*[]byte)
-	hash := (*hashPtr)[:0]
+	hash := planCacheKeyBufPool.Get()[:0]
 	if cap(hash) < len(stmt.StmtText)*2 {
 		hash = make([]byte, 0, len(stmt.StmtText)*2)
 	}
 	defer func() {
-		*hashPtr = hash
-		planCacheKeyBufPool.Put(hashPtr)
+		planCacheKeyBufPool.Put(hash)
 	}()
 	hash = append(hash, hack.Slice(userName)...)
 	hash = append(hash, hack.Slice(hostName)...)
@@ -399,8 +398,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
 		// Get int64 slice from pool
-		dirtyTableIDsPtr := dirtyTableIDsPool.Get().(*[]int64)
-		dirtyTableIDs := (*dirtyTableIDsPtr)[:0]
+		dirtyTableIDs := dirtyTableIDsPool.Get()[:0]
 		if cap(dirtyTableIDs) < len(dirtyTables) {
 			dirtyTableIDs = make([]int64, 0, len(dirtyTables))
 		}
@@ -415,8 +413,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			hash = codec.EncodeInt(hash, id)
 		}
 		// Return slice to pool
-		*dirtyTableIDsPtr = dirtyTableIDs
-		dirtyTableIDsPool.Put(dirtyTableIDsPtr)
+		dirtyTableIDsPool.Put(dirtyTableIDs)
 	}
 
 	// txn status
@@ -540,20 +537,14 @@ var planCacheHasherPool = sync.Pool{
 }
 
 // planCacheKeyBufPool is a pool for byte slices used in NewPlanCacheKey.
-var planCacheKeyBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 0, 512)
-		return &b
-	},
-}
+var planCacheKeyBufPool = zeropool.New[[]byte](func() []byte {
+	return make([]byte, 0, 512)
+})
 
 // dirtyTableIDsPool is a pool for int64 slices used in NewPlanCacheKey.
-var dirtyTableIDsPool = sync.Pool{
-	New: func() any {
-		ids := make([]int64, 0, 8)
-		return &ids
-	},
-}
+var dirtyTableIDsPool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(
