@@ -310,7 +310,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = make([]byte, 0, len(stmt.StmtText)*2)
 	}
 	defer func() {
-		planCacheKeyBufPool.Put(hash[:0])
+		hashToReturn := hash[:0]
+		planCacheKeyBufPool.Put(hashToReturn)
 	}()
 	hash = append(hash, hack.Slice(userName)...)
 	hash = append(hash, hack.Slice(hostName)...)
@@ -412,7 +413,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			hash = codec.EncodeInt(hash, id)
 		}
 		// Return slice to pool
-		dirtyTableIDsPool.Put(dirtyTableIDs[:0])
+		idsToReturn := dirtyTableIDs[:0]
+		dirtyTableIDsPool.Put(idsToReturn)
 	}
 
 	// txn status
