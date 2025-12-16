@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -332,7 +332,7 @@ func TestIssue64645(t *testing.T) {
 	tk.MustExec("set @a=1, @b=100")
 	tk.MustExec("execute stmt using @a, @b")
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
+	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"IndexRangeScan"})

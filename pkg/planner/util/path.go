@@ -165,14 +165,6 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
-<<<<<<< HEAD
-	// The plan cache do not support subquery now. So we skip this function when
-	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
-		return nil, path.TableFilters
-	}
-=======
->>>>>>> cb08e5eda44 (planner: Apply should not be full scan when plan cache enabled (#64646))
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {

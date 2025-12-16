@@ -9,23 +9,18 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
-    race = "on",
-    shard_count = 11,
-=======
-    shard_count = 13,
->>>>>>> cb08e5eda44 (planner: Apply should not be full scan when plan cache enabled (#64646))
+    shard_count = 12,
     deps = [
         "//pkg/parser",
         "//pkg/planner",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/resolve",
-        "//pkg/session/sessmgr",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "//pkg/util",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
