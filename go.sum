@@ -760,10 +760,10 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20251202113147-065a1251aea9 h1:QRJCyuB3vb/RHLf/9KDXRySAK1zB8rFInfmcHAchl3k=
-github.com/tikv/client-go/v2 v2.0.8-0.20251202113147-065a1251aea9/go.mod h1:DrneTzlX66kdfl59PMdaHpeJWzyXXNClNqzhi71AvXc=
-github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286 h1:TBrJ7eyjLfI6xc7rr348sTKPUa96ZUWmfSonqLP0vVM=
-github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286/go.mod h1:kuIEDRLck7LGHiqKYrQR3fNiK06trLmmK02s4r99iWU=
+github.com/tikv/client-go/v2 v2.0.8-0.20251211093144-53f3fad17830 h1:/A9JXuDKg6WuCTbCrfJs9KxyCM8wXmo2asGTg5cLaHw=
+github.com/tikv/client-go/v2 v2.0.8-0.20251211093144-53f3fad17830/go.mod h1:gipu6QUanLH6VCf15eTVrGpkI3fqmdqmlRIyk4PSKyU=
+github.com/tikv/pd/client v0.0.0-20251211090623-d08fd48c229d h1:bQGUYqYNn8vW9/3Oh/3RvpqX5HKXO+9ii32cfy/Uh8o=
+github.com/tikv/pd/client v0.0.0-20251211090623-d08fd48c229d/go.mod h1:WnwkeHrbTE0a44TtmTY6jZZ1dx8eU4O5uSqLeXjXrOc=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
