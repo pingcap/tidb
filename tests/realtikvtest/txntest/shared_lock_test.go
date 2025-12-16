@@ -24,6 +24,209 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func prepareForeignKeyTables(tk *testkit.TestKit) {
+	tk.MustExec("drop table if exists child, parent")
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child (id int primary key, pid int, foreign key (pid) references parent(id))")
+	tk.MustExec("insert into parent values (1), (2)")
+}
+
+func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk3.MustExec("use test")
+
+	prepareForeignKeyTables(tk1)
+
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+
+	tk1.MustExec("select * from parent where id=1 for update")
+	tk2Done := make(chan struct{})
+	go func() {
+		tk2.MustExec("insert into child values(1, 1)")
+		close(tk2Done)
+	}()
+	tk3Done := make(chan struct{})
+	go func() {
+		tk3.MustExec("insert into child values(2, 1)")
+		close(tk3Done)
+	}()
+
+	select {
+	case <-time.After(500 * time.Millisecond):
+	case <-tk2Done:
+		require.FailNow(t, "tk2 should be blocked")
+	case <-tk3Done:
+		require.FailNow(t, "tk3 should be blocked")
+	}
+	tk1.MustExec("commit")
+	<-tk2Done
+	<-tk3Done
+
+	tk1.MustQuery("select * from child").Check(testkit.Rows())
+	tk2.MustExec("commit")
+	tk1.MustQuery("select * from child").Check(testkit.Rows("1 1"))
+	tk3.MustExec("commit")
+	tk1.MustQuery("select * from child").Check(testkit.Rows("1 1", "2 1"))
+	tk1.MustExec("admin check table parent, child")
+}
+
+func TestSharedLockBlockExclusiveLock(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk3.MustExec("use test")
+
+	prepareForeignKeyTables(tk1)
+
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+
+	tk2.MustExec("insert into child values(1, 1)")
+	tk3.MustExec("insert into child values(2, 1)")
+	tk1Done := make(chan struct{})
+	go func() {
+		tk1.MustExec("select * from parent where id=1 for update")
+		close(tk1Done)
+	}()
+
+	select {
+	case <-time.After(500 * time.Millisecond):
+	case <-tk1Done:
+		require.FailNow(t, "tk1 should be blocked")
+	}
+	tk2.MustExec("commit")
+	tk2.MustQuery("select * from child").Check(testkit.Rows("1 1"))
+	select {
+	case <-time.After(500 * time.Millisecond):
+	case <-tk1Done:
+		require.FailNow(t, "tk1 should be blocked")
+	}
+	tk3.MustExec("commit")
+	tk3.MustQuery("select * from child").Check(testkit.Rows("1 1", "2 1"))
+
+	<-tk1Done
+
+	tk1.MustExec("commit")
+	tk1.MustExec("admin check table parent, child")
+}
+
+func TestSharedLockChildTableConflict(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk3.MustExec("use test")
+
+	prepareForeignKeyTables(tk1)
+
+	tk2.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+
+	tk2.MustExec("insert into child values(1, 1)")
+	tk3Done := make(chan struct{})
+	go func() {
+		tk3.MustExecToErr("insert into child values(1, 2)")
+		close(tk3Done)
+	}()
+	select {
+	case <-time.After(500 * time.Millisecond):
+	case <-tk3Done:
+		require.FailNow(t, "tk3 should be blocked")
+	}
+	tk2.MustExec("commit")
+	<-tk3Done
+	tk3.MustExec("commit")
+
+	tk2.MustQuery("select * from child").Check(testkit.Rows("1 1"))
+	tk2.MustExec("admin check table parent, child")
+
+	tk1.MustExec("delete from child")
+
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+
+	tk1.MustExec("select * from parent where id in (1, 2) for update")
+
+	tk2ErrCh := make(chan error)
+	go func() {
+		_, err := tk2.Exec("insert into child values(1, 1)")
+		tk2ErrCh <- err
+	}()
+	tk3ErrCh := make(chan error)
+	go func() {
+		_, err := tk3.Exec("insert into child values(1, 2)")
+		tk3ErrCh <- err
+	}()
+
+	select {
+	case <-time.After(500 * time.Millisecond):
+	case <-tk2ErrCh:
+		require.FailNow(t, "tk2 should be blocked")
+	case <-tk3ErrCh:
+		require.FailNow(t, "tk3 should be blocked")
+	}
+	tk1.MustExec("commit")
+
+	var (
+		results    [][]any
+		anotherErr func() error
+	)
+	select {
+	case err := <-tk2ErrCh:
+		results = append(results, []any{"1", "1"})
+		require.Nil(t, err)
+		tk2.MustExec("commit")
+		anotherErr = func() error {
+			err := <-tk3ErrCh
+			tk3.MustExec("commit")
+			return err
+		}
+	case err := <-tk3ErrCh:
+		results = append(results, []any{"1", "2"})
+		require.Nil(t, err)
+		tk3.MustExec("commit")
+		anotherErr = func() error {
+			err := <-tk2ErrCh
+			tk2.MustExec("commit")
+			return err
+		}
+	}
+
+	require.Error(t, anotherErr())
+
+	tk1.MustQuery("select * from child").Check(results)
+	tk1.MustExec("admin check table parent, child")
+}
+
 func TestSharedLockLockView(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
@@ -37,10 +240,7 @@ func TestSharedLockLockView(t *testing.T) {
 	tk2.MustExec("use test")
 	testTk.MustExec("use test")
 
-	tk1.MustExec("drop table if exists child, parent")
-	tk1.MustExec("create table parent (id int primary key)")
-	tk1.MustExec("create table child (id int primary key, pid int, foreign key (pid) references parent(id))")
-	tk1.MustExec("insert into parent values (1)")
+	prepareForeignKeyTables(tk1)
 
 	conn2 := tk2.MustQuery("select connection_id()").Rows()[0][0].(string)
 
