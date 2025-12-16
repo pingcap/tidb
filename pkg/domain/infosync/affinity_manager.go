@@ -124,7 +124,6 @@ func (m *mockAffinityManager) CreateAffinityGroupsIfNotExists(_ context.Context,
 				AffinityGroup: pdhttp.AffinityGroup{
 					ID: id,
 				},
-				Phase:      "ready",
 				RangeCount: len(ranges),
 			}
 		}

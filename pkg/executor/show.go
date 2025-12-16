@@ -293,6 +293,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowImportGroups(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
+	case ast.ShowAffinity:
+		return e.fetchShowAffinity(ctx)
 	}
 	return nil
 }
@@ -2818,3 +2820,4 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	}
 	return fn(sysCtx)
 }
+

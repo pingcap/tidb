@@ -61,6 +61,19 @@ func GetAffinityGroups(ctx context.Context, ids []string) (map[string]*pdhttp.Af
 	return is.affinityManager.GetAffinityGroups(ctx, ids)
 }
 
+// GetAllAffinityGroupStates gets all affinity group states from PD.
+// This is used by SHOW AFFINITY to directly query PD without going through the manager.
+func GetAllAffinityGroupStates(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.pdHTTPCli == nil {
+		return make(map[string]*pdhttp.AffinityGroupState), nil
+	}
+	return is.pdHTTPCli.GetAllAffinityGroups(ctx)
+}
+
 // CreateAffinityGroupsIfNotExists creates affinity groups in PD (idempotent).
 // It checks which groups already exist and only creates the ones that don't exist.
 // This makes the operation safe for DDL job retries (e.g., after Owner switch or network failures).
