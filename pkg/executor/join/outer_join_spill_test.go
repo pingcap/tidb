@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -344,6 +345,10 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 }
 
 func TestFallBackAction(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	leftDataSource, rightDataSource, info, newRootExceedAction := prepareSimpleHashJoinEnv(testFuncName)
