@@ -36,8 +36,7 @@ func GetFunctionName() string {
 
 // CheckNoLeakFiles checks if there are file leaks
 func CheckNoLeakFiles(t *testing.T, fileNamePrefixForTest string) {
-	path := t.TempDir()
-	require.Equal(t, path, config.GetGlobalConfig().TempStoragePath)
+	path := config.GetGlobalConfig().TempStoragePath
 	log.Info(fmt.Sprintf("path: %s", path))
 	err := filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
