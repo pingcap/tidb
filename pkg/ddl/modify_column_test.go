@@ -1402,21 +1402,25 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 		createTableSQL  string
 		modifySQL       string
 		embeddedAnalyze bool
+		checkResult     bool
 		queries         []query
 	}
 
 	tcs := []testCase{
 		{
-			caseName:        "table without index,no row reorg",
-			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin)",
+			// Check stats correctness after modifying column without any reorg
+			// We don't add index on b, because these indexes need reorg due to NeedRestoreData changes.
+			caseName:        "no reorg without analyze",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a))",
 			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
-			embeddedAnalyze: true,
+			embeddedAnalyze: false,
+			checkResult:     true,
 			queries: []query{
-				{"a < 10", ""},
+				{"a < 10", "i1"},
 				{"a <= 10", ""},
-				{"a > 10", ""},
+				{"a > 10", "i1"},
 				{"a >= 10", ""},
-				{"a = 10", ""},
+				{"a = 10", "i1"},
 				{"a = -1", ""},
 				{"b < '10'", ""},
 				{"b <= '10'", ""},
@@ -1427,10 +1431,13 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 			},
 		},
 		{
-			caseName:        "table with index,no row reorg",
+			// Only indexes are rewritten.
+			// The row data remains the same, so the stats are still valid.
+			caseName:        "row and index reorg with analyze",
 			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
 			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
 			embeddedAnalyze: true,
+			checkResult:     true,
 			queries: []query{
 				{"a < 10", "i1"},
 				{"a <= 10", ""},
@@ -1447,10 +1454,13 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 			},
 		},
 		{
-			caseName:        "table with index,row reorg",
+			// Both row and index reorg happen, but with no embedded analyze.
+			// All the stats become invalid, so don't check the results.
+			caseName:        "row and index reorg without analyze",
 			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
 			modifySQL:       "alter table t modify column a int unsigned, modify column b varchar(16) collate utf8mb4_general_ci",
 			embeddedAnalyze: false,
+			checkResult:     false,
 			queries: []query{
 				{"a < 10", "i1"},
 				{"a <= 10", ""},
@@ -1495,7 +1505,7 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 
 			for i, q := range tc.queries {
 				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
-				if tc.embeddedAnalyze {
+				if tc.checkResult {
 					require.Equal(t, oldRs[i], rs[0][1].(string), "predicate: %s", tc.queries[i].pred)
 				} else {
 					// For index selectivity, the stats is missing here.
