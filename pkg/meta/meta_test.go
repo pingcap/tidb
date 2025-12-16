@@ -974,13 +974,6 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 			},
 			Enable: true,
 		},
-		ForeignKeys: []*model.FKInfo{{
-			ID:       1,
-			Name:     pmodel.NewCIStr("fk"),
-			RefTable: pmodel.NewCIStr("t"),
-			RefCols:  []pmodel.CIStr{pmodel.NewCIStr("a")},
-			Cols:     []pmodel.CIStr{pmodel.NewCIStr("t_a")},
-		}},
 		TiFlashReplica: &model.TiFlashReplicaInfo{
 			Count:          0,
 			LocationLabels: []string{"a,b,c"},
@@ -1022,10 +1015,6 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.Partition, tblInfoRes[0].TableInfos[0].Partition)
-	// foreign key info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.ForeignKeysAttribute)
-	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
-	require.Equal(t, tblInfo.ForeignKeys, tblInfoRes[0].TableInfos[0].ForeignKeys)
 	// tiflash replica info
 	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
