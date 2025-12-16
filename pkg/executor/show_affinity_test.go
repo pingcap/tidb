@@ -62,7 +62,7 @@ func TestShowAffinity(t *testing.T) {
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, "test", rows[0][0])        // Db_name
 	require.Equal(t, "t1", rows[0][1])          // Table_name
-	require.Equal(t, "", rows[0][2])            // Partition_name (empty for table-level)
+	require.Equal(t, "<nil>", rows[0][2])       // Partition_name (NULL for table-level)
 
 	// Test 3: Create partitioned table with partition-level affinity
 	tk.MustExec(`create table t2 (id int) affinity='partition'
@@ -236,7 +236,7 @@ func TestShowAffinityColumns(t *testing.T) {
 	// Table_name
 	require.Equal(t, "t1", row[1])
 	// Partition_name
-	require.Equal(t, "", row[2])
+	require.Equal(t, "<nil>", row[2])
 	// Leader_store_id
 	require.Equal(t, "1", row[3])
 	// Voter_store_ids
@@ -275,7 +275,7 @@ func TestShowAffinityNullStatus(t *testing.T) {
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, "test", rows[0][0]) // Db_name
 	require.Equal(t, "t1", rows[0][1])   // Table_name
-	require.Equal(t, "", rows[0][2])     // Partition_name
+	require.Equal(t, "<nil>", rows[0][2]) // Partition_name
 	require.Equal(t, "<nil>", rows[0][3]) // Leader_store_id should be NULL
 	require.Equal(t, "<nil>", rows[0][4]) // Voter_store_ids should be NULL
 	require.Equal(t, "<nil>", rows[0][5]) // Status should be NULL (native NULL, not string "NULL")

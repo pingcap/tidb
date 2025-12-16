@@ -48,7 +48,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 	type tablePartitionInfo struct {
 		dbName        string
 		tableName     string
-		partitionName string
+		partitionName any    // nil for table-level, string for partition-level
 		groupID       string // Still needed to query PD for affinity state
 	}
 	var infos []tablePartitionInfo
@@ -74,7 +74,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 				infos = append(infos, tablePartitionInfo{
 					dbName:        dbName,
 					tableName:     tblInfo.Name.O,
-					partitionName: "",
+					partitionName: nil, // nil for table-level affinity (no partition)
 					groupID:       groupID,
 				})
 
