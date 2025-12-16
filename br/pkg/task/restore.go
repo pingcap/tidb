@@ -1185,7 +1185,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		cfg.UpstreamClusterID = backupMeta.ClusterId
 	}
 	schemaVersionPair := snapclient.SchemaVersionPairT{}
-	if loadStatsPhysical || loadSysTablePhysical {
+	if loadStatsPhysical || loadSysTablePhysical || cfg.SysCheckCollation {
 		upstreamClusterVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
 		if upstreamClusterVersion == nil {
 			log.Warn("The cluster version from backupmeta is invalid. Fallback to logically load system tables.",
@@ -1195,6 +1195,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		} else {
 			schemaVersionPair.UpstreamVersionMajor = upstreamClusterVersion.Major
 			schemaVersionPair.UpstreamVersionMinor = upstreamClusterVersion.Minor
+			if cfg.SysCheckCollation &&
+				(upstreamClusterVersion.Major > 7 || (upstreamClusterVersion.Major == 7 && upstreamClusterVersion.Minor >= 5)) {
+				log.Info("the upstream cluster version is >= v7.5, no need to check privilege system table collation",
+					zap.String("upstream cluster version", backupMeta.ClusterVersion))
+				cfg.SysCheckCollation = false
+			}
 		}
 		downstreamClusterVersionStr, err := mgr.GetClusterVersion(ctx)
 		if err != nil {
