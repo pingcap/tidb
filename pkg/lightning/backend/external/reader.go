@@ -261,7 +261,7 @@ func HandleIndexStats(dataFiles []string, ctx context.Context, cloudStoreURI str
 		if err != nil {
 			return err
 		}
-		logutil.BgLogger().Info("sampled kv example",
+		logutil.BgLogger().Debug("sampled kv example",
 			zap.Int64("tableID", tableID),
 			zap.Int64("idxID", idxID),
 			zap.Strings("idxVal", idxVal),
