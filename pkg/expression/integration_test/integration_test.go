@@ -4174,6 +4174,22 @@ func TestIssue16205(t *testing.T) {
 	require.NotEqual(t, rows1[0][0].(string), rows2[0][0].(string))
 }
 
+func TestIssue37412(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	rows := tk.MustQuery("select random_bytes(16) from (select 1 union select 2) _").Rows()
+	require.Len(t, rows, 2)
+	require.NotEqual(t, rows[0][0].(string), rows[1][0].(string))
+
+	tk.MustExec("create table test.t1(id bigint primary key auto_increment, col1 varbinary(1024) not null unique)")
+	tk.MustExec("insert into test.t1 select null, random_bytes(1024) from dual")
+	tk.MustExec("insert into test.t1 select null, random_bytes(1024) from test.t1")
+	tk.MustExec("insert into test.t1 select null, random_bytes(1024) from test.t1")
+	result := tk.MustQuery("select count(1) from test.t1")
+	result.Check(testkit.Rows("4"))
+}
+
 func calculateChecksum(cols ...any) string {
 	buf := make([]byte, 0, 64)
 	for _, col := range cols {
