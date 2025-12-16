@@ -7987,7 +7987,7 @@ func TestCompatMariaDB(t *testing.T) {
 		{`CREATE TABLE t (id int PRIMARY KEY) IETF_QUOTES=YES`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) IETF_QUOTES = YES"},
 		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
 	}
-	RunTest(t, cases, false)
+	RunTest(t, cases, false, false)
 }
 
 func TestSecondaryEngineAttribute(t *testing.T) {
@@ -8169,5 +8169,5 @@ func TestTableAffinityOption(t *testing.T) {
 		{"create table t (a int) AFFINITY", false, ""},
 	}
 
-	RunTest(t, table, false)
+	RunTest(t, table, false, false)
 }
