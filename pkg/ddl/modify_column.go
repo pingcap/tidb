@@ -109,8 +109,12 @@ func getModifyColumnType(
 	})
 
 	// FIXME(joechenrh): remove this when stats correctness is resolved.
-	if (isIntegerChange(oldCol, args.Column) && mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
-		(isCharChange(oldCol, args.Column) && !collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
+	// Since stats may store bytes encoded by codec.EncodeKey, we should disable the optimization
+	// if the same data produces different encoded bytes for the old and new types.
+	if (isIntegerChange(oldCol, args.Column) &&
+		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
+		(isCharChange(oldCol, args.Column) &&
+			!collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
 		return model.ModifyTypeReorg
 	}
 
