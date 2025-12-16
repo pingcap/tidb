@@ -354,6 +354,10 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 
 // Hash join executor may be repeatedly closed and opened
 func TestInnerJoinUnderApplyExec(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()

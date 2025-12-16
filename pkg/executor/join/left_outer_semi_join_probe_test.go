@@ -561,6 +561,10 @@ func TestLeftOuterSemiJoinSpill(t *testing.T) {
 }
 
 func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinSpill(t *testing.T, isAnti bool) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()
