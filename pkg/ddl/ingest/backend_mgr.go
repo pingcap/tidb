@@ -124,7 +124,8 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	intest.Assert(
 		job.Type == model.ActionAddPrimaryKey ||
 			job.Type == model.ActionAddIndex ||
-			job.Type == model.ActionModifyColumn,
+			job.Type == model.ActionModifyColumn ||
+			job.Type == model.ActionMultiSchemaChange,
 	)
 	intest.Assert(job.ReorgMeta != nil)
 
@@ -206,7 +207,8 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 	}
 	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
 		job.Type == model.ActionAddIndex ||
-		job.Type == model.ActionModifyColumn)
+		job.Type == model.ActionModifyColumn ||
+		job.Type == model.ActionMultiSchemaChange)
 	intest.Assert(job.ReorgMeta != nil)
 
 	resGroupName := job.ReorgMeta.ResourceGroupName
