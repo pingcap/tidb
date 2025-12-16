@@ -130,6 +130,63 @@ func TestShowAffinity(t *testing.T) {
 		require.True(t, len(tableName) > 0 && tableName[0] == 't',
 			"table name should start with 't', got: %s", tableName)
 	}
+
+	// Test 6: Test WHERE clause filter by table name
+	// Filter by exact table name using WHERE with = operator
+	result = tk.MustQuery("show affinity where Table_name = 't1'")
+	rows = result.Rows()
+	require.Equal(t, 1, len(rows), "should match exactly one table")
+	require.Equal(t, "t1", rows[0][1])
+
+	result = tk.MustQuery("show affinity where Table_name = 'affinity_test'")
+	rows = result.Rows()
+	require.Equal(t, 1, len(rows), "should match exactly one table")
+	require.Equal(t, "affinity_test", rows[0][1])
+
+	// Filter by table name using WHERE with != operator
+	result = tk.MustQuery("show affinity where Table_name != 't1'")
+	rows = result.Rows()
+	require.Greater(t, len(rows), 0, "should have at least one table")
+	for _, row := range rows {
+		require.NotEqual(t, "t1", row[1], "should not include t1")
+	}
+
+	// Filter by table name using WHERE with LIKE operator
+	result = tk.MustQuery("show affinity where Table_name like 't%'")
+	rows = result.Rows()
+	require.Greater(t, len(rows), 0)
+	for _, row := range rows {
+		tableName := row[1].(string)
+		require.True(t, len(tableName) > 0 && tableName[0] == 't',
+			"table name should start with 't', got: %s", tableName)
+	}
+
+	// Filter by table name using WHERE with IN operator
+	result = tk.MustQuery("show affinity where Table_name in ('t1', 't2')")
+	rows = result.Rows()
+	require.Greater(t, len(rows), 0)
+	for _, row := range rows {
+		tableName := row[1].(string)
+		require.True(t, tableName == "t1" || tableName == "t2",
+			"table name should be t1 or t2, got: %s", tableName)
+	}
+
+	// Test combined WHERE conditions with AND
+	result = tk.MustQuery("show affinity where Table_name = 't2' and Partition_name != ''")
+	rows = result.Rows()
+	require.Equal(t, 3, len(rows), "should have 3 partitions of t2")
+	for _, row := range rows {
+		require.Equal(t, "t2", row[1])
+		require.NotEqual(t, "", row[2], "partition name should not be empty")
+	}
+
+	// Test WHERE with Db_name filter
+	result = tk.MustQuery("show affinity where Db_name = 'test'")
+	rows = result.Rows()
+	require.Greater(t, len(rows), 0)
+	for _, row := range rows {
+		require.Equal(t, "test", row[0])
+	}
 }
 
 func TestShowAffinityColumns(t *testing.T) {
