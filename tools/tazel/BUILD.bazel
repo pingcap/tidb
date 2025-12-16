@@ -19,6 +19,7 @@ go_library(
 
 go_binary(
     name = "tazel",
+    cgo = True,  #keep
     embed = [":tazel_lib"],
     visibility = ["//visibility:public"],
 )

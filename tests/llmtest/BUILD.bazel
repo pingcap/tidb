@@ -17,6 +17,7 @@ go_library(
 
 go_binary(
     name = "llmtest",
+    cgo = True,  #keep
     embed = [":llmtest_lib"],
     visibility = ["//visibility:public"],
 )

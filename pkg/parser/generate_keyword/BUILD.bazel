@@ -9,6 +9,7 @@ go_library(
 
 go_binary(
     name = "generate_keyword",
+    cgo = True,  #keep
     embed = [":generate_keyword_lib"],
     visibility = ["//visibility:public"],
 )

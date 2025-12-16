@@ -17,6 +17,7 @@ go_library(
 
 go_binary(
     name = "dumpling",
+    cgo = True,  #keep
     embed = [":dumpling_lib"],
     visibility = ["//visibility:public"],
 )

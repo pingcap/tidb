@@ -55,6 +55,7 @@ go_library(
 
 go_binary(
     name = "br",
+    cgo = True,  #keep
     embed = [":br_lib"],
     visibility = ["//visibility:public"],
 )

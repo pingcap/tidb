@@ -18,6 +18,7 @@ go_library(
 
 go_binary(
     name = "tidb-lightning",
+    cgo = True,  #keep
     embed = [":tidb-lightning_lib"],
     visibility = ["//visibility:public"],
 )

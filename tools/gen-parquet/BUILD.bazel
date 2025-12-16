@@ -15,6 +15,7 @@ go_library(
 
 go_binary(
     name = "gen-parquet",
+    cgo = True,  #keep
     embed = [":gen-parquet_lib"],
     visibility = ["//visibility:public"],
 )

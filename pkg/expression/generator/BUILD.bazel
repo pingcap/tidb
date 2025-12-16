@@ -9,6 +9,7 @@ go_library(
 
 go_binary(
     name = "generator",
+    cgo = True,  #keep
     embed = [":generator_lib"],
     visibility = ["//visibility:public"],
 )

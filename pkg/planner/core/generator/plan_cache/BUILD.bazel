@@ -10,6 +10,7 @@ go_library(
 
 go_binary(
     name = "plan_cache",
+    cgo = True,  #keep
     embed = [":plan_cache_lib"],
     visibility = ["//visibility:public"],
 )

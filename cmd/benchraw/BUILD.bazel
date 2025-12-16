@@ -17,6 +17,7 @@ go_library(
 
 go_binary(
     name = "benchraw",
+    cgo = True,  #keep
     embed = [":benchraw_lib"],
     visibility = ["//visibility:public"],
 )

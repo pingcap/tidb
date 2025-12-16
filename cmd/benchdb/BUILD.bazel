@@ -22,6 +22,7 @@ go_library(
 
 go_binary(
     name = "benchdb",
+    cgo = True,  #keep
     embed = [":benchdb_lib"],
     visibility = ["//visibility:public"],
 )

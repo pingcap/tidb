@@ -21,6 +21,7 @@ go_library(
 
 go_binary(
     name = "goyacc",
+    cgo = True,  #keep
     embed = [":goyacc_lib"],
     visibility = ["//visibility:public"],
 )

@@ -9,6 +9,7 @@ go_library(
 
 go_binary(
     name = "dashboard-linter",
+    cgo = True,  #keep
     embed = [":dashboard-linter_lib"],
     visibility = ["//visibility:public"],
 )

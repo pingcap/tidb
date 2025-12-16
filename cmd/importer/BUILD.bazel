@@ -36,6 +36,7 @@ go_library(
 
 go_binary(
     name = "importer",
+    cgo = True,  #keep
     embed = [":importer_lib"],
     visibility = ["//visibility:public"],
 )
