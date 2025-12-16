@@ -1459,6 +1459,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			log.Info("The system tables schema is not compatible. Fallback to logically load system tables.")
 			loadSysTablePhysical = false
 		}
+		if client.GetCheckPrivilegeTableRowsCollateCompatiblity() && canLoadSysTablePhysical {
+			log.Info("The system tables schema match so no need to set sys check collation")
+			client.SetCheckPrivilegeTableRowsCollateCompatiblity(false)
+		}
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
