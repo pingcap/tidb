@@ -311,3 +311,100 @@ func TestBRIECreateTables(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("desc table_%d", i))
 	}
 }
+<<<<<<< HEAD
+=======
+
+type fakeDDLExecutor struct {
+	ddl.Executor
+	queryList        map[string][]string
+	successQueryList map[string][]string
+	maxCount         int
+}
+
+func (f *fakeDDLExecutor) BatchCreateTableWithInfo(
+	sctx sessionctx.Context,
+	schema ast.CIStr,
+	info []*model.TableInfo,
+	cs ...ddl.CreateTableOption,
+) error {
+	f.queryList[schema.O] = append(f.queryList[schema.O], sctx.Value(sessionctx.QueryString).(string))
+	if len(info) > f.maxCount {
+		switch rand.Int() % 2 {
+		case 0:
+			return kv.ErrTxnTooLarge
+		case 1:
+			return kv.ErrEntryTooLarge
+		}
+	}
+	f.successQueryList[info[0].Name.O] = append(f.successQueryList[info[0].Name.O], sctx.Value(sessionctx.QueryString).(string))
+	return nil
+}
+
+type fakeSessionContext struct {
+	sessionapi.Session
+	ddlexecutor *fakeDDLExecutor
+	values      map[string]any
+	vars        *variable.SessionVars
+}
+
+func newFakeSessionContext(ddlexecutor *fakeDDLExecutor) *fakeSessionContext {
+	return &fakeSessionContext{
+		ddlexecutor: ddlexecutor,
+		values:      make(map[string]any),
+		vars:        &variable.SessionVars{},
+	}
+}
+
+func (f *fakeSessionContext) GetDomain() any {
+	dom := &domain.Domain{}
+	dom.SetDDL(nil, f.ddlexecutor)
+	return dom
+}
+
+func (f *fakeSessionContext) Value(key fmt.Stringer) any {
+	return f.values[key.String()]
+}
+
+func (f *fakeSessionContext) SetValue(key fmt.Stringer, value any) {
+	f.values[key.String()] = value
+}
+
+func (f *fakeSessionContext) GetSessionVars() *variable.SessionVars {
+	return f.vars
+}
+
+func TestSplitTablesQueryMatch(t *testing.T) {
+	ddlexecutor := &fakeDDLExecutor{
+		maxCount:         1,
+		queryList:        make(map[string][]string),
+		successQueryList: make(map[string][]string),
+	}
+	sctx := newFakeSessionContext(ddlexecutor)
+	tables := map[string][]*model.TableInfo{
+		"test": {
+			{Name: ast.NewCIStr("t1")},
+			{Name: ast.NewCIStr("t2")},
+		},
+		"test2": {
+			{Name: ast.NewCIStr("t3")},
+		},
+	}
+
+	err := executor.BRIECreateTables(sctx, tables, "/*from(br)*/")
+	require.NoError(t, err)
+	require.Len(t, ddlexecutor.queryList, 2)
+	require.Len(t, ddlexecutor.queryList["test"], 3)
+	require.Len(t, ddlexecutor.queryList["test2"], 1)
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test"][0])
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test"][1])
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test"][2])
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t3` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test2"][0])
+	require.Len(t, ddlexecutor.successQueryList, 3)
+	require.Len(t, ddlexecutor.successQueryList["t1"], 1)
+	require.Len(t, ddlexecutor.successQueryList["t2"], 1)
+	require.Len(t, ddlexecutor.successQueryList["t3"], 1)
+	require.Equal(t, ddlexecutor.queryList["test"][1], ddlexecutor.successQueryList["t1"][0])
+	require.Equal(t, ddlexecutor.queryList["test"][2], ddlexecutor.successQueryList["t2"][0])
+	require.Equal(t, ddlexecutor.queryList["test2"][0], ddlexecutor.successQueryList["t3"][0])
+}
+>>>>>>> dd52e49685c (br: fix with sys check, check pass even privilege tables' schema are the same (#65078))
