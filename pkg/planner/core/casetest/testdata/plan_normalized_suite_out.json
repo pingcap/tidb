@@ -151,9 +151,10 @@
       {
         "SQL": "insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
         "Plan": [
-          " TableReader        root ",
-          " └─Selection        cop  ne(test.t2.b, ?)",
-          "   └─TableRangeScan cop  table:t2, range:[?,?], keep order:false"
+          " IndexLookUp        root ",
+          " ├─Selection        cop  gt(test.t2.a, ?)",
+          " │ └─IndexRangeScan cop  table:t2, index:b(b), range:[?,?], keep order:false",
+          " └─TableRowIDScan   cop  table:t2, keep order:false"
         ]
       },
       {
@@ -427,8 +428,8 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.b, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), gt(test.t1.c, ?), keep order:false"
+          "   └─Selection       cop[tiflash] gt(test.t1.c, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), gt(test.t1.b, ?), keep order:false"
         ]
       },
       {
