@@ -1133,7 +1133,6 @@ func LoadAndProcessMetaKVFilesInBatch(
 		batchSize  uint64 = 0
 		defaultIdx int    = 0
 		writeIdx   int    = 0
-		toWriteIdx int    = 0
 
 		defaultKvEntries = make([]*KvEntryWithTS, 0)
 		writeKvEntries   = make([]*KvEntryWithTS, 0)
@@ -1149,12 +1148,6 @@ func LoadAndProcessMetaKVFilesInBatch(
 				rangeMin = min(rangeMin, f.MinTs)
 				rangeMax = max(rangeMax, f.MaxTs)
 				batchSize += f.Length
-				for ; toWriteIdx < len(writeFiles); toWriteIdx++ {
-					batchSize += writeFiles[toWriteIdx].Length
-					if writeFiles[toWriteIdx].MinTs >= f.MinTs {
-						break
-					}
-				}
 			} else {
 				// Either f.MinTS > rangeMax or f.MinTs is the filterTs we need.
 				// So it is ok to pass f.MinTs as filterTs.
@@ -1172,7 +1165,8 @@ func LoadAndProcessMetaKVFilesInBatch(
 				batchSize = uint64(len(defaultKvEntries)*kvSize) + f.Length
 
 				// restore writeCF kv to f.MinTs
-				for ; toWriteIdx < len(writeFiles); toWriteIdx++ {
+				var toWriteIdx int
+				for toWriteIdx = writeIdx; toWriteIdx < len(writeFiles); toWriteIdx++ {
 					if writeFiles[toWriteIdx].MinTs >= f.MinTs {
 						break
 					}
