@@ -19,7 +19,6 @@ go_library(
 
 go_binary(
     name = "mirror",
-    cgo = True,  #keep
     data = [
         "//:DEPS.bzl",
         "//:go.mod",

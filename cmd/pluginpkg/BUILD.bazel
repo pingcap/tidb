@@ -10,7 +10,6 @@ go_library(
 
 go_binary(
     name = "pluginpkg",
-    cgo = True,  #keep
     embed = [":pluginpkg_lib"],
     visibility = ["//visibility:public"],
 )

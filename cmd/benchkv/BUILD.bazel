@@ -20,7 +20,6 @@ go_library(
 
 go_binary(
     name = "benchkv",
-    cgo = True,  #keep
     embed = [":benchkv_lib"],
     visibility = ["//visibility:public"],
 )

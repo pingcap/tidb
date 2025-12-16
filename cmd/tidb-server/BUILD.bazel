@@ -78,7 +78,6 @@ go_library(
 
 go_binary(
     name = "tidb-server",
-    cgo = True,  #keep
     embed = [":tidb-server_lib"],
     visibility = ["//visibility:public"],
     x_defs = {
@@ -93,7 +92,6 @@ go_binary(
 
 go_binary(
     name = "tidb-server-check",
-    cgo = True,  #keep
     embed = [":tidb-server_lib"],
     gc_linkopts = [
         "-X",

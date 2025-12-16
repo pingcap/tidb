@@ -13,7 +13,6 @@ go_library(
 
 go_binary(
     name = "tests",
-    cgo = True,  #keep
     embed = [":tests_lib"],
     visibility = ["//visibility:public"],
 )

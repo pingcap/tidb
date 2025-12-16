@@ -15,7 +15,6 @@ go_library(
 
 go_binary(
     name = "s3",
-    cgo = True,  #keep
     embed = [":s3_lib"],
     visibility = ["//visibility:public"],
 )
