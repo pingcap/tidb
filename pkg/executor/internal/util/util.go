@@ -24,7 +24,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,8 +36,7 @@ func GetFunctionName() string {
 // CheckNoLeakFiles checks if there are file leaks
 func CheckNoLeakFiles(t *testing.T, fileNamePrefixForTest string) {
 	path := t.TempDir()
-	log.Info(fmt.Sprintf("path: %s", path)
-
+	log.Info(fmt.Sprintf("path: %s", path))
 	err := filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
