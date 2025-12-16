@@ -1312,7 +1312,7 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 				indexScanPlan = indexScanPlan.Children()[0]
 			}
 			indexScan := indexScanPlan.(*physicalop.PhysicalIndexScan)
-			// The pushed down TopN is calculated on TiFlash, the embeded TopN info in TiCI is built in TryToPassTiCITopN.
+			// The pushed down TopN is calculated on TiFlash, the embedded TopN info in TiCI is built in TryToPassTiCITopN.
 			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.IndexPlan, indexScan.StoreType)
 			if indexScan.StoreType == kv.TiCI {
 				indexScan.TryToPassTiCITopN(pushedDownTopN)
