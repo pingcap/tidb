@@ -717,8 +717,13 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
+<<<<<<< HEAD
           "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?)",
           "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+=======
+          "   └─Selection       cop[tiflash] gt(test.t1.c, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), gt(test.t1.b, ?), keep order:false"
+>>>>>>> 1ffa70a701e (planner: fix some wrong index selection issues caused by the skyline pruning being too aggressive (#65054))
         ]
       },
       {

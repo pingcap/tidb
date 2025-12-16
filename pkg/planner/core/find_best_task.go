@@ -993,6 +993,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 	}
 
+<<<<<<< HEAD
 	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 || !comparable2 {
@@ -1010,6 +1011,9 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < -1 {
 			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 		}
+=======
+	if !comparable1 || !comparable2 {
+>>>>>>> 1ffa70a701e (planner: fix some wrong index selection issues caused by the skyline pruning being too aggressive (#65054))
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
 	// leftDidNotLose, but one of the metrics is a win
@@ -1650,7 +1654,6 @@ func (c *candidatePath) equalPredicateCount() int {
 		// but actually it should be 2.
 		return c.indexJoinCols
 	}
-
 	// Exit if this isn't a DNF condition or has no access conditions
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return c.path.EqOrInCondCount
