@@ -45,3 +45,5 @@ test_coverage
 coverage.dat
 .specstory
 .golangci.bck.yml
+go.work
+go.work.sum
