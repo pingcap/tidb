@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -264,4 +265,26 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan,
 	// 	| 13              | 192/64 MiB            |
 	memPerShare := float64(memForWriter) / float64(indexKVGroupCnt+3)
 	return uint64(memPerShare * 3), uint64(memPerShare)
+}
+
+func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
+	var count int
+	var nonClusteredPK bool
+	for _, idxInfo := range tblInfo.Indices {
+		// all public non-primary index generates index KVs
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		if idxInfo.Primary {
+			if !tblInfo.HasClusteredIndex() {
+				nonClusteredPK = true
+			}
+			continue
+		}
+		count++
+	}
+	if nonClusteredPK {
+		count++
+	}
+	return count
 }
