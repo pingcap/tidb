@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -376,7 +375,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		p.summary.Bytes += int64(kvMeta.TotalKVSize)
-		if kvGroup == dataKVGroup {
+		if kvGroup == external.DataKVGroup {
 			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
 		}
 		dataFiles := kvMeta.GetDataFiles()
@@ -415,7 +414,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		failpoint.Return([]planner.PipelineSpec{
 			&WriteIngestSpec{
 				WriteIngestStepMeta: &WriteIngestStepMeta{
-					KVGroup: dataKVGroup,
+					KVGroup: external.DataKVGroup,
 				},
 			},
 			&WriteIngestSpec{
@@ -434,7 +433,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		p.summary.Bytes += int64(kvMeta.TotalKVSize)
-		if kvGroup == dataKVGroup {
+		if kvGroup == external.DataKVGroup {
 			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
 		}
 		specsForOneSubtask, err3 := splitForOneSubtask(ctx, store, kvGroup, kvMeta, ver.Ver)
@@ -549,9 +548,9 @@ func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, st
 		}
 	}
 	res := make(map[string]*external.SortedKVMeta, 1+len(indexKVMetas))
-	res[dataKVGroup] = dataKVMeta
+	res[external.DataKVGroup] = dataKVMeta
 	for indexID, item := range indexKVMetas {
-		res[strconv.Itoa(int(indexID))] = item
+		res[external.IndexID2KVGroup(indexID)] = item
 	}
 	return res, nil
 }

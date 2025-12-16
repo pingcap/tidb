@@ -481,7 +481,7 @@ func TestNextGenMetering(t *testing.T) {
 	// note: the read/write of subtask meta file is also counted in obj_store part,
 	// but meta file contains file name which contains task and subtask ID, so
 	// the length may vary, we just use regexp to match here.
-	s.Regexp(`obj_store{r: 2.7\d*KiB, w: 3.\d*KiB}`, gotMeterData.Load())
+	s.Regexp(`obj_store{r: 2.\d*KiB, w: 3.\d*KiB}`, gotMeterData.Load())
 	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
 	s.Regexp(`cluster{r: 0B, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
 

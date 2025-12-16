@@ -352,7 +352,7 @@ func TestReadAfterCloseConnReader(t *testing.T) {
 	require.NoError(t, err)
 
 	wrapKVReader := &KVReader{byteReader: reader}
-	_, _, err = wrapKVReader.nextKV()
+	_, _, err = wrapKVReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 }
 

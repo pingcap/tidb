@@ -38,7 +38,6 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
-        "optimize_trace_test.go",
         "plan_replayer_test.go",
         "statistics_handler_test.go",
     ],
