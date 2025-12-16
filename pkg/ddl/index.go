@@ -1196,6 +1196,7 @@ SwitchIndexState:
 			if done {
 				checkAndUpdateNeedAnalyze(job, tblInfo)
 			}
+			return ver, err
 		case model.AnalyzeStateRunning:
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
