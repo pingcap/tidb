@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // InitMeta insert the manager information into dist_framework_meta.
@@ -97,6 +98,8 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 
 // GetAllNodes gets nodes in dist_framework_meta.
 func (mgr *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error) {
+	r := tracing.StartRegion(ctx, "TaskManager.GetAllNodes")
+	defer r.End()
 	var nodes []proto.ManagedNode
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nodes, err
@@ -110,6 +113,8 @@ func (mgr *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, e
 }
 
 func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Context) ([]proto.ManagedNode, error) {
+	r := tracing.StartRegion(ctx, "TaskManager.getAllNodesWithSession")
+	defer r.End()
 	rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		select host, role, cpu_count
 		from mysql.dist_framework_meta

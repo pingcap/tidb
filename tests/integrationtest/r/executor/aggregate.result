@@ -2039,25 +2039,25 @@ Projection	root		Column#9, Column#12, Column#15, Column#18
   │ │ ├─HashAgg(Build)	root		funcs:sum(Column#28)->Column#9, funcs:firstrow(Column#29)->executor__aggregate.test.a
   │ │ │ └─Projection	root		cast(executor__aggregate.test.a, decimal(10,0) BINARY)->Column#28, executor__aggregate.test.a->Column#29
   │ │ │   └─TableReader	root		data:TableFullScan
-  │ │ │     └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+  │ │ │     └─TableFullScan	cop[tikv]	table:tt	keep order:false
   │ │ └─Projection(Probe)	root		<nil>->Column#12
   │ │   └─Limit	root		offset:0, count:1
   │ │     └─TableReader	root		data:Limit
   │ │       └─Limit	cop[tikv]		offset:0, count:1
   │ │         └─Selection	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-  │ │           └─TableFullScan	cop[tikv]	table:test	keep order:false, stats:pseudo
+  │ │           └─TableFullScan	cop[tikv]	table:test	keep order:false
   │ └─Projection(Probe)	root		<nil>->Column#15
   │   └─Limit	root		offset:0, count:1
   │     └─TableReader	root		data:Limit
   │       └─Limit	cop[tikv]		offset:0, count:1
   │         └─Selection	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-  │           └─TableFullScan	cop[tikv]	table:test	keep order:false, stats:pseudo
+  │           └─TableFullScan	cop[tikv]	table:test	keep order:false
   └─Projection(Probe)	root		<nil>->Column#18
     └─Limit	root		offset:0, count:1
       └─TableReader	root		data:Limit
         └─Limit	cop[tikv]		offset:0, count:1
           └─Selection	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-            └─TableFullScan	cop[tikv]	table:test	keep order:false, stats:pseudo
+            └─TableFullScan	cop[tikv]	table:test	keep order:false
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
 select distinct avg(nullif(77.15, PI()));

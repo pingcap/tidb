@@ -14,6 +14,8 @@
 package ast
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -2617,6 +2619,14 @@ const (
 	TableOptionTTLJobInterval
 	TableOptionEngineAttribute
 	TableOptionSecondaryEngineAttribute
+	TableOptionAutoextendSize
+	TableOptionPageChecksum
+	TableOptionPageCompressed
+	TableOptionPageCompressionLevel
+	TableOptionTransactional
+	TableOptionIetfQuotes
+	TableOptionSequence
+	TableOptionAffinity
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2660,6 +2670,28 @@ const (
 	TableOptionCharsetWithoutConvertTo uint64 = 0
 	TableOptionCharsetWithConvertTo    uint64 = 1
 )
+
+const (
+	// TableAffinityLevelNone means no affinity.
+	TableAffinityLevelNone = "none"
+	// TableAffinityLevelTable means table-level affinity.
+	TableAffinityLevelTable = "table"
+	// TableAffinityLevelPartition means partition-level affinity.
+	TableAffinityLevelPartition = "partition"
+)
+
+// NormalizeTableAffinityLevel normalizes the affinity level to lower case and checks if it's valid.
+func NormalizeTableAffinityLevel(s string) (string, bool) {
+	lower := strings.ToLower(s)
+	switch lower {
+	case TableAffinityLevelNone, TableAffinityLevelTable, TableAffinityLevelPartition:
+		return lower, true
+	case "":
+		return TableAffinityLevelNone, true
+	default:
+		return s, false
+	}
+}
 
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
@@ -2974,6 +3006,49 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 	case TableOptionTTLJobInterval:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
 			ctx.WriteKeyWord("TTL_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionAutoextendSize:
+		ctx.WriteKeyWord("AUTOEXTEND_SIZE ")
+		ctx.WritePlain("= ")
+		ctx.WritePlain(n.StrValue) // e.g. '4M'
+
+	// MariaDB specific options
+	case TableOptionPageChecksum:
+		ctx.WriteKeyWord("PAGE_CHECKSUM ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionPageCompressed:
+		ctx.WriteKeyWord("PAGE_COMPRESSED ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionPageCompressionLevel:
+		ctx.WriteKeyWord("PAGE_COMPRESSION_LEVEL ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionTransactional:
+		ctx.WriteKeyWord("TRANSACTIONAL ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionIetfQuotes:
+		ctx.WriteKeyWord("IETF_QUOTES ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%s", n.StrValue)
+		return nil
+	case TableOptionSequence:
+		ctx.WriteKeyWord("SEQUENCE ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionAffinity:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
+			ctx.WriteKeyWord("AFFINITY ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 			return nil

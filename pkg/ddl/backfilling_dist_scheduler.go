@@ -588,7 +588,11 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		}
 		logger.Info("split subtask range",
 			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)))
+			zap.String("endKey", hex.EncodeToString(endKey)),
+			zap.Int("dataFilesCnt", len(dataFiles)),
+			zap.Int("rangeJobKeysCnt", len(interiorRangeJobKeys)),
+			zap.Int("regionSplitKeysCnt", len(interiorRegionSplitKeys)),
+		)
 
 		if bytes.Compare(startKey, endKey) >= 0 {
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",

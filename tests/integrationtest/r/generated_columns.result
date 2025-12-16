@@ -69,7 +69,7 @@ VALUES ('{"a": 1}', '{"1": "1"}'),
 ('{"a": 1}', '{"1": "1"}');
 INSERT INTO sgc2(j1, j2)
 VALUES ('{"a": 1}', '{"1": "1"}');
-ANALYZE TABLE sgc1, sgc2;
+ANALYZE TABLE sgc1, sgc2 predicate columns;
 EXPLAIN format = 'plan_tree' SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	task	access object	operator info
 Projection	root		generated_columns.sgc1.j1, generated_columns.sgc1.j2, generated_columns.sgc1.a, generated_columns.sgc1.b, generated_columns.sgc2.j1, generated_columns.sgc2.j2, generated_columns.sgc2.a, generated_columns.sgc2.b

@@ -24,83 +24,100 @@ import (
 
 func testFlightRecorderConfigGoodCase(t *testing.T) {
 	conf1 := `{
-	"enabled_categories": ["txn_2pc", "stmt_plan"],
-	"dump_trigger": {
-	"type": "sampling",
-	"sampling": 100
-	}
-	}`
+  "enabled_categories": [
+    "txn_2pc",
+    "stmt_plan"
+  ],
+  "dump_trigger": {
+    "type": "sampling",
+    "sampling": 100
+  }
+}`
 	name1 := "dump_trigger.sampling"
 
 	conf2 := `{
-	"enabled_categories": ["*"],
-	"dump_trigger": {
-	"type": "sampling",
-	"sampling": 1
-	}
-	}`
+  "enabled_categories": [
+    "*"
+  ],
+  "dump_trigger": {
+    "type": "sampling",
+    "sampling": 1
+  }
+}`
 	name2 := "dump_trigger.sampling"
 
 	conf3 := `{
-	"enabled_categories": ["general"],
-	"dump_trigger": {
-	"type": "user_command",
-	"user_command": {
- "type": "sql_regexp",
- "sql_regexp": "^select"
-	}
-	}
-	}`
+  "enabled_categories": [
+    "general"
+  ],
+  "dump_trigger": {
+    "type": "user_command",
+    "user_command": {
+      "type": "sql_regexp",
+      "sql_regexp": "^select"
+    }
+  }
+}`
 	name3 := "dump_trigger.user_command.sql_regexp"
 
 	conf4 := `{
-	"enabled_categories": ["*"],
-	"dump_trigger": {
-	"type": "user_command",
-	"user_command": {
- "type": "stmt_label",
- "stmt_label": "CreateTable"
-	}
-	}
-	}`
+  "enabled_categories": [
+    "*"
+  ],
+  "dump_trigger": {
+    "type": "user_command",
+    "user_command": {
+      "type": "stmt_label",
+      "stmt_label": "CreateTable"
+    }
+  }
+}`
 	name4 := "dump_trigger.user_command.stmt_label"
 
 	conf5 := `{
-	"enabled_categories": ["*"],
-	"dump_trigger": {
-	"type": "user_command",
-	"user_command": {
- "type": "sql_regexp",
- "sql_regexp": "^select"
-	}
-	}
-	}`
+  "enabled_categories": [
+    "*"
+  ],
+  "dump_trigger": {
+    "type": "user_command",
+    "user_command": {
+      "type": "sql_regexp",
+      "sql_regexp": "^select"
+    }
+  }
+}`
 	name5 := "dump_trigger.user_command.sql_regexp"
 
 	conf6 := `{
-	"enabled_categories": ["*"],
-	"dump_trigger": {
-	"type": "suspicious_event",
-	"suspicious_event": {
-	"type": "slow_query"
-	}
-	}
-	}`
+  "enabled_categories": [
+    "*"
+  ],
+  "dump_trigger": {
+    "type": "suspicious_event",
+    "suspicious_event": {
+      "type": "slow_query"
+    }
+  }
+}`
 	name6 := "dump_trigger.suspicious_event"
 
 	conf7 := `{
-	"enabled_categories": ["*"],
-	"dump_trigger": {
-	"type": "suspicious_event",
-	"suspicious_event": {
-	"type": "region_error"
-	}
-	}
-	}`
+  "enabled_categories": [
+    "*"
+  ],
+  "dump_trigger": {
+    "type": "suspicious_event",
+    "suspicious_event": {
+      "type": "region_error"
+    }
+  }
+}`
 	name7 := "dump_trigger.suspicious_event"
 
 	conf8 := `{
-  "enabled_categories": ["*"],
+  "enabled_categories": [
+    "*"
+  ],
   "dump_trigger": {
     "type": "and",
     "and": [
@@ -122,7 +139,9 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
 }`
 
 	conf9 := `{
-  "enabled_categories": ["*"],
+  "enabled_categories": [
+    "*"
+  ],
   "dump_trigger": {
     "type": "or",
     "or": [
@@ -152,6 +171,36 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
   }
 }`
 
+	conf10 := `{
+  "enabled_categories": [
+    "*"
+  ],
+  "dump_trigger": {
+    "type": "suspicious_event",
+    "suspicious_event": {
+      "type": "is_internal",
+      "is_internal": true
+    }
+  }
+}`
+	name10 := "dump_trigger.suspicious_event.is_internal"
+
+	conf11 := `{
+  "enabled_categories": [
+    "*"
+  ],
+  "dump_trigger": {
+    "type": "suspicious_event",
+    "suspicious_event": {
+      "type": "dev_debug",
+      "dev_debug": {
+        "type": "execute_internal_trace_missing"
+      }
+    }
+  }
+}`
+	name11 := "dump_trigger.suspicious_event.dev_debug"
+
 	testcases := []struct {
 		conf   string
 		result map[string]int
@@ -165,6 +214,8 @@ func testFlightRecorderConfigGoodCase(t *testing.T) {
 		{conf7, map[string]int{name7: 0}},
 		{conf8, map[string]int{"dump_trigger.user_command.stmt_label": 0, "dump_trigger.suspicious_event": 1}},
 		{conf9, map[string]int{"dump_trigger.user_command.stmt_label": 0, "dump_trigger.suspicious_event": 1, "dump_trigger.sampling": 2}},
+		{conf10, map[string]int{name10: 0}},
+		{conf11, map[string]int{name11: 0}},
 	}
 
 	var b strings.Builder
@@ -192,22 +243,27 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 	"sampling": 5,
 	}`
 	badcaseValidate := `{
-	"enabled_categories": ["txn_2pc", "stmt_plan"],
-	"dump_trigger": {
-	"type": "user_command",
-	"sampling": 5
-	}
-	}`
+  "enabled_categories": [
+    "txn_2pc",
+    "stmt_plan"
+  ],
+  "dump_trigger": {
+    "type": "user_command",
+    "sampling": 5
+  }
+}`
 	badcaseValidate1 := `{
-	"enabled_categories": ["sdaf"],
-	"dump_trigger": {
-	"type": "user_command",
-	"user_command": {
-	"type": "non_exist",
-	"sql_regexp": "^select"
-	}
-	}
-	}`
+  "enabled_categories": [
+    "sdaf"
+  ],
+  "dump_trigger": {
+    "type": "user_command",
+    "user_command": {
+      "type": "non_exist",
+      "sql_regexp": "^select"
+    }
+  }
+}`
 	badcaseDuplicated := `{
   "enabled_categories": [
     "*"
@@ -283,7 +339,7 @@ func TestParseTraceCategory(t *testing.T) {
 }
 
 func TestAndOrCombination(t *testing.T) {
-	compiled := dumpTriggerConfigCompiled{
+	compiled := compiledDumpTriggerConfig{
 		nameMapping: make(map[string]int),
 	}
 	A, err := compiled.addTrigger("A", nil)

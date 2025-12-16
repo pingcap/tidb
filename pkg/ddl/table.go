@@ -1727,3 +1727,51 @@ func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	job.SchemaState = model.StatePublic
 	return ver, nil
 }
+
+func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetAlterTableAffinityArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if err = validateTableAffinity(tblInfo, args.Affinity); err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	tblInfo.Affinity = args.Affinity
+
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if err = updateTableAffinityGroupInPD(tblInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func updateTableAffinityGroupInPD(tblInfo *model.TableInfo) error {
+	affinityLevel := ""
+	if tblInfo.Affinity != nil {
+		affinityLevel = tblInfo.Affinity.Level
+	}
+
+	// TODO: implement it
+	logutil.DDLLogger().Warn(
+		"updateTableAffinityGroupInPD is skipped because it has not been implemented yet",
+		zap.Int64("tableID", tblInfo.ID),
+		zap.String("tableName", tblInfo.Name.O),
+		zap.String("affinity", affinityLevel),
+	)
+	return nil
+}

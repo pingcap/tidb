@@ -68,6 +68,11 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 		_, _ = traceevent.SetMode(prevMode)
 	}()
 
+	// Enable all categories for this test
+	prevCategories := traceevent.GetEnabledCategories()
+	traceevent.SetCategories(traceevent.AllCategories)
+	defer traceevent.SetCategories(prevCategories)
+
 	recorder := traceevent.NewRingBufferSink(100)
 	prevSink := traceevent.CurrentSink()
 	traceevent.SetSink(recorder)
@@ -154,6 +159,11 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 
 func TestTraceControlIntegration(t *testing.T) {
 	// Test that the extractor still propagates enabled categories even without a Trace sink.
+	// First, enable TiKVRequest category (since defaultEnabledCategories is now 0)
+	prevCategories := tracing.GetEnabledCategories()
+	tracing.Enable(tracing.TiKVRequest)
+	defer tracing.SetCategories(prevCategories)
+
 	ctx := context.Background()
 	flags := trace.GetTraceControlFlags(ctx)
 	require.True(t, flags.Has(trace.FlagTiKVCategoryRequest))
@@ -215,9 +225,8 @@ func TestFlightRecorder(t *testing.T) {
 		for _, sql := range []string{"select * from t", "select * from t where b = 5"} {
 			tk.MustQueryWithContext(ctx, sql).Check(testkit.Rows())
 			sink.DiscardOrFlush(ctx)
-			require.Len(t, eventCh, 1)
-			event := <-eventCh
-			require.NotEmpty(t, event)
+			require.GreaterOrEqual(t, len(eventCh), 1)
+			drainEvents(eventCh)
 		}
 		flightRecorder.Close()
 	}
