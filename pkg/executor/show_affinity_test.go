@@ -222,7 +222,7 @@ func TestShowAffinityNullStatus(t *testing.T) {
 		map[string]*pdhttp.AffinityGroupState{}, nil,
 	).Once()
 
-	// Step 5: Test that status shows as "NULL" when group not found in PD
+	// Step 5: Test that all PD-related fields show as native NULL when group not found in PD
 	result := tk.MustQuery("show affinity")
 	rows := result.Rows()
 	require.Equal(t, 1, len(rows))
@@ -230,5 +230,9 @@ func TestShowAffinityNullStatus(t *testing.T) {
 	require.Equal(t, "t1", rows[0][1])    // Table_name
 	require.Equal(t, "", rows[0][2])      // Partition_name
 	require.Equal(t, groupID, rows[0][3]) // Affinity_group_id
-	require.Equal(t, "NULL", rows[0][6])  // Status should be NULL
+	require.Equal(t, "<nil>", rows[0][4]) // Leader_store_id should be NULL
+	require.Equal(t, "<nil>", rows[0][5]) // Voter_store_ids should be NULL
+	require.Equal(t, "<nil>", rows[0][6]) // Status should be NULL (native NULL, not string "NULL")
+	require.Equal(t, "<nil>", rows[0][7]) // Region_count should be NULL
+	require.Equal(t, "<nil>", rows[0][8]) // Affinity_region_count should be NULL
 }

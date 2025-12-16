@@ -108,8 +108,8 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 
 		var (
 			leaderStoreID       any = nil
-			voterStoreIDs       string
-			status              string
+			voterStoreIDs       any = nil
+			status              any = nil
 			regionCount         any = nil
 			affinityRegionCount any = nil
 		)
@@ -142,11 +142,8 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 
 			regionCount = state.RegionCount
 			affinityRegionCount = state.AffinityRegionCount
-		} else {
-			// Group doesn't exist in PD, show as NULL
-			status = "NULL"
-			voterStoreIDs = ""
 		}
+		// If group doesn't exist in PD, all fields remain as nil (native NULL)
 		e.appendRow([]any{
 			info.dbName,
 			info.tableName,
