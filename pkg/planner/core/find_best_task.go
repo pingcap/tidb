@@ -838,9 +838,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// This return value is used later in SkyLinePruning to determine whether we should preference an index scan
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
-	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
+	lhsPseudo, rhsPseudo := false, false
 	if statsTbl != nil {
-		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
 	}
 	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
@@ -852,61 +851,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// scanResult: comparison result of index back scan efficiency (1=LHS better, -1=RHS better, 0=equal)
 	//             scanResult will always be true for a table scan (because it is a single scan).
 	//             This has the effect of allowing the table scan plan to not be pruned.
-	// comparable2: whether the index back scan characteristics are comparable between LHS and RHS
+	// comparable2: whether the scan is a single scan or a double scan. And if it is a double scan,
+	// whether the scan of the table is better/worse between LHS and RHS.
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
-
-	// Validate scanResult: if scanResult favors a table path but that table path loses on at least 2 other
-	// metrics, invalidate the scanResult advantage. This prevents table scans from winning solely based
-	// on being a single scan when they're worse on multiple other dimensions.
-	if scanResult > 0 && lhs.path.IsTablePath() {
-		// LHS (table scan) wins on scanResult, check if it loses on at least 2 other metrics
-		losesCount := 0
-		if accessResult < 0 {
-			losesCount++
-		}
-		if matchResult < 0 {
-			losesCount++
-		}
-		if globalResult < 0 {
-			losesCount++
-		}
-		if riskResult < 0 {
-			losesCount++
-		}
-		if eqOrInResult < 0 {
-			losesCount++
-		}
-		if losesCount >= 2 {
-			// Table scan loses on at least 2 metrics, invalidate scanResult advantage
-			scanResult = 0
-		}
-	} else if scanResult < 0 && rhs.path.IsTablePath() {
-		// RHS (table scan) wins on scanResult, check if it loses on at least 2 other metrics
-		losesCount := 0
-		if accessResult > 0 {
-			losesCount++
-		}
-		if matchResult > 0 {
-			losesCount++
-		}
-		if globalResult > 0 {
-			losesCount++
-		}
-		if riskResult > 0 {
-			losesCount++
-		}
-		if eqOrInResult > 0 {
-			losesCount++
-		}
-		if losesCount >= 2 {
-			// Table scan loses on at least 2 metrics, invalidate scanResult advantage
-			scanResult = 0
-		}
-	}
 
 	// predicateResult is separated out. An index may "win" because it has a better
 	// accessResult - but that access has high risk.
@@ -921,7 +872,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
-	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
+	if lhsPseudo != rhsPseudo && // At least one side doesn't have statistics
 		(lhsEqOrInCount > 0 || rhsEqOrInCount > 0) { // At least one index has equal/IN predicates
 		lhsFullMatch := isFullIndexMatch(lhs)
 		rhsFullMatch := isFullIndexMatch(rhs)
@@ -953,6 +904,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 	}
 
+	// If the "scanResult" only won/lost because the table path is a single scan, reset it to 0.
+	// This does NOT affect the totalSum - meaning that other criteria will need to influence the winner.
+	if scanResult != 0 && (lhs.path.IsTablePath() || rhs.path.IsTablePath()) {
+		scanResult = 0
+	}
 	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 || !comparable2 {
@@ -1522,7 +1478,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	)
 	if preferRange {
 		// Override preferRange with the following limitations to scope
-		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
+		preferRange = preferMerge || idxMissingStats || ds.StatisticTable.Pseudo || ds.TableStats.RowCount < 1
 	}
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other

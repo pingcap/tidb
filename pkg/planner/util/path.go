@@ -434,43 +434,8 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 		}
 		return -1, false
 	}
-	// If c1 and c2 have the same columns but have different lengths on some column:
-	// - For prefix indexes on the same column(s), they ARE comparable - longer prefix is better
-	// - This allows proper comparison of prefix indexes like a(3) vs a(10) vs a(100)
-	allSameColumns := true
-	hasLengthDifference := false
-	for colID, colLen2 := range c2 {
-		colLen1, ok := c1[colID]
-		if !ok {
-			return 0, false
-		}
-		if colLen1 != colLen2 {
-			hasLengthDifference = true
-		}
-	}
-	// Check if c1 has any columns not in c2
-	for colID := range c1 {
-		if _, ok := c2[colID]; !ok {
-			allSameColumns = false
-			break
-		}
-	}
-	// If all columns are the same but lengths differ, they're comparable prefix indexes
-	// Longer prefix is better (more selective) for the same column
-	if allSameColumns && hasLengthDifference {
-		// Compare lengths: longer prefix is better
-		for colID, colLen2 := range c2 {
-			colLen1 := c1[colID]
-			if colLen1 > colLen2 {
-				return 1, true // c1 has longer prefix, it's better and comparable
-			}
-			if colLen1 < colLen2 {
-				return -1, true // c2 has longer prefix, it's better and comparable
-			}
-		}
-	}
 	// If all columns and lengths are the same, they're equal and comparable
-	if !hasLengthDifference {
+	if l1 == l2 {
 		return 0, true
 	}
 	// Different columns - incomparable
