@@ -343,6 +343,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			// tidb_translate_softdelete_sql affects the semantics of the queries that involves softdelete tables, so
 			// we need to consider it in plan cache.
 			hash = append(hash, hack.Slice(strconv.FormatBool(vars.SoftDeleteRewrite))...)
+			// We only need to add it once, so break here.
 			break
 		}
 	}
