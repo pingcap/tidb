@@ -228,7 +228,11 @@ func MakeTableRegions(
 	eg.SetLimit(concurrency)
 	meta := cfg.TableMeta
 
-	largeFiles := make([]FileInfo, 0, 4)
+	var (
+		largeFiles             sync.Map
+		parallelSplitThreshold = cfg.MaxChunkSize * int64(concurrency)
+	)
+
 	for _, info := range meta.DataFiles {
 		eg.Go(func() error {
 			select {
@@ -247,13 +251,16 @@ func MakeTableRegions(
 			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 				info.FileMeta.Compression == CompressionNone &&
 				info.FileMeta.FileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
-				// If a csv file is overlarge, we need to split it into multiple regions.
-				// Note: We can only split a csv file whose format is strict.
-				// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
-				// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
-				// avoid split a lot of small chunks.
-				// If a csv file is compressed, we can't split it now because we can't get the exact size of a row.
-				largeFiles = append(largeFiles, info)
+				// If a csv file is overlarge, we need to split it into multiple regions. This can only be done for
+				// uncompressed files with strict format. Besides, the check threshold is increased by 1/10 of the
+				// `max-region-size` to avoid splitting small chunks, because tools like dumpling may dump files whose
+				// size is slightly exceed the `max-region-size`.
+				if info.FileMeta.FileSize > parallelSplitThreshold {
+					// For extremely large csv files, we split them later.
+					largeFiles.Store(info.FileMeta.Path, info)
+					return nil
+				}
+				regions, sizes, err = SplitLargeCSV(ctx, cfg, info, false)
 			} else {
 				regions, sizes, err = MakeSourceFileRegion(egCtx, cfg, info)
 			}
@@ -272,14 +279,22 @@ func MakeTableRegions(
 	}
 
 	// Process large CSV files
-	for _, info := range largeFiles {
-		regions, sizes, err := SplitLargeCSV(ctx, cfg, info)
+	var splitErr error
+	largeFiles.Range(func(_, value any) bool {
+		info, _ := value.(FileInfo)
+		regions, sizes, err := SplitLargeCSV(ctx, cfg, info, true)
 		if err != nil {
 			logutil.Logger(ctx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
-			return nil, err
+			splitErr = err
+			return false
 		}
 		result := fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}
 		fileRegionsMap.Store(info.FileMeta.Path, result)
+		return true
+	})
+
+	if splitErr != nil {
+		return nil, splitErr
 	}
 
 	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
@@ -487,6 +502,7 @@ func SplitLargeCSV(
 	ctx context.Context,
 	cfg *DataDivideConfig,
 	dataFile FileInfo,
+	parallel bool,
 ) (regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.MaxChunkSize
 	regionCnt := dataFile.FileMeta.FileSize/maxRegionSize + 1
@@ -504,7 +520,11 @@ func SplitLargeCSV(
 		endOffset += maxRegionSize
 	}
 
-	concurrency := max(cfg.Concurrency, 1) * 2
+	concurrency := 1
+	if parallel {
+		concurrency = max(cfg.Concurrency, 1) * 2
+	}
+
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	for i, endOffset := range splitEndOffsets {
