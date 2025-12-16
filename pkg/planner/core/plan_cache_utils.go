@@ -305,13 +305,14 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 
 	// Get buffer from pool and ensure it has enough capacity
-	hash := planCacheKeyBufPool.Get().([]byte)[:0]
+	hashPtr := planCacheKeyBufPool.Get().(*[]byte)
+	hash := (*hashPtr)[:0]
 	if cap(hash) < len(stmt.StmtText)*2 {
 		hash = make([]byte, 0, len(stmt.StmtText)*2)
 	}
 	defer func() {
-		hashToReturn := hash[:0]
-		planCacheKeyBufPool.Put(hashToReturn)
+		*hashPtr = hash
+		planCacheKeyBufPool.Put(hashPtr)
 	}()
 	hash = append(hash, hack.Slice(userName)...)
 	hash = append(hash, hack.Slice(hostName)...)
@@ -398,7 +399,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
 		// Get int64 slice from pool
-		dirtyTableIDs := dirtyTableIDsPool.Get().([]int64)[:0]
+		dirtyTableIDsPtr := dirtyTableIDsPool.Get().(*[]int64)
+		dirtyTableIDs := (*dirtyTableIDsPtr)[:0]
 		if cap(dirtyTableIDs) < len(dirtyTables) {
 			dirtyTableIDs = make([]int64, 0, len(dirtyTables))
 		}
@@ -413,8 +415,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			hash = codec.EncodeInt(hash, id)
 		}
 		// Return slice to pool
-		idsToReturn := dirtyTableIDs[:0]
-		dirtyTableIDsPool.Put(idsToReturn)
+		*dirtyTableIDsPtr = dirtyTableIDs
+		dirtyTableIDsPool.Put(dirtyTableIDsPtr)
 	}
 
 	// txn status
@@ -540,14 +542,16 @@ var planCacheHasherPool = sync.Pool{
 // planCacheKeyBufPool is a pool for byte slices used in NewPlanCacheKey.
 var planCacheKeyBufPool = sync.Pool{
 	New: func() any {
-		return make([]byte, 0, 512)
+		b := make([]byte, 0, 512)
+		return &b
 	},
 }
 
 // dirtyTableIDsPool is a pool for int64 slices used in NewPlanCacheKey.
 var dirtyTableIDsPool = sync.Pool{
 	New: func() any {
-		return make([]int64, 0, 8)
+		ids := make([]int64, 0, 8)
+		return &ids
 	},
 }
 
