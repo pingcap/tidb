@@ -10,7 +10,6 @@ go_library(
 
 go_binary(
     name = "shallow_ref",
-    cgo = True,  #keep
     embed = [":shallow_ref_lib"],
     visibility = ["//visibility:public"],
 )

@@ -14,7 +14,6 @@ go_library(
 
 go_binary(
     name = "hash64_equals",
-    cgo = True,  #keep
     embed = [":hash64_equals_lib"],
     visibility = ["//visibility:public"],
 )

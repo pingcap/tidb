@@ -10,7 +10,6 @@ go_library(
 
 go_binary(
     name = "ucaimpl",
-    cgo = True,  #keep
     embed = [":ucaimpl_lib"],
     visibility = ["//visibility:public"],
 )
