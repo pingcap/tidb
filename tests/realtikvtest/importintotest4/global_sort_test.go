@@ -497,13 +497,17 @@ func TestNextGenMetering(t *testing.T) {
 	s.EqualValues(6, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.EqualValues(288, sum.Bytes.Load())
+	// if we retry write, the bytes may be larger than 288
+	s.GreaterOrEqual(sum.Bytes.Load(), int64(288))
 	s.EqualValues(6, sum.GetReqCnt.Load())
 	s.EqualValues(0, sum.PutReqCnt.Load())
 
 	s.Eventually(func() bool {
 		items := *rowAndSizeMeterItems.Load()
-		return items != nil && items["row_count"].(int64) == 3 &&
-			items["data_kv_bytes"].(int64) == 114 && items["index_kv_bytes"].(int64) == 174
+		return items != nil && items[metering.RowCountField].(int64) == 3 &&
+			items[metering.DataKVBytesField].(int64) == 114 && items[metering.IndexKVBytesField].(int64) == 174 &&
+			items[metering.ConcurrencyField].(int) == task.Concurrency &&
+			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
+			items[metering.DurationSecondsField].(int64) > 0
 	}, 30*time.Second, 100*time.Millisecond)
 }
