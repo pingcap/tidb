@@ -164,14 +164,16 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
-func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
+func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext) (access []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
 	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
-		return nil, path.TableFilters
+		return nil
 	}
+	eqOrInCount := path.EqOrInCondCount
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
+	usedCnt := 0
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
@@ -185,7 +187,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 				// branch also ensures that there must be some col-eq-corcol condition in access if len(access) > 0, which is
 				// important. If there is no col-eq-corcol condition in access, we would not rebuild ranges, which brings the
 				// correctness issue.
-				return nil, path.TableFilters
+				return nil
 			}
 			colEqCorCol := isColEqCorCol(filter, path.IdxCols[i])
 			if !colEqConstant && !colEqCorCol {
@@ -193,8 +195,10 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			}
 			matched = true
 			access[i-eqOrInCount] = filter
+			path.ConstCols[i] = true
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
+				usedCnt++
 			}
 			break
 		}
@@ -203,12 +207,15 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			break
 		}
 	}
+	remained := make([]expression.Expression, 0, len(used)-usedCnt)
 	for i, ok := range used {
 		if !ok {
 			remained = append(remained, path.TableFilters[i]) // nozero
 		}
 	}
-	return access, remained
+	path.AccessConds = append(path.AccessConds, access...)
+	path.TableFilters = remained
+	return access
 }
 
 // isColEqConstant checks if the expression is eq function that one side is column and the other side is constant.
