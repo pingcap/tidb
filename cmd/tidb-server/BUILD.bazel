@@ -92,6 +92,7 @@ go_binary(
 
 go_binary(
     name = "tidb-server-check",
+    cgo = True,
     embed = [":tidb-server_lib"],
     gc_linkopts = [
         "-X",
