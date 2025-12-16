@@ -16,7 +16,6 @@ go_library(
 
 go_binary(
     name = "br_txn",
-    cgo = True,  #keep
     embed = [":br_txn_lib"],
     visibility = ["//visibility:public"],
 )

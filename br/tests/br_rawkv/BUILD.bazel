@@ -16,7 +16,6 @@ go_library(
 
 go_binary(
     name = "br_rawkv",
-    cgo = True,  #keep
     embed = [":br_rawkv_lib"],
     visibility = ["//visibility:public"],
 )

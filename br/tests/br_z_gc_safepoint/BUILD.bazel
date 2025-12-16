@@ -16,7 +16,6 @@ go_library(
 
 go_binary(
     name = "br_z_gc_safepoint",
-    cgo = True,  #keep
     embed = [":br_z_gc_safepoint_lib"],
     visibility = ["//visibility:public"],
 )

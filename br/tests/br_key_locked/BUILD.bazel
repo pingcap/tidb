@@ -34,7 +34,6 @@ go_library(
 
 go_binary(
     name = "br_key_locked",
-    cgo = True,  #keep
     embed = [":br_key_locked_lib"],
     visibility = ["//visibility:public"],
 )

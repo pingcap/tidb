@@ -13,7 +13,6 @@ go_library(
 
 go_binary(
     name = "debug-linter",
-    cgo = True,  #keep
     embed = [":debug-linter_lib"],
     visibility = ["//visibility:public"],
 )
