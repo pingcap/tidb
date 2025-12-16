@@ -2301,6 +2301,16 @@ error = '''
 Unknown resource group '%-.192s'
 '''
 
+["meta:8280"]
+error = '''
+Tablegroup '%-.192s' already exists
+'''
+
+["meta:8281"]
+error = '''
+Unknown tablegroup '%-.192s'
+'''
+
 ["planner:1044"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'
@@ -3154,6 +3164,31 @@ Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_contr
 ["schema:8257"]
 error = '''
 Cannot set resource group for a role
+'''
+
+["schema:8280"]
+error = '''
+Tablegroup '%-.192s' already exists
+'''
+
+["schema:8281"]
+error = '''
+Unknown tablegroup '%-.192s'
+'''
+
+["schema:8282"]
+error = '''
+Tablegroup not supported, reason: %-.192s
+'''
+
+["schema:8283"]
+error = '''
+Tablegroup partitions count not match
+'''
+
+["schema:8284"]
+error = '''
+Duplicate table name '%-.192s'
 '''
 
 ["server:1040"]

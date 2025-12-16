@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -246,6 +247,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTablePrivileges(ctx, sctx)
 		case infoschema.TableSchemaPrivileges:
 			err = e.setDataFromSchemaPrivileges(ctx, sctx)
+		case infoschema.TableTableGroups:
+			err = e.setDataFromTableGroups(ctx)
+		case infoschema.TableTableGroupStatus:
+			err = e.setDataFromTableGroupStatus(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -4268,6 +4273,101 @@ func (e *memtableRetriever) setDataFromSchemaPrivileges(ctx context.Context, sct
 		}
 	}
 	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTableGroups(ctx context.Context) error {
+	tgs := e.is.AllTableGroups()
+	sort.Slice(tgs, func(i, j int) bool {
+		return tgs[i].Name.L < tgs[j].Name.L
+	})
+	e.rows = make([][]types.Datum, 0, len(tgs))
+	for _, tgInfo := range tgs {
+		for _, ag := range tgInfo.AffinityGroups {
+			for _, tb := range ag.Tables {
+				var partitionName any
+				if tb.PartitionName != "" {
+					partitionName = tb.PartitionName
+				}
+				e.rows = append(e.rows, types.MakeDatums(
+					tb.DB,
+					tb.Table,
+					partitionName,
+					tgInfo.Name.L,
+					ag.Name,
+				))
+			}
+			if len(ag.Tables) == 0 {
+				e.rows = append(e.rows, types.MakeDatums(
+					nil,
+					nil,
+					nil,
+					tgInfo.Name.L,
+					ag.Name,
+				))
+			}
+		}
+	}
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTableGroupStatus(ctx context.Context, sctx sessionctx.Context) error {
+	ags, err := infosync.GetAllAffinityGroups(ctx)
+	if err != nil {
+		return err
+	}
+	if ags == nil {
+		ags = make(map[string]*pd.AffinityGroupState)
+	}
+	tgs := e.is.AllTableGroups()
+	sort.Slice(tgs, func(i, j int) bool {
+		return tgs[i].Name.L < tgs[j].Name.L
+	})
+	loc := sctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
+	e.rows = make([][]types.Datum, 0, len(tgs))
+	for _, tgInfo := range tgs {
+		for _, ag := range tgInfo.AffinityGroups {
+			state := ags[ag.Name]
+			if state != nil {
+				t := time.Unix(int64(state.CreateTimestamp), 0)
+				createTime := types.NewTime(types.FromGoTime(t.In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+				var buf strings.Builder
+				for _, id := range state.VoterStoreIDs {
+					if buf.Len() > 0 {
+						buf.WriteString(", ")
+					}
+					buf.WriteString(strconv.FormatUint(id, 10))
+				}
+				e.rows = append(e.rows, types.MakeDatums(
+					ag.Name,
+					tgInfo.Name.L,
+					createTime,
+					state.LeaderStoreID,
+					buf.String(),
+					state.RangeCount,
+					state.RegionCount,
+					state.AffinityRegionCount,
+					state.Phase,
+				))
+			} else {
+				e.rows = append(e.rows, types.MakeDatums(
+					ag.Name,
+					tgInfo.Name.L,
+					nil,
+					nil,
+					nil,
+					nil,
+					nil,
+					nil,
+					nil,
+				))
+
+			}
+		}
+	}
 	return nil
 }
 

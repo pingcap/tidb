@@ -108,4 +108,16 @@ var (
 	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
 	// ErrCheckConstraintDupName returns for duplicate constraint names.
 	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
+
+	// ErrTableGroupExists returns when tablegroup already exists
+	ErrTableGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrTableGroupExists)
+	// ErrTableGroupNotExists returns for unknown tablegroup
+	ErrTableGroupNotExists = dbterror.ClassSchema.NewStd(mysql.ErrTableGroupNotExists)
+	// ErrTableGroupNotSupported returns when tablegroup is not supported
+	ErrTableGroupNotSupported = dbterror.ClassSchema.NewStd(mysql.ErrTableGroupNotSupported)
+
+	// ErrTableGroupPartitionNumNotMatch returns when partition numbers don't match in tablegroup
+	ErrTableGroupPartitionNumNotMatch = dbterror.ClassSchema.NewStd(mysql.ErrTableGroupPartitionNumNotMatch)
+	// ErrDuplicateTable returns when table already exists
+	ErrDuplicateTable = dbterror.ClassSchema.NewStd(mysql.ErrDuplicateTable)
 )

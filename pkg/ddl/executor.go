@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -109,6 +110,8 @@ type Executor interface {
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	CreateTableGroup(ctx sessionctx.Context, stmt *ast.CreateTableGroupStmt) error
+	AlterTableGroup(ctx sessionctx.Context, stmt *ast.AlterTableGroupStmt) (err error)
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
@@ -133,6 +136,7 @@ type Executor interface {
 	AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
 	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
 	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
+	DropTableGroup(ctx sessionctx.Context, stmt *ast.DropTableGroupStmt) (err error)
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
@@ -1012,6 +1016,186 @@ func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTa
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (e *executor) CreateTableGroup(ctx sessionctx.Context, stmt *ast.CreateTableGroupStmt) (err error) {
+	tgInfo := &model.TableGroupInfo{
+		Name:   stmt.Name,
+		Tables: make([]model.TableName, 0, len(stmt.Tables)),
+	}
+	uniqueMap := make(map[model.TableName]struct{}, len(stmt.Tables))
+	for _, tn := range stmt.Tables {
+		if tn.Schema.L == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		table := model.TableName{
+			DB:    tn.Schema.L,
+			Table: tn.Name.L,
+		}
+		if _, exist := uniqueMap[table]; exist {
+			return infoschema.ErrDuplicateTable.GenWithStackByArgs(ast.Ident{Schema: tn.Schema, Name: tn.Name})
+		}
+		uniqueMap[table] = struct{}{}
+		tgInfo.Tables = append(tgInfo.Tables, table)
+	}
+	onExist := OnExistError
+	if stmt.IfNotExists {
+		onExist = OnExistIgnore
+	}
+	return e.createTableGroupWithInfo(ctx, tgInfo, onExist)
+}
+
+func (e *executor) createTableGroupWithInfo(ctx sessionctx.Context, tgInfo *model.TableGroupInfo, onExist OnExist) error {
+	if err := checkTooLongTable(tgInfo.Name); err != nil {
+		return errors.Trace(err)
+	}
+	is := e.infoCache.GetLatest()
+	_, ok := is.TableGroupByName(tgInfo.Name)
+	if ok {
+		err := infoschema.ErrTableGroupExists.GenWithStackByArgs(tgInfo.Name)
+		if onExist == OnExistIgnore {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+	partitionNum := 0
+	for idx, tn := range tgInfo.Tables {
+		tbl, err := is.TableByName(e.ctx, pmodel.NewCIStr(tn.DB), pmodel.NewCIStr(tn.Table))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		currentPartitionNum := 0
+		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+			currentPartitionNum = len(pi.Definitions)
+		}
+		if idx == 0 {
+			partitionNum = currentPartitionNum
+		} else {
+			if partitionNum != currentPartitionNum {
+				return infoschema.ErrTableGroupPartitionNumNotMatch.FastGenByArgs()
+			}
+		}
+		tg, _ := is.TableGroupByTableName(tn)
+		if tg != nil {
+			reason := fmt.Sprintf("table %v aleady in tablegroup %v", tn.Table, tg.Name)
+			return infoschema.ErrTableGroupNotSupported.FastGenByArgs(reason)
+		}
+	}
+
+	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
+		SchemaName:          tgInfo.Name.L,
+		Type:                model.ActionCreateTableGroup,
+		BinlogInfo:          &model.HistoryInfo{},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			// todo: need to do something?
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+
+	args := &model.TableGroupArgs{
+		TableGroup: tgInfo,
+	}
+	err := e.doDDLJob2(ctx, job, args)
+	if err != nil {
+		// table exists, but if_not_exists flags is true, so we ignore this error.
+		if onExist == OnExistIgnore && infoschema.ErrTableGroupExists.Equal(err) {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			err = nil
+		}
+	}
+	return errors.Trace(err)
+}
+
+func (e *executor) DropTableGroup(ctx sessionctx.Context, stmt *ast.DropTableGroupStmt) (err error) {
+	is := e.infoCache.GetLatest()
+	tgInfo, ok := is.TableGroupByName(stmt.Name)
+	if !ok {
+		if stmt.IfExists {
+			return nil
+		}
+		return infoschema.ErrTableGroupNotExists.GenWithStackByArgs(stmt.Name)
+	}
+	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
+		SchemaID:            tgInfo.ID,
+		SchemaName:          tgInfo.Name.L,
+		SchemaState:         tgInfo.State,
+		Type:                model.ActionDropTableGroup,
+		BinlogInfo:          &model.HistoryInfo{},
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			// todo: need to do something?
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.TableGroupArgs{TableGroupName: stmt.Name}
+	err = e.doDDLJob2(ctx, job, args)
+	if err != nil {
+		if stmt.IfExists && infoschema.ErrTableGroupNotExists.Equal(err) {
+			return nil
+		}
+	}
+	return errors.Trace(err)
+}
+
+func (e *executor) AlterTableGroup(ctx sessionctx.Context, stmt *ast.AlterTableGroupStmt) (err error) {
+	is := e.infoCache.GetLatest()
+	tgInfo, ok := is.TableGroupByName(stmt.Name)
+	if !ok {
+		return infoschema.ErrTableGroupNotExists.GenWithStackByArgs(stmt.Name)
+	}
+	tableNames := make([]model.TableName, 0, len(stmt.Tables))
+	uniqueMap := make(map[model.TableName]struct{}, len(stmt.Tables))
+	for _, tn := range stmt.Tables {
+		if tn.Schema.L == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		table := model.TableName{
+			DB:    tn.Schema.L,
+			Table: tn.Name.L,
+		}
+		if _, exist := uniqueMap[table]; exist {
+			return infoschema.ErrDuplicateTable.GenWithStackByArgs(ast.Ident{Schema: tn.Schema, Name: tn.Name})
+		}
+		uniqueMap[table] = struct{}{}
+		if stmt.Option == ast.AlterTableGroupOptionAddTables {
+			tbl, err := is.TableByName(e.ctx, tn.Schema, tn.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			groupNum := 1
+			if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+				groupNum = len(pi.Definitions)
+			}
+			if groupNum != len(tgInfo.AffinityGroups) {
+				return infoschema.ErrTableGroupPartitionNumNotMatch.FastGenByArgs()
+			}
+		}
+		tableNames = append(tableNames, table)
+	}
+	err = checkAlterTableGroup(tgInfo, stmt.Option, tableNames)
+	if err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
+		SchemaID:            tgInfo.ID,
+		SchemaName:          tgInfo.Name.L,
+		SchemaState:         tgInfo.State,
+		Type:                model.ActionAlterTableGroup,
+		BinlogInfo:          &model.HistoryInfo{},
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			// todo: need to do something?
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.AlterTableGroupArgs{Option: stmt.Option, Tables: tableNames}
+	err = e.doDDLJob2(ctx, job, args)
+	return errors.Trace(err)
 }
 
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {

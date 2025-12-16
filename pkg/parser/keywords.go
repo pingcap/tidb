@@ -612,6 +612,8 @@ var Keywords = []KeywordsType{
 	{"SWITCHES", false, "unreserved"},
 	{"SYSTEM", false, "unreserved"},
 	{"SYSTEM_TIME", false, "unreserved"},
+	{"TABLEGROUP", false, "unreserved"},
+	{"TABLEGROUPS", false, "unreserved"},
 	{"TABLES", false, "unreserved"},
 	{"TABLESPACE", false, "unreserved"},
 	{"TABLE_CHECKSUM", false, "unreserved"},

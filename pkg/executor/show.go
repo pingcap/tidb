@@ -94,9 +94,10 @@ type ShowExec struct {
 	Table             *resolve.TableNameW // Used for showing columns.
 	Partition         pmodel.CIStr        // Used for showing partition
 	Procedure         *ast.TableName
-	Column            *ast.ColumnName      // Used for `desc table column`.
-	IndexName         pmodel.CIStr         // Used for show table regions.
-	ResourceGroupName pmodel.CIStr         // Used for showing resource group
+	Column            *ast.ColumnName // Used for `desc table column`.
+	IndexName         pmodel.CIStr    // Used for show table regions.
+	ResourceGroupName pmodel.CIStr    // Used for showing resource group
+	TableGroupName    pmodel.CIStr
 	Flag              int                  // Some flag parsed from sql, such as FULL.
 	Roles             []*auth.RoleIdentity // Used for show grants.
 	User              *auth.UserIdentity   // Used by show grants, show create user.
@@ -198,6 +199,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreatePlacementPolicy()
 	case ast.ShowCreateResourceGroup:
 		return e.fetchShowCreateResourceGroup()
+	case ast.ShowCreateTableGroup:
+		return e.fetchShowCreateTableGroup()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowEngines:
@@ -286,6 +289,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
+	case ast.ShowTableGroups:
+		return e.fetchShowTableGroups()
 	}
 	return nil
 }
@@ -1659,6 +1664,21 @@ func constructResultOfShowCreateResourceGroup(resourceGroup *model.ResourceGroup
 	return fmt.Sprintf("CREATE RESOURCE GROUP `%s` %s", resourceGroup.Name.O, resourceGroup.ResourceGroupSettings.String())
 }
 
+func constructResultOfShowCreateTableGroup(tgInfo *model.TableGroupInfo) string {
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	fmt.Fprintf(buf, "CREATE TABLEGROUP `%s`", tgInfo.Name.O)
+	if len(tgInfo.Tables) > 0 {
+		buf.WriteString(" TABLES ")
+	}
+	for i, tn := range tgInfo.Tables {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		fmt.Fprintf(buf, "`%s`.`%s`", tn.DB, tn.Table)
+	}
+	return buf.String()
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
@@ -1700,6 +1720,16 @@ func (e *ShowExec) fetchShowCreateResourceGroup() error {
 	}
 	showCreate := constructResultOfShowCreateResourceGroup(group)
 	e.appendRow([]any{e.ResourceGroupName.O, showCreate})
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateTableGroup() error {
+	tgInfo, ok := e.is.TableGroupByName(e.TableGroupName)
+	if !ok {
+		return infoschema.ErrTableGroupNotExists.GenWithStackByArgs(e.TableGroupName.O)
+	}
+	showCreate := constructResultOfShowCreateTableGroup(tgInfo)
+	e.appendRow([]any{e.TableGroupName.O, showCreate})
 	return nil
 }
 
@@ -2476,4 +2506,16 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	return fn(sysCtx)
+}
+
+func (e *ShowExec) fetchShowTableGroups() error {
+	tgs := e.is.AllTableGroups()
+	sort.Slice(tgs, func(i, j int) bool {
+		return tgs[i].Name.L < tgs[j].Name.L
+	})
+	for _, tg := range tgs {
+		e.appendRow([]any{tg.Name.L})
+	}
+
+	return nil
 }

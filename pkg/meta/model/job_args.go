@@ -1198,6 +1198,56 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 	return getOrDecodeArgs[*PlacementPolicyArgs](&PlacementPolicyArgs{}, job)
 }
 
+// TableGroupArgs is the argument for create/drop tablegroup
+type TableGroupArgs struct {
+	TableGroup     *TableGroupInfo `json:"tablegroup,omitempty"`
+	TableGroupName pmodel.CIStr    `json:"tablegroup_name,omitempty"`
+}
+
+func (a *TableGroupArgs) getArgsV1(job *Job) []any {
+	if job.Type == ActionCreateTableGroup {
+		return []any{a.TableGroup}
+	}
+	return []any{a.TableGroupName}
+}
+
+func (a *TableGroupArgs) decodeV1(job *Job) error {
+	if job.Type == ActionCreateTableGroup {
+		return errors.Trace(job.decodeArgs(&a.TableGroup))
+	}
+	return errors.Trace(job.decodeArgs(&a.TableGroupName))
+}
+
+// AlterTableGroupArgs is the argument for alter tablegroup
+type AlterTableGroupArgs struct {
+	Option ast.AlterTableGroupOptionType `json:"option"`
+	Tables []TableName                   `json:"tables"`
+}
+
+func (a *AlterTableGroupArgs) getArgsV1(job *Job) []any {
+	if job.Type == ActionAlterTableGroup {
+		return []any{a.Option, a.Tables}
+	}
+	return nil
+}
+
+func (a *AlterTableGroupArgs) decodeV1(job *Job) error {
+	if job.Type == ActionDropTable {
+		return job.decodeArgs(&a.Option, a.Tables)
+	}
+	return nil
+}
+
+// GetAlterTableGroupArgs gets the alter table partition args.
+func GetAlterTableGroupArgs(job *Job) (*AlterTableGroupArgs, error) {
+	return getOrDecodeArgs[*AlterTableGroupArgs](&AlterTableGroupArgs{}, job)
+}
+
+// GetTableGroupArgs gets the table group args.
+func GetTableGroupArgs(job *Job) (*TableGroupArgs, error) {
+	return getOrDecodeArgs[*TableGroupArgs](&TableGroupArgs{}, job)
+}
+
 // SetDefaultValueArgs is the argument for setting default value ddl.
 type SetDefaultValueArgs struct {
 	Col *ColumnInfo `json:"column_info,omitempty"`

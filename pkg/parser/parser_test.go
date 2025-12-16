@@ -60,7 +60,7 @@ func TestSimple(t *testing.T) {
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
-		"match", "until", "placement", "tablesample", "failedLoginAttempts", "passwordLockTime",
+		"match", "until", "placement", "tablegroup", "tablesample", "failedLoginAttempts", "passwordLockTime",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -84,7 +84,7 @@ func TestSimple(t *testing.T) {
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
-		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"start", "global", "tables", "tablegroup", "tablegroups", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers", "language",
@@ -4068,6 +4068,21 @@ func TestDDL(t *testing.T) {
 
 		// Restore INSERT_METHOD table option
 		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
+	}
+	RunTest(t, table, false)
+}
+
+func TestTableGroup(t *testing.T) {
+	table := []testCase{
+		{"CREATE TABLEGROUP tg1", false, ""},
+		{"CREATE TABLEGROUP tg1 TABLES t1, t2, test.t3 PARTITIONS 3", false, ""},
+		{"CREATE TABLEGROUP tg1 TABLES t1, t2, test.t3", true, "CREATE TABLEGROUP `tg1` TABLES `t1`, `t2`, `test`.`t3`"},
+		{"DROP TABLEGROUP tg1", true, "DROP TABLEGROUP `tg1`"},
+		{"ALTER TABLEGROUP tg1", false, ""},
+		{"ALTER TABLEGROUP tg1 ADD TABLES t1, test.t2", true, "ALTER TABLEGROUP `tg1`ADD TABLES `t1`, `test`.`t2`"},
+		{"ALTER TABLEGROUP tg1 DROP TABLES t1, test.t2", true, "ALTER TABLEGROUP `tg1`DROP TABLES `t1`, `test`.`t2`"},
+		{"SHOW CREATE TABLEGROUP tg1", true, "SHOW CREATE TABLEGROUP `tg1`"},
+		{"SHOW TABLEGROUPS", true, "SHOW TABLEGROUPS"},
 	}
 	RunTest(t, table, false)
 }

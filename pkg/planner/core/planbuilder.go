@@ -3551,6 +3551,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Column:                show.Column,
 			IndexName:             show.IndexName,
 			ResourceGroupName:     show.ResourceGroupName,
+			TableGroupName:        show.TableGroupName,
 			Flag:                  show.Flag,
 			User:                  show.User,
 			Roles:                 show.Roles,
@@ -5348,6 +5349,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				return nil, err
 			}
 		}
+	case *ast.CreateTableGroupStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Name.L, "", "", authErr)
 	case *ast.CreateViewStmt:
 		err := checkForUserVariables(v.Select)
 		if err != nil {
@@ -5421,6 +5428,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, tableVal.Schema.L, tableVal.Name.L, "", authErr)
 		}
+	case *ast.DropTableGroupStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = plannererrors.ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Name)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Name.L, "", "", authErr)
 	case *ast.DropSequenceStmt:
 		for _, sequence := range v.Sequences {
 			if b.ctx.GetSessionVars().User != nil {
@@ -5964,6 +5977,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
+	case ast.ShowCreateTableGroup:
+		names = []string{"TableGroup", "Create TableGroup"}
 	case ast.ShowGrants:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("Grants for %s", s.User)}
@@ -6058,6 +6073,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowImportJobs:
 		names = importIntoSchemaNames
 		ftypes = importIntoSchemaFTypes
+	case ast.ShowTableGroups:
+		names = []string{"TableGroups"}
+		ftypes = []byte{mysql.TypeVarchar}
 	}
 	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }

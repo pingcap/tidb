@@ -110,6 +110,9 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionCreateResourceGroup,
 		ActionAlterResourceGroup,
 		ActionDropResourceGroup,
+		ActionCreateTableGroup,
+		ActionDropTableGroup,
+		ActionAlterTableGroup,
 	},
 	UnknownDDL: {
 		_DEPRECATEDActionAlterTableAlterPartition,

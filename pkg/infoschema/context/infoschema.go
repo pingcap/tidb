@@ -126,6 +126,9 @@ type SchemaAndTable interface {
 type Misc interface {
 	PolicyByName(name pmodel.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name pmodel.CIStr) (*model.ResourceGroupInfo, bool)
+	TableGroupByName(name pmodel.CIStr) (*model.TableGroupInfo, bool)
+	TableGroupByTableName(tn model.TableName) (*model.TableGroupInfo, bool)
+	AllTableGroups() []*model.TableGroupInfo
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
 	// AllPlacementBundles is used to get all placement bundles

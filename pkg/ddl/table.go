@@ -123,6 +123,11 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
 		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
+			// update tablegroup
+			if e := updateTableGroupWhenDropTable(jobCtx.ctx, metaMut, jobCtx.infoCache, tblInfo, job.SchemaID); e != nil {
+				logutil.DDLLogger().Error("updateTableGroupWhenDropTable fails", zap.Error(e))
+			}
+
 			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
 			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, noSubJob, w.sess)
 			if err != nil {
@@ -563,6 +568,11 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	err = updateTableGroupWhenTruncateTable(jobCtx.ctx, metaMut, jobCtx.infoCache, tblInfo, schemaID)
+	if err != nil {
+		logutil.DDLLogger().Error("updateTableGroupWhenTruncateTable fails", zap.Error(err))
 	}
 
 	err = metaMut.CreateTableOrView(schemaID, tblInfo)

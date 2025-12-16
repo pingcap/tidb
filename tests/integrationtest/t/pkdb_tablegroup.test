@@ -1,0 +1,192 @@
+drop database if exists tg_test1;
+drop database if exists tg_test2;
+drop database if exists tg_test3;
+create database tg_test1;
+create database tg_test2;
+create database tg_test3;
+use tg_test1;
+
+# Basic tablegroup creation and verification
+create table t1 (a int);
+create table t2 (a int);
+create tablegroup tg1 tables t1, t2;
+show create tablegroup tg1;
+select * from information_schema.tablegroups where tablegroup='tg1';
+select * from information_schema.tablegroup_status where tablegroup='tg1';
+
+# Test tablegroup with databases
+use tg_test2;
+create table t3 (a int);
+create table t4 (a int);
+create tablegroup tg2 tables t3, t4;
+show create tablegroup tg2;
+select * from information_schema.tablegroups where tablegroup='tg2';
+select * from information_schema.tablegroup_status where tablegroup='tg2';
+
+# Test error cases - duplicate table in same tablegroup
+-- error 8284
+create tablegroup tg3 tables t3, t3;
+
+# Test error cases - table doesn't exist
+-- error 1146
+create tablegroup tg4 tables nonexistent_table;
+
+# Test error cases - tablegroup already exists
+-- error 8280
+create tablegroup tg2 tables t3;
+
+# Test error cases - table already in another tablegroup
+-- error 8282
+create tablegroup tg5 tables t3;
+
+# Alter tablegroup - add tables
+create table t5 (a int);
+create table t6 (a int);
+alter tablegroup tg2 add tables t5, t6;
+show create tablegroup tg2;
+select * from information_schema.tablegroups where tablegroup='tg2' order by table_name;
+
+# Test error cases - add table that doesn't exist
+-- error 1146
+alter tablegroup tg2 add tables nonexistent_table;
+
+# Test error cases - add table already in tablegroup
+-- error 1050
+alter tablegroup tg2 add tables t3;
+
+# Test error cases - add duplicate table names
+-- error 8284
+alter tablegroup tg2 add tables t5, t5;
+
+# Alter tablegroup - drop tables
+alter tablegroup tg2 drop tables t3;
+show create tablegroup tg2;
+select * from information_schema.tablegroups where tablegroup='tg2';
+select * from information_schema.tablegroup_status where tablegroup='tg2';
+
+# Test error cases - drop table that doesn't exist
+-- error 1146
+alter tablegroup tg2 drop tables nonexistent_table;
+
+# Test error cases - drop all tables from tablegroup
+-- error 1105
+alter tablegroup tg2 drop tables t4, t5, t6;
+
+# Test truncate table with tablegroup
+create table t7 (a int primary key);
+insert into t7 values (1), (2), (3);
+create tablegroup tg6 tables t7;
+select * from information_schema.tablegroup_status where tablegroup='tg6';
+truncate table t7;
+show create tablegroup tg6;
+select * from information_schema.tablegroup_status where tablegroup='tg6';
+
+# Test drop table with tablegroup
+create table t8 (a int);
+create tablegroup tg7 tables t8;
+show create tablegroup tg7;
+select * from information_schema.tablegroup_status where tablegroup='tg7';
+drop table t8;
+show create tablegroup tg7;
+select * from information_schema.tablegroups where tablegroup='tg7';
+select * from information_schema.tablegroup_status where tablegroup='tg7';
+
+# Test drop database with tablegroup
+use tg_test3;
+create table t9 (a int);
+create table t10 (a int);
+create tablegroup tg8 tables t9, t10;
+select * from information_schema.tablegroups where tablegroup='tg8';
+select * from information_schema.tablegroup_status where tablegroup='tg8';
+drop database tg_test3;
+show create tablegroup tg8;
+select * from information_schema.tablegroups where tablegroup='tg8';
+select * from information_schema.tablegroup_status where tablegroup='tg8';
+
+# Test partition tablegroup
+use tg_test1;
+create table pt1 (a int primary key) partition by hash(a) partitions 3;
+create table pt2 (a int primary key) partition by hash(a) partitions 3;
+create table pt3 (a int primary key) partition by hash(a) partitions 3;
+create tablegroup tg9 tables pt1, pt2, pt3;
+show create tablegroup tg9;
+select * from information_schema.tablegroups where tablegroup='tg9' order by table_name, partition_name;
+select * from information_schema.tablegroup_status where tablegroup='tg9' order by affinity_group_id;
+
+# Test error cases - partition count mismatch
+create table pt4 (a int primary key) partition by hash(a) partitions 2;
+create table pt5_new (a int primary key) partition by hash(a) partitions 3;
+-- error 8283
+create tablegroup tg10 tables pt4, pt5_new;
+
+# Test alter tablegroup with partition tables
+alter tablegroup tg9 drop tables pt2;
+show create tablegroup tg9;
+select * from information_schema.tablegroups where tablegroup='tg9' order by table_name, partition_name;
+select * from information_schema.tablegroup_status where tablegroup='tg9' order by affinity_group_id;
+
+# Test add partition table with mismatching count
+create table pt6_new (a int primary key) partition by hash(a) partitions 5;
+-- error 8283
+alter tablegroup tg9 add tables pt6_new;
+
+# Test truncate partition with tablegroup
+create table pt6 (a int, b int, primary key (a, b)) partition by range(b) (
+    partition p0 values less than (10),
+    partition p1 values less than (20),
+    partition p2 values less than (30)
+);
+create table pt7 (a int, b int, primary key (a, b)) partition by range(b) (
+    partition p0 values less than (10),
+    partition p1 values less than (20),
+    partition p2 values less than (30)
+);
+create tablegroup tg11 tables pt6, pt7;
+insert into pt6 values (1, 5), (2, 15), (3, 25);
+insert into pt7 values (4, 8), (5, 18), (6, 28);
+select * from information_schema.tablegroups where tablegroup='tg11' order by table_name, partition_name;
+select * from information_schema.tablegroup_status where tablegroup='tg11' order by affinity_group_id;
+
+# Truncate single partition
+alter table pt6 truncate partition p1;
+select * from information_schema.tablegroups where tablegroup='tg11' order by table_name, partition_name;
+select * from information_schema.tablegroup_status where tablegroup='tg11' order by affinity_group_id;
+
+# Truncate multiple partitions
+alter table pt7 truncate partition p0, p2;
+select * from information_schema.tablegroups where tablegroup='tg11' order by table_name, partition_name;
+
+# Test drop tablegroup
+show tablegroups;
+drop tablegroup tg1;
+drop tablegroup tg2;
+drop tablegroup tg6;
+drop tablegroup tg7;
+drop tablegroup tg9;
+drop tablegroup tg11;
+show tablegroups;
+
+# Test drop tablegroup that doesn't exist
+-- error 8281
+drop tablegroup nonexistent_tg;
+
+# Test show tablegroups
+use tg_test1;
+create table t11 (a int);
+create table t12 (a int);
+create tablegroup tg_final tables t11, t12;
+show tablegroups;
+show tablegroups like '%final%';
+
+# Test cross-database tablegroups
+use tg_test1;
+create table tg_cross1 (a int);
+use tg_test2;
+create table tg_cross2 (a int);
+create tablegroup tg_cross tables tg_test1.tg_cross1, tg_cross2;
+show create tablegroup tg_cross;
+select * from information_schema.tablegroups where tablegroup='tg_cross' order by table_schema, table_name;
+
+# Cleanup
+drop database if exists tg_test1;
+drop database if exists tg_test2;

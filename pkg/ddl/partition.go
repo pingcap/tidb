@@ -2380,7 +2380,8 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 	tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 }
 
-func replaceTruncatePartitions(job *model.Job, t *meta.Mutator, tblInfo *model.TableInfo, oldIDs, newIDs []int64) ([]model.PartitionDefinition, []model.PartitionDefinition, error) {
+func replaceTruncatePartitions(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo, oldIDs, newIDs []int64) ([]model.PartitionDefinition, []model.PartitionDefinition, error) {
+	t := jobCtx.metaMut
 	oldDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 	newDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 	pi := tblInfo.Partition
@@ -2404,6 +2405,10 @@ func replaceTruncatePartitions(job *model.Job, t *meta.Mutator, tblInfo *model.T
 
 	if err := updateTruncatePartitionLabelRules(job, t, oldDefinitions, newDefinitions, tblInfo, oldIDs); err != nil {
 		return nil, nil, err
+	}
+
+	if err := updateTableGroupWhenTruncatePartitions(jobCtx.ctx, t, jobCtx.infoCache, tblInfo, job.SchemaID, oldIDs, newIDs); err != nil {
+		logutil.DDLLogger().Error("updateTableGroupWhenTruncatePartitions fails", zap.Error(err))
 	}
 	return oldDefinitions, newDefinitions, nil
 }
@@ -2562,7 +2567,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// We can still rollback here, since we have not yet started to write to the new partitions!
-		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, jobCtx.metaMut, tblInfo, oldIDs, newIDs)
+		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(jobCtx, job, tblInfo, oldIDs, newIDs)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

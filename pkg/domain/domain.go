@@ -386,6 +386,10 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	tableGroups, err := do.fetchAllTableGroups(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
 	data := do.infoCache.Data
@@ -399,7 +403,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		data = infoschema.NewData()
 	}
 	builder := infoschema.NewBuilder(do, do.sysFacHack, data, useV2)
-	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, tableGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -463,6 +467,14 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 		return nil, err
 	}
 	return allResourceGroups, nil
+}
+
+func (*Domain) fetchAllTableGroups(m meta.Reader) ([]*model.TableGroupInfo, error) {
+	tableGroups, err := m.ListTableGroups()
+	if err != nil {
+		return nil, err
+	}
+	return tableGroups, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {

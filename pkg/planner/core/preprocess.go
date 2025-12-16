@@ -378,6 +378,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateSequenceStmt(node)
+	case *ast.CreateTableGroupStmt:
+		p.stmtTp = TypeCreate
+		p.flag |= inCreateOrDropTable
+		if util.IsInCorrectIdentifierName(node.Name.String()) {
+			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(node.Name.String())
+			return
+		}
 	case *ast.DropSequenceStmt:
 		p.stmtTp = TypeDrop
 		p.flag |= inCreateOrDropTable

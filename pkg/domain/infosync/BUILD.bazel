@@ -7,6 +7,7 @@ go_library(
         "info.go",
         "label_manager.go",
         "mock_info.go",
+        "pkdb_tablegroup.go",
         "placement_manager.go",
         "region.go",
         "resource_manager_client.go",

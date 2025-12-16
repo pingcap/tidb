@@ -20,12 +20,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"go.uber.org/zap"
 )
 
 func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -194,6 +196,15 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
+		}
+		for _, tblInfo := range tables {
+			err = updateTableGroupWhenDropTableInDB(jobCtx.ctx, metaMut, jobCtx.infoCache, dbInfo, tblInfo)
+			if err != nil {
+				logutil.DDLLogger().Error("updateTableGroupWhenDropTableInDB failed",
+					zap.String("db", dbInfo.Name.L),
+					zap.String("table", tblInfo.Name.L),
+					zap.Error(err))
+			}
 		}
 	case model.StateWriteOnly:
 		// write only -> delete only

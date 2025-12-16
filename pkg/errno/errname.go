@@ -1160,6 +1160,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupQueryRunawayQuarantine:    mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
 	ErrResourceGroupInvalidBackgroundTaskName: mysql.Message("Unknown background task name '%-.192s'", nil),
 
+	ErrTableGroupExists:               mysql.Message("Tablegroup '%-.192s' already exists", nil),
+	ErrTableGroupNotExists:            mysql.Message("Unknown tablegroup '%-.192s'", nil),
+	ErrTableGroupNotSupported:         mysql.Message("Tablegroup not supported, reason: %-.192s", nil),
+	ErrTableGroupPartitionNumNotMatch: mysql.Message("Tablegroup partitions count not match", nil),
+	ErrDuplicateTable:                 mysql.Message("Duplicate table name '%-.192s'", nil),
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),

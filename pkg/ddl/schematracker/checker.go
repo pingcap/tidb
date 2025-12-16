@@ -261,6 +261,16 @@ func (d *Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt)
 	return nil
 }
 
+// CreateTableGroup implements the DDL interface.
+func (d *Checker) CreateTableGroup(ctx sessionctx.Context, stmt *ast.CreateTableGroupStmt) error {
+	return nil
+}
+
+// AlterTableGroup implements the DDL interface.
+func (d *Checker) AlterTableGroup(ctx sessionctx.Context, stmt *ast.AlterTableGroupStmt) (err error) {
+	return nil
+}
+
 // CreateView implements the DDL interface.
 func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error {
 	err := d.realExecutor.CreateView(ctx, stmt)
@@ -460,6 +470,11 @@ func (*Checker) AddResourceGroup(_ sessionctx.Context, _ *ast.CreateResourceGrou
 
 // DropResourceGroup implements the DDL interface.
 func (*Checker) DropResourceGroup(_ sessionctx.Context, _ *ast.DropResourceGroupStmt) error {
+	return nil
+}
+
+// DropTableGroup implements the DDL interface.
+func (*Checker) DropTableGroup(_ sessionctx.Context, _ *ast.DropTableGroupStmt) error {
 	return nil
 }
 

@@ -229,6 +229,16 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, nil, ddl.WithOnExist(onExist))
 }
 
+// CreateTableGroup implements the DDL interface.
+func (d *SchemaTracker) CreateTableGroup(ctx sessionctx.Context, s *ast.CreateTableGroupStmt) error {
+	return nil
+}
+
+// AlterTableGroup implements the DDL interface.
+func (d *SchemaTracker) AlterTableGroup(ctx sessionctx.Context, stmt *ast.AlterTableGroupStmt) (err error) {
+	return nil
+}
+
 // CreateTableWithInfo implements the DDL interface.
 func (d *SchemaTracker) CreateTableWithInfo(
 	_ sessionctx.Context,
@@ -1163,6 +1173,11 @@ func (*SchemaTracker) AddResourceGroup(_ sessionctx.Context, _ *ast.CreateResour
 
 // DropResourceGroup implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) DropResourceGroup(_ sessionctx.Context, _ *ast.DropResourceGroupStmt) error {
+	return nil
+}
+
+// DropTableGroup implements the DDL interface.
+func (*SchemaTracker) DropTableGroup(_ sessionctx.Context, _ *ast.DropTableGroupStmt) error {
 	return nil
 }
 

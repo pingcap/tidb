@@ -125,6 +125,7 @@ type InfoSyncer struct {
 	modifyTime            time.Time
 	labelRuleManager      LabelRuleManager
 	placementManager      PlacementManager
+	tableGroupManager     TableGroupManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
@@ -275,6 +276,7 @@ func GlobalInfoSyncerInit(
 	}
 	is.initLabelRuleManager()
 	is.initPlacementManager()
+	is.initTableGroupManager()
 	is.initScheduleManager()
 	is.initTiFlashReplicaManager(codec)
 	is.initResourceManagerClient(pdCli)
@@ -322,6 +324,14 @@ func (is *InfoSyncer) initPlacementManager() {
 		return
 	}
 	is.placementManager = &PDPlacementManager{is.pdHTTPCli}
+}
+
+func (is *InfoSyncer) initTableGroupManager() {
+	if is.pdHTTPCli == nil {
+		is.tableGroupManager = &mockTableGroupManager{}
+		return
+	}
+	is.tableGroupManager = &PDTableGroupManager{is.pdHTTPCli}
 }
 
 func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
@@ -688,6 +698,51 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 // PutRuleBundlesWithDefaultRetry will retry for default times
 func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bundle) (err error) {
 	return PutRuleBundlesWithRetry(ctx, bundles, SyncBundlesMaxRetry, RequestRetryInterval)
+}
+
+// CreateAffinityGroup creates affinity groups globally.
+func CreateAffinityGroup(ctx context.Context, affinityGroups map[string][]pdhttp.AffinityGroupKeyRange) (map[string]*pdhttp.AffinityGroupState, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.tableGroupManager.CreateAffinityGroup(ctx, affinityGroups)
+}
+
+// GetAllAffinityGroups retrieves all affinity groups globally.
+func GetAllAffinityGroups(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.tableGroupManager.GetAllAffinityGroups(ctx)
+}
+
+// AddAffinityGroupKeyRanges adds key ranges to affinity groups globally.
+func AddAffinityGroupKeyRanges(ctx context.Context, affinityGroups map[string][]pdhttp.AffinityGroupKeyRange) (map[string]*pdhttp.AffinityGroupState, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.tableGroupManager.AddAffinityGroupKeyRanges(ctx, affinityGroups)
+}
+
+// RemoveAffinityGroupKeyRanges removes key ranges from affinity groups globally.
+func RemoveAffinityGroupKeyRanges(ctx context.Context, affinityGroups map[string][]pdhttp.AffinityGroupKeyRange) (map[string]*pdhttp.AffinityGroupState, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.tableGroupManager.RemoveAffinityGroupKeyRanges(ctx, affinityGroups)
+}
+
+// BatchDeleteAffinityGroups deletes multiple affinity groups globally.
+func BatchDeleteAffinityGroups(ctx context.Context, groupIDs []string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.tableGroupManager.BatchDeleteAffinityGroups(ctx, groupIDs)
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {

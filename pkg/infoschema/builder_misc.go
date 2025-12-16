@@ -101,7 +101,7 @@ func (b *Builder) addTemporaryTable(tblID int64) {
 	b.infoSchema.temporaryTableIDs[tblID] = struct{}{}
 }
 
-func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo) {
+func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, tableGroups []*model.TableGroupInfo) {
 	info := b.infoSchema
 	// build the policies.
 	for _, policy := range policies {
@@ -111,5 +111,9 @@ func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model
 	// build the groups.
 	for _, group := range resourceGroups {
 		info.setResourceGroup(group)
+	}
+
+	for _, tg := range tableGroups {
+		info.setTableGroup(tg)
 	}
 }

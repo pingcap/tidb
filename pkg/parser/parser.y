@@ -668,6 +668,8 @@ import (
 	switchesSym           "SWITCHES"
 	system                "SYSTEM"
 	systemTime            "SYSTEM_TIME"
+	tableGroup            "TABLEGROUP"
+	tableGroups           "TABLEGROUPS"
 	tables                "TABLES"
 	tablespace            "TABLESPACE"
 	tableChecksum         "TABLE_CHECKSUM"
@@ -982,6 +984,7 @@ import (
 	AdminStmt                  "Check table statement or show ddl statement"
 	AlterDatabaseStmt          "Alter database statement"
 	AlterTableStmt             "Alter table statement"
+	AlterTableGroupStmt		   "Alter tablegroup statement"
 	AlterUserStmt              "Alter user statement"
 	AlterInstanceStmt          "Alter instance statement"
 	AlterRangeStmt             "Alter data range configuration statement"
@@ -996,6 +999,7 @@ import (
 	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
+	CreateTableGroupStmt       "CREATE TABLEGROUP statement"
 	CreateViewStmt             "CREATE VIEW  statement"
 	CreateUserStmt             "CREATE User statement"
 	CreateRoleStmt             "CREATE Role statement"
@@ -1017,6 +1021,7 @@ import (
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
 	DropTableStmt              "DROP TABLE statement"
+	DropTableGroupStmt         "DROP TABLEGROUP statement"
 	DropSequenceStmt           "DROP SEQUENCE statement"
 	DropUserStmt               "DROP USER"
 	DropRoleStmt               "DROP ROLE"
@@ -1071,7 +1076,7 @@ import (
 	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
-	ShowStmt                   "Show engines/databases/tables/user/columns/warnings/status statement"
+	ShowStmt                   "Show engines/databases/tables/user/columns/warnings/status/tablegroup statement"
 	Statement                  "statement"
 	TraceStmt                  "TRACE statement"
 	TraceableStmt              "traceable statement"
@@ -1639,6 +1644,7 @@ import (
 	DBName                          "Database Name"
 	PolicyName                      "Placement Policy Name"
 	ResourceGroupName               "Resource Group Name"
+	TableGroupName                  "TableGroup name"
 	ExplainFormatType               "explain format type"
 	FieldAsName                     "Field alias name"
 	FieldAsNameOpt                  "Field alias name opt"
@@ -4515,6 +4521,61 @@ DatabaseOptionList:
 
 /*******************************************************************
  *
+ *  Create TABLEGROUP Statement
+ *
+ *******************************************************************/
+CreateTableGroupStmt:
+	"CREATE" "TABLEGROUP" IfNotExists TableGroupName "TABLES" TableNameList
+	{
+		$$ = &ast.CreateTableGroupStmt{
+			IfNotExists: $3.(bool),
+			Name:        model.NewCIStr($4),
+			Tables:      $6.([]*ast.TableName),
+		}
+	}
+
+/*******************************************************************
+ *
+ *  Drop TABLEGROUP Statement
+ *
+ *******************************************************************/
+DropTableGroupStmt:
+	"DROP" "TABLEGROUP" IfExists TableGroupName
+	{
+		$$ = &ast.DropTableGroupStmt{
+			IfExists: $3.(bool),
+			Name:     model.NewCIStr($4),
+		}
+	}
+
+/*******************************************************************
+ *
+ *  Alter TABLEGROUP Statement
+ *
+ *******************************************************************/
+AlterTableGroupStmt:
+	"ALTER" "TABLEGROUP" TableGroupName "ADD" "TABLES" TableNameList
+	{
+		$$ = &ast.AlterTableGroupStmt{
+			Name:     model.NewCIStr($3),
+			Option:   ast.AlterTableGroupOptionAddTables,
+			Tables:      $6.([]*ast.TableName),
+		}
+	}
+|   "ALTER" "TABLEGROUP" TableGroupName "DROP" "TABLES" TableNameList
+	{
+		$$ = &ast.AlterTableGroupStmt{
+			Name:     model.NewCIStr($3),
+			Option:   ast.AlterTableGroupOptionDropTables,
+			Tables:      $6.([]*ast.TableName),
+		}
+	}
+
+TableGroupName:
+	Identifier
+
+/*******************************************************************
+ *
  *  Create Table Statement
  *
  *  Example:
@@ -6894,6 +6955,8 @@ UnReservedKeyword:
 |	"SUBPARTITIONS"
 |	"SUBPARTITION"
 |	"TABLES"
+|	"TABLEGROUP"
+|	"TABLEGROUPS"
 |	"TABLESPACE"
 |	"TEXT"
 |	"THAN"
@@ -11686,6 +11749,13 @@ ShowStmt:
 			User: $4.(*auth.UserIdentity),
 		}
 	}
+|	"SHOW" "CREATE" "TABLEGROUP" TableGroupName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:             ast.ShowCreateTableGroup,
+			TableGroupName: $4,
+		}
+	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
@@ -12153,6 +12223,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
+|	"TABLEGROUPS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowTableGroups}
+	}
 
 ShowLikeOrWhereOpt:
 	{
@@ -12356,6 +12430,7 @@ Statement:
 |	AdminStmt
 |	AlterDatabaseStmt
 |	AlterTableStmt
+|	AlterTableGroupStmt
 |	AlterUserStmt
 |	AlterInstanceStmt
 |	AlterRangeStmt
@@ -12374,6 +12449,7 @@ Statement:
 |	ExplainStmt
 |	CalibrateResourceStmt
 |	CreateDatabaseStmt
+|	CreateTableGroupStmt
 |	CreateIndexStmt
 |	CreateTableStmt
 |	CreateViewStmt
@@ -12390,6 +12466,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	DropTableGroupStmt
 |	DropProcedureStmt
 |	DropPolicyStmt
 |	DropSequenceStmt

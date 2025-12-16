@@ -39,6 +39,7 @@ var (
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
 	_ DDLNode = &CreateResourceGroupStmt{}
+	_ DDLNode = &CreateTableGroupStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &FlashBackDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
@@ -46,6 +47,7 @@ var (
 	_ DDLNode = &DropSequenceStmt{}
 	_ DDLNode = &DropPlacementPolicyStmt{}
 	_ DDLNode = &DropResourceGroupStmt{}
+	_ DDLNode = &DropTableGroupStmt{}
 	_ DDLNode = &OptimizeTableStmt{}
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
@@ -168,6 +170,137 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateDatabaseStmt)
+	return v.Leave(n)
+}
+
+// CreateTableGroupStmt is a statement to create a tablegrroup.
+type CreateTableGroupStmt struct {
+	ddlNode
+
+	IfNotExists bool
+	Name        model.CIStr
+	Tables      []*TableName
+}
+
+// Restore implements Node interface.
+func (n *CreateTableGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE TABLEGROUP ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.Name.O)
+	ctx.WriteKeyWord(" TABLES ")
+	for index, table := range n.Tables {
+		if index != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := table.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore DropTableStmt.Tables[%d]", index)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateTableGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	for i := range n.Tables {
+		node, ok := n.Tables[i].Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
+	n = newNode.(*CreateTableGroupStmt)
+	return v.Leave(n)
+}
+
+type DropTableGroupStmt struct {
+	ddlNode
+
+	IfExists bool
+	Name     model.CIStr
+}
+
+// Restore implements Node interface.
+func (n *DropTableGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP TABLEGROUP ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteName(n.Name.O)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropTableGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropTableGroupStmt)
+	return v.Leave(n)
+}
+
+// AlterTableGroupStmt is a statement to alter a tablegrroup.
+type AlterTableGroupStmt struct {
+	ddlNode
+
+	Name   model.CIStr
+	Option AlterTableGroupOptionType
+	Tables []*TableName
+}
+
+// AlterTableGroupOptionType is the type for alter tablegroup options.
+type AlterTableGroupOptionType int
+
+// AlterTableGroup option types.
+const (
+	AlterTableGroupOptionNone AlterTableGroupOptionType = iota
+	AlterTableGroupOptionAddTables
+	AlterTableGroupOptionDropTables
+)
+
+// Restore implements Node interface.
+func (n *AlterTableGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER TABLEGROUP ")
+	ctx.WriteName(n.Name.O)
+	switch n.Option {
+	case AlterTableGroupOptionAddTables:
+		ctx.WriteKeyWord("ADD TABLES ")
+	case AlterTableGroupOptionDropTables:
+		ctx.WriteKeyWord("DROP TABLES ")
+	default:
+		return errors.Errorf("invalid AlterTableGroupOptionType: %d", n.Option)
+	}
+	for index, table := range n.Tables {
+		if index != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := table.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableGroupStmt.Tables[%d]", index)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterTableGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	for i := range n.Tables {
+		node, ok := n.Tables[i].Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
+	n = newNode.(*AlterTableGroupStmt)
 	return v.Leave(n)
 }
 

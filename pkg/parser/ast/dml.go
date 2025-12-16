@@ -3030,6 +3030,7 @@ const (
 	ShowCreateUser
 	ShowCreateSequence
 	ShowCreatePlacementPolicy
+	ShowCreateTableGroup
 	ShowGrants
 	ShowTriggers
 	ShowProcedureStatus
@@ -3076,6 +3077,7 @@ const (
 	ShowCreateProcedure
 	ShowBinlogStatus
 	ShowReplicaStatus
+	ShowTableGroups
 )
 
 const (
@@ -3105,7 +3107,8 @@ type ShowStmt struct {
 	Column            *ColumnName // Used for `desc table column`.
 	IndexName         model.CIStr
 	ResourceGroupName string // used for showing resource group
-	Flag              int    // Some flag parsed from sql, such as FULL.
+	TableGroupName    string
+	Flag              int // Some flag parsed from sql, such as FULL.
 	Full              bool
 	User              *auth.UserIdentity   // Used for show grants/create user.
 	Roles             []*auth.RoleIdentity // Used for show grants .. using
@@ -3204,6 +3207,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := n.User.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.User")
 		}
+	case ShowCreateTableGroup:
+		ctx.WriteKeyWord("CREATE TABLEGROUP ")
+		ctx.WriteName(n.TableGroupName)
 	case ShowGrants:
 		ctx.WriteKeyWord("GRANTS")
 		if n.User != nil {
@@ -3455,6 +3461,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SESSION_STATES")
 		case ShowReplicaStatus:
 			ctx.WriteKeyWord("REPLICA STATUS")
+		case ShowTableGroups:
+			ctx.WriteKeyWord("TABLEGROUPS")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}

@@ -53,6 +53,9 @@ type Reader interface {
 	GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 	ListResourceGroups() ([]*model.ResourceGroupInfo, error)
 
+	GetTableGroup(id int64) (*model.TableGroupInfo, error)
+	ListTableGroups() ([]*model.TableGroupInfo, error)
+
 	GetMetasByDBID(dbID int64) ([]structure.HashPair, error)
 	GetGlobalID() (int64, error)
 	GetBDRRole() (string, error)

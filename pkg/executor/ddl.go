@@ -163,6 +163,12 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeCreateDatabase(x)
 	case *ast.FlashBackDatabaseStmt:
 		err = e.executeFlashbackDatabase(x)
+	case *ast.CreateTableGroupStmt:
+		err = e.executeCreateTableGroup(x)
+	case *ast.DropTableGroupStmt:
+		err = e.executeDropTableGroup(x)
+	case *ast.AlterTableGroupStmt:
+		err = e.executeAlterTableGroup(x)
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
@@ -271,6 +277,10 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 	return err
 }
 
+func (e *DDLExec) executeCreateTableGroup(s *ast.CreateTableGroupStmt) error {
+	return e.ddlExecutor.CreateTableGroup(e.Ctx(), s)
+}
+
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := e.ddlExecutor.CreateTable(e.Ctx(), s)
 	return err
@@ -358,8 +368,16 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	return err
 }
 
+func (e *DDLExec) executeDropTableGroup(s *ast.DropTableGroupStmt) error {
+	return e.ddlExecutor.DropTableGroup(e.Ctx(), s)
+}
+
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 	return e.ddlExecutor.DropTable(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeAlterTableGroup(s *ast.AlterTableGroupStmt) error {
+	return e.ddlExecutor.AlterTableGroup(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropView(s *ast.DropTableStmt) error {

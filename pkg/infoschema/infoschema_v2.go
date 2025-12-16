@@ -1534,11 +1534,11 @@ func applyCreateSchema(b *Builder, m meta.Reader, diff *model.SchemaDiff) error 
 	return b.applyCreateSchema(m, diff)
 }
 
-func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
+func applyDropSchema(b *Builder, m meta.Reader, diff *model.SchemaDiff) []int64 {
 	if b.enableV2 {
-		return b.applyDropSchemaV2(diff)
+		return b.applyDropSchemaV2(m, diff)
 	}
-	return b.applyDropSchema(diff)
+	return b.applyDropSchema(m, diff)
 }
 
 func applyRecoverSchema(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
@@ -1654,7 +1654,7 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 	if err != nil {
 		return nil, err
 	}
-	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+	b.updateBundleForTableUpdate(m, diff, oldDBInfo.Name, newTableID, oldTableID)
 
 	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, oldDBInfo, diff)
 	if err != nil {
@@ -1672,7 +1672,7 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
+func (b *Builder) applyDropSchemaV2(m meta.Reader, diff *model.SchemaDiff) []int64 {
 	di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil
@@ -1683,6 +1683,7 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 	terror.Log(err)
 	for _, tbl := range tables {
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
+		b.reloadTableGroupIfNeeded(m, di.Name, tbl.Name)
 	}
 
 	for _, id := range tableIDs {

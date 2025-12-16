@@ -39,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Builder builds a new InfoSchema.
@@ -68,7 +70,7 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 	case model.ActionCreateSchema:
 		return nil, applyCreateSchema(b, m, diff)
 	case model.ActionDropSchema:
-		return applyDropSchema(b, diff), nil
+		return applyDropSchema(b, m, diff), nil
 	case model.ActionRecoverSchema:
 		return applyRecoverSchema(b, m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
@@ -87,6 +89,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return nil, applyCreateOrAlterResourceGroup(b, m, diff)
 	case model.ActionDropResourceGroup:
 		return applyDropResourceGroup(b, m, diff), nil
+	case model.ActionCreateTableGroup:
+		return nil, applyCreateTableGroup(b, m, diff.SchemaID)
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
@@ -102,6 +106,11 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return applyExchangeTablePartition(b, m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
+	case model.ActionDropTableGroup:
+		applyDropTableGroup(b, diff.SchemaID)
+		return nil, nil
+	case model.ActionAlterTableGroup:
+		return nil, applyReloadTableGroup(b, m, diff.SchemaID)
 	default:
 		return applyDefaultAction(b, m, diff)
 	}
@@ -328,7 +337,7 @@ func applyDefaultAction(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]in
 
 func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID, newTableID int64, err error) {
 	switch diff.Type {
-	case model.ActionCreateSequence, model.ActionRecoverTable:
+	case model.ActionCreateSequence, model.ActionRecoverTable, model.ActionCreateTableGroup:
 		newTableID = diff.TableID
 	case model.ActionCreateTable:
 		// WARN: when support create table with foreign key in https://github.com/pingcap/tidb/pull/37148,
@@ -368,7 +377,7 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 	return
 }
 
-func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID, oldTableID int64) {
+func (b *Builder) updateBundleForTableUpdate(m meta.Reader, diff *model.SchemaDiff, dbName pmodel.CIStr, newTableID, oldTableID int64) {
 	// handle placement rule cache
 	switch diff.Type {
 	case model.ActionCreateTable, model.ActionAddTablePartition:
@@ -382,6 +391,33 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionAlterTablePlacement, model.ActionAlterTablePartitionPlacement:
 		b.markTableBundleShouldUpdate(newTableID)
+	}
+
+	// handle tablegroup cache
+	switch diff.Type {
+	case model.ActionDropTable, model.ActionTruncateTable, model.ActionTruncateTablePartition:
+		// todo: consider refine following logic.
+		var tbInfo *model.TableInfo
+		if b.enableV2 {
+			tbInfo, _ = b.TableInfoByID(oldTableID)
+		} else {
+			tbInfo, _ = b.infoSchema.TableInfoByID(oldTableID)
+		}
+		if tbInfo != nil {
+			b.reloadTableGroupIfNeeded(m, dbName, tbInfo.Name)
+		}
+	}
+}
+
+func (b *Builder) reloadTableGroupIfNeeded(m meta.Reader, dbName, tblName pmodel.CIStr) {
+	if tgInfo, ok := b.TableGroupByTableName(model.TableName{DB: dbName.L, Table: tblName.L}); ok {
+		if e := applyReloadTableGroup(b, m, tgInfo.ID); e != nil {
+			logutil.BgLogger().Warn("failed to reload tablegroup",
+				zap.String("tablegroup", tgInfo.Name.L),
+				zap.String("db", dbName.L),
+				zap.String("table", tblName.L),
+				zap.Error(e))
+		}
 	}
 }
 
@@ -440,7 +476,7 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 	if err != nil {
 		return nil, err
 	}
-	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+	b.updateBundleForTableUpdate(m, diff, roDBInfo.Name, newTableID, oldTableID)
 	b.copySortedTables(oldTableID, newTableID)
 
 	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, dbInfo, diff)
@@ -557,7 +593,7 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m meta.Reader, diff *model.S
 	return nil
 }
 
-func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
+func (b *Builder) applyDropSchema(m meta.Reader, diff *model.SchemaDiff) []int64 {
 	di, ok := b.infoSchema.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil
@@ -571,6 +607,7 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
 		// TODO: If the table ID doesn't exist.
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
+		b.reloadTableGroupIfNeeded(m, di.Name, tbl.Name)
 	}
 	for bucketIdx := range bucketIdxMap {
 		b.copySortedTablesBucket(bucketIdx)
@@ -829,6 +866,10 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.ruleBundleMap = maps.Clone(oldIS.ruleBundleMap)
 	b.infoSchema.policyMap = oldIS.ClonePlacementPolicies()
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
+	oldIS.tableGroupMutex.RLock()
+	b.infoSchema.tableGroupMap = maps.Clone(oldIS.tableGroupMap)
+	b.infoSchema.tableName2TableGroupMap = maps.Clone(oldIS.tableName2TableGroupMap)
+	oldIS.tableGroupMutex.RUnlock()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
 
@@ -875,7 +916,7 @@ func (b *Builder) sortAllTablesByID() {
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) error {
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, tableGroups []*model.TableGroupInfo, schemaVersion int64) error {
 	info := b.infoSchema
 	info.schemaMetaVersion = schemaVersion
 
@@ -908,7 +949,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	}
 
 	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
-	b.initMisc(policies, resourceGroups)
+	b.initMisc(policies, resourceGroups, tableGroups)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {

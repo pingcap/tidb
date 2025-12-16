@@ -1,0 +1,270 @@
+drop database if exists tg_test1;
+drop database if exists tg_test2;
+drop database if exists tg_test3;
+create database tg_test1;
+create database tg_test2;
+create database tg_test3;
+use tg_test1;
+create table t1 (a int);
+create table t2 (a int);
+create tablegroup tg1 tables t1, t2;
+show create tablegroup tg1;
+TableGroup	Create TableGroup
+tg1	CREATE TABLEGROUP `tg1` TABLES `tg_test1`.`t1`, `tg_test1`.`t2`
+select * from information_schema.tablegroups where tablegroup='tg1';
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test1	t1	NULL	tg1	_tidb_tg_tg1
+tg_test1	t2	NULL	tg1	_tidb_tg_tg1
+select * from information_schema.tablegroup_status where tablegroup='tg1';
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_tg_tg1	tg1	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+use tg_test2;
+create table t3 (a int);
+create table t4 (a int);
+create tablegroup tg2 tables t3, t4;
+show create tablegroup tg2;
+TableGroup	Create TableGroup
+tg2	CREATE TABLEGROUP `tg2` TABLES `tg_test2`.`t3`, `tg_test2`.`t4`
+select * from information_schema.tablegroups where tablegroup='tg2';
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test2	t3	NULL	tg2	_tidb_tg_tg2
+tg_test2	t4	NULL	tg2	_tidb_tg_tg2
+select * from information_schema.tablegroup_status where tablegroup='tg2';
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_tg_tg2	tg2	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+create tablegroup tg3 tables t3, t3;
+Error 8284 (HY000): Duplicate table name 'tg_test2.t3'
+create tablegroup tg4 tables nonexistent_table;
+Error 1146 (42S02): Table 'tg_test2.nonexistent_table' doesn't exist
+create tablegroup tg2 tables t3;
+Error 8280 (HY000): Tablegroup 'tg2' already exists
+create tablegroup tg5 tables t3;
+Error 8282 (HY000): Tablegroup not supported, reason: table t3 aleady in tablegroup tg2
+create table t5 (a int);
+create table t6 (a int);
+alter tablegroup tg2 add tables t5, t6;
+show create tablegroup tg2;
+TableGroup	Create TableGroup
+tg2	CREATE TABLEGROUP `tg2` TABLES `tg_test2`.`t3`, `tg_test2`.`t4`, `tg_test2`.`t5`, `tg_test2`.`t6`
+select * from information_schema.tablegroups where tablegroup='tg2' order by table_name;
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test2	t3	NULL	tg2	_tidb_tg_tg2
+tg_test2	t4	NULL	tg2	_tidb_tg_tg2
+tg_test2	t5	NULL	tg2	_tidb_tg_tg2
+tg_test2	t6	NULL	tg2	_tidb_tg_tg2
+alter tablegroup tg2 add tables nonexistent_table;
+Error 1146 (42S02): Table 'tg_test2.nonexistent_table' doesn't exist
+alter tablegroup tg2 add tables t3;
+Error 1050 (42S01): Table 'tg_test2.t3' already exists
+alter tablegroup tg2 add tables t5, t5;
+Error 8284 (HY000): Duplicate table name 'tg_test2.t5'
+alter tablegroup tg2 drop tables t3;
+show create tablegroup tg2;
+TableGroup	Create TableGroup
+tg2	CREATE TABLEGROUP `tg2` TABLES `tg_test2`.`t4`, `tg_test2`.`t5`, `tg_test2`.`t6`
+select * from information_schema.tablegroups where tablegroup='tg2';
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test2	t4	NULL	tg2	_tidb_tg_tg2
+tg_test2	t5	NULL	tg2	_tidb_tg_tg2
+tg_test2	t6	NULL	tg2	_tidb_tg_tg2
+select * from information_schema.tablegroup_status where tablegroup='tg2';
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_tg_tg2	tg2	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+alter tablegroup tg2 drop tables nonexistent_table;
+Error 1146 (42S02): Table 'tg_test2.nonexistent_table' doesn't exist
+alter tablegroup tg2 drop tables t4, t5, t6;
+Error 1105 (HY000): drop all tables from tablegroup is not allowed, try drop tablegroup instead
+create table t7 (a int primary key);
+insert into t7 values (1), (2), (3);
+create tablegroup tg6 tables t7;
+select * from information_schema.tablegroup_status where tablegroup='tg6';
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_tg_tg6	tg6	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+truncate table t7;
+show create tablegroup tg6;
+TableGroup	Create TableGroup
+tg6	CREATE TABLEGROUP `tg6` TABLES `tg_test2`.`t7`
+select * from information_schema.tablegroup_status where tablegroup='tg6';
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_tg_tg6	tg6	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+create table t8 (a int);
+create tablegroup tg7 tables t8;
+show create tablegroup tg7;
+TableGroup	Create TableGroup
+tg7	CREATE TABLEGROUP `tg7` TABLES `tg_test2`.`t8`
+select * from information_schema.tablegroup_status where tablegroup='tg7';
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_tg_tg7	tg7	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+drop table t8;
+show create tablegroup tg7;
+TableGroup	Create TableGroup
+tg7	CREATE TABLEGROUP `tg7`
+select * from information_schema.tablegroups where tablegroup='tg7';
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+NULL	NULL	NULL	tg7	_tidb_tg_tg7
+select * from information_schema.tablegroup_status where tablegroup='tg7';
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_tg_tg7	tg7	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+use tg_test3;
+create table t9 (a int);
+create table t10 (a int);
+create tablegroup tg8 tables t9, t10;
+select * from information_schema.tablegroups where tablegroup='tg8';
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test3	t9	NULL	tg8	_tidb_tg_tg8
+tg_test3	t10	NULL	tg8	_tidb_tg_tg8
+select * from information_schema.tablegroup_status where tablegroup='tg8';
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_tg_tg8	tg8	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+drop database tg_test3;
+show create tablegroup tg8;
+TableGroup	Create TableGroup
+tg8	CREATE TABLEGROUP `tg8`
+select * from information_schema.tablegroups where tablegroup='tg8';
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+NULL	NULL	NULL	tg8	_tidb_tg_tg8
+select * from information_schema.tablegroup_status where tablegroup='tg8';
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_tg_tg8	tg8	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+use tg_test1;
+create table pt1 (a int primary key) partition by hash(a) partitions 3;
+create table pt2 (a int primary key) partition by hash(a) partitions 3;
+create table pt3 (a int primary key) partition by hash(a) partitions 3;
+create tablegroup tg9 tables pt1, pt2, pt3;
+show create tablegroup tg9;
+TableGroup	Create TableGroup
+tg9	CREATE TABLEGROUP `tg9` TABLES `tg_test1`.`pt1`, `tg_test1`.`pt2`, `tg_test1`.`pt3`
+select * from information_schema.tablegroups where tablegroup='tg9' order by table_name, partition_name;
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test1	pt1	p0	tg9	_tidb_ptg_tg9_p0
+tg_test1	pt1	p1	tg9	_tidb_ptg_tg9_p1
+tg_test1	pt1	p2	tg9	_tidb_ptg_tg9_p2
+tg_test1	pt2	p0	tg9	_tidb_ptg_tg9_p0
+tg_test1	pt2	p1	tg9	_tidb_ptg_tg9_p1
+tg_test1	pt2	p2	tg9	_tidb_ptg_tg9_p2
+tg_test1	pt3	p0	tg9	_tidb_ptg_tg9_p0
+tg_test1	pt3	p1	tg9	_tidb_ptg_tg9_p1
+tg_test1	pt3	p2	tg9	_tidb_ptg_tg9_p2
+select * from information_schema.tablegroup_status where tablegroup='tg9' order by affinity_group_id;
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_ptg_tg9_p0	tg9	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+_tidb_ptg_tg9_p1	tg9	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+_tidb_ptg_tg9_p2	tg9	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+create table pt4 (a int primary key) partition by hash(a) partitions 2;
+create table pt5_new (a int primary key) partition by hash(a) partitions 3;
+create tablegroup tg10 tables pt4, pt5_new;
+Error 8283 (HY000): Tablegroup partitions count not match
+alter tablegroup tg9 drop tables pt2;
+show create tablegroup tg9;
+TableGroup	Create TableGroup
+tg9	CREATE TABLEGROUP `tg9` TABLES `tg_test1`.`pt1`, `tg_test1`.`pt3`
+select * from information_schema.tablegroups where tablegroup='tg9' order by table_name, partition_name;
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test1	pt1	p0	tg9	_tidb_ptg_tg9_p0
+tg_test1	pt1	p1	tg9	_tidb_ptg_tg9_p1
+tg_test1	pt1	p2	tg9	_tidb_ptg_tg9_p2
+tg_test1	pt3	p0	tg9	_tidb_ptg_tg9_p0
+tg_test1	pt3	p1	tg9	_tidb_ptg_tg9_p1
+tg_test1	pt3	p2	tg9	_tidb_ptg_tg9_p2
+select * from information_schema.tablegroup_status where tablegroup='tg9' order by affinity_group_id;
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_ptg_tg9_p0	tg9	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+_tidb_ptg_tg9_p1	tg9	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+_tidb_ptg_tg9_p2	tg9	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+create table pt6_new (a int primary key) partition by hash(a) partitions 5;
+alter tablegroup tg9 add tables pt6_new;
+Error 8283 (HY000): Tablegroup partitions count not match
+create table pt6 (a int, b int, primary key (a, b)) partition by range(b) (
+partition p0 values less than (10),
+partition p1 values less than (20),
+partition p2 values less than (30)
+);
+create table pt7 (a int, b int, primary key (a, b)) partition by range(b) (
+partition p0 values less than (10),
+partition p1 values less than (20),
+partition p2 values less than (30)
+);
+create tablegroup tg11 tables pt6, pt7;
+insert into pt6 values (1, 5), (2, 15), (3, 25);
+insert into pt7 values (4, 8), (5, 18), (6, 28);
+select * from information_schema.tablegroups where tablegroup='tg11' order by table_name, partition_name;
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test1	pt6	p0	tg11	_tidb_ptg_tg11_p0
+tg_test1	pt6	p1	tg11	_tidb_ptg_tg11_p1
+tg_test1	pt6	p2	tg11	_tidb_ptg_tg11_p2
+tg_test1	pt7	p0	tg11	_tidb_ptg_tg11_p0
+tg_test1	pt7	p1	tg11	_tidb_ptg_tg11_p1
+tg_test1	pt7	p2	tg11	_tidb_ptg_tg11_p2
+select * from information_schema.tablegroup_status where tablegroup='tg11' order by affinity_group_id;
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_ptg_tg11_p0	tg11	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+_tidb_ptg_tg11_p1	tg11	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+_tidb_ptg_tg11_p2	tg11	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+alter table pt6 truncate partition p1;
+select * from information_schema.tablegroups where tablegroup='tg11' order by table_name, partition_name;
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test1	pt6	p0	tg11	_tidb_ptg_tg11_p0
+tg_test1	pt6	p1	tg11	_tidb_ptg_tg11_p1
+tg_test1	pt6	p2	tg11	_tidb_ptg_tg11_p2
+tg_test1	pt7	p0	tg11	_tidb_ptg_tg11_p0
+tg_test1	pt7	p1	tg11	_tidb_ptg_tg11_p1
+tg_test1	pt7	p2	tg11	_tidb_ptg_tg11_p2
+select * from information_schema.tablegroup_status where tablegroup='tg11' order by affinity_group_id;
+AFFINITY_GROUP_ID	TABLEGROUP	CREATE_TIME	LEADER_STORE_ID	VOTER_STORE_IDS	RANGE_COUNT	REGION_COUNT	AFFINITY_REGION_COUNT	PHASE
+_tidb_ptg_tg11_p0	tg11	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+_tidb_ptg_tg11_p1	tg11	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+_tidb_ptg_tg11_p2	tg11	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+alter table pt7 truncate partition p0, p2;
+select * from information_schema.tablegroups where tablegroup='tg11' order by table_name, partition_name;
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test1	pt6	p0	tg11	_tidb_ptg_tg11_p0
+tg_test1	pt6	p1	tg11	_tidb_ptg_tg11_p1
+tg_test1	pt6	p2	tg11	_tidb_ptg_tg11_p2
+tg_test1	pt7	p0	tg11	_tidb_ptg_tg11_p0
+tg_test1	pt7	p1	tg11	_tidb_ptg_tg11_p1
+tg_test1	pt7	p2	tg11	_tidb_ptg_tg11_p2
+show tablegroups;
+TableGroups
+tg1
+tg11
+tg2
+tg6
+tg7
+tg8
+tg9
+drop tablegroup tg1;
+drop tablegroup tg2;
+drop tablegroup tg6;
+drop tablegroup tg7;
+drop tablegroup tg9;
+drop tablegroup tg11;
+show tablegroups;
+TableGroups
+tg8
+drop tablegroup nonexistent_tg;
+Error 8281 (HY000): Unknown tablegroup 'nonexistent_tg'
+use tg_test1;
+create table t11 (a int);
+create table t12 (a int);
+create tablegroup tg_final tables t11, t12;
+show tablegroups;
+TableGroups
+tg8
+tg_final
+show tablegroups like '%final%';
+TableGroups
+tg_final
+use tg_test1;
+create table tg_cross1 (a int);
+use tg_test2;
+create table tg_cross2 (a int);
+create tablegroup tg_cross tables tg_test1.tg_cross1, tg_cross2;
+show create tablegroup tg_cross;
+TableGroup	Create TableGroup
+tg_cross	CREATE TABLEGROUP `tg_cross` TABLES `tg_test1`.`tg_cross1`, `tg_test2`.`tg_cross2`
+select * from information_schema.tablegroups where tablegroup='tg_cross' order by table_schema, table_name;
+TABLE_SCHEMA	TABLE_NAME	PARTITION_NAME	TABLEGROUP	AFFINITY_GROUP_ID
+tg_test1	tg_cross1	NULL	tg_cross	_tidb_tg_tg_cross
+tg_test2	tg_cross2	NULL	tg_cross	_tidb_tg_tg_cross
+drop database if exists tg_test1;
+drop database if exists tg_test2;

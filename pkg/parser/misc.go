@@ -831,6 +831,8 @@ var tokenMap = map[string]int{
 	"TABLE":                    tableKwd,
 	"TABLE_NAME":               tableName,
 	"TABLES":                   tables,
+	"TABLEGROUP":               tableGroup,
+	"TABLEGROUPS":              tableGroups,
 	"TABLESAMPLE":              tableSample,
 	"TABLESPACE":               tablespace,
 	"TEMPORARY":                temporary,

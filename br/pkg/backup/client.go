@@ -963,7 +963,10 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 		model.ActionModifySchemaDefaultPlacement,
 		model.ActionAlterTablePlacement,
 		model.ActionAlterTableAttributes,
-		model.ActionAlterTablePartitionAttributes:
+		model.ActionAlterTablePartitionAttributes,
+		model.ActionCreateTableGroup,
+		model.ActionDropTableGroup,
+		model.ActionAlterTableGroup:
 		return true
 	default:
 		return false

@@ -510,6 +510,8 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 			count += len(args.PartInfo.Definitions)
 		case model.ActionTruncateTable:
 			count += 1 + len(jobW.JobArgs.(*model.TruncateTableArgs).OldPartitionIDs)
+		case model.ActionCreateTableGroup:
+			count += 1
 		}
 	}
 	return count
@@ -575,6 +577,11 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 					partIDs[i] = alloc.next()
 				}
 				args.NewPartitionIDs = partIDs
+			}
+		case model.ActionCreateTableGroup:
+			if !jobW.IDAllocated {
+				args := jobW.JobArgs.(*model.TableGroupArgs)
+				args.TableGroup.ID = alloc.next()
 			}
 		}
 		jobW.ID = alloc.next()

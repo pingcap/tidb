@@ -905,6 +905,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Column:                v.Column,
 		IndexName:             v.IndexName,
 		ResourceGroupName:     pmodel.NewCIStr(v.ResourceGroupName),
+		TableGroupName:        pmodel.NewCIStr(v.TableGroupName),
 		Flag:                  v.Flag,
 		Roles:                 v.Roles,
 		User:                  v.User,
@@ -2316,7 +2317,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableRoutines),
 			strings.ToLower(infoschema.TableColumnPrivileges),
 			strings.ToLower(infoschema.TableTablePrivileges),
-			strings.ToLower(infoschema.TableSchemaPrivileges):
+			strings.ToLower(infoschema.TableSchemaPrivileges),
+			strings.ToLower(infoschema.TableTableGroups),
+			strings.ToLower(infoschema.TableTableGroupStatus):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{

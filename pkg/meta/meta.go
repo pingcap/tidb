@@ -90,6 +90,8 @@ var (
 	mPolicies            = []byte("Policies")
 	mPolicyPrefix        = "Policy"
 	mResourceGroups      = []byte("ResourceGroups")
+	mTableGroups         = []byte("TableGroups")
+	mTableGroupPrefix    = "TableGroup"
 	mResourceGroupPrefix = "RG"
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
@@ -153,6 +155,12 @@ var (
 	ErrResourceGroupExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists is the error for resource group not exists.
 	ErrResourceGroupNotExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupNotExists)
+
+	// ErrTableGroupExists is the error for table group exists.
+	ErrTableGroupExists = dbterror.ClassMeta.NewStd(errno.ErrTableGroupExists)
+	// ErrTableGroupNotExists is the error for table group not exists.
+	ErrTableGroupNotExists = dbterror.ClassMeta.NewStd(errno.ErrTableGroupNotExists)
+
 	// ErrTableExists is the error for table exists.
 	ErrTableExists = dbterror.ClassMeta.NewStd(mysql.ErrTableExists)
 	// ErrTableNotExists is the error for table not exists.
@@ -293,6 +301,10 @@ func (*Mutator) policyKey(policyID int64) []byte {
 
 func (*Mutator) resourceGroupKey(groupID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mResourceGroupPrefix, groupID))
+}
+
+func (*Mutator) tableGroupKey(id int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mTableGroupPrefix, id))
 }
 
 func (*Mutator) dbKey(dbID int64) []byte {
@@ -552,6 +564,22 @@ func (m *Mutator) checkResourceGroupExists(groupKey []byte) error {
 	return errors.Trace(err)
 }
 
+func (m *Mutator) checkTableGroupExists(tableGroupKey []byte) error {
+	v, err := m.txn.HGet(mTableGroups, tableGroupKey)
+	if err == nil && v == nil {
+		err = ErrTableGroupNotExists.GenWithStack("tablegroup doesn't exist")
+	}
+	return errors.Trace(err)
+}
+
+func (m *Mutator) checkTableGroupNotExists(tableGroupKey []byte) error {
+	v, err := m.txn.HGet(mTableGroups, tableGroupKey)
+	if err == nil && v != nil {
+		err = ErrTableGroupExists.GenWithStack("tablegroup already exists")
+	}
+	return errors.Trace(err)
+}
+
 func (m *Mutator) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err == nil && v == nil {
@@ -656,6 +684,50 @@ func (m *Mutator) DropResourceGroup(groupID int64) error {
 	// Check if group exists.
 	groupKey := m.resourceGroupKey(groupID)
 	if err := m.txn.HDel(mResourceGroups, groupKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// CreateTableGroup creates a tablegroup.
+func (m *Mutator) CreateTableGroup(tg *model.TableGroupInfo) error {
+	if tg.ID == 0 {
+		return errors.New("tablegroup.ID is invalid")
+	}
+
+	key := m.tableGroupKey(tg.ID)
+	if err := m.checkTableGroupNotExists(key); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(tg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mTableGroups, key, data)
+}
+
+// UpdateTableGroup updates a tablegroup with db info.
+func (m *Mutator) UpdateTableGroup(tg *model.TableGroupInfo) error {
+	key := m.tableGroupKey(tg.ID)
+	if err := m.checkTableGroupExists(key); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(tg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mTableGroups, key, data)
+}
+
+// DropTableGroup drops whole tablegroup.
+func (m *Mutator) DropTableGroup(tgID int64) error {
+	key := m.tableGroupKey(tgID)
+	if err := m.checkTableGroupExists(key); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.HDel(mTableGroups, key); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1427,6 +1499,38 @@ func (m *Mutator) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 		groups = append(groups, defaultRGroupMeta)
 	}
 	return groups, nil
+}
+
+// GetTableGroup gets the tablegroup value with ID.
+func (m *Mutator) GetTableGroup(tableGroupID int64) (*model.TableGroupInfo, error) {
+	tableGroupKey := m.tableGroupKey(tableGroupID)
+	value, err := m.txn.HGet(mTableGroups, tableGroupKey)
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	tgInfo := &model.TableGroupInfo{}
+	err = json.Unmarshal(value, tgInfo)
+	return tgInfo, errors.Trace(err)
+}
+
+// ListTableGroups shows all policies.
+func (m *Mutator) ListTableGroups() ([]*model.TableGroupInfo, error) {
+	res, err := m.txn.HGetAll(mTableGroups)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tableGroups := make([]*model.TableGroupInfo, 0, len(res))
+	for _, r := range res {
+		tg := &model.TableGroupInfo{}
+		err = json.Unmarshal(r.Value, tg)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tableGroups = append(tableGroups, tg)
+	}
+	return tableGroups, nil
 }
 
 // DefaultGroupMeta4Test return the default group info for test usage.

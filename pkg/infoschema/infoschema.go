@@ -88,6 +88,11 @@ type infoSchemaMisc struct {
 	resourceGroupMutex sync.RWMutex
 	resourceGroupMap   map[string]*model.ResourceGroupInfo
 
+	// tableGroupMap stores all tablegroup.
+	tableGroupMutex         sync.RWMutex
+	tableGroupMap           map[string]*model.TableGroupInfo
+	tableName2TableGroupMap map[model.TableName]*model.TableGroupInfo
+
 	// temporaryTables stores the temporary table ids
 	temporaryTableIDs map[int64]struct{}
 }
@@ -199,9 +204,11 @@ func (is *infoSchema) base() *infoSchema {
 func newInfoSchema() *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
-			policyMap:        map[string]*model.PolicyInfo{},
-			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
-			ruleBundleMap:    map[int64]*placement.Bundle{},
+			policyMap:               map[string]*model.PolicyInfo{},
+			resourceGroupMap:        map[string]*model.ResourceGroupInfo{},
+			tableGroupMap:           map[string]*model.TableGroupInfo{},
+			tableName2TableGroupMap: map[model.TableName]*model.TableGroupInfo{},
+			ruleBundleMap:           map[int64]*placement.Bundle{},
 		},
 		schemaMap:             map[string]*schemaTables{},
 		schemaID2Name:         map[int64]string{},
@@ -542,6 +549,44 @@ func (is *infoSchemaMisc) ResourceGroupByName(name pmodel.CIStr) (*model.Resourc
 	return t, r
 }
 
+// TableGroupByName is used to find the tablegroup
+func (is *infoSchemaMisc) TableGroupByName(name pmodel.CIStr) (*model.TableGroupInfo, bool) {
+	is.tableGroupMutex.RLock()
+	defer is.tableGroupMutex.RUnlock()
+	tg, ok := is.tableGroupMap[name.L]
+	return tg, ok
+}
+
+// TableGroupByTableName is used to find the tablegroup
+func (is *infoSchemaMisc) TableGroupByTableName(tn model.TableName) (*model.TableGroupInfo, bool) {
+	is.tableGroupMutex.RLock()
+	defer is.tableGroupMutex.RUnlock()
+	tg, ok := is.tableName2TableGroupMap[tn]
+	return tg, ok
+}
+
+// AllTableGroups returns all tablegroups.
+func (is *infoSchemaMisc) AllTableGroups() []*model.TableGroupInfo {
+	is.tableGroupMutex.RLock()
+	defer is.tableGroupMutex.RUnlock()
+	tgs := make([]*model.TableGroupInfo, 0, len(is.tableGroupMap))
+	for _, tg := range is.tableGroupMap {
+		tgs = append(tgs, tg)
+	}
+	return tgs
+}
+
+func (is *infoSchema) TableGroupByID(id int64) (val *model.TableGroupInfo, ok bool) {
+	is.tableGroupMutex.RLock()
+	defer is.tableGroupMutex.RUnlock()
+	for _, v := range is.tableGroupMap {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
 // ResourceGroupByID is used to find the resource group.
 func (is *infoSchemaMisc) ResourceGroupByID(id int64) (*model.ResourceGroupInfo, bool) {
 	is.resourceGroupMutex.RLock()
@@ -623,6 +668,31 @@ func (is *infoSchemaMisc) deletePolicy(name string) {
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
 	delete(is.policyMap, name)
+}
+
+func (is *infoSchemaMisc) setTableGroup(tg *model.TableGroupInfo) {
+	if tg == nil {
+		return
+	}
+	is.tableGroupMutex.Lock()
+	defer is.tableGroupMutex.Unlock()
+	is.tableGroupMap[tg.Name.L] = tg
+	for _, tn := range tg.Tables {
+		is.tableName2TableGroupMap[tn] = tg
+	}
+}
+
+func (is *infoSchemaMisc) deleteTableGroup(name string) {
+	is.tableGroupMutex.Lock()
+	defer is.tableGroupMutex.Unlock()
+	tg := is.tableGroupMap[name]
+	if tg != nil {
+		for _, tn := range tg.Tables {
+			delete(is.tableName2TableGroupMap, tn)
+		}
+	}
+	delete(is.tableGroupMap, name)
+
 }
 
 func (is *infoSchema) addReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.TableInfo) {

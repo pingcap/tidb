@@ -47,7 +47,8 @@ type ShowContents struct {
 	Partition         model.CIStr     // Use for showing partition
 	Column            *ast.ColumnName // Used for `desc table column`.
 	IndexName         model.CIStr
-	ResourceGroupName string               // Used for showing resource group
+	ResourceGroupName string // Used for showing resource group
+	TableGroupName    string
 	Flag              int                  // Some flag parsed from sql, such as FULL.
 	User              *auth.UserIdentity   // Used for show grants.
 	Roles             []*auth.RoleIdentity // Used for show grants.

@@ -1151,6 +1151,13 @@ const (
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 
+	// TableGroup errors.
+	ErrTableGroupExists               = 8280
+	ErrTableGroupNotExists            = 8281
+	ErrTableGroupNotSupported         = 8282
+	ErrTableGroupPartitionNumNotMatch = 8283
+	ErrDuplicateTable                 = 8284
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249

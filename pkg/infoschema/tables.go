@@ -229,6 +229,11 @@ const (
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
 	// TableTiDBPlanCache is the plan cache table.
 	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
+	// TableTableGroups is a table to show the tablegroup information.
+	TableTableGroups = "TABLEGROUPS"
+
+	// TableTableGroupStatus is the name of the TABLEGROUP_STATUS table.
+	TableTableGroupStatus = "TABLEGROUP_STATUS"
 )
 
 const (
@@ -353,6 +358,8 @@ var tableIDMap = map[string]int64{
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
 	TableTiDBPlanCache:                   autoid.InformationSchemaDBID + 96,
 	ClusterTableTiDBPlanCache:            autoid.InformationSchemaDBID + 97,
+	TableTableGroups:                     autoid.InformationSchemaDBID + 98,
+	TableTableGroupStatus:                autoid.InformationSchemaDBID + 99,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1815,6 +1822,26 @@ var tablePlanCache = []columnInfo{
 	{name: "LAST_ACTIVE_TIME", tp: mysql.TypeDatetime, size: 19},
 }
 
+var tablegroupsCols = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLEGROUP", tp: mysql.TypeVarchar, size: 128},
+	{name: "AFFINITY_GROUP_ID", tp: mysql.TypeVarchar, size: 128},
+}
+
+var tablegroupStatusCols = []columnInfo{
+	{name: "AFFINITY_GROUP_ID", tp: mysql.TypeVarchar, size: 128},
+	{name: "TABLEGROUP", tp: mysql.TypeVarchar, size: 128},
+	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 21},
+	{name: "LEADER_STORE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "VOTER_STORE_IDS", tp: mysql.TypeVarchar, size: 255},
+	{name: "RANGE_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "REGION_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "AFFINITY_REGION_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "PHASE", tp: mysql.TypeVarchar, size: 255},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2465,6 +2492,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 	TableTiDBPlanCache:                      tablePlanCache,
 	TableUserLoginHistory:                   tableUserLoginHistoryCols,
+	TableTableGroups:                        tablegroupsCols,
+	TableTableGroupStatus:                   tablegroupStatusCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
