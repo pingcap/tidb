@@ -1020,10 +1020,41 @@ func assertMultiSchema(t *testing.T, job *model.Job, subJobLen int) {
 	assert.Len(t, job.MultiSchemaInfo.SubJobs, subJobLen, job)
 }
 
-func TestXxx(t *testing.T) {
+func TestMultiSchemaChangeReorgOnlyOnce(t *testing.T) {
+	type testCase struct {
+		alterSQL string
+		expected int
+	}
+
+	var reorgCount int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", func(_ *model.Job) {
+		reorgCount++
+	})
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("create table t (a int, b int, index i1(a));")
-	tk.MustExec("alter table t modify column a int unsigned, add index i2(b);")
+
+	for _, tc := range []testCase{
+		{
+			alterSQL: "alter table t add index i1(a), add index i2(b), modify column c int unsigned",
+			expected: 1,
+		},
+		{
+			alterSQL: "alter table t modify column a int unsigned, modify column c int unsigned",
+			expected: 1,
+		},
+		{
+			alterSQL: "alter table t modify column a int, modify column c int, drop index idx_b",
+			expected: 0,
+		},
+	} {
+		reorgCount = 0
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
+		tk.MustExec("insert into t values (1, 2, 3), (2, 3, 4), (3, 4, 5)")
+		tk.MustExec(tc.alterSQL)
+		require.EqualValues(t, tc.expected, reorgCount)
+		tk.MustExec("admin check table t")
+	}
 }
