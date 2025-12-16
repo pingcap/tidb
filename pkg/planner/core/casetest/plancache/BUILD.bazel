@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "plancache_test",
+    timeout = "short",
+    srcs = ["plan_cache_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/planner/core",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/util/benchdaily",
+    ],
+)
