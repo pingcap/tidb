@@ -110,74 +110,7 @@ func (*readIndexExecutor) Init(_ context.Context) error {
 	return nil
 }
 
-<<<<<<< HEAD
 func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
-=======
-func (r *readIndexStepExecutor) runGlobalPipeline(
-	ctx context.Context,
-	opCtx *OperatorCtx,
-	subtask *proto.Subtask,
-	sm *BackfillSubTaskMeta,
-	concurrency int,
-) error {
-	pipe, err := r.buildExternalStorePipeline(opCtx, subtask.TaskID, subtask.ID, sm, concurrency)
-	if err != nil {
-		return err
-	}
-
-	r.currPipe.Store(pipe)
-	defer func() {
-		r.currPipe.Store(nil)
-	}()
-
-	if err = executeAndClosePipeline(opCtx, pipe, nil, nil, r.avgRowSize); err != nil {
-		return errors.Trace(err)
-	}
-	return r.onFinished(ctx, subtask)
-}
-
-func (r *readIndexStepExecutor) runLocalPipeline(
-	ctx context.Context,
-	opCtx *OperatorCtx,
-	subtask *proto.Subtask,
-	sm *BackfillSubTaskMeta,
-	concurrency int,
-) error {
-	// TODO(tangenta): support checkpoint manager that interact with subtask table.
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
-		WithImportDistributedLock(r.d.etcdCli, sm.TS).
-		Build(r.backendCfg, r.backend)
-	if err != nil {
-		return err
-	}
-	defer bCtx.Close()
-	pipe, err := r.buildLocalStorePipeline(opCtx, bCtx, sm, concurrency)
-	if err != nil {
-		return err
-	}
-	r.currPipe.Store(pipe)
-	defer func() {
-		r.currPipe.Store(nil)
-	}()
-	err = executeAndClosePipeline(opCtx, pipe, nil, nil, r.avgRowSize)
-	if err != nil {
-		// For dist task local based ingest, checkpoint is unsupported.
-		// If there is an error we should keep local sort dir clean.
-		err1 := bCtx.FinishAndUnregisterEngines(ingest.OptCleanData)
-		if err1 != nil {
-			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
-		}
-		return err
-	}
-
-	if err = bCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup); err != nil {
-		return errors.Trace(err)
-	}
-	return r.onFinished(ctx, subtask)
-}
-
-func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
->>>>>>> 1040e033f4a (add index: add backfill task meta version (#61430))
 	logutil.DDLLogger().Info("read index executor run subtask",
 		zap.Bool("use cloud", len(r.cloudStorageURI) > 0))
 
@@ -195,7 +128,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	r.curRowCount.Store(0)
 
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, subtask.Concurrency)
+		pipe, err := r.buildExternalStorePipeline(opCtx, subtask.TaskID, subtask.ID, sm, subtask.Concurrency)
 		if err != nil {
 			return err
 		}
