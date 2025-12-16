@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "importintotest4_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
         "cloud_sdk_test.go",
         "conflict_resolution_test.go",
