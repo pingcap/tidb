@@ -63,7 +63,6 @@ func TestShowAffinity(t *testing.T) {
 	require.Equal(t, "test", rows[0][0])        // Db_name
 	require.Equal(t, "t1", rows[0][1])          // Table_name
 	require.Equal(t, "", rows[0][2])            // Partition_name (empty for table-level)
-	require.Contains(t, rows[0][3], "_tidb_t_") // Affinity_group_id
 
 	// Test 3: Create partitioned table with partition-level affinity
 	tk.MustExec(`create table t2 (id int) affinity='partition'
@@ -83,8 +82,7 @@ func TestShowAffinity(t *testing.T) {
 	for _, row := range rows {
 		if row[1] == "t2" {
 			t2Count++
-			require.NotEqual(t, "", row[2])          // Partition_name should not be empty
-			require.Contains(t, row[3], "_tidb_pt_") // Affinity_group_id for partition
+			require.NotEqual(t, "", row[2]) // Partition_name should not be empty
 		}
 	}
 	require.Equal(t, 3, t2Count)
@@ -227,7 +225,7 @@ func TestShowAffinityColumns(t *testing.T) {
 
 	// Step 5: Execute query and verify results
 	result := tk.MustQuery("show affinity")
-	require.Equal(t, 9, len(result.Rows()[0])) // Should have 9 columns
+	require.Equal(t, 8, len(result.Rows()[0])) // Should have 8 columns
 
 	rows := result.Rows()
 	require.Equal(t, 1, len(rows))
@@ -239,18 +237,16 @@ func TestShowAffinityColumns(t *testing.T) {
 	require.Equal(t, "t1", row[1])
 	// Partition_name
 	require.Equal(t, "", row[2])
-	// Affinity_group_id
-	require.Equal(t, groupID, row[3])
 	// Leader_store_id
-	require.Equal(t, "1", row[4])
+	require.Equal(t, "1", row[3])
 	// Voter_store_ids
-	require.Equal(t, "1,2,3", row[5])
+	require.Equal(t, "1,2,3", row[4])
 	// Status
-	require.Equal(t, "Stable", row[6])
+	require.Equal(t, "Stable", row[5])
 	// Region_count
-	require.Equal(t, "10", row[7])
+	require.Equal(t, "10", row[6])
 	// Affinity_region_count
-	require.Equal(t, "9", row[8])
+	require.Equal(t, "9", row[7])
 }
 
 func TestShowAffinityNullStatus(t *testing.T) {
@@ -263,33 +259,26 @@ func TestShowAffinityNullStatus(t *testing.T) {
 	tk.MustExec("create table t1 (id int) affinity='table'")
 	defer tk.MustExec("drop table if exists t1")
 
-	// Step 2: Get actual table ID from session
-	is := tk.Session().GetLatestInfoSchema()
-	tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
-	require.NoError(t, err)
-	groupID := ddl.GetTableAffinityGroupID(tbl.ID)
-
-	// Step 3: Set up mock PD client
+	// Step 2: Set up mock PD client
 	mockCli := &mockPDCliForAffinity{}
 	recoverFn := infosync.SetPDHttpCliForTest(mockCli)
 	defer recoverFn()
 
-	// Step 4: Mock PD response with empty map (group not found)
+	// Step 3: Mock PD response with empty map (group not found)
 	mockCli.On("GetAllAffinityGroups", mock.Anything).Return(
 		map[string]*pdhttp.AffinityGroupState{}, nil,
 	).Once()
 
-	// Step 5: Test that all PD-related fields show as native NULL when group not found in PD
+	// Step 4: Test that all PD-related fields show as native NULL when group not found in PD
 	result := tk.MustQuery("show affinity")
 	rows := result.Rows()
 	require.Equal(t, 1, len(rows))
-	require.Equal(t, "test", rows[0][0])  // Db_name
-	require.Equal(t, "t1", rows[0][1])    // Table_name
-	require.Equal(t, "", rows[0][2])      // Partition_name
-	require.Equal(t, groupID, rows[0][3]) // Affinity_group_id
-	require.Equal(t, "<nil>", rows[0][4]) // Leader_store_id should be NULL
-	require.Equal(t, "<nil>", rows[0][5]) // Voter_store_ids should be NULL
-	require.Equal(t, "<nil>", rows[0][6]) // Status should be NULL (native NULL, not string "NULL")
-	require.Equal(t, "<nil>", rows[0][7]) // Region_count should be NULL
-	require.Equal(t, "<nil>", rows[0][8]) // Affinity_region_count should be NULL
+	require.Equal(t, "test", rows[0][0]) // Db_name
+	require.Equal(t, "t1", rows[0][1])   // Table_name
+	require.Equal(t, "", rows[0][2])     // Partition_name
+	require.Equal(t, "<nil>", rows[0][3]) // Leader_store_id should be NULL
+	require.Equal(t, "<nil>", rows[0][4]) // Voter_store_ids should be NULL
+	require.Equal(t, "<nil>", rows[0][5]) // Status should be NULL (native NULL, not string "NULL")
+	require.Equal(t, "<nil>", rows[0][6]) // Region_count should be NULL
+	require.Equal(t, "<nil>", rows[0][7]) // Affinity_region_count should be NULL
 }

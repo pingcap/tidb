@@ -44,12 +44,12 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 	// Get all tables with affinity attribute from infoschema
 	tableInfoResults := is.ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
 
-	// Collect all affinity group IDs and map them to table/partition info
+	// Collect table/partition info with affinity
 	type tablePartitionInfo struct {
 		dbName        string
 		tableName     string
 		partitionName string
-		groupID       string
+		groupID       string // Still needed to query PD for affinity state
 	}
 	var infos []tablePartitionInfo
 
@@ -148,7 +148,6 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 			info.dbName,
 			info.tableName,
 			info.partitionName,
-			info.groupID,
 			leaderStoreID,
 			voterStoreIDs,
 			status,
