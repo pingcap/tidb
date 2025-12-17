@@ -251,10 +251,12 @@ func MakeTableRegions(
 			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 				info.FileMeta.Compression == CompressionNone &&
 				info.FileMeta.FileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
-				// If a csv file is overlarge, we need to split it into multiple regions. This can only be done for
-				// uncompressed files with strict format. Besides, the check threshold is increased by 1/10 of the
-				// `max-region-size` to avoid splitting small chunks, because tools like dumpling may dump files whose
-				// size is slightly exceed the `max-region-size`.
+				// If a csv file is overlarge, we need to split it into multiple
+				// regions. This can only be done for uncompressed files with
+				// strict format. Besides, the check threshold is increased by
+				// 1/10 of the `max-region-size` to avoid splitting small chunks,
+				// because tools like dumpling may dump files whose size is
+				// slightly exceed the `max-region-size`.
 				if info.FileMeta.FileSize > parallelSplitThreshold {
 					// For extremely large csv files, we split them later.
 					largeFiles.Store(info.FileMeta.Path, info)
@@ -456,6 +458,7 @@ func openCSVParser(
 
 	parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
 	if err != nil {
+		_ = r.Close()
 		return nil, err
 	}
 
@@ -505,7 +508,7 @@ func SplitLargeCSV(
 	parallel bool,
 ) (regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.MaxChunkSize
-	regionCnt := dataFile.FileMeta.FileSize/maxRegionSize + 1
+	regionCnt := (dataFile.FileMeta.FileSize + maxRegionSize - 1) / maxRegionSize
 	dataFileSizes = make([]float64, 0, regionCnt)
 
 	headerColumns, dataStart, err := getHeaderColumn(ctx, cfg, dataFile.FileMeta.Path)
@@ -514,10 +517,8 @@ func SplitLargeCSV(
 	}
 
 	splitEndOffsets := make([]int64, 0, regionCnt)
-	endOffset := dataStart + maxRegionSize
-	for endOffset < dataFile.FileMeta.FileSize {
-		splitEndOffsets = append(splitEndOffsets, endOffset)
-		endOffset += maxRegionSize
+	for end := dataStart + maxRegionSize; end < dataFile.FileMeta.FileSize; end += maxRegionSize {
+		splitEndOffsets = append(splitEndOffsets, end)
 	}
 
 	concurrency := 1
