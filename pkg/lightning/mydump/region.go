@@ -522,7 +522,7 @@ func SplitLargeCSV(
 
 	concurrency := 1
 	if parallel {
-		concurrency = max(cfg.Concurrency, 1) * 2
+		concurrency = max(cfg.Concurrency, 1)
 	}
 
 	eg, egCtx := errgroup.WithContext(ctx)
