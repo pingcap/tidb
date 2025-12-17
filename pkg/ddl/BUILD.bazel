@@ -12,6 +12,7 @@ go_library(
     name = "ddl",
     srcs = [
         "add_column.go",
+        "affinity.go",
         "backfilling.go",
         "backfilling_clean_s3.go",
         "backfilling_dist_executor.go",
@@ -104,6 +105,7 @@ go_library(
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/operator",
+        "//pkg/domain/affinity",
         "//pkg/domain/infosync",
         "//pkg/errctx",
         "//pkg/expression",
@@ -229,6 +231,7 @@ go_test(
     name = "ddl_test",
     timeout = "moderate",
     srcs = [
+        "affinity_test.go",
         "attributes_sql_test.go",
         "backfilling_dist_scheduler_test.go",
         "backfilling_test.go",
@@ -324,6 +327,7 @@ go_test(
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/operator",
         "//pkg/domain",
+        "//pkg/domain/affinity",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
         "//pkg/errctx",
