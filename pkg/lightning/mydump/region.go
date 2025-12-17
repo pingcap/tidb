@@ -509,13 +509,14 @@ func SplitLargeCSV(
 	parallel bool,
 ) (regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.MaxChunkSize
-	regionCnt := (dataFile.FileMeta.FileSize + maxRegionSize - 1) / maxRegionSize
-	dataFileSizes = make([]float64, 0, regionCnt)
 
 	headerColumns, dataStart, err := getHeaderColumn(ctx, cfg, dataFile.FileMeta.Path)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
+	regionCnt := (dataFile.FileMeta.FileSize - dataStart + maxRegionSize - 1) / maxRegionSize
+	dataFileSizes = make([]float64, 0, regionCnt)
 
 	splitPoints := mathutil.Divide2Batches(dataFile.FileMeta.FileSize-dataStart, regionCnt)
 	splitPoints = splitPoints[:len(splitPoints)-1]
