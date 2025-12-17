@@ -327,6 +327,7 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 		idxID, collector, tp, false, nil, false)
 	logutil.BgLogger().Info("build hist, topn",
 		zap.Int("items-count", len(sampleItems)),
+		zap.Int64("fms-count", fullFms.NDV()),
 		zap.Any("hist", hist),
 		zap.Int("topn", topn.Num()))
 
