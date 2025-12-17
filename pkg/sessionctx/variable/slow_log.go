@@ -161,6 +161,19 @@ const (
 	SlowLogCompileTimeStr = "Compile_time"
 	// SlowLogOptimizeTimeStr is the optimization time.
 	SlowLogOptimizeTimeStr = "Optimize_time"
+	// SlowLogOptimizeLogicalOpt is the logical optimization time.
+	SlowLogOptimizeLogicalOpt = "Opt_logical"
+	// SlowLogOptimizePhysicalOpt is the physical optimization time.
+	SlowLogOptimizePhysicalOpt = "Opt_physical"
+	// SlowLogOptimizeBindingMatch is the binding match time.
+	SlowLogOptimizeBindingMatch = "Opt_binding_match"
+	// SlowLogOptimizeStatsSyncLoad is the stats sync load time.
+	SlowLogOptimizeStatsSyncLoad = "Opt_stats_syncload"
+	// SlowLogOptimizeStatsDerive is the stats derive time.
+	SlowLogOptimizeStatsDerive = "Opt_stats_derive"
+	// SlowLogOptimizeTiFlashInfoFetch is the tiflash info fetch time.
+	SlowLogOptimizeTiFlashInfoFetch = "Opt_tiflash_info_fetch"
+
 	// SlowLogWaitTSTimeStr is the time of waiting TS.
 	SlowLogWaitTSTimeStr = "Wait_TS"
 	// SlowLogDBStr is slow log field name.
@@ -389,7 +402,21 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	buf.WriteString("\n")
 
-	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(s.DurationOptimization.Seconds(), 'f', -1, 64))
+	// optimizer time
+	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(s.DurationOptimizer.Total.Seconds(), 'f', -1, 64))
+	buf.WriteString(SlowLogRowPrefixStr)
+	buf.WriteString(SlowLogOptimizeLogicalOpt + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.LogicalOpt.Seconds(), 'f', -1, 64) + " ")
+	buf.WriteString(SlowLogOptimizePhysicalOpt + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.PhysicalOpt.Seconds(), 'f', -1, 64) + " ")
+	buf.WriteString(SlowLogOptimizeBindingMatch + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.BindingMatch.Seconds(), 'f', -1, 64) + " ")
+	if s.DurationOptimizer.StatsSyncLoad > 0 {
+		buf.WriteString(SlowLogOptimizeStatsSyncLoad + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.StatsSyncLoad.Seconds(), 'f', -1, 64) + " ")
+	}
+	if s.DurationOptimizer.TiFlashInfoFetch > 0 {
+		buf.WriteString(SlowLogOptimizeTiFlashInfoFetch + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.TiFlashInfoFetch.Seconds(), 'f', -1, 64) + " ")
+	}
+	buf.WriteString(SlowLogOptimizeStatsDerive + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.StatsDerive.Seconds(), 'f', -1, 64))
+	buf.WriteString("\n")
+
 	writeSlowLogItem(&buf, SlowLogWaitTSTimeStr, strconv.FormatFloat(s.DurationWaitTS.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
@@ -695,7 +722,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 	strings.ToLower(SlowLogOptimizeTimeStr): {
 		Parse: parseFloat64,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, seVars.DurationOptimization.Seconds())
+			return matchGE(threshold, seVars.DurationOptimizer.Total.Seconds())
 		},
 	},
 	strings.ToLower(SlowLogWaitTSTimeStr): {

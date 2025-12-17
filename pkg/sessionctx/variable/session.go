@@ -1257,8 +1257,16 @@ type SessionVars struct {
 	// RewritePhaseInfo records all information about the rewriting phase.
 	RewritePhaseInfo
 
-	// DurationOptimization is the duration of optimizing a query.
-	DurationOptimization time.Duration
+	// DurationOptimizer tracks time used by the optimizer.
+	DurationOptimizer struct {
+		Total            time.Duration
+		BindingMatch     time.Duration
+		StatsSyncLoad    time.Duration
+		LogicalOpt       time.Duration
+		PhysicalOpt      time.Duration
+		StatsDerive      time.Duration
+		TiFlashInfoFetch time.Duration
+	}
 
 	// DurationWaitTS is the duration of waiting for a snapshot TS
 	DurationWaitTS time.Duration
