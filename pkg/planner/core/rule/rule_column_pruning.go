@@ -16,7 +16,6 @@ package rule
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -30,9 +29,6 @@ type ColumnPruner struct {
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan) (base.LogicalPlan, bool, error) {
-	if !lp.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	planChanged := false
 	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns))
 	if err != nil {
