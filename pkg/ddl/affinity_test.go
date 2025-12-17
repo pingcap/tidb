@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -124,7 +124,7 @@ func (c *affinityGroupCheck) check(t *testing.T) {
 	}
 
 	// Get affinity groups from PD
-	groups, err := infosync.GetAffinityGroups(ctx, groupIDs)
+	groups, err := affinity.GetGroups(ctx, groupIDs)
 	require.NoError(t, err, c.comment)
 
 	if c.shouldExist {
@@ -202,7 +202,7 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("drop table t1")
 	// Verify affinity groups are deleted
 	ctx := context.Background()
-	groups, err := infosync.GetAffinityGroups(ctx, []string{ddl.GetTableAffinityGroupID(t1ID)})
+	groups, err := affinity.GetGroups(ctx, []string{ddl.GetTableAffinityGroupID(t1ID)})
 	require.NoError(t, err)
 	require.Empty(t, groups, "affinity groups should be deleted after dropping table")
 
@@ -217,7 +217,7 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("truncate table t2")
 	checkAffinityGroupsInPD(t, dom, "test", "t2", true)
 	// Old table ID's affinity group should be deleted
-	groups, err = infosync.GetAffinityGroups(ctx, []string{ddl.GetTableAffinityGroupID(oldTableID)})
+	groups, err = affinity.GetGroups(ctx, []string{ddl.GetTableAffinityGroupID(oldTableID)})
 	require.NoError(t, err)
 	require.Empty(t, groups, "old table's affinity groups should be deleted after truncate")
 
@@ -233,7 +233,7 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("alter table tp2 truncate partition p0")
 	checkAffinityGroupsInPD(t, dom, "test", "tp2", true)
 	// Old partition's affinity group should be deleted
-	groups, err = infosync.GetAffinityGroups(ctx, []string{ddl.GetPartitionAffinityGroupID(tblInfo.Meta().ID, oldPartitionID)})
+	groups, err = affinity.GetGroups(ctx, []string{ddl.GetPartitionAffinityGroupID(tblInfo.Meta().ID, oldPartitionID)})
 	require.NoError(t, err)
 	require.Empty(t, groups, "old partition's affinity group should be deleted after truncate partition")
 
@@ -277,7 +277,7 @@ func TestAffinityDropDatabase(t *testing.T) {
 		groupIDs = append(groupIDs, ddl.GetPartitionAffinityGroupID(tp1Info.Meta().ID, def.ID))
 	}
 
-	groups, err := infosync.GetAffinityGroups(ctx, groupIDs)
+	groups, err := affinity.GetGroups(ctx, groupIDs)
 	require.NoError(t, err)
 	require.Empty(t, groups, "all affinity groups should be deleted after dropping database")
 }

@@ -106,7 +106,6 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
-	affinityManager       affinity.Manager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
 	tikvCodec             tikv.Codec
@@ -179,9 +178,12 @@ func GlobalInfoSyncerInit(
 	is.initPlacementManager()
 	is.initScheduleManager()
 	is.initTiFlashReplicaManager(codec)
-	is.initAffinityManager()
 	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
+
+	// Initialize affinity package
+	affinity.InitManager(is.pdHTTPCli)
+
 	return is, nil
 }
 
@@ -280,14 +282,6 @@ func (is *InfoSyncer) initScheduleManager() {
 		return
 	}
 	is.scheduleManager = &PDScheduleManager{is.pdHTTPCli}
-}
-
-func (is *InfoSyncer) initAffinityManager() {
-	if is.pdHTTPCli == nil {
-		is.affinityManager = affinity.NewMockManager()
-		return
-	}
-	is.affinityManager = affinity.NewPDManager(is.pdHTTPCli)
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash

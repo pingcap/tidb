@@ -118,6 +118,7 @@ go_library(
         "//pkg/disttask/importinto",
         "//pkg/disttask/operator",
         "//pkg/domain",
+        "//pkg/domain/affinity",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
         "//pkg/errctx",

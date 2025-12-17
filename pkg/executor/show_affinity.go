@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -95,10 +95,8 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 	}
 
 	// Get affinity group states from PD
-	// Use GetAllAffinityGroupStates to directly query PD client (similar to GetReplicationState)
-	// This bypasses the manager layer to allow test mocking with SetPDHttpCliForTest
 	// TODO: update it after pd support batch get
-	allAffinityStates, err := infosync.GetAllAffinityGroupStates(ctx)
+	allAffinityStates, err := affinity.GetAllGroupStates(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

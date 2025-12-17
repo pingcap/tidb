@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -121,7 +121,7 @@ func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo)
 	logutil.DDLLogger().Info("creating affinity groups in PD",
 		zap.Int64("tableID", tblInfo.ID),
 		zap.Strings("groupIDs", collectAffinityGroupIDs(groups)))
-	if err := infosync.CreateAffinityGroupsIfNotExists(ctx, groups); err != nil {
+	if err := affinity.CreateGroupsIfNotExists(ctx, groups); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -150,7 +150,7 @@ func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo,
 	}
 
 	ids := collectAffinityGroupIDs(groups)
-	return infosync.DeleteAffinityGroupsWithDefaultRetry(ctx, ids)
+	return affinity.DeleteGroupsWithRetry(ctx, ids)
 }
 
 // batchDeleteTableAffinityGroups deletes affinity groups for multiple tables in PD.
@@ -184,7 +184,7 @@ func batchDeleteTableAffinityGroups(jobCtx *jobContext, tables []*model.TableInf
 	}
 
 	logutil.DDLLogger().Info("deleting affinity groups for batch tables", zap.Strings("groupIDs", ids))
-	return infosync.DeleteAffinityGroupsWithDefaultRetry(ctx, ids)
+	return affinity.DeleteGroupsWithRetry(ctx, ids)
 }
 
 // BuildAffinityGroupDefinitionsForTest is exported for testing.
