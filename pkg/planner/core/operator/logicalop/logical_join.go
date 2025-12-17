@@ -311,7 +311,7 @@ func filterOutOtherCondition4ConvertAntiJoin(sf []expression.Expression) iter.Se
 
 // CanConvertAntiJoin is used in outer-join-to-semi-join rule.
 func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema) (proj *LogicalProjection, selConditionColInOuter bool) {
-	if len(ret) != 1 || len(p.EqualConditions) == 0 {
+	if len(ret) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
 		return nil, false
 	}
 	if _, ok := p.Self().(*LogicalApply); ok {
