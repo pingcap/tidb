@@ -4,7 +4,6 @@ go_library(
     name = "infosync",
     srcs = [
         "affinity.go",
-        "affinity_manager.go",
         "error.go",
         "info.go",
         "label_manager.go",
@@ -22,6 +21,7 @@ go_library(
         "//pkg/ddl/label",
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
+        "//pkg/domain/affinity",
         "//pkg/domain/serverinfo",
         "//pkg/errno",
         "//pkg/kv",
