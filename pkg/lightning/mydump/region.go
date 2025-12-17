@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -516,9 +517,14 @@ func SplitLargeCSV(
 		return nil, nil, errors.Trace(err)
 	}
 
-	splitEndOffsets := make([]int64, 0, regionCnt)
-	for end := dataStart + maxRegionSize; end < dataFile.FileMeta.FileSize; end += maxRegionSize {
-		splitEndOffsets = append(splitEndOffsets, end)
+	splitPoints := mathutil.Divide2Batches(dataFile.FileMeta.FileSize-dataStart, regionCnt)
+	splitPoints = splitPoints[:len(splitPoints)-1]
+	for i := range splitPoints {
+		if i == 0 {
+			splitPoints[i] += dataStart
+		} else {
+			splitPoints[i] += splitPoints[i-1]
+		}
 	}
 
 	concurrency := 1
@@ -528,7 +534,7 @@ func SplitLargeCSV(
 
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
-	for i, endOffset := range splitEndOffsets {
+	for i, splitPoint := range splitPoints {
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():
@@ -536,7 +542,7 @@ func SplitLargeCSV(
 			default:
 			}
 
-			parser, err := openCSVParser(egCtx, cfg, dataFile.FileMeta.Path, endOffset)
+			parser, err := openCSVParser(egCtx, cfg, dataFile.FileMeta.Path, splitPoint)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -553,7 +559,7 @@ func SplitLargeCSV(
 				pos = dataFile.FileMeta.FileSize
 			}
 
-			splitEndOffsets[i] = pos
+			splitPoints[i] = pos
 			return nil
 		})
 	}
@@ -561,18 +567,17 @@ func SplitLargeCSV(
 		return nil, nil, err
 	}
 
-	if len(splitEndOffsets) == 0 || splitEndOffsets[len(splitEndOffsets)-1] != dataFile.FileMeta.FileSize {
-		splitEndOffsets = append(splitEndOffsets, dataFile.FileMeta.FileSize)
-	}
+	// Add the file end as the last split point
+	splitPoints = append(splitPoints, dataFile.FileMeta.FileSize)
 
 	divisor := int64(cfg.ColumnCnt)
 	prevRowIdxMax := int64(0)
-	for i := range splitEndOffsets {
+	for i := range splitPoints {
 		startOffset := dataStart
 		if i > 0 {
-			startOffset = splitEndOffsets[i-1]
+			startOffset = splitPoints[i-1]
 		}
-		endOffset := splitEndOffsets[i]
+		endOffset := splitPoints[i]
 
 		if startOffset == endOffset {
 			continue

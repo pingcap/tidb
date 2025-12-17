@@ -19,6 +19,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"golang.org/x/exp/constraints"
 )
 
 // Architecture and/or implementation specific integer limits and bit widths.
@@ -94,8 +95,8 @@ func NextPowerOfTwo(i int64) int64 {
 // Divide2Batches divides 'total' into 'batches', and returns the size of each batch.
 // Σ(batchSizes) = 'total'. if 'total' < 'batches', we return 'total' batches with size 1.
 // 'total' is allowed to be 0.
-func Divide2Batches(total, batches int) []int {
-	result := make([]int, 0, batches)
+func Divide2Batches[T constraints.Integer](total, batches T) []T {
+	result := make([]T, 0, batches)
 	quotient := total / batches
 	remainder := total % batches
 	for total > 0 {
