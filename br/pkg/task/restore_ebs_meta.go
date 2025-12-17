@@ -228,7 +228,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		err         error
 		totalSize   int64
 		// a map whose key is available zone, and value is the snapshot id array
-		snapshotsIDsMap = make(map[string][]*string)
+		snapshotsIDsMap = make(map[string][]string)
 	)
 	ec2Session, err = aws.NewEC2Session(h.cfg.CloudAPIConcurrency, h.cfg.S3.Region)
 	if err != nil {
