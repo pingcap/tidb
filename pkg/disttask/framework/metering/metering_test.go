@@ -133,7 +133,7 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 			require.EqualValues(t, 1, md.Data[0][getRequestsField])
 			require.NotContains(t, md.Data[0], putRequestsField)
 			r.objStoreAccess.Requests.Put.Add(2)
-			// unregister after scrape, but before write, the onSuccessFlush
+			// unregister after scrape, but before write, the afterFlush
 			// shouldn't remove it
 			UnregisterRecorder(1)
 			return nil
@@ -166,7 +166,7 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 			md := data.(*common.MeteringData)
 			require.EqualValues(t, 1, md.Data[0][getRequestsField])
 			require.NotContains(t, md.Data[0], putRequestsField)
-			// re-register before onSuccessFlush do cleanup
+			// re-register before afterFlush do cleanup
 			RegisterRecorder(&proto.TaskBase{ID: 1})
 			require.False(t, meter.recorders[1].unregistered)
 			return nil
