@@ -61,8 +61,6 @@ const (
 	SlowLogUserStr = "User"
 	// SlowLogHostStr only for slow_query table usage.
 	SlowLogHostStr = "Host"
-	// SlowLogRewriteTimeStr is the rewrite time.
-	SlowLogRewriteTimeStr = "Rewrite_time"
 	// SlowLogPreprocSubQueriesStr is the number of pre-processed sub-queries.
 	SlowLogPreprocSubQueriesStr = "Preproc_subqueries"
 	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processing sub-queries.
@@ -159,6 +157,8 @@ const (
 	SlowLogParseTimeStr = "Parse_time"
 	// SlowLogCompileTimeStr is the compile plan time.
 	SlowLogCompileTimeStr = "Compile_time"
+	// SlowLogRewriteTimeStr is the rewrite time.
+	SlowLogRewriteTimeStr = "Rewrite_time"
 	// SlowLogOptimizeTimeStr is the optimization time.
 	SlowLogOptimizeTimeStr = "Optimize_time"
 	// SlowLogWaitTSTimeStr is the time of waiting TS.
@@ -690,6 +690,15 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 		Parse: parseFloat64,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
 			return matchGE(threshold, seVars.DurationCompile.Seconds())
+		},
+	},
+	strings.ToLower(SlowLogRewriteTimeStr): {
+		Parse: parseFloat64,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			items.RewriteInfo = seVars.RewritePhaseInfo
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return matchGE(threshold, items.RewriteInfo.DurationRewrite.Seconds())
 		},
 	},
 	strings.ToLower(SlowLogOptimizeTimeStr): {
