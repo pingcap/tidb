@@ -329,6 +329,7 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 		zap.Int("items-count", len(sampleItems)),
 		zap.Int64("fms-count", fullFms.NDV()),
 		zap.Any("hist", hist),
+		zap.Any("topn", topn),
 		zap.Int("topn", topn.Num()))
 
 	return nil
