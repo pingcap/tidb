@@ -66,6 +66,7 @@ func TestAffinityBuildGroupDefinitionsPartition(t *testing.T) {
 		ID:       50,
 		Affinity: &model.TableAffinityInfo{Level: ast.TableAffinityLevelPartition},
 		Partition: &model.PartitionInfo{
+			Enable: true,
 			Definitions: []model.PartitionDefinition{
 				{ID: 1},
 				{ID: 3},

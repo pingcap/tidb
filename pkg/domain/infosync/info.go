@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -105,7 +106,7 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
-	affinityManager       AffinityManager
+	affinityManager       affinity.Manager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
 	tikvCodec             tikv.Codec
@@ -283,10 +284,10 @@ func (is *InfoSyncer) initScheduleManager() {
 
 func (is *InfoSyncer) initAffinityManager() {
 	if is.pdHTTPCli == nil {
-		is.affinityManager = &mockAffinityManager{}
+		is.affinityManager = affinity.NewMockManager()
 		return
 	}
-	is.affinityManager = &pdAffinityManager{is.pdHTTPCli}
+	is.affinityManager = affinity.NewPDManager(is.pdHTTPCli)
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash

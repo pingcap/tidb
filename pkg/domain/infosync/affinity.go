@@ -89,3 +89,4 @@ func CreateAffinityGroupsIfNotExists(ctx context.Context, groups map[string][]pd
 	}
 	return is.affinityManager.CreateAffinityGroupsIfNotExists(ctx, groups)
 }
+
