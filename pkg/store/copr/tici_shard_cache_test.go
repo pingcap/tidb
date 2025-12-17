@@ -29,6 +29,10 @@ import (
 
 type mockClient struct {
 	shards []*ShardWithAddr
+
+	// for test purpose only
+	randomBound [][]byte
+	rng         *rand.Rand
 }
 
 func newMockClient() *mockClient {
@@ -150,128 +154,153 @@ func TestShardCache(t *testing.T) {
 	require.Equal(t, cache.mu.sorted[1].b.Len(), 5)
 }
 
-func TestShardCacheRandomRangesNoOverlapOrMissing(t *testing.T) {
-	seed := time.Now().Unix()
-	randGen := rand.New(rand.NewSource(seed))
-	t.Logf("rand seed: %d", seed)
-	client := &mockClient{
-		shards: []*ShardWithAddr{
-			{
-				Shard: Shard{
-					ShardID:  1,
-					Epoch:    0,
-					StartKey: []byte("a"),
-					EndKey:   []byte("e"),
-				},
-				localCacheAddrs: []string{"addr-1"},
-			},
-			{
-				Shard: Shard{
-					ShardID:  2,
-					Epoch:    0,
-					StartKey: []byte("e"),
-					EndKey:   []byte("g"),
-				},
-				localCacheAddrs: []string{"addr-2"},
-			},
-			{
-				Shard: Shard{
-					ShardID:  1,
-					Epoch:    0,
-					StartKey: []byte("g"),
-					EndKey:   []byte("j"),
-				},
-				localCacheAddrs: []string{"addr-1"},
-			},
-			{
-				Shard: Shard{
-					ShardID:  3,
-					Epoch:    0,
-					StartKey: []byte("g"),
-					EndKey:   []byte("z"),
-				},
-				localCacheAddrs: []string{"addr-1"},
-			},
+func newMockClientWithFullRange(rng *rand.Rand) *mockClient {
+	shards := make([]*ShardWithAddr, 0)
+	shards = append(shards, &ShardWithAddr{
+		Shard: Shard{
+			ShardID:  100,
+			Epoch:    0,
+			StartKey: []byte(""),
+			EndKey:   []byte(""),
 		},
-	}
-	cache := NewTiCIShardCache(client)
-	ctx := context.Background()
+		localCacheAddrs: []string{
+			"addr-100",
+		},
+	})
 
-	shardIDs := make([]uint64, 0, len(client.shards))
-	for _, s := range client.shards {
-		shardIDs = append(shardIDs, s.ShardID)
-	}
-
-	randomKey := func(rng *rand.Rand, length int) []byte {
+	randomKey := func(length int) []byte {
+		const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 		b := make([]byte, length)
 		for i := range b {
-			b[i] = byte('a' + rng.Intn(20)) // keep headroom so endKey can advance
+			b[i] = byte(letters[rng.Intn(len(letters))])
 		}
 		return b
 	}
-
-	makeRange := func(rng *rand.Rand, length int) kv.KeyRange {
-		start := randomKey(rng, length)
-		end := append([]byte(nil), start...)
-		delta := 1 + rng.Intn(5)
-		end[len(end)-1] = byte(min(int('z'), int(end[len(end)-1])+delta))
-		return kv.KeyRange{StartKey: start, EndKey: end}
+	randomBound := make([][]byte, 0, 1000)
+	for range 1000 {
+		randomBound = append(randomBound, randomKey(rng.Intn(10)+3))
 	}
+	sort.Slice(randomBound, func(i, j int) bool {
+		return bytes.Compare(randomBound[i], randomBound[j]) < 0
+	})
 
-	makeRanges := func(rng *rand.Rand, count int, length int) []kv.KeyRange {
-		rgs := make([]kv.KeyRange, 0, count)
-		for i := 0; i < count; i++ {
-			rgs = append(rgs, makeRange(rng, length))
+	unique := [][]byte{randomBound[0]}
+	for i := 1; i < len(randomBound); i++ {
+		if !bytes.Equal(randomBound[i], randomBound[i-1]) {
+			unique = append(unique, randomBound[i])
 		}
-		return rgs
 	}
 
-	sortByStart := func(rgs []kv.KeyRange) {
-		sort.Slice(rgs, func(i, j int) bool {
-			cmp := bytes.Compare(rgs[i].StartKey, rgs[j].StartKey)
-			if cmp == 0 {
-				return bytes.Compare(rgs[i].EndKey, rgs[j].EndKey) < 0
-			}
-			return cmp < 0
+	return &mockClient{shards: shards, randomBound: unique, rng: rng}
+}
+
+func (c *mockClient) genRandomRangeBetween(start, end []byte) []byte {
+	var startIdx, endIdx int
+	if len(start) == 0 {
+		startIdx = -1
+	} else {
+		startIdx = sort.Search(len(c.randomBound), func(i int) bool {
+			return bytes.Compare(c.randomBound[i], start) > 0
 		})
 	}
+	if len(end) == 0 {
+		endIdx = len(c.randomBound)
+	} else {
+		endIdx = sort.Search(len(c.randomBound), func(i int) bool {
+			return bytes.Compare(c.randomBound[i], end) > 0
+		})
+	}
+	if endIdx-startIdx <= 1 {
+		return nil
+	}
+	return c.randomBound[c.rng.Intn(endIdx-startIdx-1)+startIdx+1]
+}
 
-	mergeRanges := func(rgs []kv.KeyRange) []kv.KeyRange {
-		if len(rgs) == 0 {
+func (c *mockClient) randomSplitOne() {
+	if len(c.shards) == 0 {
+		return
+	}
+	idx := c.rng.Intn(len(c.shards))
+	s := c.shards[idx]
+	midKey := c.genRandomRangeBetween(s.StartKey, s.EndKey)
+	if midKey == nil {
+		return
+	}
+	shard1 := &ShardWithAddr{
+		Shard: Shard{
+			ShardID:  s.ShardID,
+			Epoch:    s.Epoch + 1,
+			StartKey: s.StartKey,
+			EndKey:   midKey,
+		},
+		localCacheAddrs: []string{fmt.Sprintf("addr-%d-1", s.ShardID)},
+	}
+	shard2 := &ShardWithAddr{
+		Shard: Shard{
+			ShardID:  uint64(c.rng.Int63n(1000)),
+			Epoch:    s.Epoch + 1,
+			StartKey: midKey,
+			EndKey:   s.EndKey,
+		},
+		localCacheAddrs: []string{fmt.Sprintf("addr-%d-2", s.ShardID)},
+	}
+	c.shards = append(c.shards[:idx], append([]*ShardWithAddr{shard1, shard2}, c.shards[idx+1:]...)...)
+}
+
+func (c *mockClient) randomMergeOne() {
+	if len(c.shards) < 2 {
+		return
+	}
+	idx := c.rng.Intn(len(c.shards) - 1)
+	s1 := c.shards[idx]
+	s2 := c.shards[idx+1]
+	if !bytes.Equal(s1.EndKey, s2.StartKey) {
+		panic("Test Fail")
+	}
+	merged := &ShardWithAddr{
+		Shard: Shard{
+			ShardID:  s1.ShardID,
+			Epoch:    s1.Epoch + 1,
+			StartKey: s1.StartKey,
+			EndKey:   s2.EndKey,
+		},
+		localCacheAddrs: []string{fmt.Sprintf("addr-%d-merged", s1.ShardID)},
+	}
+	c.shards = append(c.shards[:idx], append([]*ShardWithAddr{merged}, c.shards[idx+2:]...)...)
+}
+
+func TestShardCacheRandomRangesNoOverlapOrMissing(t *testing.T) {
+	var seed int64 = time.Now().Unix()
+	t.Logf("test seed: %d", seed)
+	rng := rand.New(rand.NewSource(seed))
+	client := newMockClientWithFullRange(rng)
+	cache := NewTiCIShardCache(client)
+	ctx := context.Background()
+
+	sortByStart := func(ranges []kv.KeyRange) {
+		sort.Slice(ranges, func(i, j int) bool {
+			return bytes.Compare(ranges[i].StartKey, ranges[j].StartKey) < 0
+		})
+	}
+	mergeRanges := func(ranges []kv.KeyRange) []kv.KeyRange {
+		if len(ranges) == 0 {
 			return nil
 		}
-		sorted := append([]kv.KeyRange(nil), rgs...)
-		sortByStart(sorted)
-		merged := []kv.KeyRange{sorted[0]}
-		for _, r := range sorted[1:] {
-			last := &merged[len(merged)-1]
-			if len(last.EndKey) == 0 || bytes.Compare(last.EndKey, r.StartKey) >= 0 {
-				if len(last.EndKey) == 0 || bytes.Compare(last.EndKey, r.EndKey) >= 0 {
-					continue
+		sortByStart(ranges)
+		merged := make([]kv.KeyRange, 0, len(ranges))
+		cur := ranges[0]
+		for i := 1; i < len(ranges); i++ {
+			if bytes.Compare(cur.EndKey, ranges[i].StartKey) >= 0 {
+				if bytes.Compare(cur.EndKey, ranges[i].EndKey) < 0 {
+					cur.EndKey = ranges[i].EndKey
 				}
-				last.EndKey = r.EndKey
-				continue
+			} else {
+				merged = append(merged, cur)
+				cur = ranges[i]
 			}
-			merged = append(merged, r)
 		}
+		merged = append(merged, cur)
 		return merged
-	}
-
-	expireRandomShard := func() {
-		if len(shardIDs) == 0 {
-			return
-		}
-		cache.InvalidateCachedShard(shardIDs[randGen.Intn(len(shardIDs))])
-	}
-
-	mutateRandomShard := func(iter int) {
-		if len(client.shards) == 0 {
-			return
-		}
-		idx := randGen.Intn(len(client.shards))
-		s := client.shards[idx]
-		s.Epoch++
-		s.localCacheAddrs = []string{fmt.Sprintf("addr-%d-%d", s.ShardID, iter)}
 	}
 
 	assertNoOverlapAndMissing := func(req []kv.KeyRange, locs []*ShardLocation) {
@@ -292,15 +321,39 @@ func TestShardCacheRandomRangesNoOverlapOrMissing(t *testing.T) {
 		require.Equal(t, expectedUnion, locatedUnion, "missing coverage")
 	}
 
-	for iter := 0; iter < 10; iter++ {
-		ranges := makeRanges(randGen, 12, iter+1)
-		ranges = mergeRanges(ranges)
-		if randGen.Intn(2) == 0 {
-			expireRandomShard()
+	const rangeCount = 10
+	const testCount = 100
+	for range testCount {
+		bound := make([][]byte, 0, rangeCount*2)
+		ranges := make([]kv.KeyRange, 0)
+		for range rangeCount * 2 {
+			k := client.genRandomRangeBetween([]byte(""), []byte(""))
+			bound = append(bound, k)
 		}
-		if randGen.Intn(2) == 0 {
-			mutateRandomShard(iter)
+		sort.Slice(bound, func(i, j int) bool {
+			return bytes.Compare(bound[i], bound[j]) < 0
+		})
+		for i := range rangeCount {
+			ranges = append(ranges, kv.KeyRange{
+				StartKey: bound[i*2],
+				EndKey:   bound[i*2+1],
+			})
 		}
+		if rng.Intn(2) == 0 {
+			for range 20 {
+				client.randomSplitOne()
+			}
+			for range 5 {
+				client.randomMergeOne()
+			}
+		}
+		// invalidate the cache
+		for id := range cache.mu.shards {
+			if id%3 == 0 {
+				cache.InvalidateCachedShard(id)
+			}
+		}
+
 		locs, err := cache.BatchLocateKeyRanges(ctx, 0, 0, ranges)
 		require.NoError(t, err)
 		assertNoOverlapAndMissing(ranges, locs)

@@ -238,15 +238,15 @@ func (s *TiCIShardCache) BatchLocateKeyRanges(
 	indexID int64,
 	keyRanges []kv.KeyRange,
 ) ([]*ShardLocation, error) {
-	tmp := make([]kv.KeyRange, len(keyRanges))
-	copy(tmp, keyRanges)
+	copiedKeyRanges := make([]kv.KeyRange, len(keyRanges))
+	copy(copiedKeyRanges, keyRanges)
 	var ss = "BatchLocateKeyRanges keyRanges:["
 	for _, info := range keyRanges {
 		ss += fmt.Sprintf("[ StartKey: %v, EndKey: %v ]",
 			[]byte(info.StartKey), []byte(info.EndKey))
 	}
 	ss += "]"
-	logutil.BgLogger().Info("TiCIShardCache BatchLocateKeyRanges",
+	logutil.BgLogger().Debug("TiCIShardCache BatchLocateKeyRanges",
 		zap.String("keyRanges", ss),
 		zap.String("indexID", fmt.Sprintf("%d", indexID)))
 	uncachedRanges := make([]kv.KeyRange, 0, len(keyRanges))
@@ -335,7 +335,7 @@ func (s *TiCIShardCache) BatchLocateKeyRanges(
 		}
 	}
 	merged := merger.build()
-	return s.attachRangesToLocations(merged, tmp), nil
+	return s.attachRangesToLocations(merged, copiedKeyRanges), nil
 }
 
 func (s *TiCIShardCache) attachRangesToLocations(shards []*ShardLocation, keyRanges []kv.KeyRange) []*ShardLocation {
@@ -512,22 +512,25 @@ func (s *TiCIShardCache) splitKeyRangesByLocations(loc *ShardWithAddr, ranges *K
 }
 
 type batchLocateShardsMerger struct {
-	lastEndKey   []byte
-	cachedIdx    int
-	cachedShards []*ShardWithAddr
-	mergedShards []*ShardWithAddr
+	lastEndKey      []byte
+	cachedIdx       int
+	cachedShards    []*ShardWithAddr
+	mergedLocations []*ShardLocation
 }
 
 func newBatchLocateShardsMerger(cachedShards []*ShardWithAddr, sizeHint int) *batchLocateShardsMerger {
 	return &batchLocateShardsMerger{
-		lastEndKey:   nil,
-		cachedShards: cachedShards,
-		mergedShards: make([]*ShardWithAddr, 0, sizeHint),
+		lastEndKey:      nil,
+		cachedShards:    cachedShards,
+		mergedLocations: make([]*ShardLocation, 0, sizeHint),
 	}
 }
 
 func (m *batchLocateShardsMerger) appendKeyLocation(shard *ShardWithAddr) {
-	m.mergedShards = append(m.mergedShards, shard)
+	m.mergedLocations = append(m.mergedLocations, &ShardLocation{
+		ShardWithAddr: shard,
+		Ranges:        NewKeyRanges([]kv.KeyRange{{StartKey: kv.Key(shard.StartKey), EndKey: kv.Key(shard.EndKey)}}),
+	})
 }
 
 func (m *batchLocateShardsMerger) appendShard(uncachedShard *ShardWithAddr) {
@@ -550,7 +553,7 @@ func (m *batchLocateShardsMerger) appendShard(uncachedShard *ShardWithAddr) {
 	}
 
 	for ; m.cachedIdx < len(m.cachedShards); m.cachedIdx++ {
-		if m.lastEndKey != nil && bytes.Compare(m.lastEndKey, kv.Key(m.cachedShards[m.cachedIdx].EndKey)) >= 0 {
+		if m.lastEndKey != nil && len(m.cachedShards[m.cachedIdx].EndKey) != 0 && bytes.Compare(m.lastEndKey, kv.Key(m.cachedShards[m.cachedIdx].EndKey)) >= 0 {
 			continue
 		}
 		if bytes.Compare(kv.Key(m.cachedShards[m.cachedIdx].StartKey), kv.Key(uncachedShard.StartKey)) >= 0 {
@@ -563,19 +566,12 @@ func (m *batchLocateShardsMerger) appendShard(uncachedShard *ShardWithAddr) {
 
 func (m *batchLocateShardsMerger) build() []*ShardLocation {
 	for ; m.cachedIdx < len(m.cachedShards); m.cachedIdx++ {
-		if m.lastEndKey != nil && bytes.Compare(m.lastEndKey, kv.Key(m.cachedShards[m.cachedIdx].EndKey)) >= 0 {
+		if m.lastEndKey != nil && len(m.cachedShards[m.cachedIdx].EndKey) != 0 && bytes.Compare(m.lastEndKey, kv.Key(m.cachedShards[m.cachedIdx].EndKey)) >= 0 {
 			continue
 		}
 		m.appendKeyLocation(m.cachedShards[m.cachedIdx])
 	}
-	locs := make([]*ShardLocation, len(m.mergedShards))
-	for i, shard := range m.mergedShards {
-		locs[i] = &ShardLocation{
-			ShardWithAddr: shard,
-			Ranges:        NewKeyRanges([]kv.KeyRange{{StartKey: kv.Key(shard.StartKey), EndKey: kv.Key(shard.EndKey)}}),
-		}
-	}
-	return locs
+	return m.mergedLocations
 }
 
 func (mu *shardIndexMu) insertShardToCache(indexID int64, cachedShard *ShardWithAddr, invalidateOldShard bool) bool {
@@ -596,9 +592,12 @@ func (mu *shardIndexMu) insertShardToCache(indexID int64, cachedShard *ShardWith
 
 // InvalidateCachedShard invalidates the cached shard with the given shardID.
 func (s *TiCIShardCache) InvalidateCachedShard(shardID uint64) {
-	logutil.BgLogger().Info("InvalidateCachedShard", zap.Uint64("shardID", shardID))
-	cachedShards := s.GetCachedShardWithRLock(shardID)
-	if len(cachedShards) == 0 {
+	logutil.BgLogger().Debug("InvalidateCachedShard", zap.Uint64("shardID", shardID))
+	s.mu.Lock()
+	cachedShards, ok := s.mu.shards[shardID]
+	s.mu.shards[shardID] = nil
+	s.mu.Unlock()
+	if !ok {
 		return
 	}
 	for _, cachedShard := range cachedShards {
