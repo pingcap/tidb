@@ -2696,7 +2696,7 @@ func writeChunk(
 		count++
 	}
 	ks, vs := fms.KV()
-	logutil.DDLLogger().Info("fm sketch hashset by index", zap.Uint64s("k", ks), zap.Bools("v", vs))
+	logutil.DDLLogger().Debug("fm sketch hashset by index", zap.Uint64s("k", ks), zap.Bools("v", vs))
 	return count, totalBytes, sampled, nil
 }
 

@@ -155,7 +155,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		}
 		defer e.sessPool.Put(sctx)
 
-		err = external.HandleIndexStats(sctx, context.Background(), e.cloudStoreURI)
+		err = external.HandleIndexStats(sctx, context.Background(), e.indexes[0].ID, e.cloudStoreURI)
 		if err != nil {
 			logutil.Logger(ctx).Error("cloud import executor read sampled stats kv failed", zap.Error(err))
 		}

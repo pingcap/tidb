@@ -208,7 +208,7 @@ func readOneFile(
 	return nil
 }
 
-func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, cloudStoreURI string) error {
+func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64, cloudStoreURI string) error {
 	totalCnt := 0
 	ts := time.Now()
 	sampledKVs := make([]KVPair, 0)
@@ -306,8 +306,10 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, cloudStoreUR
 		}
 		fullFms.MergeFMSketch(fms)
 	}
-	ks, vs := fullFms.KV()
-	logutil.BgLogger().Info("fms sketch example", zap.Uint64s("ks", ks), zap.Bools("vs", vs))
+	if fullFms.NDV() < 100 {
+		ks, vs := fullFms.KV()
+		logutil.BgLogger().Info("fms sketch example", zap.Uint64s("ks", ks), zap.Bools("vs", vs))
+	}
 
 	// build hist, topn
 	collector := &statistics.SampleCollector{
@@ -318,16 +320,15 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, cloudStoreUR
 		TotalSize: int64(len(sampleItems)),
 		MemSize:   int64(len(sampleItems)) * (8 + statistics.EmptySampleItemSize + 8),
 	}
-	idxID := 1
 	tp := types.NewFieldType(mysql.TypeBlob)
 	hist, topn, err := statistics.BuildHistAndTopN(sctx,
 		statistics.DefaultHistogramBuckets,
 		statistics.DefaultTopNValue,
-		int64(idxID), collector, tp, false, nil, false)
+		idxID, collector, tp, false, nil, false)
 	logutil.BgLogger().Info("build hist, topn",
 		zap.Int("items-count", len(sampleItems)),
 		zap.Any("hist", hist),
-		zap.Any("topn", topn))
+		zap.Int("topn", topn.Num()))
 
 	return nil
 }
