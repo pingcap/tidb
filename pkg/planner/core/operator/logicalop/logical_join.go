@@ -361,25 +361,48 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 		if isNullcol, ok := args[0].(*expression.Column); ok {
 			// column in IsNull expression is from the outer side columns.
 			selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
-			// selection's schema doesn't contain the outer side columns.
-			selOutputColInOuter := slices.ContainsFunc(selectSch.Columns, func(column *expression.Column) bool {
-				return outerSchSet.Has(int(column.UniqueID))
-			})
-			if selConditionColInOuter && selOutputColInOuter {
-				projExprs := make([]expression.Expression, 0, len(selectSch.Columns))
-				for _, c := range selectSch.Columns {
-					if outerSchSet.Has(int(c.UniqueID)) {
-						projExprs = append(projExprs, expression.NewNull())
-					} else {
-						projExprs = append(projExprs, c)
-					}
+			if selConditionColInOuter {
+				// selection's schema doesn't contain the outer side columns.
+				proj = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+			} else {
+				outerSch := p.Children()[1^innerChildIdx].Schema()
+				idx := outerSch.ColumnIndex(isNullcol)
+				if mysql.HasNotNullFlag(outerSch.Columns[idx].RetType.GetFlag()) {
+					proj = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+					selConditionColInOuter = true
 				}
-				proj = LogicalProjection{Exprs: projExprs}.Init(p.SCtx(), p.QueryBlockOffset())
-				proj.SetSchema(selectSch.Clone())
 			}
 		}
 	}
+
+	if selConditionColInOuter {
+		ctx := p.SCtx().GetExprCtx()
+		if p.JoinType == base.RightOuterJoin {
+			for idx, expr := range p.EqualConditions {
+				args := expr.GetArgs()
+				p.EqualConditions[idx] = expression.NewFunctionInternal(ctx, expr.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0]).(*expression.ScalarFunction)
+			}
+			args := p.Children()
+			p.SetChildren(args[1], args[0])
+		}
+		p.JoinType = base.AntiSemiJoin
+	}
+
 	return proj, selConditionColInOuter
+}
+
+func (p *LogicalJoin) generateProject4ConvertAntiJoin(outerSchSet *intset.FastIntSet, selectSch *expression.Schema) (proj *LogicalProjection) {
+	projExprs := make([]expression.Expression, 0, len(selectSch.Columns))
+	for _, c := range selectSch.Columns {
+		if outerSchSet.Has(int(c.UniqueID)) {
+			projExprs = append(projExprs, expression.NewNull())
+		} else {
+			projExprs = append(projExprs, c.Clone())
+		}
+	}
+	proj = LogicalProjection{Exprs: projExprs}.Init(p.SCtx(), p.QueryBlockOffset())
+	proj.SetSchema(selectSch.Clone())
+	return
 }
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.

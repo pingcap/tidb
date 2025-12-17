@@ -38,7 +38,6 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 			if ok {
 				proj, ok := join.CanConvertAntiJoin(sel.Conditions, sel.Schema())
 				if ok {
-					join.JoinType = base.AntiSemiJoin
 					if proj != nil {
 						proj.SetChildren(join)
 						p.SetChild(idx, proj)
