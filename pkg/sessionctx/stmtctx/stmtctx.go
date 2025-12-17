@@ -476,6 +476,11 @@ type StatementContext struct {
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
 	// acquired in this case.
 	ForShareLockEnabledByNoop bool
+
+	// HACK
+	HackBinding any
+	HackMatched bool
+	HackScope   string
 }
 
 // DefaultStmtErrLevels is the default error levels for statement
