@@ -1088,13 +1088,13 @@ func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
 // Add add a new sample value to the ru summary record.
 func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
 	if info != nil {
-		s.UnpackedBytesSentTiKVTotal += info.UnpackedBytesSentKVTotal
-		s.UnpackedBytesReceivedTiKVTotal += info.UnpackedBytesReceivedKVTotal
-		s.UnpackedBytesSentTiKVCrossZone += info.UnpackedBytesSentKVCrossZone
-		s.UnpackedBytesReceivedTiKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
-		s.UnpackedBytesSentTiFlashTotal += info.UnpackedBytesSentMPPTotal
-		s.UnpackedBytesReceivedTiFlashTotal += info.UnpackedBytesReceivedMPPTotal
-		s.UnpackedBytesSentTiFlashCrossZone += info.UnpackedBytesSentMPPCrossZone
-		s.UnpackedBytesReceivedTiFlashCrossZone += info.UnpackedBytesReceivedMPPCrossZone
+		s.UnpackedBytesSentTiKVTotal += atomic.LoadInt64(&info.UnpackedBytesSentKVTotal)
+		s.UnpackedBytesReceivedTiKVTotal += atomic.LoadInt64(&info.UnpackedBytesReceivedKVTotal)
+		s.UnpackedBytesSentTiKVCrossZone += atomic.LoadInt64(&info.UnpackedBytesSentKVCrossZone)
+		s.UnpackedBytesReceivedTiKVCrossZone += atomic.LoadInt64(&info.UnpackedBytesReceivedKVCrossZone)
+		s.UnpackedBytesSentTiFlashTotal += atomic.LoadInt64(&info.UnpackedBytesSentMPPTotal)
+		s.UnpackedBytesReceivedTiFlashTotal += atomic.LoadInt64(&info.UnpackedBytesReceivedMPPTotal)
+		s.UnpackedBytesSentTiFlashCrossZone += atomic.LoadInt64(&info.UnpackedBytesSentMPPCrossZone)
+		s.UnpackedBytesReceivedTiFlashCrossZone += atomic.LoadInt64(&info.UnpackedBytesReceivedMPPCrossZone)
 	}
 }

@@ -1791,15 +1791,15 @@ func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail := tikvExecDetailRaw.(*util.ExecDetails)
-		executor_metrics.ExecutorNetworkTransmissionSentTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesSentKVTotal))
-		executor_metrics.ExecutorNetworkTransmissionSentTiKVCrossZone.Add(float64(tikvExecDetail.UnpackedBytesSentKVCrossZone))
-		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesReceivedKVTotal))
-		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVCrossZone.Add(float64(tikvExecDetail.UnpackedBytesReceivedKVCrossZone))
+		executor_metrics.ExecutorNetworkTransmissionSentTiKVTotal.Add(float64(atomic.LoadInt64(&tikvExecDetail.UnpackedBytesSentKVTotal)))
+		executor_metrics.ExecutorNetworkTransmissionSentTiKVCrossZone.Add(float64(atomic.LoadInt64(&tikvExecDetail.UnpackedBytesSentKVCrossZone)))
+		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVTotal.Add(float64(atomic.LoadInt64(&tikvExecDetail.UnpackedBytesReceivedKVTotal)))
+		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVCrossZone.Add(float64(atomic.LoadInt64(&tikvExecDetail.UnpackedBytesReceivedKVCrossZone)))
 		if hasMPPTraffic {
-			executor_metrics.ExecutorNetworkTransmissionSentTiFlashTotal.Add(float64(tikvExecDetail.UnpackedBytesSentMPPTotal))
-			executor_metrics.ExecutorNetworkTransmissionSentTiFlashCrossZone.Add(float64(tikvExecDetail.UnpackedBytesSentMPPCrossZone))
-			executor_metrics.ExecutorNetworkTransmissionReceivedTiFlashTotal.Add(float64(tikvExecDetail.UnpackedBytesReceivedMPPTotal))
-			executor_metrics.ExecutorNetworkTransmissionReceivedTiFlashCrossZone.Add(float64(tikvExecDetail.UnpackedBytesReceivedMPPCrossZone))
+			executor_metrics.ExecutorNetworkTransmissionSentTiFlashTotal.Add(float64(atomic.LoadInt64(&tikvExecDetail.UnpackedBytesSentMPPTotal)))
+			executor_metrics.ExecutorNetworkTransmissionSentTiFlashCrossZone.Add(float64(atomic.LoadInt64(&tikvExecDetail.UnpackedBytesSentMPPCrossZone)))
+			executor_metrics.ExecutorNetworkTransmissionReceivedTiFlashTotal.Add(float64(atomic.LoadInt64(&tikvExecDetail.UnpackedBytesReceivedMPPTotal)))
+			executor_metrics.ExecutorNetworkTransmissionReceivedTiFlashCrossZone.Add(float64(atomic.LoadInt64(&tikvExecDetail.UnpackedBytesReceivedMPPCrossZone)))
 		}
 	}
 }

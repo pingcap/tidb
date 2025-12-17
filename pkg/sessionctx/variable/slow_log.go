@@ -311,14 +311,14 @@ func kvExecDetailFormat(buf *bytes.Buffer, kvExecDetail *util.ExecDetails) {
 	writeSlowLogItem(buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(kvExecDetail.WaitKVRespDuration).Seconds(), 'f', -1, 64))
 	writeSlowLogItem(buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(kvExecDetail.WaitPDRespDuration).Seconds(), 'f', -1, 64))
 	writeSlowLogItem(buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(kvExecDetail.BackoffDuration).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesSentKVTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedKVTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesSentKVCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedKVCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesSentMPPTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedMPPTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesSentMPPCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedMPPCrossZone, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVTotal, strconv.FormatInt(atomic.LoadInt64(&kvExecDetail.UnpackedBytesSentKVTotal), 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVTotal, strconv.FormatInt(atomic.LoadInt64(&kvExecDetail.UnpackedBytesReceivedKVTotal), 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVCrossZone, strconv.FormatInt(atomic.LoadInt64(&kvExecDetail.UnpackedBytesSentKVCrossZone), 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, strconv.FormatInt(atomic.LoadInt64(&kvExecDetail.UnpackedBytesReceivedKVCrossZone), 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashTotal, strconv.FormatInt(atomic.LoadInt64(&kvExecDetail.UnpackedBytesSentMPPTotal), 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashTotal, strconv.FormatInt(atomic.LoadInt64(&kvExecDetail.UnpackedBytesReceivedMPPTotal), 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashCrossZone, strconv.FormatInt(atomic.LoadInt64(&kvExecDetail.UnpackedBytesSentMPPCrossZone), 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, strconv.FormatInt(atomic.LoadInt64(&kvExecDetail.UnpackedBytesReceivedMPPCrossZone), 10))
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -807,49 +807,49 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 	strings.ToLower(SlowLogUnpackedBytesSentTiKVTotal): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesSentKVTotal)
+			return matchGE(threshold, atomic.LoadInt64(&d.UnpackedBytesSentKVTotal))
 		},
 	),
 	strings.ToLower(SlowLogUnpackedBytesReceivedTiKVTotal): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesReceivedKVTotal)
+			return matchGE(threshold, atomic.LoadInt64(&d.UnpackedBytesReceivedKVTotal))
 		},
 	),
 	strings.ToLower(SlowLogUnpackedBytesSentTiKVCrossZone): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesSentKVCrossZone)
+			return matchGE(threshold, atomic.LoadInt64(&d.UnpackedBytesSentKVCrossZone))
 		},
 	),
 	strings.ToLower(SlowLogUnpackedBytesReceivedTiKVCrossZone): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesReceivedKVCrossZone)
+			return matchGE(threshold, atomic.LoadInt64(&d.UnpackedBytesReceivedKVCrossZone))
 		},
 	),
 	strings.ToLower(SlowLogUnpackedBytesSentTiFlashTotal): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesSentMPPTotal)
+			return matchGE(threshold, atomic.LoadInt64(&d.UnpackedBytesSentMPPTotal))
 		},
 	),
 	strings.ToLower(SlowLogUnpackedBytesReceivedTiFlashTotal): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesReceivedMPPTotal)
+			return matchGE(threshold, atomic.LoadInt64(&d.UnpackedBytesReceivedMPPTotal))
 		},
 	),
 	strings.ToLower(SlowLogUnpackedBytesSentTiFlashCrossZone): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesSentMPPCrossZone)
+			return matchGE(threshold, atomic.LoadInt64(&d.UnpackedBytesSentMPPCrossZone))
 		},
 	),
 	strings.ToLower(SlowLogUnpackedBytesReceivedTiFlashCrossZone): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
-			return matchGE(threshold, d.UnpackedBytesReceivedMPPCrossZone)
+			return matchGE(threshold, atomic.LoadInt64(&d.UnpackedBytesReceivedMPPCrossZone))
 		},
 	),
 	// The following fields are related to execdetails.ExecDetails.
