@@ -898,6 +898,8 @@ func (w *indexIngestWorker) Close() error {
 
 	// write fms to s3
 	if w.fms != nil && w.fms.NDV() != 0 {
+		logutil.BgLogger().Info("write fms sketch to external storage",
+			zap.Int64("ndv", w.fms.NDV()))
 		data, err := statistics.EncodeFMSketch(w.fms)
 		if err != nil {
 			return errors.Trace(err)
