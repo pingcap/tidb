@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/mock"
@@ -205,7 +205,7 @@ func TestShowAffinityColumns(t *testing.T) {
 
 	// Step 3: Set up mock PD client
 	mockCli := &mockPDCliForAffinity{}
-	recoverFn := infosync.SetPDHttpCliForTest(mockCli)
+	recoverFn := affinity.SetPDClientForTest(mockCli)
 	defer recoverFn()
 
 	// Step 4: Mock the GetAllAffinityGroups call with actual group ID
@@ -261,7 +261,7 @@ func TestShowAffinityNullStatus(t *testing.T) {
 
 	// Step 2: Set up mock PD client
 	mockCli := &mockPDCliForAffinity{}
-	recoverFn := infosync.SetPDHttpCliForTest(mockCli)
+	recoverFn := affinity.SetPDClientForTest(mockCli)
 	defer recoverFn()
 
 	// Step 3: Mock PD response with empty map (group not found)

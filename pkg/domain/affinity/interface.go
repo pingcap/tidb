@@ -103,3 +103,13 @@ func GetAllGroupStates(ctx context.Context) (map[string]*pdhttp.AffinityGroupSta
 	}
 	return pdClient.GetAllAffinityGroups(ctx)
 }
+
+// SetPDClientForTest sets the PD client for testing.
+// Please do not use it in the production environment.
+func SetPDClientForTest(cli pdhttp.Client) func() {
+	originalCli := pdClient
+	pdClient = cli
+	return func() {
+		pdClient = originalCli
+	}
+}
