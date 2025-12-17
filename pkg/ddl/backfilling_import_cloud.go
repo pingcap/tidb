@@ -19,9 +19,7 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"github.com/pingcap/tidb/pkg/util"
-	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"go.uber.org/zap"
-	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -117,36 +115,36 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	var (
-		indexDataFile = make([]string, 0, len(sm.DataFiles))
-		indexStatFile = make([]string, 0, len(sm.StatFiles))
-		statsDataFile = make([]string, 0, len(sm.DataFiles))
-		statsStatFile = make([]string, 0, len(sm.StatFiles))
-	)
-	for i := range sm.DataFiles {
-		if strings.Contains(sm.DataFiles[i], disttaskutil.StatsSampled) {
-			statsDataFile = append(statsDataFile, sm.DataFiles[i])
-			statsStatFile = append(statsStatFile, sm.StatFiles[i])
-		} else {
-			indexDataFile = append(indexDataFile, sm.DataFiles[i])
-			indexStatFile = append(indexStatFile, sm.StatFiles[i])
-		}
-	}
-	logutil.BgLogger().Info("cloud import executor split index and stats files",
-		zap.Strings("indexDataFiles", indexDataFile),
-		zap.Strings("indexStatFiles", indexStatFile),
-		zap.Strings("statsDataFiles", statsDataFile),
-		zap.Strings("statsStatFiles", statsStatFile),
-	)
-	sm.DataFiles = indexDataFile
-	sm.StatFiles = indexStatFile
+	//var (
+	//	indexDataFile = make([]string, 0, len(sm.DataFiles))
+	//	indexStatFile = make([]string, 0, len(sm.StatFiles))
+	//	statsDataFile = make([]string, 0, len(sm.DataFiles))
+	//	statsStatFile = make([]string, 0, len(sm.StatFiles))
+	//)
+	//for i := range sm.DataFiles {
+	//	if strings.Contains(sm.DataFiles[i], disttaskutil.StatsSampled) {
+	//		statsDataFile = append(statsDataFile, sm.DataFiles[i])
+	//		statsStatFile = append(statsStatFile, sm.StatFiles[i])
+	//	} else {
+	//		indexDataFile = append(indexDataFile, sm.DataFiles[i])
+	//		indexStatFile = append(indexStatFile, sm.StatFiles[i])
+	//	}
+	//}
+	//logutil.BgLogger().Info("cloud import executor split index and stats files",
+	//	zap.Strings("indexDataFiles", indexDataFile),
+	//	zap.Strings("indexStatFiles", indexStatFile),
+	//	zap.Strings("statsDataFiles", statsDataFile),
+	//	zap.Strings("statsStatFiles", statsStatFile),
+	//)
+	//sm.DataFiles = indexDataFile
+	//sm.StatFiles = indexStatFile
 
 	wg := &util.WaitGroupWrapper{}
 	defer func() {
 		wg.Wait()
 	}()
 	wg.Run(func() {
-		err := external.HandleIndexStats(statsDataFile, context.Background(), e.cloudStoreURI)
+		err := external.HandleIndexStats(context.Background(), e.cloudStoreURI)
 		if err != nil {
 			logutil.Logger(ctx).Error("cloud import executor read sampled stats kv failed", zap.Error(err))
 		}

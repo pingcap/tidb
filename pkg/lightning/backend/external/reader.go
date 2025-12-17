@@ -203,10 +203,11 @@ func readOneFile(
 	return nil
 }
 
-func HandleIndexStats(dataFiles []string, ctx context.Context, cloudStoreURI string) error {
+func HandleIndexStats(ctx context.Context, cloudStoreURI string) error {
 	totalCnt := 0
 	ts := time.Now()
 	sampledKVs := make([]KVPair, 0)
+	var dataFiles []string
 	defer func() {
 		logutil.BgLogger().Info("read all sampled kv files completed",
 			zap.Int("total-kv-count", totalCnt),
@@ -233,18 +234,18 @@ func HandleIndexStats(dataFiles []string, ctx context.Context, cloudStoreURI str
 		storage.Close()
 	}()
 
+	// get sampled kv file path
 	files, err := GetAllFileNames(ctx, storage, disttaskutil.StatsSampled)
 	if err != nil {
 		return err
 	}
 	logutil.BgLogger().Info("read sampled kv files", zap.Strings("files", files))
-	dataFiles = []string{}
+
 	for _, file := range files {
 		if !strings.Contains(file, "stat") {
 			dataFiles = append(dataFiles, file)
 		}
 	}
-
 	for _, dataFile := range dataFiles {
 		cnt, kvs, err := readOneSampledFile(ctx, storage, dataFile, smallBlockBufPool.NewBuffer(), largeBlockBufPool.NewBuffer())
 		if err != nil {
@@ -268,12 +269,14 @@ func HandleIndexStats(dataFiles []string, ctx context.Context, cloudStoreURI str
 		)
 		//d := types.NewIntDatum()
 	}
+
 	// read fms from s3 and merge
 	files, err = GetAllFileNames(ctx, storage, "fms")
 	if err != nil {
 		return err
 	}
 	logutil.BgLogger().Info("read fms file", zap.Strings("file", files))
+	fullFms := statistics.NewFMSketch(statistics.MaxSketchSize)
 	for _, file := range files {
 		data, err := storage.ReadFile(ctx, file)
 		if err != nil {
@@ -283,9 +286,11 @@ func HandleIndexStats(dataFiles []string, ctx context.Context, cloudStoreURI str
 		if err != nil {
 			return errors.Trace(err)
 		}
-		ks, vs := fms.KV()
-		logutil.BgLogger().Info("fms sketch example", zap.Uint64s("ks", ks), zap.Bools("vs", vs))
+		fullFms.MergeFMSketch(fms)
 	}
+	ks, vs := fullFms.KV()
+	logutil.BgLogger().Info("fms sketch example", zap.Uint64s("ks", ks), zap.Bools("vs", vs))
+
 	return nil
 }
 
