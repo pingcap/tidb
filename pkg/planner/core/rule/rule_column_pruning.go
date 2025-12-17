@@ -38,9 +38,9 @@ func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan) (base.Logi
 	if err != nil {
 		return nil, planChanged, err
 	}
-	 intest.AssertFunc(func() bool {
-	 	 return noZeroColumnLayOut(lp)
-	 }, "After column pruning, some operator got zero row output. Please fix it.")
+	intest.AssertFunc(func() bool {
+		return noZeroColumnLayOut(lp)
+	}, "After column pruning, some operator got zero row output. Please fix it.")
 	return lp, planChanged, nil
 }
 
