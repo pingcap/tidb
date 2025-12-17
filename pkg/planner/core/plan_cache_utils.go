@@ -411,6 +411,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
+	//return string(hash), binding, true, "", nil
 	return string(hack.String(hash)), binding, true, "", nil
 }
 
