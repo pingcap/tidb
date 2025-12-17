@@ -107,11 +107,11 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 		state, exists := allAffinityStates[info.groupID]
 
 		var (
-			leaderStoreID       any = nil
-			voterStoreIDs       any = nil
-			status              any = nil
-			regionCount         any = nil
-			affinityRegionCount any = nil
+			leaderStoreID       any
+			voterStoreIDs       any
+			status              any
+			regionCount         any
+			affinityRegionCount any
 		)
 
 		if exists && state != nil {
