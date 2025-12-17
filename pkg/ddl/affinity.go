@@ -69,8 +69,8 @@ func buildAffinityGroupDefinitions(codec tikv.Codec, tblInfo *model.TableInfo, p
 		}, nil
 	case ast.TableAffinityLevelPartition:
 		definitions := partitionDefs
-		if definitions == nil && tblInfo.Partition != nil {
-			definitions = tblInfo.Partition.Definitions
+		if definitions == nil && tblInfo.GetPartitionInfo() != nil {
+			definitions = tblInfo.GetPartitionInfo().Definitions
 		}
 		if len(definitions) == 0 {
 			return nil, errors.Errorf("partition affinity requires partition definitions for table %s (ID: %d), table metadata may be corrupted", tblInfo.Name.O, tblInfo.ID)

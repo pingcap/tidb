@@ -51,7 +51,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 		partitionName any    // nil for table-level, string for partition-level
 		groupID       string // Still needed to query PD for affinity state
 	}
-	var infos []tablePartitionInfo
+	infos := make([]tablePartitionInfo, 0, len(tableInfoResults))
 
 	for _, result := range tableInfoResults {
 		dbName := result.DBName.O

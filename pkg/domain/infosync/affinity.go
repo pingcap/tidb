@@ -42,8 +42,10 @@ func DeleteAffinityGroupsWithDefaultRetry(ctx context.Context, ids []string) (er
 			return err
 		}
 		if i != RequestPDMaxRetry {
-			logutil.BgLogger().Warn("Error occurs when DeleteAffinityGroups, retry", zap.Error(err), zap.Strings("groupIDs", ids))
 			time.Sleep(RequestRetryInterval)
+		} else {
+			// Only log error on final retry failure
+			logutil.BgLogger().Error("Failed to delete affinity groups after retries", zap.Error(err), zap.Strings("groupIDs", ids))
 		}
 	}
 	return
