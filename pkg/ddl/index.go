@@ -2703,7 +2703,7 @@ func writeChunk(
 func sample() bool {
 	//sample 110000 of 49000000 the total rows
 	//return true
-	return rand.Intn(49000000) < 10000
+	return rand.Intn(49000000) < 110000
 }
 
 func maxIndexColumnCount(indexes []table.Index) int {
