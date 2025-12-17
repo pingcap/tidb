@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"sync/atomic"
@@ -58,9 +59,11 @@ type cloudImportExecutor struct {
 	metric          *lightningmetric.Common
 	engine          atomic.Pointer[external.Engine]
 	summary         *execute.SubtaskSummary
+	sessPool        *sess.Pool
 }
 
 func newCloudImportExecutor(
+	sessPool *sess.Pool,
 	job *model.Job,
 	store kv.Storage,
 	indexes []*model.IndexInfo,
@@ -76,6 +79,7 @@ func newCloudImportExecutor(
 		cloudStoreURI:   cloudStoreURI,
 		taskConcurrency: taskConcurrency,
 		summary:         &execute.SubtaskSummary{},
+		sessPool:        sessPool,
 	}, nil
 }
 
@@ -144,7 +148,14 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		wg.Wait()
 	}()
 	wg.Run(func() {
-		err := external.HandleIndexStats(context.Background(), e.cloudStoreURI)
+		sctx, err := e.sessPool.Get()
+		if err != nil {
+			logutil.Logger(ctx).Error("cloud import executor get session failed", zap.Error(err))
+			return
+		}
+		defer e.sessPool.Put(sctx)
+
+		err = external.HandleIndexStats(sctx, context.Background(), e.cloudStoreURI)
 		if err != nil {
 			logutil.Logger(ctx).Error("cloud import executor read sampled stats kv failed", zap.Error(err))
 		}

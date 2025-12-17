@@ -21,10 +21,15 @@ import (
 	goerrors "errors"
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -203,7 +208,7 @@ func readOneFile(
 	return nil
 }
 
-func HandleIndexStats(ctx context.Context, cloudStoreURI string) error {
+func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, cloudStoreURI string) error {
 	totalCnt := 0
 	ts := time.Now()
 	sampledKVs := make([]KVPair, 0)
@@ -256,6 +261,7 @@ func HandleIndexStats(ctx context.Context, cloudStoreURI string) error {
 	}
 
 	// decode and calculate stats from sampledKVs
+	sampleItems := make([]*statistics.SampleItem, 0, len(sampledKVs))
 	for _, kv := range sampledKVs {
 		// decode index key
 		tableID, idxID, idxVal, err := tablecodec.DecodeIndexKey(kv.Key)
@@ -267,7 +273,19 @@ func HandleIndexStats(ctx context.Context, cloudStoreURI string) error {
 			zap.Int64("idxID", idxID),
 			zap.Strings("idxVal", idxVal),
 		)
-		//d := types.NewIntDatum()
+		i, err := strconv.ParseInt(idxVal[0], 10, 64)
+		if err != nil {
+			return err
+		}
+		d := types.NewIntDatum(i)
+		b := make([]byte, 0, 8)
+		b, err = codec.EncodeKey(time.UTC, b, d)
+		if err != nil {
+			return err
+		}
+		sampleItems = append(sampleItems, &statistics.SampleItem{
+			Value: types.NewBytesDatum(b),
+		})
 	}
 
 	// read fms from s3 and merge
@@ -290,6 +308,26 @@ func HandleIndexStats(ctx context.Context, cloudStoreURI string) error {
 	}
 	ks, vs := fullFms.KV()
 	logutil.BgLogger().Info("fms sketch example", zap.Uint64s("ks", ks), zap.Bools("vs", vs))
+
+	// build hist, topn
+	collector := &statistics.SampleCollector{
+		Samples:   sampleItems,
+		NullCount: 0,
+		Count:     int64(len(sampleItems)),
+		FMSketch:  fullFms,
+		TotalSize: int64(len(sampleItems)),
+		MemSize:   int64(len(sampleItems)) * (8 + statistics.EmptySampleItemSize + 8),
+	}
+	idxID := 1
+	tp := types.NewFieldType(mysql.TypeBlob)
+	hist, topn, err := statistics.BuildHistAndTopN(sctx,
+		statistics.DefaultHistogramBuckets,
+		statistics.DefaultTopNValue,
+		int64(idxID), collector, tp, false, nil, false)
+	logutil.BgLogger().Info("build hist, topn",
+		zap.Int("items-count", len(sampleItems)),
+		zap.Any("hist", hist),
+		zap.Any("topn", topn))
 
 	return nil
 }
