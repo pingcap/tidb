@@ -88,11 +88,6 @@ func getModifyColumnType(
 		return model.ModifyTypeReorg
 	}
 
-	// FIXME(joechenrh): handle partition table case
-	if tblInfo.Partition != nil {
-		return model.ModifyTypeReorg
-	}
-
 	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
 			failpoint.Return(model.ModifyTypeReorg)
@@ -327,7 +322,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	if job.SchemaState == model.StateNone {
-		err = postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
+		err = postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column, job.SQLMode)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -1102,7 +1097,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
-			return ver, errors.Errorf(errMsg)
+			return ver, errors.Errorf("%s", errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
@@ -1296,7 +1291,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
-			return ver, errors.Errorf(errMsg)
+			return ver, errors.Errorf("%s", errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", oldIdxInfos[0].State)
@@ -1405,14 +1400,14 @@ func preCheckPartitionModifiableColumn(sctx sessionctx.Context, t table.Table, c
 		}
 		for _, name := range pt.GetPartitionColumnNames() {
 			if strings.EqualFold(name.L, col.Name.L) {
-				return checkPartitionColumnModifiable(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+				return checkPartitionColumnModifiable(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo, sctx.GetSessionVars().SQLMode)
 			}
 		}
 	}
 	return nil
 }
 
-func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo, sqlMode mysql.SQLMode) error {
 	// Check that the column change does not affect the partitioning column
 	// It must keep the same type, int [unsigned], [var]char, date[time]
 	if tblInfo.Partition != nil {
@@ -1424,7 +1419,7 @@ func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col
 		if len(tblInfo.Partition.Columns) > 0 {
 			for _, pc := range tblInfo.Partition.Columns {
 				if strings.EqualFold(pc.L, col.Name.L) {
-					err := checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+					err := checkPartitionColumnModifiable(sctx, tblInfo, col, newCol, sqlMode)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1444,13 +1439,13 @@ func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col
 			}
 		}
 		if partCol != nil {
-			return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+			return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol, sqlMode)
 		}
 	}
 	return nil
 }
 
-func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo, sqlMode mysql.SQLMode) error {
 	if col.Name.L != newCol.Name.L {
 		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 	}
@@ -1463,8 +1458,7 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 		// There are many edge cases, like when truncating SQL Mode is allowed
 		// which will change the partitioning expression value resulting in a
 		// different partition. Better be safe and not allow decreasing of length.
-		// TODO: Should we allow it in strict mode? Wait for a use case / request.
-		if newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
+		if sqlMode.HasStrictMode() && newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
 			return dbterror.ErrUnsupportedModifyColumn.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
 		}
 	}

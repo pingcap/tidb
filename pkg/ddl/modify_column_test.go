@@ -1363,3 +1363,130 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 		}
 	}
 }
+
+func TestStatsAfterModifyColumn(t *testing.T) {
+	type query struct {
+		pred string
+		idx  string
+	}
+
+	type testCase struct {
+		caseName        string
+		createTableSQL  string
+		modifySQL       string
+		embeddedAnalyze bool
+		checkResult     bool
+		queries         []query
+	}
+
+	tcs := []testCase{
+		{
+			// Check stats correctness after modifying column without any reorg
+			// We don't add index on b, because these indexes need reorg due to NeedRestoreData changes.
+			caseName:        "no reorg without analyze",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a)) partition by hash(a) partitions 4",
+			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
+			embeddedAnalyze: false,
+			checkResult:     true,
+			queries: []query{
+				{"a < 10", "i1"},
+				{"a <= 10", ""},
+				{"a > 10", "i1"},
+				{"a >= 10", ""},
+				{"a = 10", "i1"},
+				{"a = -1", ""},
+				{"b < '10'", ""},
+				{"b <= '10'", ""},
+				{"b > '10'", ""},
+				{"b >= '10'", ""},
+				{"b = '10'", ""},
+				{"b = 'non-exist'", ""},
+			},
+		},
+		{
+			// Only indexes are rewritten.
+			// The row data remains the same, so the stats are still valid.
+			caseName:        "row and index reorg with analyze",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
+			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
+			embeddedAnalyze: true,
+			checkResult:     true,
+			queries: []query{
+				{"a < 10", "i1"},
+				{"a <= 10", ""},
+				{"a > 10", "i1"},
+				{"a >= 10", ""},
+				{"a = 10", "i1"},
+				{"a = -1", ""},
+				{"b < '10'", ""},
+				{"b <= '10'", "i2"},
+				{"b > '10'", ""},
+				{"b >= '10'", "i2"},
+				{"b = '10'", ""},
+				{"b = 'non-exist'", "i2"},
+			},
+		},
+		{
+			// Both row and index reorg happen, but with no embedded analyze.
+			// All the stats become invalid, so don't check the results.
+			caseName:        "row and index reorg without analyze",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
+			modifySQL:       "alter table t modify column a int unsigned, modify column b varchar(16) collate utf8mb4_general_ci",
+			embeddedAnalyze: false,
+			checkResult:     false,
+			queries: []query{
+				{"a < 10", "i1"},
+				{"a <= 10", ""},
+				{"a > 10", "i1"},
+				{"a >= 10", ""},
+				{"a = 10", "i1"},
+				{"a = -1", ""},
+				{"b < '10'", ""},
+				{"b <= '10'", "i2"},
+				{"b > '10'", ""},
+				{"b >= '10'", "i2"},
+				{"b = '10'", ""},
+				{"b = 'non-exist'", "i2"},
+			},
+		},
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = true;")
+
+	for _, tc := range tcs {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec(tc.createTableSQL)
+			tk.MustExec(fmt.Sprintf("set @@tidb_stats_update_during_ddl = %t", tc.embeddedAnalyze))
+
+			for i := range 128 {
+				tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+			}
+
+			tk.MustExec("analyze table t columns a, b")
+
+			oldRs := make([]string, 0, len(tc.queries))
+			for _, q := range tc.queries {
+				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
+				oldRs = append(oldRs, rs[0][1].(string))
+			}
+
+			tk.MustExec(tc.modifySQL)
+
+			for i, q := range tc.queries {
+				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
+				if tc.checkResult {
+					require.Equal(t, oldRs[i], rs[0][1].(string), "predicate: %s", tc.queries[i].pred)
+				} else {
+					// For index selectivity, the stats is missing here.
+					if q.idx != "" {
+						require.Contains(t, rs[len(rs)-1][len(rs[0])-1], "missing")
+					}
+				}
+			}
+		})
+	}
+}
