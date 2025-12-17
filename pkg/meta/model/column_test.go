@@ -104,3 +104,24 @@ func TestDefaultValue(t *testing.T) {
 	require.Equal(t, mysql.NotNullFlag, extraPhysTblIDCol.GetFlag())
 	require.Equal(t, mysql.TypeLonglong, extraPhysTblIDCol.GetType())
 }
+
+func TestInternalColumn(t *testing.T) {
+	cases := []struct {
+		col     *ColumnInfo
+		typ     byte
+		flen    int
+		decimal int
+	}{
+		{NewExtraHandleColInfo(), mysql.TypeLonglong, 0, 0},
+		{NewExtraCommitTSColInfo(), mysql.TypeLonglong, 0, 0},
+		{NewExtraOriginTSColInfo(), mysql.TypeLonglong, 0, 0},
+		{NewExtraSoftDeleteTimeColInfo(), mysql.TypeTimestamp, 0, 6},
+	}
+	for _, c := range cases {
+		eflen, edecimal := mysql.GetDefaultFieldLengthAndDecimal(c.typ)
+		eflen = max(eflen, c.flen)
+		edecimal = max(edecimal, c.decimal)
+		require.Equal(t, eflen, c.col.GetFlen())
+		require.Equal(t, edecimal, c.col.GetDecimal())
+	}
+}
