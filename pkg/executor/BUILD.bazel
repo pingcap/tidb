@@ -421,6 +421,7 @@ go_test(
         "//pkg/distsql/context",
         "//pkg/disttask/importinto",
         "//pkg/domain",
+        "//pkg/domain/affinity",
         "//pkg/domain/infosync",
         "//pkg/errctx",
         "//pkg/errno",
