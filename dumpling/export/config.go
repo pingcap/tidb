@@ -13,7 +13,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
+	"git.pingcap.net/pingkai/semver/coreos/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"

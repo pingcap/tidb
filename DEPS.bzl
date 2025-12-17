@@ -4928,19 +4928,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_masterminds_semver",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/Masterminds/semver",
-        sha256 = "15f6b54a695c15ffb205d5719e5ed50fab9ba9a739e1b4bdf3a0a319f51a7202",
-        strip_prefix = "github.com/Masterminds/semver@v1.5.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/Masterminds/semver/com_github_masterminds_semver-v1.5.0.zip",
-            "http://ats.apps.svc/gomod/github.com/Masterminds/semver/com_github_masterminds_semver-v1.5.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/Masterminds/semver/com_github_masterminds_semver-v1.5.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/Masterminds/semver/com_github_masterminds_semver-v1.5.0.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_masterminds_semver_v3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/Masterminds/semver/v3",
@@ -9917,6 +9904,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/rsc.io/sampler/io_rsc_sampler-v1.3.0.zip",
             "https://cache.hawkingrei.com/gomod/rsc.io/sampler/io_rsc_sampler-v1.3.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/rsc.io/sampler/io_rsc_sampler-v1.3.0.zip",
+        ],
+    )
+    go_repository(
+        name = "net_pingcap_git_pingkai_semver",
+        build_file_proto_mode = "disable_global",
+        importpath = "git.pingcap.net/pingkai/semver",
+        sha256 = "7eeb1f6bea37a2bdcaa39be02e37782152778d53444ba2fc4cc0e17052e0c446",
+        strip_prefix = "git.pingcap.net/pingkai/semver@v0.0.0-20251217135932-2e4e3afe6494",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/git.pingcap.net/pingkai/semver/net_pingcap_git_pingkai_semver-v0.0.0-20251217135932-2e4e3afe6494.zip",
+            "http://ats.apps.svc/gomod/git.pingcap.net/pingkai/semver/net_pingcap_git_pingkai_semver-v0.0.0-20251217135932-2e4e3afe6494.zip",
+            "https://cache.hawkingrei.com/gomod/git.pingcap.net/pingkai/semver/net_pingcap_git_pingkai_semver-v0.0.0-20251217135932-2e4e3afe6494.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/git.pingcap.net/pingkai/semver/net_pingcap_git_pingkai_semver-v0.0.0-20251217135932-2e4e3afe6494.zip",
         ],
     )
     go_repository(
