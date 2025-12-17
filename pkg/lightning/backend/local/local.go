@@ -1293,12 +1293,6 @@ func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
 		failpoint.Inject("skipOnDuplicateKeyCheck", func(_ failpoint.Value) {
 			failpoint.Return(nil)
 		})
-		onDup := extEngine.GetOnDup()
-		if onDup == engineapi.OnDuplicateKeyRecord || onDup == engineapi.OnDuplicateKeyRemove {
-			return errors.Errorf("OnDuplicateKeyRecord and OnDuplicateKeyRemove are not yet implemented for local backend. " +
-				"When implementing these options, please also implement the statistics verification for them.")
-		}
-
 		// Verify the imported statistics after import.
 		// For external engine, use the total number of KVs loaded in LoadIngestData
 		// (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
