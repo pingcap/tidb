@@ -82,6 +82,8 @@ github.com/Masterminds/semver/v3 v3.3.1 h1:QtNSWtVZ3nBfk8mAOu/B6v7FMJ+NHTIgUPi7r
 github.com/Masterminds/semver/v3 v3.3.1/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/Masterminds/sprig/v3 v3.2.2 h1:17jRggJu518dr3QaafizSXOjKYp94wKfABxUmyxvxX8=
 github.com/Masterminds/sprig/v3 v3.2.2/go.mod h1:UoaO7Yp8KlPnJIYWTFkMaqPUYKTfGFPhxNuwnnxkKlk=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20251217054729-e03951360cd1 h1:Juv5dtxjtZ4r2aKd75XBfE5+EElYPA5zLwhd4Ort/Q8=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20251217054729-e03951360cd1/go.mod h1:gLv6XpW6X3gjl8syKWWCxSg6Mt3KlYVIHb4XGRGpARo=
 github.com/VividCortex/ewma v1.1.1/go.mod h1:2Tkkvm3sRDVXaiyucHiACn4cqf7DpdyLvmxzcbUokwA=
 github.com/VividCortex/ewma v1.2.0 h1:f58SaIzcDXrSy3kWaHNvuJgJ3Nmz59Zji6XoJR/q1ow=
 github.com/VividCortex/ewma v1.2.0/go.mod h1:nz4BbCtbLyFDeC9SUHbtcT5644juEuWfUAUnGx7j5l4=
@@ -951,8 +953,6 @@ github.com/tidwall/pretty v1.2.1 h1:qjsOFOWWQl+N3RsoF5/ssm1pHmJJwhjlSbZ51I6wMl4=
 github.com/tidwall/pretty v1.2.1/go.mod h1:ITEVvHYasfjBbM0u2Pg8T2nJnzm8xPwvNhhsoaGGjNU=
 github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
 github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
-github.com/tikv/client-go/v2 v2.0.8-0.20251028065425-b7d4dfd8520e h1:pcwlWjTLgCEAmkUTzlKvGscvU94ouMXKhzQOJ2aNvw8=
-github.com/tikv/client-go/v2 v2.0.8-0.20251028065425-b7d4dfd8520e/go.mod h1:gLv6XpW6X3gjl8syKWWCxSg6Mt3KlYVIHb4XGRGpARo=
 github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500 h1:ZUCeeEEU76I/jFUK3C9EV3dSSrtVZt3rwpHF6cT8V3k=
 github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500/go.mod h1:SicyvcZE0fzrGGWW3AEtZWWPRzGw/h5img4/6qiSYws=
 github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67 h1:9LPGD+jzxMlnk5r6+hJnar67cgpDIz/iyD+rfl5r2Vk=
