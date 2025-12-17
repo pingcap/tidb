@@ -45,17 +45,19 @@ func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode,
 		bindingSQL = binding.BindSQL
 		ignoreBinding = binding.Hint.ContainTableHint(hint.HintIgnorePlanCache)
 	}
-	stmt := sctx.GetSessionVars().StmtCtx
-	stmt.HackBinding = binding
-	stmt.HackMatched = matched
-	stmt.HackScope = scope
+	if sctx.GetSessionVars().EnableHack {
+		stmt := sctx.GetSessionVars().StmtCtx
+		stmt.HackBinding = binding
+		stmt.HackMatched = matched
+		stmt.HackScope = scope
+	}
 	return
 }
 
 // MatchSQLBinding returns the matched binding for this statement.
 func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding Binding, matched bool, scope string) {
 	stmt := sctx.GetSessionVars().StmtCtx
-	if stmt.HackBinding != nil {
+	if sctx.GetSessionVars().EnableHack && stmt.HackBinding != nil {
 		return stmt.HackBinding.(Binding), stmt.HackMatched, stmt.HackScope
 	}
 	return matchSQLBinding(sctx, stmtNode, nil)
