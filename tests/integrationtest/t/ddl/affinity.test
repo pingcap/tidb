@@ -137,5 +137,55 @@ alter table t1 affinity = 'table';
 -- error 8200
 alter table tp1 exchange partition p0 with table t1;
 
+# test DROP PARTITION after removing affinity
+drop table if exists tp_drop;
+create table tp_drop(a int) affinity = 'partition' partition by range(a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20),
+    PARTITION p2 VALUES LESS THAN (30)
+);
+show create table tp_drop;
+-- error 8200
+alter table tp_drop drop partition p1;
+alter table tp_drop affinity = '';
+show create table tp_drop;
+alter table tp_drop drop partition p1;
+show create table tp_drop;
+select TABLE_NAME, PARTITION_NAME, TIDB_AFFINITY from information_schema.partitions where TABLE_SCHEMA = database() and TABLE_NAME = 'tp_drop' order by PARTITION_NAME;
+
+# test TRUNCATE PARTITION with affinity (should succeed and preserve affinity)
+drop table if exists tp_trunc;
+create table tp_trunc(a int) affinity = 'partition' partition by range(a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20)
+);
+insert into tp_trunc values (5), (15);
+select count(*) from tp_trunc partition(p0);
+select count(*) from tp_trunc partition(p1);
+show create table tp_trunc;
+alter table tp_trunc truncate partition p0;
+select count(*) from tp_trunc partition(p0);
+select count(*) from tp_trunc partition(p1);
+show create table tp_trunc;
+
+# test TRUNCATE TABLE preserves affinity
+drop table if exists t_trunc, tp_trunc2;
+create table t_trunc(a int) affinity = 'table';
+insert into t_trunc values (1), (2), (3);
+select count(*) from t_trunc;
+show create table t_trunc;
+truncate table t_trunc;
+select count(*) from t_trunc;
+show create table t_trunc;
+create table tp_trunc2(a int) affinity = 'partition' partition by range(a) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (20)
+);
+insert into tp_trunc2 values (5), (15);
+show create table tp_trunc2;
+truncate table tp_trunc2;
+select count(*) from tp_trunc2;
+show create table tp_trunc2;
+
 # clear
-drop table if exists t1, t2, t3, t4, tp1, tp2, tp3, v1, temp1;
+drop table if exists t1, t2, t3, t4, tp1, tp2, tp3, v1, temp1, tp_drop, tp_trunc, tp_trunc2, t_trunc;

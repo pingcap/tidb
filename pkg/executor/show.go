@@ -292,6 +292,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowImportJobs(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
+	case ast.ShowAffinity:
+		return e.fetchShowAffinity(ctx)
 	}
 	return nil
 }
