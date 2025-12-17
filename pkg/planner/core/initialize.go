@@ -280,7 +280,7 @@ func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
 		return
 	}
 
-	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.indexPlan, p.tablePlan)
+	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.indexPlan, p.tablePlan, len(p.CommonHandleCols) > 0)
 	if err != nil {
 		// This should not happen, but if it happens, we just log a warning and continue to use the original plan.
 		intest.AssertNoError(err)

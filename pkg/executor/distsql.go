@@ -660,7 +660,6 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	if e.indexLookUpPushDown {
-		// For index lookup push down, partition table is not supported
 		return false, nil
 	}
 
@@ -738,8 +737,20 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		e.byItems = nil
 	}
 	var tps []*types.FieldType
+	tblScanIdxForRewritePartitionID := -1
 	if e.indexLookUpPushDown {
 		tps = e.RetFieldTypes()
+		if e.partitionTableMode {
+			for idx, executor := range e.dagPB.Executors {
+				if executor.Tp == tipb.ExecType_TypeTableScan {
+					tblScanIdxForRewritePartitionID = idx
+					break
+				}
+			}
+			if tblScanIdxForRewritePartitionID < 0 {
+				return errors.New("cannot find table scan executor in for partition index lookup push down")
+			}
+		}
 	} else {
 		tps = e.getRetTpsForIndexReader()
 	}
@@ -761,7 +772,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		for _, kvRange := range kvRanges {
+		for idx, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
 			select {
@@ -772,6 +783,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			if finished {
 				break
 			}
+
+			if tblScanIdxForRewritePartitionID >= 0 {
+				// We should set the TblScan's TableID to the partition physical ID to make sure
+				// the push-down index lookup can encode the table handle key correctly.
+				e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[idx].GetPhysicalID()
+			}
+
 			var builder distsql.RequestBuilder
 			builder.SetDAGRequest(e.dagPB).
 				SetStartTS(e.startTS).
@@ -1159,7 +1177,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 	}
 	taskID := 0
 	for i := 0; i < len(results); {
-		result := results[i]
+		curResultIdx := i
+		result := results[curResultIdx]
 		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
 			break
 		}
@@ -1206,7 +1225,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			}
 			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
 			if w.idxLookup.partitionTableMode {
-				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[i]
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 			}
 			taskID++
 		}
