@@ -812,6 +812,10 @@ workLoop:
 				}
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
+			if !task.isColumn {
+				ks, vs := collector.FMSketch.KV()
+				logutil.BgLogger().Info("analyze get fms", zap.Uint64s("keys", ks), zap.Bools("values", vs))
+			}
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()
