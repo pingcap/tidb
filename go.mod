@@ -87,7 +87,11 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20251205034844-90db5eaa107c
+=======
+	github.com/pingcap/kvproto v0.0.0-20251202064041-b6fd818387cd
+>>>>>>> 524a282a213 (*: update pd client and client go (#65044))
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -110,9 +114,15 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20251215033232-e642d8e8bf0e
 	github.com/tikv/pd/client v0.0.0-20251211090623-d08fd48c229d
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20251215121014-01758810e841
+	github.com/tikv/pd/client v0.0.0-20251216162211-a0bf0e9fc204
+	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
+>>>>>>> 524a282a213 (*: update pd client and client go (#65044))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
