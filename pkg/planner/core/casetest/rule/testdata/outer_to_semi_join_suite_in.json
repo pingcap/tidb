@@ -1,0 +1,19 @@
+[
+  {
+    "name": "TestOuterToSemiJoin",
+    "cases": [
+      "select * from A left join B on A.id = B.a_id where B.val > 0",
+      "select A.* from A left join B on A.id = B.a_id where B.id IS NULL",
+      "select A.* from A left join B on A.id = B.a_id where B.non_null_col IS NULL",
+      "select A.* from A left join B on A.id = B.a_id where B.nullable_col IS NULL",
+      "select A.* from A left join B on A.id = B.a_id where B.id IS NULL OR B.val > 100",
+      "select A.* from A left join B on A.id <=> B.a_id where B.id IS NULL",
+      "select A.* from A left join B on A.id <=> B.a_id where B.val > 0",
+      "select B.* from A right join B on A.id = B.a_id where A.id IS NULL",
+      "select B.* from A right join B on A.id = B.a_id where A.val > 10",
+      "select B.* from A right join B on A.id = B.a_id where A.nullable_val IS NULL",
+      "select B.* from A right join B on A.id = B.a_id where A.id IS NULL OR A.val > 20",
+      "select B.* from A right join B on A.id <=> B.a_id where A.id IS NULL"
+    ]
+  }
+]
