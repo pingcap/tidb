@@ -367,6 +367,11 @@ func (rs *KS3Storage) FileExists(ctx context.Context, file string) (bool, error)
 				return false, nil
 			}
 		}
+		if rerr, ok := errors.Cause(err).(awserr.RequestFailure); ok {
+			if rerr.StatusCode() == 404 {
+				return false, nil
+			}
+		}
 		return false, errors.Trace(err)
 	}
 	return true, nil

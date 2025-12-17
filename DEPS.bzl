@@ -736,13 +736,13 @@ def go_deps():
         name = "com_github_aws_aws_sdk_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go",
-        sha256 = "5d0522d952824a79d837bba9c0dfe1b024628a99be4f1d031611e18d7e98bbce",
-        strip_prefix = "github.com/aws/aws-sdk-go@v1.55.5",
+        sha256 = "c1cd94e343142198dd51601ada20340cd81d6c24d4d7931772ec43dc43dffac1",
+        strip_prefix = "github.com/aws/aws-sdk-go@v1.55.7",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.5.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.5.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.5.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.7.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.7.zip",
         ],
     )
     go_repository(
@@ -775,39 +775,52 @@ def go_deps():
         name = "com_github_aws_aws_sdk_go_v2_config",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/config",
-        sha256 = "c33f05bfc1f0180913fbc6320a8e6ed5208120b1242aea6dc8de1f26a54f6ce5",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/config@v1.27.37",
+        sha256 = "f4fa9b6296595fce68477d7daddebad4dabebec8b5d882fa2dace98b315ffe92",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/config@v1.29.17",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.27.37.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.27.37.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.27.37.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.27.37.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.29.17.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.29.17.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.29.17.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.29.17.zip",
         ],
     )
     go_repository(
         name = "com_github_aws_aws_sdk_go_v2_credentials",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/credentials",
-        sha256 = "37ad210e8824bfb95291fd05b33d32d206f3b2b4887af65baef391f16d316353",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/credentials@v1.17.35",
+        sha256 = "133d7a27cb83a637495f09566c864e05425eb3d98885b73b764d720fc05c1b96",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/credentials@v1.17.70",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.35.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.35.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.35.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.35.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.70.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.70.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.70.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.70.zip",
         ],
     )
     go_repository(
         name = "com_github_aws_aws_sdk_go_v2_feature_ec2_imds",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/feature/ec2/imds",
-        sha256 = "1e693ac24c0f2bc4525293a5cddf1f5c8e1270c383dd65545c5a3ee1432b6af6",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/feature/ec2/imds@v1.16.14",
+        sha256 = "83778d050a9bfc3fe3f0590e3d08dc603154ab11312a3c03d9fb527431d4a2d8",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/feature/ec2/imds@v1.16.32",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.14.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.14.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.14.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.14.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.32.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.32.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.32.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.32.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_aws_aws_sdk_go_v2_feature_s3_manager",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/aws/aws-sdk-go-v2/feature/s3/manager",
+        sha256 = "1ce87f7dae55ae2e4afc9e5a30aa4c4020bf25cdcecb735816a9d789adea5e93",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/feature/s3/manager@v1.17.84",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/feature/s3/manager/com_github_aws_aws_sdk_go_v2_feature_s3_manager-v1.17.84.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/feature/s3/manager/com_github_aws_aws_sdk_go_v2_feature_s3_manager-v1.17.84.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/feature/s3/manager/com_github_aws_aws_sdk_go_v2_feature_s3_manager-v1.17.84.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/feature/s3/manager/com_github_aws_aws_sdk_go_v2_feature_s3_manager-v1.17.84.zip",
         ],
     )
     go_repository(
@@ -840,13 +853,13 @@ def go_deps():
         name = "com_github_aws_aws_sdk_go_v2_internal_ini",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/internal/ini",
-        sha256 = "30ceb160c10eee87c002f89ce5a89100463ec2935a980a3652fc53fff4efe21a",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/internal/ini@v1.8.1",
+        sha256 = "7c134d09366b976ea1362c3dca8a394e130182af739a792d7b16089eefa8a514",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/internal/ini@v1.8.3",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.1.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.3.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.3.zip",
         ],
     )
     go_repository(
@@ -860,6 +873,32 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/internal/v4a/com_github_aws_aws_sdk_go_v2_internal_v4a-v1.4.4.zip",
             "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/internal/v4a/com_github_aws_aws_sdk_go_v2_internal_v4a-v1.4.4.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/internal/v4a/com_github_aws_aws_sdk_go_v2_internal_v4a-v1.4.4.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_aws_aws_sdk_go_v2_service_cloudwatch",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/aws/aws-sdk-go-v2/service/cloudwatch",
+        sha256 = "b652decee1623251035d4e5d8d657eab4a4076cfc7b166ea13f0457a34f558a5",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/cloudwatch@v1.45.3",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/cloudwatch/com_github_aws_aws_sdk_go_v2_service_cloudwatch-v1.45.3.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/cloudwatch/com_github_aws_aws_sdk_go_v2_service_cloudwatch-v1.45.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/cloudwatch/com_github_aws_aws_sdk_go_v2_service_cloudwatch-v1.45.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/cloudwatch/com_github_aws_aws_sdk_go_v2_service_cloudwatch-v1.45.3.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_aws_aws_sdk_go_v2_service_ec2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/aws/aws-sdk-go-v2/service/ec2",
+        sha256 = "62a1c53b0e74fa93805c1376a66ac9143e61062f72b0096feb2b7fa3be2ce587",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/ec2@v1.232.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/ec2/com_github_aws_aws_sdk_go_v2_service_ec2-v1.232.0.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/ec2/com_github_aws_aws_sdk_go_v2_service_ec2-v1.232.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/ec2/com_github_aws_aws_sdk_go_v2_service_ec2-v1.232.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/ec2/com_github_aws_aws_sdk_go_v2_service_ec2-v1.232.0.zip",
         ],
     )
     go_repository(
@@ -915,6 +954,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_aws_aws_sdk_go_v2_service_kms",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/aws/aws-sdk-go-v2/service/kms",
+        sha256 = "bc1982015886c078bdb28cbdbbd25a44935333db2e9ba883e113ee028e3f9aff",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/kms@v1.41.2",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/kms/com_github_aws_aws_sdk_go_v2_service_kms-v1.41.2.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/kms/com_github_aws_aws_sdk_go_v2_service_kms-v1.41.2.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/kms/com_github_aws_aws_sdk_go_v2_service_kms-v1.41.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/kms/com_github_aws_aws_sdk_go_v2_service_kms-v1.41.2.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_aws_aws_sdk_go_v2_service_s3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/service/s3",
@@ -931,39 +983,39 @@ def go_deps():
         name = "com_github_aws_aws_sdk_go_v2_service_sso",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/service/sso",
-        sha256 = "a7bd69b4ae523f519730bb75ed141f4fa1e62dbfa6fc7ec5e0e729f546124cd9",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/sso@v1.23.1",
+        sha256 = "b0be331326a91101eaae56d4b9f5ed07d7a3124cc79291b8f47a674f60991e0b",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/sso@v1.25.5",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.23.1.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.23.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.23.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.23.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.25.5.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.25.5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.25.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.25.5.zip",
         ],
     )
     go_repository(
         name = "com_github_aws_aws_sdk_go_v2_service_ssooidc",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/service/ssooidc",
-        sha256 = "59c0781f1cb61e9f94afe00d8addbfa757caf054e5efe1de9b266c8228839080",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/ssooidc@v1.27.1",
+        sha256 = "dd0ad13e8d73f583b4876420ac346502eedc8cf56b7092491e4fa37390c0675b",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/ssooidc@v1.30.3",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.27.1.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.27.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.27.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.27.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.30.3.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.30.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.30.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.30.3.zip",
         ],
     )
     go_repository(
         name = "com_github_aws_aws_sdk_go_v2_service_sts",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/service/sts",
-        sha256 = "d8fd381f123a1b2e83a653acec96b39fb2a8ba4429b2ef8377410eb9136fb644",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/sts@v1.31.1",
+        sha256 = "6a6bbd067146a2f0184fca54100e66f8350348659c0590f0fb6bad8396b31141",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/sts@v1.34.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.31.1.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.31.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.31.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.31.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.34.0.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.34.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.34.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.34.0.zip",
         ],
     )
     go_repository(
