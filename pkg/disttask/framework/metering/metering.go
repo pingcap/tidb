@@ -382,6 +382,9 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 		logger.Warn("failed to write metering data", zap.Error(err),
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
+		// metering expect incremental data. due to the case described in NewMeter,
+		// we can only retry the data with given TS, and cannot accumulate with
+		// new data and send with new TS as this will cause data duplication.
 		m.pendingRetryData.addFailedData(ts, items)
 	} else {
 		logger.Info("succeed to write metering data",
