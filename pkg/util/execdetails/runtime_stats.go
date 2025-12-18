@@ -558,6 +558,17 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	return copStats
 }
 
+// GetCopStatsTaskNum returns total tasks of CopRuntimeStats that specified by planID
+func (e *RuntimeStatsColl) GetCopStatsTaskNum(planID int) int32 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		return 0
+	}
+	return copStats.GetTasks()
+}
+
 // GetCopCountAndRows returns the total cop-tasks count and total rows of all cop-tasks.
 func (e *RuntimeStatsColl) GetCopCountAndRows(planID int) (int32, int64) {
 	e.mu.Lock()

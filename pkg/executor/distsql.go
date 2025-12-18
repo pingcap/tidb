@@ -1012,10 +1012,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	if e.stats != nil {
 		defer func() {
 			e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
-			var indexScanCopTasks int32
-			if copStats := e.stmtRuntimeStatsColl.GetCopStats(e.getIndexPlanRootID()); copStats != nil {
-				indexScanCopTasks = copStats.GetTasks()
-			}
+			indexScanCopTasks := e.stmtRuntimeStatsColl.GetCopStatsTaskNum(e.getIndexPlanRootID())
 			if e.indexLookUpPushDown {
 				metrics.IndexLookUpExecutorWithPushDownEnabledRowNumber.Observe(float64(e.stats.indexScanBasicStats.GetActRows()))
 				metrics.IndexLookUpIndexScanCopTasksWithPushDownEnabled.Add(float64(indexScanCopTasks))
