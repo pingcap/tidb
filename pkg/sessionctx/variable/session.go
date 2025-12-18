@@ -1261,7 +1261,7 @@ type SessionVars struct {
 	DurationOptimizer struct {
 		Total            time.Duration // total time spent in query optimization
 		BindingMatch     time.Duration // time spent matching plan bindings
-		StatsSyncLoad    time.Duration // time spent loading stats synchronously
+		StatsSyncWait    time.Duration // time spent waiting for stats load to complete
 		LogicalOpt       time.Duration // time spent in logical optimization
 		PhysicalOpt      time.Duration // time spent in physical optimization
 		StatsDerive      time.Duration // time spent deriving/estimating statistics

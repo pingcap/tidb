@@ -240,10 +240,6 @@ func (SyncWaitStatsLoadPoint) Name() string {
 
 // RequestLoadStats send load column/index stats requests to stats handle
 func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadItem, syncWait int64) error {
-	defer func(begin time.Time) {
-		ctx.GetSessionVars().DurationOptimizer.StatsSyncLoad = time.Since(begin)
-	}(time.Now())
-
 	maxExecutionTime := ctx.GetSessionVars().GetMaxExecutionTime()
 	if maxExecutionTime > 0 && maxExecutionTime < uint64(syncWait) {
 		syncWait = int64(maxExecutionTime)
@@ -277,6 +273,10 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	if len(stmtCtx.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
+	defer func(begin time.Time) {
+		// track the time spent in sync wait stats load, which might take a long time.
+		plan.SCtx().GetSessionVars().DurationOptimizer.StatsSyncWait = time.Since(begin)
+	}(time.Now())
 	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
