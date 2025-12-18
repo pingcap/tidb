@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	goerrors "errors"
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -289,6 +290,7 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 	}
 
 	// read fms from s3 and merge
+	var sub statistics.SubStats
 	files, err = GetAllFileNames(ctx, storage, "fms")
 	if err != nil {
 		return err
@@ -300,11 +302,12 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		fms, err := statistics.DecodeFMSketch(data)
+		//fms, err := statistics.DecodeFMSketch(data)
+		err = json.Unmarshal(data, &sub)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		fullFms.MergeFMSketch(fms)
+		fullFms.MergeFMSketch(sub.Fms)
 	}
 	if fullFms.NDV() < 100 {
 		ks, vs := fullFms.KV()
@@ -315,7 +318,7 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 	collector := &statistics.SampleCollector{
 		Samples:   sampleItems,
 		NullCount: 0,
-		Count:     int64(len(sampleItems)),
+		Count:     int64(len(sampleItems)), // todo.
 		FMSketch:  fullFms,
 		TotalSize: int64(len(sampleItems)),
 		MemSize:   int64(len(sampleItems)) * (8 + statistics.EmptySampleItemSize + 8),

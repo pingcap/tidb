@@ -276,6 +276,21 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 	return fm, nil
 }
 
+func (s *FMSketch) MarshalJSON() ([]byte, error) {
+	return EncodeFMSketch(s)
+}
+
+func (s *FMSketch) UnmarshalJSON(data []byte) error {
+	fm, err := DecodeFMSketch(data)
+	if err != nil {
+		return err
+	}
+	s.mask = fm.mask
+	s.maxSize = fm.maxSize
+	s.hashset = fm.hashset
+	return nil
+}
+
 // MemoryUsage returns the total memory usage of a FMSketch.
 func (s *FMSketch) MemoryUsage() (sum int64) {
 	// As for the variables mask(uint64) and maxSize(int) each will consume 8 bytes. This is the origin of the constant 16.

@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"github.com/pingcap/tidb/pkg/statistics"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -699,6 +700,9 @@ func NewWriteExternalStoreOperator(
 				extStore:     store,
 				fms:          statistics.NewFMSketch(statistics.MaxSketchSize),
 				fmsS3Path:    path.Join("fms", strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10)),
+				subStats: &statistics.SubStats{
+					Fms: statistics.NewFMSketch(statistics.MaxSketchSize),
+				},
 			}
 			err := w.initIndexConditionCheckers()
 			if err != nil {
@@ -818,6 +822,7 @@ type indexIngestWorker struct {
 	collector    execute.Collector
 	extStore     storage.ExternalStorage
 	fms          *statistics.FMSketch
+	subStats     *statistics.SubStats
 	fmsS3Path    string
 }
 
@@ -897,10 +902,10 @@ func (w *indexIngestWorker) Close() error {
 	var gerr error
 
 	// write fms to s3
-	if w.fms != nil && w.fms.NDV() != 0 {
+	if w.subStats.Fms != nil && w.subStats.Fms.NDV() != 0 {
 		logutil.BgLogger().Info("write fms sketch to external storage",
-			zap.Int64("ndv", w.fms.NDV()))
-		data, err := statistics.EncodeFMSketch(w.fms)
+			zap.Int64("ndv", w.subStats.Fms.NDV()))
+		data, err := json.Marshal(w.subStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -951,7 +956,7 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes i
 		// skip running the checker in TiDB side.
 		indexConditionCheckers = nil
 	}
-	cnt, kvBytes, sampled, err := writeChunk(w.ctx, w.writers, w.statsWriter, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta(), w.fms)
+	cnt, kvBytes, sampled, err := writeChunk(w.ctx, w.writers, w.statsWriter, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta(), w.fms, w.subStats)
 	if err != nil || cnt == 0 {
 		return 0, 0, 0, err
 	}

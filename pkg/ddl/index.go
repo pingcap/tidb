@@ -2594,6 +2594,7 @@ func writeChunk(
 	copChunk *chunk.Chunk,
 	tblInfo *model.TableInfo,
 	fms *statistics.FMSketch,
+	subStats *statistics.SubStats,
 ) (rowCnt int, bytes int, sampledCnt int, err error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
@@ -2683,6 +2684,7 @@ func writeChunk(
 
 			//sample and write to s3
 			fms.InsertIndexVal(loc, idxData[0])
+			subStats.Fms.InsertIndexVal(loc, idxData[0])
 			if len(statsWriters) != 0 && sample() {
 				// logutil.DDLLogger().Info("sample index kv", zap.Int64("indexID", index.Meta().ID), zap.Int64("handle", handleDataBuf[0].GetInt64()))
 				_, err := writeOneKV(ctx, statsWriters[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)

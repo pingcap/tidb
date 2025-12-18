@@ -315,3 +315,11 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 	c.TopN.Sort()
 	return nil
 }
+
+// SubStats is the statistics for a subset of data.
+type SubStats struct {
+	Fms          *FMSketch `json:"fms"`
+	NullCnt      int64     `json:"null_count"`
+	NoneNullCnt  int64     `json:"non_null_count"`
+	NoneNullSize int64     `json:"size"`
+}
