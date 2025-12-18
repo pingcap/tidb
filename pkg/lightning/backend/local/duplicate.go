@@ -1139,6 +1139,37 @@ type DupeController struct {
 	importClientFactory importClientFactory
 	resourceGroupName   string
 	taskType            string
+
+	collectRemoteDupRows bool
+}
+
+// NewDupeControllerForRemoteBackend creates a new DupeController for remote backend.
+func NewDupeControllerForRemoteBackend(
+	dupeConcurrency int,
+	errorMgr *errormanager.ErrorManager,
+	splitCli split.SplitClient,
+	tikvCli *tikv.KVStore,
+	tikvCodec tikv.Codec,
+	duplicateDB *pebble.DB,
+	keyAdapter common.KeyAdapter,
+	importClientFactory importClientFactory,
+	resourceGroupName string,
+	taskType string,
+	collectRemoteDupRows bool,
+) *DupeController {
+	return &DupeController{
+		splitCli:             splitCli,
+		tikvCli:              tikvCli,
+		tikvCodec:            tikvCodec,
+		errorMgr:             errorMgr,
+		dupeConcurrency:      dupeConcurrency,
+		duplicateDB:          duplicateDB,
+		keyAdapter:           keyAdapter,
+		importClientFactory:  importClientFactory,
+		resourceGroupName:    resourceGroupName,
+		taskType:             taskType,
+		collectRemoteDupRows: collectRemoteDupRows,
+	}
 }
 
 // CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
@@ -1175,6 +1206,12 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 		logger.End(zap.ErrorLevel, err)
 	}()
 
+	// For remote bakcend, the remote worker make sure that the data is already globally ordered before ingest to TiKV.
+	// So remote backend don't need  collect duplicate rows from TiKV.
+	if !local.collectRemoteDupRows {
+		logger.Info("[detect-dupe] skipping remote duplicate detection due to configuration")
+		return false, nil
+	}
 	duplicateManager, err := NewDupeDetector(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
 		local.errorMgr, opts, local.dupeConcurrency, log.Wrap(tidblogutil.Logger(ctx)), local.resourceGroupName, local.taskType)
 	if err != nil {

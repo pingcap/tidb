@@ -98,6 +98,10 @@ var (
 	ErrDropIndexFailed           = errors.Normalize("drop index %s on table %s failed", errors.RFCCodeText("Lightning:Restore:ErrDropIndexFailed"))
 	ErrFoundDataConflictRecords  = errors.Normalize("found data conflict records in table %s, primary key is '%s', row data is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundDataConflictRecords"))
 	ErrFoundIndexConflictRecords = errors.Normalize("found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundIndexConflictRecords"))
+
+	ErrRemoteLoadDataTaskNotFound = errors.Normalize("[remote bakcend] load data task %s is not found in remote worker", errors.RFCCodeText("Lightning:Restore:ErrRemoteLoadDataTaskNotFound"))
+	ErrRemoteRequestRemoteWorker  = errors.Normalize("[remote bakcend] request remote worker error, status code: %d, message: %s", errors.RFCCodeText("Lightning:Restore:ErrRemoteRequestRemoteWorker"))
+	ErrRemoteLoadDataTaskCanceled = errors.Normalize("[remote bakcend] load data task %s is canceled, error: %s", errors.RFCCodeText("Lightning:Restore:ErrRemoteLoadDataTaskCanceled"))
 )
 
 type withStack struct {
