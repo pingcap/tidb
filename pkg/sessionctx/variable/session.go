@@ -1498,6 +1498,8 @@ type SessionVars struct {
 	// EnablePlanCacheForSubquery controls whether the prepare statement with sub query can be cached
 	EnablePlanCacheForSubquery bool
 
+	EnableHack bool
+
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
