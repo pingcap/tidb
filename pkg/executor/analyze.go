@@ -184,6 +184,7 @@ TASKLOOP:
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
+		failpoint.InjectCall("beforeHandleGlobalStats")
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
 		if err != nil {
 			return err

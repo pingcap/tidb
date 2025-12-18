@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1521,4 +1522,48 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStatsForPartitioned(t *testing.T) {
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
+	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set global tidb_enable_async_merge_global_stats = 0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`
+		create table t (a bigint, b bigint, index i2(b))
+		PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (32),
+			PARTITION p1 VALUES LESS THAN (64),
+			PARTITION p2 VALUES LESS THAN (96),
+			PARTITION p3 VALUES LESS THAN (128)
+		)
+	`)
+
+	for i := range 128 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+	}
+
+	// Do analyze and modify column
+	tk.MustExec("analyze table t columns a, b")
+	tk.MustExec("alter table t modify column b int unsigned")
+	tk.MustExec("explain analyze select * from t where a < 32")
+	tk.MustExec("explain analyze select * from t where a != 40")
+	tk.MustExec("explain analyze select * from t where a > 55")
+
+	var singleAnalyze atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeHandleGlobalStats", func() {
+		// Do analyze for single partition again, the stats should be collected
+		// with new type. So now this table contains both stats with old type
+		// and new type.
+		if singleAnalyze.CompareAndSwap(false, true) {
+			tk.MustExec("analyze table t partition p0")
+		}
+	})
+
+	tk.MustExec("analyze table t")
 }

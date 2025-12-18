@@ -102,7 +102,7 @@ func MergePartitionStats2GlobalStats(
 	isIndex bool,
 	histIDs []int64,
 ) (globalStats *GlobalStats, err error) {
-	if sc.GetSessionVars().EnableAsyncMergeGlobalStats {
+	if false {
 		statslogutil.StatsSampleLogger().Info("use async merge global stats",
 			zap.Int64("tableID", globalTableInfo.ID),
 			zap.String("table", globalTableInfo.Name.L),
