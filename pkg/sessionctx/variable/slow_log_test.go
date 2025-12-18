@@ -272,7 +272,7 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 }
 
 func TestParseSingleSlowLogField(t *testing.T) {
-	require.Equal(t, len(variable.SlowLogRuleFieldAccessors), 39)
+	require.Equal(t, len(variable.SlowLogRuleFieldAccessors), 38)
 	accessor, ok := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPlanDigest)]
 	require.True(t, ok)
 	require.NotNil(t, accessor.Setter)
@@ -304,10 +304,6 @@ func TestParseSingleSlowLogField(t *testing.T) {
 
 	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "abc")
 	require.Error(t, err)
-
-	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogMemArbitration, "1.2345")
-	require.NoError(t, err)
-	require.Equal(t, 1.2345, v)
 
 	// string fields
 	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogDBStr, "testdb")
