@@ -366,7 +366,7 @@ func (s *TiCIShardCache) attachRangesToLocations(shards []*ShardLocation, keyRan
 			if _, ok := rangesByShard[shard.ShardWithAddr]; !ok {
 				order = append(order, shard.ShardWithAddr)
 			}
-			rangesByShard[shard.ShardWithAddr] = append(rangesByShard[shard.ShardWithAddr], kv.KeyRange{StartKey: kv.Key(start), EndKey: kv.Key(end)})
+			rangesByShard[shard.ShardWithAddr] = append(rangesByShard[shard.ShardWithAddr], kv.KeyRange{StartKey: start, EndKey: end})
 
 			if len(kr.EndKey) == 0 || (len(end) > 0 && bytes.Compare(end, kr.EndKey) >= 0) {
 				break
