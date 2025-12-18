@@ -207,6 +207,7 @@ type WriterBuilder struct {
 	propKeysDist uint64
 	onClose      OnWriterCloseFunc
 	tikvCodec    tikv.Codec
+	pool         *membuf.Pool
 	onDup        engineapi.OnDuplicateKey
 }
 
@@ -272,6 +273,12 @@ func (b *WriterBuilder) SetTiKVCodec(codec tikv.Codec) *WriterBuilder {
 	return b
 }
 
+// SetPool sets the pool of the writer.
+func (b *WriterBuilder) SetPool(pool *membuf.Pool) *WriterBuilder {
+	b.pool = pool
+	return b
+}
+
 // SetOnDup sets the action when checkDup enabled and a duplicate key is found.
 func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder {
 	b.onDup = onDup
@@ -286,10 +293,14 @@ func (b *WriterBuilder) Build(
 	writerID string,
 ) *Writer {
 	filenamePrefix := filepath.Join(prefix, writerID)
-	p := membuf.NewPool(
-		membuf.WithBlockNum(0),
-		membuf.WithBlockSize(b.blockSize),
-	)
+	p := b.pool
+	if p == nil {
+		p = membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithBlockSize(b.blockSize),
+		)
+	}
+
 	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
 	ret := &Writer{
 		rc: &rangePropertiesCollector{

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -140,7 +141,9 @@ type SharedVars struct {
 	ShareMu          sync.Mutex
 	summary          *execute.SubtaskSummary
 
-	pool *mydump.Pool
+	pool         *mydump.Pool
+	dataMemPool  *membuf.Pool
+	indexMemPool *membuf.Pool
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {

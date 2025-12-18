@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -80,7 +81,10 @@ type importStepExecutor struct {
 	wg           sync.WaitGroup
 
 	summary execute.SubtaskSummary
-	memPool *mydump.Pool
+
+	memPool      *mydump.Pool
+	dataMemPool  *membuf.Pool
+	indexMemPool *membuf.Pool
 }
 
 func getTableImporter(
@@ -160,10 +164,6 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		}()
 	}
 
-	if s.memPool == nil {
-		s.memPool = mydump.GetPool(int(s.GetResource().Mem.Capacity()))
-	}
-
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
 	s.dataBlockSize = external.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
 	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, external.DefaultBlockSize)
@@ -172,6 +172,18 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
 		zap.String("data-buf-block-size", units.BytesSize(float64(s.dataBlockSize))),
 		zap.String("index-buf-block-size", units.BytesSize(float64(s.indexBlockSize))))
+
+	s.memPool = mydump.GetPool(int(s.GetResource().Mem.Capacity()))
+	s.dataMemPool = membuf.NewPool(
+		membuf.WithBlockNum(int(s.dataKVMemSizePerCon)/s.dataBlockSize),
+		membuf.WithBlockSize(s.dataBlockSize),
+	)
+	indexKVGroupCnt := getNumOfIndexGenKV(s.tableImporter.Plan.DesiredTableInfo)
+	s.indexMemPool = membuf.NewPool(
+		membuf.WithBlockNum(indexKVGroupCnt*int(s.perIndexKVMemSizePerCon)/s.indexBlockSize),
+		membuf.WithBlockSize(s.indexBlockSize),
+	)
+
 	return nil
 }
 
@@ -238,7 +250,10 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 		summary:          &s.summary,
-		pool:             s.memPool,
+
+		pool:         s.memPool,
+		dataMemPool:  s.dataMemPool,
+		indexMemPool: s.indexMemPool,
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
