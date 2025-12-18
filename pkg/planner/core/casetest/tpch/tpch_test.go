@@ -95,6 +95,7 @@ func TestQ3(t *testing.T) {
 		createLineItem(t, tk, dom)
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+
 		integrationSuiteData := GetTPCHSuiteData()
 		var (
 			input  []string
@@ -114,6 +115,55 @@ func TestQ3(t *testing.T) {
 			tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 		}
 	})
+}
+
+func TestQ3RCAndDisableTikv(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	createCustomer(t, tk, dom)
+	createOrders(t, tk, dom)
+	createLineItem(t, tk, dom)
+	tk.MustExec(`set tx_isolation="READ-COMMITTED";`)
+	tk.MustExec("begin;")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tidb,tiflash\"")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	integrationSuiteData := GetTPCHSuiteData()
+	var (
+		input  []string
+		output []struct {
+			SQL                 string
+			Result              []string
+			ForUpdate           []string
+			ForUpdateAndEnforce []string
+		}
+	)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+			output[i].ForUpdate = testdata.ConvertRowsToStrings(tk.MustQuery(input[i] + " for update").Rows())
+			tk.MustExec("SET tidb_enforce_mpp=1")
+			output[i].ForUpdateAndEnforce = testdata.ConvertRowsToStrings(tk.MustQuery(input[i] + " for update").Rows())
+			tk.MustExec("SET tidb_enforce_mpp=0")
+
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+		tk.MustQuery(input[i] + " for update").Check(testkit.Rows(output[i].ForUpdate...))
+		tk.MustExec("SET tidb_enforce_mpp=1")
+		tk.MustQuery(input[i] + " for update").Check(testkit.Rows(output[i].ForUpdateAndEnforce...))
+		tk.MustExec("SET tidb_enforce_mpp=0")
+
+	}
+	tk.MustExec(`commit;`)
+}
+
+func testQ3(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string, enableRC bool) {
+
 }
 
 func TestQ4(t *testing.T) {

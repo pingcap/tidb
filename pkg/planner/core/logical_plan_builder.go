@@ -3739,9 +3739,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		projExprs                     []expression.Expression
 		rollup                        bool
 	)
-
+	sessVars := b.ctx.GetSessionVars()
 	// set for update read to true before building result set node
 	if isForUpdateReadSelectLock(sel.LockInfo) {
+		sessVars.IsolationReadEngines[kv.TiKV] = struct{}{}
 		b.isForUpdateRead = true
 	}
 

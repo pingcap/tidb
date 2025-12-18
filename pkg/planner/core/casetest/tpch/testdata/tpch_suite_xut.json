@@ -167,6 +167,11 @@
     ]
   },
   {
+    "Name": "TestQ3RCAndDisableTikv",
+    "Cases": [
+    ]
+  },
+  {
     "Name": "TestQ4",
     "Cases": [
       {
