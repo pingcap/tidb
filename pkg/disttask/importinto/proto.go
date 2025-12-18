@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"go.uber.org/zap"
@@ -138,6 +139,8 @@ type SharedVars struct {
 	SortedIndexMetas map[int64]*external.SortedKVMeta
 	ShareMu          sync.Mutex
 	summary          *execute.SubtaskSummary
+
+	pool *mydump.Pool
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {

@@ -233,7 +233,7 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			}, &importer.Plan{
 				DesiredTableInfo: info,
 				ThreadCnt:        1,
-			}, false)
+			})
 			require.Equal(t, c.dataKVMemSizePerCon, dataKVMemSizePerCon, c.createSQL)
 			if c.numOfIndexGenKV > 0 {
 				require.Equal(t, c.perIndexKVMemSizePerCon, perIndexKVMemSizePerCon, c.createSQL)

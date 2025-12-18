@@ -538,7 +538,7 @@ func NewParquetParser(
 	var allocator memory.Allocator
 	allocator = memory.NewGoAllocator()
 	if meta.MemoryPool != nil {
-		allocator = NewAppendOnlyAllocator(meta.MemoryPool, meta.MemoryUsage)
+		allocator = NewParquetAllocator(meta.MemoryPool, meta.MemoryUsage)
 	}
 
 	prop := parquet.NewReaderProperties(allocator)
@@ -641,8 +641,8 @@ func SampleStatisticsFromParquet(
 	avgRowSize = float64(rowSize) / float64(rowCount)
 
 	alloc := parser.alloc
-	a, _ := alloc.(*appendOnlyAllocator)
-	memoryUsage = a.Allocated() + arenaSize
+	a, _ := alloc.(*parquetAllocator)
+	memoryUsage = a.Allocated()
 
 	parser.logger.Info("Get memory usage of parquet reader",
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),

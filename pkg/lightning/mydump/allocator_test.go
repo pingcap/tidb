@@ -21,13 +21,15 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
-func TestSimpleAllocator(t *testing.T) {
+func TestAllocator(t *testing.T) {
 	arenaSize = 16 << 20
 
 	pool := GetPool(16 << 23)
-	a := NewAppendOnlyAllocator(pool, 0)
+	a := NewParquetAllocator(pool, 0)
 
 	var (
 		lk sync.Mutex
@@ -68,5 +70,45 @@ func TestSimpleAllocator(t *testing.T) {
 	}
 	wg.Wait()
 
-	a.check()
+	a.Check()
+}
+
+func TestArena(t *testing.T) {
+	buf := make([]byte, 100)
+	s := newArena(buf)
+
+	b1 := s.allocate(20)
+	b2 := s.allocate(20)
+	b3 := s.allocate(20)
+	b4 := s.allocate(20)
+	b5 := s.allocate(20)
+	require.Nil(t, s.allocate(10))
+	require.Len(t, s.allocated, 5)
+
+	s.free(b2)
+	s.free(b4)
+	s.free(b5)
+	// free blocks: [20,40), [60,100)
+	require.Equal(t, 40, s.freeByStart[60])
+	require.Equal(t, 40, s.freeByEnd[100])
+	require.Len(t, s.allocated, 2)
+
+	s.free(b3)
+	// free blocks: [20, 100)
+	require.Equal(t, 80, s.freeByStart[20])
+	require.Equal(t, 80, s.freeByEnd[100])
+	require.Len(t, s.allocated, 1)
+
+	s6 := s.allocate(60)
+	require.NotNil(t, s6)
+	// free blocks: [80, 100)
+	require.Equal(t, 20, s.freeByStart[80])
+	require.Equal(t, 20, s.freeByEnd[100])
+	require.Len(t, s.allocated, 2)
+
+	s.free(b1)
+	s.free(s6)
+	require.Len(t, s.allocated, 0)
+	require.Equal(t, 100, s.freeByStart[0])
+	require.Equal(t, 100, s.freeByEnd[100])
 }

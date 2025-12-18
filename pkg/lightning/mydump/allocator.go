@@ -18,9 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
-	"go.uber.org/zap"
 )
 
 var (
@@ -30,30 +28,8 @@ var (
 	// maxParquetMemoryPercent defines the maximum percentage of memory used for parquet parser
 	// Because less memory for writer can make more small files, which may affect performance
 	// merge and ingest steps, so we set a limit here.
-	maxParquetMemoryPercent = 40
+	maxParquetMemoryPercent = 30
 )
-
-// GetMemoryForWriter gets the memory for writer
-func GetMemoryForWriter(encodeStep bool, parquetMemUsage, threadCnt, totalMem int) int64 {
-	memPerCon := totalMem / threadCnt
-
-	writerPercent := 50
-	if encodeStep {
-		upperLimit := totalMem * maxParquetMemoryPercent / 100
-		if parquetMemUsage >= upperLimit {
-			log.L().Warn("parquet parser memory usage is too high, may cause OOM")
-		}
-		actualUsage := min(parquetMemUsage*threadCnt, upperLimit)
-		parserPercent := (actualUsage*100/totalMem + 9) / 10 * 10
-		writerPercent = (100 - parserPercent) / 2
-	}
-
-	log.L().Info("get parquet memory usage",
-		zap.Int("parquet memory usage", parquetMemUsage),
-		zap.Int("writer percent", writerPercent))
-	// Use half of the remaining memory for writer
-	return int64(memPerCon * writerPercent / 100)
-}
 
 // Pool manages a pool of reusable byte buffers to reduce memory allocation overhead.
 // It uses a buffered channel to store and reuse buffers efficiently.
@@ -117,12 +93,6 @@ func addressOf(buf []byte) uintptr {
 	}
 	buf = buf[:1]
 	return uintptr(unsafe.Pointer(&buf[0]))
-}
-
-type arena interface {
-	allocate(int) []byte
-	free([]byte)
-	reset()
 }
 
 type AllocatorWithClose interface {

@@ -42,7 +42,7 @@ import (
 // MiniTaskExecutor is the interface for a minimal task executor.
 // exported for testing.
 type MiniTaskExecutor interface {
-	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter, collector execute.Collector, pool *mydump.Pool) error
+	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter, collector execute.Collector) error
 }
 
 // importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
@@ -62,7 +62,6 @@ func (e *importMinimalTaskExecutor) Run(
 	ctx context.Context,
 	dataWriter, indexWriter backend.EngineWriter,
 	collector execute.Collector,
-	pool *mydump.Pool,
 ) error {
 	logger := e.mTtask.logger
 	failpoint.Inject("beforeSortChunk", func() {})
@@ -74,7 +73,7 @@ func (e *importMinimalTaskExecutor) Run(
 
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
-		MemoryPool:  pool,
+		MemoryPool:  sharedVars.pool,
 		MemoryUsage: sharedVars.TableImporter.ParquetFileMemoryUsage,
 		Loc:         sharedVars.TableImporter.Location,
 	}
