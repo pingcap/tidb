@@ -126,15 +126,17 @@ func (c *jobContext) initStepCtx() {
 	}
 }
 
-func (c *jobContext) cleanStepCtx() {
+func (c *jobContext) cleanStepCtx(cause error) {
 	// reorgTimeoutOccurred indicates whether the current reorg process
 	// was temporarily exit due to a timeout condition. When set to true,
 	// it prevents premature cleanup of step context.
-	if c.reorgTimeoutOccurred {
+	if cause == context.Canceled && c.reorgTimeoutOccurred {
 		c.reorgTimeoutOccurred = false // reset flag
 		return
 	}
-	c.stepCtxCancel(context.Canceled)
+	if c.stepCtxCancel != nil {
+		c.stepCtxCancel(cause)
+	}
 	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
@@ -848,6 +850,14 @@ func (w *worker) runOneJobStep(
 
 	// It would be better to do the positive check, but no idea to list all valid states here now.
 	if job.IsRollingback() {
+		if jobCtx.stepCtx != nil && jobCtx.stepCtx.Err() == nil {
+			// If the job switched to rolling back immediately after a reorg step
+			// timed out, the step context may still be active and hold reorg
+			// resources (workers, tickers, goroutines). Clean the step context
+			// explicitly to release those resources and avoid leaks before we
+			// continue rollback processing.
+			jobCtx.cleanStepCtx(dbterror.ErrCancelledDDLJob)
+		}
 		// when rolling back, we use worker context to process.
 		jobCtx.stepCtx = w.workCtx
 	} else {
@@ -859,7 +869,7 @@ func (w *worker) runOneJobStep(
 			defer close(stopCheckingJobCancelled)
 
 			jobCtx.initStepCtx()
-			defer jobCtx.cleanStepCtx()
+			defer jobCtx.cleanStepCtx(context.Canceled)
 			w.wg.Run(func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()
