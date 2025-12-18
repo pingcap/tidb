@@ -87,6 +87,7 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/errno",
         "//pkg/executor",
+        "//pkg/executor/pkdb_remote",
         "//pkg/executor/staticrecordset",
         "//pkg/expression",
         "//pkg/expression/exprctx",

@@ -29,9 +29,35 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
+
+// PlanCacheVersionInfo contains version information for plan cache lookup.
+// This is computed on the control side and passed to the remote side
+// to avoid parsing SQL AST on the remote side.
+type PlanCacheVersionInfo struct {
+	// SchemaVersion is the schema version from control side
+	SchemaVersion int64
+	// RelateVersion is the table versions map (table ID -> revision)
+	RelateVersion map[int64]uint64
+	// LatestSchemaVersion is the latest schema version (for RC isolation)
+	LatestSchemaVersion int64
+	// HasSubquery indicates whether the SQL contains subquery
+	HasSubquery bool
+	// IsReadOnly indicates whether the statement is read-only. Nil means unknown.
+	IsReadOnly *bool
+	// ParamTypes are the types of the parameters (optional, can be derived from params)
+	ParamTypes []*types.FieldType
+	// LimitValues contains the limit values (count, offset) for LIMIT clause
+	LimitValues []uint64
+	// StatsVerHash is the hash of stats versions for PlanCacheInvalidationOnFreshStats
+	StatsVerHash uint64
+	// PlanCacheEnabled indicates whether plan cache is enabled on the control side
+	// This is used to restore the plan cache enabled flag on the remote side
+	PlanCacheEnabled bool
+}
 
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
@@ -57,6 +83,8 @@ type Session interface {
 	// Deprecated: please use ExecuteStmt, this function is left for testing only.
 	// TODO: remove ExecutePreparedStmt.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []expression.Expression) (sqlexec.RecordSet, error)
+	// ExecuteWithRemotePlanCache executes a parameterized SQL using the plan cache
+	ExecuteWithRemotePlanCache(ctx context.Context, paramSQL string, params []expression.Expression, versionInfo *PlanCacheVersionInfo) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	// SetSessionStatesHandler sets SessionStatesHandler for type stateType.
 	SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler)

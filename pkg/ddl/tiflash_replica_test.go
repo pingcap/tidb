@@ -147,10 +147,10 @@ func TestSetTableFlashReplica(t *testing.T) {
 }
 
 // setUpRPCService setup grpc server to handle cop request for test.
-func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm util.SessionManager) (*grpc.Server, string) {
+func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm util.SessionManager) (*grpc.Server, string, func()) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
-	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
+	srv, remoteExecSrv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
@@ -160,7 +160,14 @@ func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm util.Sess
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
 	})
-	return srv, addr
+	cleanup := func() {
+		srv.Stop()
+		if remoteExecSrv != nil {
+			remoteExecSrv.Close()
+		}
+		_ = lis.Close()
+	}
+	return srv, addr, cleanup
 }
 
 func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *model.TableInfo) {
@@ -180,8 +187,8 @@ func TestInfoSchemaForTiFlashReplica(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
-	defer rpcserver.Stop()
+	_, _, cleanup := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	defer cleanup()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx(a))")
@@ -205,8 +212,8 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
-	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
-	defer rpcserver.Stop()
+	_, _, cleanup := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	defer cleanup()
 	tk.MustExec("use test")
 	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
 	tk.MustExec("create temporary table temp2(id int)")

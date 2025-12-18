@@ -1831,3 +1831,15 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestEnableRemotePlanForwardingSysVar(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(TiDBEnableRemotePlan)
+	require.NotNil(t, sv)
+
+	require.False(t, vars.EnableRemotePlan)
+	val, err := sv.Validate(vars, On, ScopeSession)
+	require.NoError(t, err)
+	require.NoError(t, sv.SetSessionFromHook(vars, val))
+	require.True(t, vars.EnableRemotePlan)
+}

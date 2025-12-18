@@ -1,0 +1,44 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pkdb_remoteexec",
+    srcs = ["service.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/pkdb_remoteexec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/executor/pkdb_remote/pb",
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
+        "//pkg/resourcemanager/pool/workerpool",
+        "//pkg/resourcemanager/util",
+        "//pkg/server/internal/column",
+        "//pkg/session",
+        "//pkg/session/types",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "//pkg/util/timeutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "pkdb_remoteexec_test",
+    timeout = "short",
+    srcs = ["service_leak_test.go"],
+    embed = [":pkdb_remoteexec"],
+    flaky = True,
+    deps = ["@org_uber_go_goleak//:goleak"],
+)

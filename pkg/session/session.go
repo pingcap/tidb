@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/pkdb_remote"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -105,6 +106,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	ptypes "github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -2052,6 +2054,44 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				s.txn.changeToInvalid()
 				return rs, nil
 			}
+
+			// Try early forwarding before compile for prepared statements.
+			// This can skip plan generation when the target store is already known.
+			if rs, handled, ferr := pkdbremote.TryEarlyForwardExecute(ctx, s, execStmt); handled {
+				if ferr == nil {
+					if dmlRS, ok := pkdbremote.IsDMLRecordSet(rs); ok {
+						// Extract DML metadata from the remote response
+						sessVars.StmtCtx.SetAffectedRows(dmlRS.AffectedRows())
+						sessVars.StmtCtx.LastInsertID = dmlRS.LastInsertID()
+						sessVars.StmtCtx.SetMessage(dmlRS.Info())
+						sessVars.StmtCtx.SetWarnings(dmlRS.Warnings())
+						// Handle auto-commit for DML statements
+						if !sessVars.InTxn() {
+							if err := s.CommitTxn(ctx); err != nil {
+								_ = dmlRS.Close()
+								return nil, err
+							}
+						}
+						// Reset txn state if pending
+						if s.txn.pending() {
+							s.txn.changeToInvalid()
+						}
+						_ = dmlRS.Close()
+						return nil, nil
+					}
+					// Non-DML early forwarded statement; invalidate the local txn so the next statement
+					// enters a fresh txn and doesn't reuse a pending snapshot.
+					// NOTE: When the statement is executed inside a transaction, we must keep the local
+					// transaction valid so subsequent statements share the same snapshot.
+					if sessVars.IsAutocommit() && !sessVars.InTxn() {
+						s.txn.changeToInvalid()
+					}
+					if rs != nil {
+						return rs, nil
+					}
+				}
+				return rs, ferr
+			}
 		}
 	}
 
@@ -2161,6 +2201,20 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		if execStmt.Name == "" {
 			// for exec-stmt on bin-protocol, ignore the plan detail in `show process` to gain performance benefits.
 			s.currentPlan = nil
+		}
+	}
+
+	// Update EarlyLocationInfo.CachedLocationInfo after compile for statements that reference
+	// partitioned tables. This allows subsequent executions to use partition pruning without
+	// full planning.
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if preparedCore, ok := execStmt.PrepStmt.(*plannercore.PlanCacheStmt); ok {
+			if preparedCore.EarlyLocationInfo != nil && preparedCore.EarlyLocationInfo.HasPartitionTable &&
+				!preparedCore.EarlyLocationInfo.HasCachedLocationInfo() {
+				// Extract location info from the compiled plan and cache it
+				locationInfo := plannercore.ExtractTableLocationInfo(stmt.Plan)
+				preparedCore.EarlyLocationInfo.SetCachedLocationInfo(locationInfo)
+			}
 		}
 	}
 
@@ -2517,6 +2571,186 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 		PrepStmt:   stmt,
 	}
 	return s.ExecuteStmt(ctx, execStmt)
+}
+
+// ExecuteWithRemotePlanCache executes a parameterized SQL using the plan cache
+// with pre-computed version information from the control side.
+// This is optimized for remote execution scenarios where version info is passed via forward pb,
+// avoiding the need to parse SQL AST on the remote side.
+//
+// Parameters:
+//   - ctx: context for the execution
+//   - paramSQL: the parameterized SQL with ? placeholders
+//   - params: the parameter values as expression.Expression slice
+//   - versionInfo: pre-computed version information from control side
+//
+// Returns:
+//   - sqlexec.RecordSet: the result set (may be nil for non-SELECT statements)
+//   - error: any error that occurred during execution
+func (s *session) ExecuteWithRemotePlanCache(ctx context.Context, paramSQL string, params []expression.Expression, versionInfo *types.PlanCacheVersionInfo) (sqlexec.RecordSet, error) {
+	if paramSQL == "" {
+		return nil, errors.New("empty SQL text")
+	}
+
+	// versionInfo can be nil for simple queries without plan cache optimization
+	// In this case, we'll fall back to full planning
+
+	// Prepare transaction context.
+	// Always go through PrepareTxnCtx so txnManager sets up the context provider.
+	snapshotStartTS := uint64(0)
+	if s.sessionVars.InTxn() && s.sessionVars.TxnCtx.StartTS > 0 {
+		snapshotStartTS = s.sessionVars.TxnCtx.StartTS
+	}
+	s.currentCtx = ctx
+	if err := s.PrepareTxnCtx(ctx); err != nil {
+		return nil, err
+	}
+	// PrepareTxnCtx may reset StartTS during provider setup; restore the forwarded StartTS
+	// so downstream code (prepareTxn) can reuse it instead of fetching a new TS.
+	if snapshotStartTS > 0 && s.sessionVars.TxnCtx.StartTS == 0 {
+		s.sessionVars.TxnCtx.StartTS = snapshotStartTS
+	}
+
+	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
+		return nil, err
+	}
+
+	// Get info schema
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+	if is == nil {
+		is = domain.GetDomain(s).InfoSchema()
+	}
+
+	// Try to look up plan cache if versionInfo is provided
+	if versionInfo != nil {
+		// Get parameter types for cache lookup
+		paramTypes := versionInfo.ParamTypes
+		if paramTypes == nil && len(params) > 0 {
+			paramTypes = make([]*ptypes.FieldType, len(params))
+			for i, p := range params {
+				paramTypes[i] = p.GetType(s.GetExprCtx().GetEvalCtx())
+			}
+		}
+
+		// Build PlanCacheLookupParams from version info
+		lookupParams := &plannercore.PlanCacheLookupParams{
+			ParamSQL:            paramSQL,
+			ParamTypes:          paramTypes,
+			SchemaVersion:       versionInfo.SchemaVersion,
+			RelateVersion:       versionInfo.RelateVersion,
+			LatestSchemaVersion: versionInfo.LatestSchemaVersion,
+			IsReadOnly:          versionInfo.IsReadOnly,
+			HasSubquery:         versionInfo.HasSubquery,
+			LimitValues:         versionInfo.LimitValues,
+			StatsVerHash:        versionInfo.StatsVerHash,
+		}
+
+		// Restore plan cache enabled flag from control side
+		if versionInfo.PlanCacheEnabled {
+			s.GetSessionVars().StmtCtx.EnablePlanCache()
+		}
+
+		// Try to look up plan cache directly using parameterized SQL with version info
+		// This avoids parsing SQL AST on the remote side
+		cachedVal, _, hit := plannercore.LookupPlanCacheBySQLWithParams(ctx, s, lookupParams)
+		if hit && cachedVal != nil && cachedVal.Stmt != nil {
+			pstmt := cachedVal.Stmt
+			if err := executor.ResetContextOfStmt(s, pstmt.PreparedAst.Stmt); err != nil {
+				return nil, err
+			}
+
+			if versionInfo.PlanCacheEnabled {
+				s.GetSessionVars().StmtCtx.EnablePlanCache()
+			}
+
+			// Set parameter values into session context (may be empty for statements without placeholders)
+			if err := plannercore.SetParameterValuesIntoSCtx(s.GetPlanCtx(), true, nil, params); err != nil {
+				return nil, errors.Annotate(err, "failed to set parameter values")
+			}
+
+			// Adjust and execute the cached plan
+			plan, ok, err := plannercore.AdjustCachedPlan(ctx, s, cachedVal.Plan, cachedVal.StmtHints, true, true, "", is, nil)
+			if err != nil {
+				return nil, errors.Annotate(err, "failed to adjust cached plan")
+			}
+			if ok {
+				logutil.Logger(ctx).Debug("Hit remote PlanCache")
+				return s.executeWithCachedPlan(ctx, plan, cachedVal.OutputColumns, cachedVal.Stmt, is)
+			}
+		}
+	}
+
+	// Cache miss or plan adjustment failed, fall back to full planning
+	// Parse the parameterized SQL
+	paramStmt, err := plannercore.ParseParameterizedSQL(s, paramSQL)
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to parse parameterized SQL")
+	}
+
+	// Reset context of statement before generating PlanCacheStmt
+	// This initializes StmtCtx including MDLRelatedTableIDs map
+	if err := executor.ResetContextOfStmt(s, paramStmt); err != nil {
+		return nil, errors.Annotate(err, "failed to reset context of statement")
+	}
+
+	// Set parameter values into session context before generating PlanCacheStmt
+	if err := plannercore.SetParameterValuesIntoSCtx(s.GetPlanCtx(), true, nil, params); err != nil {
+		return nil, errors.Annotate(err, "failed to set parameter values")
+	}
+
+	// Generate PlanCacheStmt (this is needed to get the correct cache key with RelateVersion)
+	// Use isPrepStmt=true because the SQL is already parameterized (with ? placeholders),
+	// which is similar to prepared statement mode. This allows us to use EnablePreparedPlanCache
+	// (default true) instead of EnableNonPreparedPlanCache (default false).
+	stmt, _, _, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, s, true, paramSQL, paramStmt, is)
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to generate plan cache statement")
+	}
+
+	// Get plan from plan cache (this will use NewPlanCacheKey which includes RelateVersion,
+	// and will cache the plan for future use)
+	// Use isNonPrepared=false to match isPrepStmt=true above
+	plan, names, err := plannercore.GetPlanFromPlanCache(ctx, s, false, is, stmt, params)
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to get plan from cache")
+	}
+
+	// Build and execute the statement using the cached plan
+	return s.executeWithCachedPlan(ctx, plan, names, stmt, is)
+}
+
+// executeWithCachedPlan executes a physical plan obtained from the plan cache
+func (s *session) executeWithCachedPlan(ctx context.Context, plan base.Plan, names []*ptypes.FieldName, stmt *plannercore.PlanCacheStmt, is infoschema.InfoSchema) (sqlexec.RecordSet, error) {
+	sessVars := s.sessionVars
+	sessVars.StartTime = time.Now()
+
+	stmtCtx := sessVars.StmtCtx
+
+	// Set up statement context
+	stmtCtx.SetPlan(plan)
+	if stmt.NormalizedPlan != "" {
+		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	}
+
+	// Create ExecStmt
+	execStmt := &executor.ExecStmt{
+		GoCtx:       ctx,
+		InfoSchema:  is,
+		Plan:        plan,
+		Text:        stmt.StmtText,
+		StmtNode:    stmt.PreparedAst.Stmt,
+		Ctx:         s,
+		OutputNames: names,
+		PsStmt:      stmt,
+	}
+
+	// Perform optimization related to transaction level
+	if err := sessiontxn.AdviseOptimizeWithPlanAndThenWarmUp(s, plan); err != nil {
+		return nil, err
+	}
+
+	// Execute
+	return runStmt(ctx, s, execStmt)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {

@@ -1,0 +1,310 @@
+syntax = "proto3";
+
+package tidb.remoteexec;
+
+option go_package = "github.com/pingcap/tidb/pkg/executor/pkdb_remote/pb";
+
+// FieldType represents the type information for a parameter or column.
+// This mirrors pkg/parser/types.FieldType structure for efficient serialization.
+message FieldType {
+  // MySQL type (e.g., mysql.TypeLong, mysql.TypeVarchar)
+  uint32 tp = 1;
+  // Flags (e.g., mysql.UnsignedFlag, mysql.BinaryFlag)
+  uint32 flag = 2;
+  // Field length
+  int32 flen = 3;
+  // Decimal places
+  int32 decimal = 4;
+  // Character set name
+  string charset = 5;
+  // Collation name
+  string collate = 6;
+  // Elements for ENUM/SET types
+  repeated string elems = 7;
+  // Binary literal flags for elements
+  repeated bool elems_is_binary_lit = 8;
+  // Whether this is an array type
+  bool array = 9;
+}
+
+message Param {
+  string value = 1;
+  // Structured field type for efficient serialization
+  FieldType field_type = 3;
+  // Reserved field number for removed legacy string type
+  reserved 2;
+  reserved "type";
+}
+
+message TxnContext {
+  bool in_txn = 1;
+  bool autocommit = 2;
+  uint64 start_ts = 3;
+  uint64 for_update_ts = 4;
+}
+
+message SessionSnapshot {
+  string current_db = 1;
+  uint64 sql_mode = 2;
+  string time_zone = 3;
+  string isolation = 4;
+  string txn_mode = 5;
+  string resource_group = 6;
+  TxnContext txn = 7;
+  
+  // User authentication info (for plan cache key)
+  string auth_username = 8;
+  string auth_hostname = 9;
+  
+  // Partition prune mode (e.g., "static", "dynamic")
+  string partition_prune_mode = 10;
+  
+  // Isolation read engines (comma-separated, e.g., "tikv,tiflash")
+  string isolation_read_engines = 11;
+  
+  // Select limit
+  uint64 select_limit = 12;
+  
+  // Connection charset and collation
+  string conn_charset = 13;
+  string conn_collation = 14;
+  
+  // Restricted SQL flag
+  bool in_restricted_sql = 15;
+  
+  // Foreign key checks
+  bool foreign_key_checks = 16;
+  
+  // For share lock enabled by noop
+  bool for_share_lock_enabled_by_noop = 17;
+  
+  // Shared lock promotion
+  bool shared_lock_promotion = 18;
+  
+  // Plan cache settings from control side
+  // These should be respected by the remote side to maintain consistent behavior
+  bool enable_prep_plan_cache = 19;           // tidb_enable_prepared_plan_cache
+  bool enable_non_prep_plan_cache = 20;       // tidb_enable_non_prepared_plan_cache
+  bool enable_instance_plan_cache = 21;       // tidb_enable_instance_plan_cache
+
+  // Async commit / 1PC flags and row format version (needed when CommonGlobalLoaded is forced true on the remote side).
+  bool enable_async_commit = 22;              // tidb_enable_async_commit
+  bool enable_1pc = 23;                       // tidb_enable_1pc
+  uint32 row_format_version = 24;             // tidb_row_format_version
+}
+
+// TableVersion represents a table's ID and its schema revision
+message TableVersion {
+  int64 table_id = 1;
+  uint64 revision = 2;
+}
+
+// PlanCacheInfo contains version information for plan cache lookup
+// This is computed on the control side and passed to the remote side
+// to avoid parsing SQL AST on the remote side
+message PlanCacheInfo {
+  // Schema version from control side
+  int64 schema_version = 1;
+  
+  // Table versions map (table ID -> revision)
+  repeated TableVersion relate_versions = 2;
+  
+  // Latest schema version (for RC isolation)
+  int64 latest_schema_version = 3;
+  
+  // Whether the SQL contains subquery
+  bool has_subquery = 4;
+  
+  // Limit values (count, offset) for LIMIT clause
+  repeated uint64 limit_values = 5;
+  
+  // Stats version hash for PlanCacheInvalidationOnFreshStats
+  uint64 stats_ver_hash = 6;
+  
+  // Whether plan cache is enabled on the control side
+  // This is used to restore the plan cache enabled flag on the remote side
+  bool plan_cache_enabled = 7;
+
+  // Whether the statement is read-only (optional). If unset, remote side may re-parse to decide.
+  optional bool is_read_only = 8;
+}
+
+message RemoteRequest {
+  string target = 1;
+  string sql_text = 2;
+  string normalized_sql = 3;
+  string plan_digest = 4;
+  repeated Param params = 5;
+  SessionSnapshot session = 6;
+  
+  // Plan cache info for direct plan cache lookup
+  // If provided, the remote side can directly look up the plan cache
+  // without parsing the SQL to extract table information
+  PlanCacheInfo plan_cache_info = 7;
+}
+
+// ColumnInfo mirrors pkg/server/internal/column.Info for MySQL protocol compatibility.
+// This is the exact structure used by the MySQL protocol layer, so we can use it directly
+// without any conversion on the client side.
+message ColumnInfo {
+  string schema = 1;           // Database name
+  string table = 2;            // Table alias name
+  string org_table = 3;        // Original table name
+  string name = 4;             // Column alias name
+  string org_name = 5;         // Original column name
+  uint32 column_length = 6;    // Column length (already computed with charset multiplier)
+  uint32 charset = 7;          // Charset ID (mysql.CharsetNameToID result)
+  uint32 flag = 8;             // Column flags
+  uint32 decimal = 9;          // Decimal places
+  uint32 type = 10;            // MySQL type (already converted, e.g., TypeVarchar -> TypeVarString)
+  bytes default_value = 11;    // Default value (JSON encoded)
+  
+  // Original field type information for accurate reconstruction
+  // These fields avoid precision loss from reverse conversion
+  int32 flen = 12;             // Original field length (types.FieldType.Flen)
+  string charset_name = 13;    // Original charset name
+  string collate = 14;         // Original collation name
+}
+
+// ChunkData contains binary-encoded chunk data using TiDB's native chunk.Codec format.
+// This is the most efficient way to transfer data as it avoids per-row encoding overhead.
+message ChunkData {
+  // Binary-encoded chunk data using chunk.Codec.Encode()
+  // This contains all columns' data in a single byte slice.
+  bytes data = 1;
+  
+  // Number of rows in this chunk
+  uint32 num_rows = 2;
+}
+
+// Row contains the values for a single row (for backward compatibility and simple cases).
+message Row {
+  repeated string values = 1;      // String representation
+  repeated bytes raw_values = 2;   // Raw bytes representation
+  repeated bool is_null = 3;       // Null flags for each column
+}
+
+// Warning contains warning metadata for SHOW WARNINGS and OK packet warning count.
+message Warning {
+  string level = 1;
+  uint32 code = 2;
+  string message = 3;
+}
+
+// DMLResult contains metadata for DML statements (INSERT/UPDATE/DELETE)
+message DMLResult {
+  // Number of rows affected by the DML statement
+  uint64 affected_rows = 1;
+  
+  // Last insert ID (for INSERT statements with AUTO_INCREMENT)
+  uint64 last_insert_id = 2;
+  
+  // Number of warnings generated
+  uint32 warning_count = 3;
+  
+  // Server status flags (e.g., SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS)
+  uint32 status_flags = 4;
+
+  // OK packet info string (e.g., "Records: ... Duplicates: ... Warnings: ...").
+  string info = 5;
+
+  // Warning details captured in the remote statement context.
+  repeated Warning warnings = 6;
+}
+
+// RemoteExecFeedback contains execution feedback from the remote side (TiDB2) to the
+// control side (TiDB1). It is typically attached to the final StreamResponse of a request.
+//
+// The goal is to help the control side decide whether remote forwarding is worthwhile
+// (e.g. whether the remote execution shrinks the result set, and whether TiKV local-call/FFI
+// was actually used).
+message RemoteExecFeedback {
+  // Total rows returned to the control side.
+  uint64 result_rows = 1;
+
+  // Total bytes of chunk-encoded payload returned to the control side.
+  uint64 result_bytes = 2;
+
+  // Total number of KV requests issued during execution (best-effort).
+  uint64 kv_request_count = 3;
+
+  // Total number of keys processed by TiKV (best-effort).
+  uint64 tikv_processed_keys = 4;
+
+  // Total bytes of user key/value pairs scanned in TiKV MVCC layer (best-effort).
+  uint64 tikv_processed_keys_size = 5;
+
+  // Number of KV requests that actually used TiKV local-call/FFI (best-effort).
+  uint64 kv_local_call_request_count = 8;
+}
+
+// ============================================================================
+// Batch Commands for Bidirectional Streaming
+// ============================================================================
+// This design is inspired by TiKV's BatchCommands pattern, which allows
+// multiplexing multiple requests over a single bidirectional stream.
+// Benefits:
+// 1. Reduced connection overhead - single stream per target
+// 2. Better throughput - requests can be pipelined
+// 3. Lower latency - no connection setup per request
+
+// BatchRemoteRequest wraps multiple RemoteRequests with request IDs for matching responses
+message BatchRemoteRequest {
+  // List of requests to execute
+  repeated RemoteRequest requests = 1;
+  
+  // Request IDs for matching responses
+  // Each request_id corresponds to the request at the same index in requests
+  repeated uint64 request_ids = 2;
+}
+
+// StreamResponse represents a single response in the stream
+// It can be either column metadata, data chunk, or completion signal
+message StreamResponse {
+  // Request ID this response belongs to
+  uint64 request_id = 1;
+  
+  // Response type (oneof would be cleaner but we use fields for simplicity)
+  
+  // Column metadata (sent as the first response for a request)
+  repeated ColumnInfo column_infos = 2;
+  
+  // Data chunk (sent for each batch of rows)
+  ChunkData chunk = 3;
+  
+  // Batch of rows (fallback when chunk encoding is not available)
+  repeated Row rows = 4;
+  
+  // Indicates if there are more data to come for this request
+  bool has_more = 5;
+  
+  // Error message (if any)
+  string err = 6;
+  
+  // DML result metadata (for INSERT/UPDATE/DELETE statements)
+  DMLResult dml_result = 7;
+  
+  // Sequence number within this request's response stream
+  // 0 = column info, 1+ = data chunks, last chunk has has_more=false
+  uint32 sequence = 8;
+
+  // Execution feedback from remote side (typically sent with the final response).
+  RemoteExecFeedback feedback = 9;
+}
+
+// BatchRemoteResponse wraps multiple StreamResponses
+message BatchRemoteResponse {
+  // List of responses
+  repeated StreamResponse responses = 1;
+  
+  // Server load information (optional, for load balancing)
+  // Similar to TiKV's transport_layer_load
+  uint64 server_load = 2;
+}
+
+service RemoteExecService {
+  // Bidirectional streaming RPC for remote SQL execution
+  // Single stream handles multiple requests with request ID matching
+  // This is more efficient for high-throughput scenarios
+  rpc BatchRemoteExecute(stream BatchRemoteRequest) returns (stream BatchRemoteResponse);
+}

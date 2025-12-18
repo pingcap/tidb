@@ -249,6 +249,14 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
+// ForwardedForRemoteExecKey is a session ValueStore key indicating the session is executing SQL forwarded
+// from another TiDB node (e.g. via pkdb_remoteexec service).
+type ForwardedForRemoteExecKey struct{}
+
+func (ForwardedForRemoteExecKey) String() string {
+	return "forwarded_for_remote_exec"
+}
+
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp.
 // For read requests to the storage, the check can be implicitly performed when sending the RPC request. So this
 // function is only needed when it's not proper to delay the check to when RPC requests are being sent (e.g., `BEGIN`

@@ -1,0 +1,59 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pkdb_remote",
+    srcs = [
+        "batch_client.go",
+        "batch_recordset.go",
+        "doc.go",
+        "remote.go",
+        "stats.go",
+        "stats_test_only.go",  #keep
+        "test_hooks_intest.go",  #keep
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/pkdb_remote",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/executor/pkdb_remote/pb",
+        "//pkg/expression",
+        "//pkg/expression/exprctx",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
+        "//pkg/planner/util",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/sessiontxn",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/context",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "pkdb_remote_test",
+    timeout = "short",
+    srcs = ["remote_test.go"],
+    flaky = True,
+    shard_count = 19,
+    deps = [
+        ":pkdb_remote",
+        "//pkg/testkit",
+        "//pkg/util",
+        "@com_github_stretchr_testify//require",
+    ],
+)

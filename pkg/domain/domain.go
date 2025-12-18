@@ -142,20 +142,21 @@ func NewMockDomain() *Domain {
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store           kv.Storage
-	infoCache       *infoschema.InfoCache
-	privHandle      *privileges.Handle
-	bindHandle      atomic.Value
-	statsHandle     atomic.Pointer[handle.Handle]
-	statsLease      time.Duration
-	ddl             ddl.DDL
-	ddlExecutor     ddl.Executor
-	ddlNotifier     *notifier.DDLNotifier
-	info            *infosync.InfoSyncer
-	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
-	m               syncutil.Mutex
-	SchemaValidator SchemaValidator
-	schemaLease     time.Duration
+	store            kv.Storage
+	infoCache        *infoschema.InfoCache
+	privHandle       *privileges.Handle
+	bindHandle       atomic.Value
+	statsHandle      atomic.Pointer[handle.Handle]
+	statsLease       time.Duration
+	ddl              ddl.DDL
+	ddlExecutor      ddl.Executor
+	ddlNotifier      *notifier.DDLNotifier
+	info             *infosync.InfoSyncer
+	globalCfgSyncer  *globalconfigsync.GlobalConfigSyncer
+	locationResolver *TableGroupLocationResolver
+	m                syncutil.Mutex
+	SchemaValidator  SchemaValidator
+	schemaLease      time.Duration
 	// Note: If you no longer need the session, you must call Destroy to release it.
 	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
 	sysSessionPool util.DestroyableSessionPool
@@ -1512,6 +1513,10 @@ func (do *Domain) Close() {
 		return
 	}
 	startTime := time.Now()
+
+	if do.locationResolver != nil {
+		do.locationResolver.Stop()
+	}
 	if do.ddl != nil {
 		terror.Log(do.ddl.Stop())
 	}
@@ -1823,8 +1828,45 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		return err
 	}
 
+	// Initialize and start the TableGroupLocationResolver
+	do.initLocationResolver()
+
 	return nil
 }
+
+// initLocationResolver initializes the TableGroupLocationResolver
+func (do *Domain) initLocationResolver() {
+	var regionCache *tikv.RegionCache
+	if store, ok := do.store.(interface{ GetRegionCache() *tikv.RegionCache }); ok {
+		regionCache = store.GetRegionCache()
+	}
+
+	cfg := TableGroupLocationResolverConfig{
+		LocalAddr:       do.getLocalStatusAddr(),
+		RefreshInterval: 30 * time.Second,
+		InfoSchemaGetter: func() infoschema.InfoSchema {
+			return do.InfoSchema()
+		},
+		RegionCache: regionCache,
+	}
+	do.locationResolver = NewTableGroupLocationResolver(cfg)
+	do.locationResolver.Start()
+
+	// Set the global location resolver via the callback
+	if SetGlobalLocationResolver != nil {
+		SetGlobalLocationResolver(do.locationResolver)
+	}
+}
+
+// getLocalAddr returns the local TiDB server address
+func (do *Domain) getLocalStatusAddr() string {
+	cfg := config.GetGlobalConfig()
+	return fmt.Sprintf("%s:%d", cfg.AdvertiseAddress, cfg.Status.StatusPort)
+}
+
+// SetGlobalLocationResolver is a callback function to set the global location resolver
+// This is set by the planner/core package to avoid import cycles
+var SetGlobalLocationResolver func(resolver any)
 
 // GetSchemaLease return the schema lease.
 func (do *Domain) GetSchemaLease() time.Duration {

@@ -490,7 +490,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	grpcL := m.Match(cmux.Any())
 
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
-	grpcServer := NewRPCServer(s.cfg, s.dom, s)
+	grpcServer, remoteExecSrv := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
 	if s.cfg.Store == "tikv" {
 		keyspaceName := config.GetGlobalKeyspaceName()
@@ -526,6 +526,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	s.statusServer = statusServer
 	s.grpcServer = grpcServer
+	s.pkdbRemoteExecServer = remoteExecSrv
 
 	go util.WithRecovery(func() {
 		err := grpcServer.Serve(grpcL)

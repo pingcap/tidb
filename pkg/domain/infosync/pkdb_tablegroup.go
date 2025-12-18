@@ -16,6 +16,7 @@ package infosync
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -48,7 +49,11 @@ func (m *PDTableGroupManager) CreateAffinityGroup(ctx context.Context, affinityG
 // GetAllAffinityGroups retrieves all affinity groups from PD.
 func (m *PDTableGroupManager) GetAllAffinityGroups(ctx context.Context) (map[string]*pd.AffinityGroupState, error) {
 	state, err := m.pdHTTPCli.GetAllAffinityGroups(ctx)
-	logutil.BgLogger().Info("GetAllAffinityGroups", zap.Any("state", state), zap.Error(err))
+	if err != nil {
+		logutil.BgLogger().Warn("GetAllAffinityGroups failed", zap.Error(err))
+	} else {
+		logutil.BgLogger().Debug("GetAllAffinityGroups success", zap.Any("state", state))
+	}
 	return state, err
 }
 

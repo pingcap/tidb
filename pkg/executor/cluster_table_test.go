@@ -37,7 +37,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
+func createRPCServer(t *testing.T, dom *domain.Domain) (*grpc.Server, func()) {
 	sm := &testkit.MockSessionManager{}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
@@ -49,7 +49,7 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
-	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
+	srv, remoteExecSrv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	go func() {
 		err = srv.Serve(lis)
@@ -60,13 +60,20 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 		conf.Status.StatusPort = uint(port)
 	})
 
-	return srv
+	cleanup := func() {
+		srv.Stop()
+		if remoteExecSrv != nil {
+			remoteExecSrv.Close()
+		}
+		_ = lis.Close()
+	}
+	return srv, cleanup
 }
 
 func TestClusterTableSlowQuery(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := createRPCServer(t, dom)
-	defer srv.Stop()
+	_, cleanup := createRPCServer(t, dom)
+	defer cleanup()
 
 	logData0 := ""
 	logData1 := `
@@ -185,8 +192,8 @@ select 7;`
 
 func TestIssue20236(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := createRPCServer(t, dom)
-	defer srv.Stop()
+	_, cleanup := createRPCServer(t, dom)
+	defer cleanup()
 
 	logData0 := ""
 	logData1 := `
@@ -295,8 +302,8 @@ select 10;`
 
 func TestSQLDigestTextRetriever(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := createRPCServer(t, dom)
-	defer srv.Stop()
+	_, cleanup := createRPCServer(t, dom)
+	defer cleanup()
 
 	tkInit := testkit.NewTestKit(t, store)
 	tkInit.MustExec("use test")

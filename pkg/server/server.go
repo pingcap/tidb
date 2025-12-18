@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
+	"github.com/pingcap/tidb/pkg/server/pkdb_remoteexec"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -134,12 +135,13 @@ type Server struct {
 	capability uint32
 	dom        *domain.Domain
 
-	statusAddr     string
-	statusListener net.Listener
-	statusServer   *http.Server
-	grpcServer     *grpc.Server
-	inShutdownMode *uatomic.Bool
-	health         *uatomic.Bool
+	statusAddr           string
+	statusListener       net.Listener
+	statusServer         *http.Server
+	grpcServer           *grpc.Server
+	pkdbRemoteExecServer *pkdbremoteexec.Server
+	inShutdownMode       *uatomic.Bool
+	health               *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
 	internalSessions    map[any]struct{}
@@ -663,6 +665,10 @@ func (s *Server) closeListener() {
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
+	}
+	if s.pkdbRemoteExecServer != nil {
+		s.pkdbRemoteExecServer.Close()
+		s.pkdbRemoteExecServer = nil
 	}
 	if s.autoIDService != nil {
 		s.autoIDService.Close()

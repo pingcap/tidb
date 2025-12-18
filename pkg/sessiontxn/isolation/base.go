@@ -323,6 +323,15 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 		return nil
 	}
 
+	// If a StartTS is already provided for forwarded execution, reuse it to avoid PD requests.
+	// Note: Some tests (and some internal flows) may set TxnCtx.StartTS for other purposes; we must not
+	// treat those as a forwarded transaction snapshot.
+	if ts := p.sctx.GetSessionVars().TxnCtx.StartTS; ts > 0 {
+		if forwarded, ok := p.sctx.Value(sessionctx.ForwardedForRemoteExecKey{}).(bool); ok && forwarded {
+			return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(ts))
+		}
+	}
+
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}

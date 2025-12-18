@@ -59,6 +59,9 @@ type PlanCacheKeyTestClone struct{}
 // PlanCacheKeyEnableInstancePlanCache is only for test.
 type PlanCacheKeyEnableInstancePlanCache struct{}
 
+// PlanCacheKeyEnableRemoteInstancePlanCache is only for remote plan exec.
+type PlanCacheKeyEnableRemoteInstancePlanCache struct{}
+
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
@@ -290,7 +293,7 @@ func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
 }
 
 func instancePlanCacheEnabled(ctx context.Context) bool {
-	if intest.InTest && ctx.Value(PlanCacheKeyEnableInstancePlanCache{}) != nil {
+	if ctx.Value(PlanCacheKeyEnableRemoteInstancePlanCache{}) != nil || (intest.InTest && ctx.Value(PlanCacheKeyEnableInstancePlanCache{}) != nil) {
 		return true
 	}
 	enableInstancePlanCache := variable.EnableInstancePlanCache.Load()
@@ -343,7 +346,9 @@ func AdjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	} else {
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
-	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	if stmt != nil {
+		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	}
 	stmtCtx.StmtHints = *stmtHints
 	return plan, true, nil
 }

@@ -63,12 +63,11 @@ func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSu
 		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("infoschema-cluster-table-test", pdAddrs)),
 		mockstore.WithPDAddr(pdAddrs),
 	)
-	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
+	var rpcCleanup func()
+	s.rpcServer, s.listenAddr, rpcCleanup = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.startTime = time.Now()
 	t.Cleanup(func() {
-		if s.rpcServer != nil {
-			s.rpcServer.Stop()
-		}
+		rpcCleanup()
 		if s.httpServer != nil {
 			s.httpServer.Close()
 		}
@@ -76,7 +75,7 @@ func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSu
 	return s
 }
 
-func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Server, string) {
+func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Server, string, func()) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 
@@ -91,7 +90,7 @@ func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Serve
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
 	})
-	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
+	srv, remoteExecSrv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
@@ -100,7 +99,14 @@ func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Serve
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
 	})
-	return srv, addr
+	cleanup := func() {
+		srv.Stop()
+		if remoteExecSrv != nil {
+			remoteExecSrv.Close()
+		}
+		_ = lis.Close()
+	}
+	return srv, addr, cleanup
 }
 
 func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {

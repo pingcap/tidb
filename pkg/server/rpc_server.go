@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
+	"github.com/pingcap/tidb/pkg/executor/pkdb_remote/pb"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/server/pkdb_remoteexec"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -47,7 +49,7 @@ import (
 )
 
 // NewRPCServer creates a new rpc server.
-func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
+func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionManager) (*grpc.Server, *pkdbremoteexec.Server) {
 	defer func() {
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("r", v),
@@ -68,6 +70,9 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		}),
 		grpc.MaxConcurrentStreams(uint32(config.Status.GRPCConcurrentStreams)),
 		grpc.InitialWindowSize(int32(config.Status.GRPCInitialWindowSize)),
+		grpc.InitialConnWindowSize(int32(config.Status.GRPCInitialWindowSize)),
+		grpc.ReadBufferSize(64*1024),
+		grpc.WriteBufferSize(64*1024),
 		grpc.MaxSendMsgSize(config.Status.GRPCMaxSendMsgSize),
 	)
 	rpcSrv := &rpcServer{
@@ -78,7 +83,9 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)
 	topsql.RegisterPubSubServer(s)
-	return s
+	remoteExecSrv := pkdbremoteexec.NewServer(sm, dom)
+	pb.RegisterRemoteExecServiceServer(s, remoteExecSrv)
+	return s, remoteExecSrv
 }
 
 // rpcServer contains below 2 services:

@@ -756,7 +756,7 @@ func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.
 			Command: mysql.ComQuery,
 		}
 	}
-	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
+	srv, remoteExecSrv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
@@ -766,6 +766,12 @@ func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
 		conf.AdvertiseAddress = "127.0.0.1"
+	})
+	t.Cleanup(func() {
+		if remoteExecSrv != nil {
+			remoteExecSrv.Close()
+		}
+		_ = lis.Close()
 	})
 	return srv, addr
 }

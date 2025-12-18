@@ -168,6 +168,12 @@ func (c *Constant) SafeToShareAcrossSession() bool {
 	return true
 }
 
+// Order returns the order (index) of the parameter marker.
+// This is used to get the parameter value from the prepared statement parameters.
+func (d *ParamMarker) Order() int {
+	return d.order
+}
+
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
 func (d *ParamMarker) GetUserVar(ctx ParamValues) (types.Datum, error) {
 	return ctx.GetParamValue(d.order)

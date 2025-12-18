@@ -30,9 +30,9 @@ import (
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
 func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 	sc := p.SCtx().GetSessionVars().StmtCtx
-	if !sc.UseCache() {
-		return false // plan-cache is disabled for this query
-	}
+	// if !sc.UseCache() {
+	// 	return false // plan-cache is disabled for this query
+	// }
 
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()

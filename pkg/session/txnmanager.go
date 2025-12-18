@@ -282,6 +282,11 @@ func (m *txnManager) resetEvents() {
 	if m.events == nil {
 		m.events = make([]event, 0, 10)
 	} else {
+		// Clear existing entries so the backing array does not hold references
+		// to previous SQL strings, which can accumulate across statements.
+		for i := range m.events {
+			m.events[i] = event{}
+		}
 		m.events = m.events[:0]
 	}
 	m.enterTxnInstant = time.Now()
