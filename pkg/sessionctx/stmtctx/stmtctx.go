@@ -1194,6 +1194,9 @@ func (sc *StatementContext) DetachMemDiskTracker() {
 func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
 	sc.StaleTSOProvider.Lock()
 	defer sc.StaleTSOProvider.Unlock()
+	if sc.StaleTSOProvider.eval != nil {
+		return
+	}
 	sc.StaleTSOProvider.value = nil
 	sc.StaleTSOProvider.eval = eval
 }
