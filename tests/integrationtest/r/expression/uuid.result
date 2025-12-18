@@ -1,23 +1,8 @@
-SELECT UUID_V3("DNS", "pingcap.com");
-UUID_V3("DNS", "pingcap.com")
-643d1627-8d1e-31ae-b27b-e797caebdcbd
-SELECT UUID_V5("DNS", "pingcap.com");
-UUID_V5("DNS", "pingcap.com")
-11b87852-135e-531d-8df0-3a18362907d3
 SELECT IS_UUID(UUID());
 IS_UUID(UUID())
 1
-SELECT IS_UUID(UUID_V3("DNS", "pingcap.com"));
-IS_UUID(UUID_V3("DNS", "pingcap.com"))
-1
 SELECT IS_UUID(UUID_V4());
 IS_UUID(UUID_V4())
-1
-SELECT IS_UUID(UUID_V5("DNS", "pingcap.com"));
-IS_UUID(UUID_V5("DNS", "pingcap.com"))
-1
-SELECT IS_UUID(UUID_V6());
-IS_UUID(UUID_V6())
 1
 SELECT IS_UUID(UUID_V7());
 IS_UUID(UUID_V7())
@@ -25,18 +10,9 @@ IS_UUID(UUID_V7())
 SELECT UUID_VERSION(UUID());
 UUID_VERSION(UUID())
 1
-SELECT UUID_VERSION(UUID_V3("DNS", "pingcap.com"));
-UUID_VERSION(UUID_V3("DNS", "pingcap.com"))
-3
 SELECT UUID_VERSION(UUID_V4());
 UUID_VERSION(UUID_V4())
 4
-SELECT UUID_VERSION(UUID_V5("DNS", "pingcap.com"));
-UUID_VERSION(UUID_V5("DNS", "pingcap.com"))
-5
-SELECT UUID_VERSION(UUID_V6());
-UUID_VERSION(UUID_V6())
-6
 SELECT UUID_VERSION(UUID_V7());
 UUID_VERSION(UUID_V7())
 7
@@ -46,32 +22,26 @@ UUID_TIMESTAMP('5f13f854-d74a-11f0-9b7a-0ae0156bd76b')
 SELECT FROM_UNIXTIME(UUID_TIMESTAMP('5f13f854-d74a-11f0-9b7a-0ae0156bd76b'));
 FROM_UNIXTIME(UUID_TIMESTAMP('5f13f854-d74a-11f0-9b7a-0ae0156bd76b'))
 2025-12-12 19:04:47.118139
-SELECT UUID_TIMESTAMP('643d1627-8d1e-31ae-b27b-e797caebdcbd');
-UUID_TIMESTAMP('643d1627-8d1e-31ae-b27b-e797caebdcbd')
-NULL
 SELECT UUID_TIMESTAMP('a3e3b4a1-ea6d-471e-9860-8303a8b261f6');
 UUID_TIMESTAMP('a3e3b4a1-ea6d-471e-9860-8303a8b261f6')
 NULL
-SELECT UUID_TIMESTAMP('11b87852-135e-531d-8df0-3a18362907d3');
-UUID_TIMESTAMP('11b87852-135e-531d-8df0-3a18362907d3')
-NULL
-SELECT UUID_TIMESTAMP('01f0d799-2c36-6fd0-ab24-0ae0156bd76b');
-UUID_TIMESTAMP('01f0d799-2c36-6fd0-ab24-0ae0156bd76b')
-1765571332.021857
 SELECT UUID_TIMESTAMP('019b1440-87b7-7380-ab00-ce413e795004');
 UUID_TIMESTAMP('019b1440-87b7-7380-ab00-ce413e795004')
 1765571332.023000
 SELECT UUID_SHORT();
 Error 1305 (42000): FUNCTION UUID_SHORT does not exist
-SELECT UUID_V3();
-Error 1582 (42000): Incorrect parameter count in the call to native function 'uuid_v3'
-SELECT UUID_V3(0);
-Error 1582 (42000): Incorrect parameter count in the call to native function 'uuid_v3'
-SELECT UUID_V3("foobar", "pingcap.com");
-Error 1105 (HY000): unknown namespace
-SELECT UUID_V5();
-Error 1582 (42000): Incorrect parameter count in the call to native function 'uuid_v5'
-SELECT UUID_V5(0);
-Error 1582 (42000): Incorrect parameter count in the call to native function 'uuid_v5'
-SELECT UUID_V5("foobar", "pingcap.com");
-Error 1105 (HY000): unknown namespace
+CREATE TABLE t123 (id int PRIMARY KEY, uuid VARCHAR(255) AS (UUID()));
+Error 3102 (HY000): Expression of generated column 'uuid' contains a disallowed function.
+CREATE TABLE t123 (id int PRIMARY KEY, uuid VARCHAR(255) AS (UUID_V4()));
+Error 3102 (HY000): Expression of generated column 'uuid' contains a disallowed function.
+CREATE TABLE t123 (id int PRIMARY KEY, uuid VARCHAR(255) AS (UUID_V7()));
+Error 3102 (HY000): Expression of generated column 'uuid' contains a disallowed function.
+CREATE TABLE t123 (id int PRIMARY KEY, uuid VARCHAR(255) DEFAULT (UUID()));
+CREATE TABLE t123 (id int PRIMARY KEY, uuid VARCHAR(255) DEFAULT (UUID_V4()));
+Error 3770 (HY000): Default value expression of column 'uuid' contains a disallowed function: `UUID_V4`.
+CREATE TABLE t123 (id int PRIMARY KEY, uuid VARCHAR(255) DEFAULT (UUID_V7()));
+Error 3770 (HY000): Default value expression of column 'uuid' contains a disallowed function: `UUID_V7`.
+CREATE TABLE t1234 (id int PRIMARY KEY, uuid BINARY(16) DEFAULT (UUID_TO_BIN(UUID())));
+CREATE TABLE t12345 (id int PRIMARY KEY, uuid BINARY(16) DEFAULT (UUID_TO_BIN(UUID_V4())));
+CREATE TABLE t12346 (id int PRIMARY KEY, uuid BINARY(16) DEFAULT (UUID_TO_BIN(UUID_V7())));
+DROP TABLE IF EXISTS t123, t1234, t12345, t12346;

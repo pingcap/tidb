@@ -57,10 +57,7 @@ var (
 	_ functionClass = &nameConstFunctionClass{}
 	_ functionClass = &releaseAllLocksFunctionClass{}
 	_ functionClass = &uuidFunctionClass{}
-	_ functionClass = &uuidv3FunctionClass{}
 	_ functionClass = &uuidv4FunctionClass{}
-	_ functionClass = &uuidv5FunctionClass{}
-	_ functionClass = &uuidv6FunctionClass{}
 	_ functionClass = &uuidv7FunctionClass{}
 	_ functionClass = &uuidVersionFunctionClass{}
 	_ functionClass = &uuidShortFunctionClass{}
@@ -1516,70 +1513,6 @@ func (b *builtinUUIDSig) evalString(ctx EvalContext, row chunk.Row) (d string, i
 	return
 }
 
-// Function: UUID_V3()
-type uuidv3FunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *uuidv3FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
-	if err != nil {
-		return nil, err
-	}
-	charset, collate := ctx.GetCharsetInfo()
-	bf.tp.SetCharset(charset)
-	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(36)
-	sig := &builtinUUIDv3Sig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_UUID)
-	return sig, nil
-}
-
-type builtinUUIDv3Sig struct {
-	baseBuiltinFunc
-
-	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
-	// as this expression may be shared across sessions.
-	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
-}
-
-func (b *builtinUUIDv3Sig) Clone() builtinFunc {
-	newSig := &builtinUUIDv3Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-// evalString evals a builtinUUIDv3Sig.
-func (b *builtinUUIDv3Sig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
-	var id, namespace uuid.UUID
-	namespaceString, isNull, err := b.args[0].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", isNull, err
-	}
-	switch namespaceString {
-	case "DNS":
-		namespace = uuid.NameSpaceDNS
-	case "URL":
-		namespace = uuid.NameSpaceURL
-	case "OID":
-		namespace = uuid.NameSpaceOID
-	case "X500":
-		namespace = uuid.NameSpaceX500
-	default:
-		return "", isNull, errors.New("unknown namespace")
-	}
-	val, isNull, err := b.args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", isNull, err
-	}
-	id = uuid.NewMD5(namespace, []byte(val))
-	d = id.String()
-	return
-}
-
 // Function: UUID_V4()
 type uuidv4FunctionClass struct {
 	baseFunctionClass
@@ -1620,117 +1553,6 @@ func (b *builtinUUIDv4Sig) Clone() builtinFunc {
 func (b *builtinUUIDv4Sig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
 	var id uuid.UUID
 	id, err = uuid.NewRandom()
-	if err != nil {
-		return
-	}
-	d = id.String()
-	return
-}
-
-// Function: UUID_V5()
-type uuidv5FunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *uuidv5FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
-	if err != nil {
-		return nil, err
-	}
-	charset, collate := ctx.GetCharsetInfo()
-	bf.tp.SetCharset(charset)
-	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(36)
-	sig := &builtinUUIDv5Sig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_UUID)
-	return sig, nil
-}
-
-type builtinUUIDv5Sig struct {
-	baseBuiltinFunc
-
-	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
-	// as this expression may be shared across sessions.
-	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
-}
-
-func (b *builtinUUIDv5Sig) Clone() builtinFunc {
-	newSig := &builtinUUIDv5Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-// evalString evals a builtinUUIDv5Sig.
-func (b *builtinUUIDv5Sig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
-	var id, namespace uuid.UUID
-	namespaceString, isNull, err := b.args[0].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", isNull, err
-	}
-	switch namespaceString {
-	case "DNS":
-		namespace = uuid.NameSpaceDNS
-	case "URL":
-		namespace = uuid.NameSpaceURL
-	case "OID":
-		namespace = uuid.NameSpaceOID
-	case "X500":
-		namespace = uuid.NameSpaceX500
-	default:
-		return "", isNull, errors.New("unknown namespace")
-	}
-	val, isNull, err := b.args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", isNull, err
-	}
-	id = uuid.NewSHA1(namespace, []byte(val))
-	d = id.String()
-	return
-}
-
-// Function: UUID_V6()
-type uuidv6FunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *uuidv6FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
-	if err != nil {
-		return nil, err
-	}
-	charset, collate := ctx.GetCharsetInfo()
-	bf.tp.SetCharset(charset)
-	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(36)
-	sig := &builtinUUIDv6Sig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_UUID)
-	return sig, nil
-}
-
-type builtinUUIDv6Sig struct {
-	baseBuiltinFunc
-
-	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
-	// as this expression may be shared across sessions.
-	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
-}
-
-func (b *builtinUUIDv6Sig) Clone() builtinFunc {
-	newSig := &builtinUUIDv6Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-// evalString evals a builtinUUIDv6Sig.
-func (b *builtinUUIDv6Sig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
-	var id uuid.UUID
-	id, err = uuid.NewV6()
 	if err != nil {
 		return
 	}
