@@ -18,6 +18,7 @@ go_library(
         "//pkg/disttask/framework/storage",
         "//pkg/domain/infosync",
         "//pkg/kv",
+        "//pkg/lightning/log",
         "//pkg/meta",
         "//pkg/meta/tidbvar",
         "//pkg/metrics",

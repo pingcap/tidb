@@ -780,9 +780,9 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 	colCount := 0
 	for _, col := range upstreamTable.Columns {
 		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
-			if col.GetCollate() != "utf8mb4_bin" {
+			if col.GetCollate() != "utf8mb4_bin" && col.GetCollate() != "utf8mb4_general_ci" {
 				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-					"incompatible column collate, upstream table %s.%s column %s collate should be %s",
+					"incompatible column collate, upstream table %s.%s column %s collate is %s but should be utf8mb4_bin",
 					dbNameL, tableNameL, col.Name.L, col.GetCollate())
 			}
 			colCount += 1
