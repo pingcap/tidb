@@ -23,6 +23,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"math/rand"
 	"os"
 	"slices"
@@ -2599,6 +2600,7 @@ func writeChunk(
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
 	ectx := c.ExprCtx.GetEvalCtx()
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
 
 	maxIdxColCnt := maxIndexColumnCount(indexes)
 	idxDataBuf := make([]types.Datum, maxIdxColCnt)
@@ -2684,7 +2686,20 @@ func writeChunk(
 
 			//sample and write to s3
 			fms.InsertIndexVal(loc, idxData[0])
-			subStats.Fms.InsertIndexVal(loc, idxData[0])
+			if subStats != nil {
+				subStats.Fms.InsertIndexVal(loc, idxData[0])
+			}
+			if idxData[0].IsNull() {
+				subStats.NullCnt++
+			} else {
+				subStats.NotNullCnt++
+				s, err := codec.EstimateValueSize(typeCtx, idxData[0])
+				if err != nil {
+					return 0, totalBytes, 0, errors.Trace(err)
+				}
+				subStats.TotalSize += int64(s)
+			}
+
 			if len(statsWriters) != 0 && sample() {
 				// logutil.DDLLogger().Info("sample index kv", zap.Int64("indexID", index.Meta().ID), zap.Int64("handle", handleDataBuf[0].GetInt64()))
 				_, err := writeOneKV(ctx, statsWriters[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)

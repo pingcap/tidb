@@ -297,6 +297,9 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 	}
 	logutil.BgLogger().Info("read fms file", zap.Strings("file", files))
 	fullFms := statistics.NewFMSketch(statistics.MaxSketchSize)
+	nullCnt := int64(0)
+	notNullCnt := int64(0)
+	totalSize := int64(0)
 	for _, file := range files {
 		data, err := storage.ReadFile(ctx, file)
 		if err != nil {
@@ -308,6 +311,9 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 			return errors.Trace(err)
 		}
 		fullFms.MergeFMSketch(sub.Fms)
+		nullCnt += sub.NullCnt
+		notNullCnt += sub.NotNullCnt
+		totalSize += sub.TotalSize
 	}
 	if fullFms.NDV() < 100 {
 		ks, vs := fullFms.KV()
@@ -333,7 +339,11 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 		zap.Int64("fms-count", fullFms.NDV()),
 		zap.Any("hist", hist),
 		zap.Any("topn", topn),
-		zap.Int("topn", topn.Num()))
+		zap.Int("topn", topn.Num()),
+		zap.Int64("null-count", nullCnt),
+		zap.Int64("not-null-count", notNullCnt),
+		zap.Int64("total-size", totalSize),
+	)
 
 	return nil
 }
