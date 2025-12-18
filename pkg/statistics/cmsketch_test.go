@@ -288,12 +288,3 @@ func TestTopNScale(t *testing.T) {
 		require.Less(t, roundErrorRatio, 0.0001)
 	}
 }
-
-func TestXxx(t *testing.T) {
-	d := types.NewDatum(1)
-	d1, err := codec.EncodeKey(nil, nil, d)
-	require.NoError(t, err)
-
-	_, _, err = codec.DecodeOne(d1)
-	require.NoError(t, err)
-}
