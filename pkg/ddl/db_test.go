@@ -1314,6 +1314,9 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 }
 
 func TestAdminAlterDDLJobCommitFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("resource params are calculated automatically on nextgen for add-index, we don't support alter them")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
