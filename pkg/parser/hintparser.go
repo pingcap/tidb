@@ -1074,7 +1074,7 @@ func yyhintlex1(yylex yyhintLexer, lval *yyhintSymType) (n int) {
 	return n
 }
 
-func yyhintParse(yylex yyhintLexer, parser *Parser) int {
+func yyhintParse(yylex yyhintLexer, parser *hintParser) int {
 	const yyError = 135
 
 	yyEx, _ := yylex.(yyhintLexerEx)

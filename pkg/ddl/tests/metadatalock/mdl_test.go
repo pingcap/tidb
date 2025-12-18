@@ -902,7 +902,7 @@ func TestMDLPreparePlanCacheInvalid(t *testing.T) {
 
 func TestMDLPreparePlanCacheExecute(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	sv := server.CreateMockServer(t, store)
 
@@ -958,7 +958,7 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 
 func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	sv := server.CreateMockServer(t, store)
 
@@ -1004,7 +1004,7 @@ func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 // TestMDLPreparePlanCacheExecuteInsert makes sure the insert statement handle the schema correctly in plan cache.
 func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	sv := server.CreateMockServer(t, store)
 

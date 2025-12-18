@@ -101,6 +101,12 @@ type DDLReorgMeta struct {
 	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
 }
 
+// ShallowCopy creates a shallow copy of DDLReorgMeta.
+func (dm *DDLReorgMeta) ShallowCopy() *DDLReorgMeta {
+	newMeta := *dm
+	return &newMeta
+}
+
 // GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta,
 // pass the default value in case of the reorg meta coming from old cluster and Concurrency is 0.
 func (dm *DDLReorgMeta) GetConcurrencyOrDefault(defaultVal int) int {
