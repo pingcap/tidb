@@ -691,7 +691,9 @@ func OpenReader(
 		}
 		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path, nil)
 	default:
-		reader, err = store.Open(ctx, fileMeta.Path, nil)
+		reader, err = store.Open(ctx, fileMeta.Path, &storage.ReaderOption{
+			PrefetchSize: 16 << 20, // 16 MB
+		})
 	}
 	return
 }
