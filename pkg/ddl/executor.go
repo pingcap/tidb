@@ -78,9 +78,6 @@ import (
 
 const (
 	expressionIndexPrefix = "_V$"
-	changingColumnPrefix  = "_Col$_"
-	removingObjPrefix     = "_Tombstone$_"
-	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
 	blobMaxLength         = 65535
@@ -2003,7 +2000,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
-	setNeedAnalyze(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -4973,7 +4969,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		}
 	case model.ActionModifyColumn:
 		setReorgParam()
-		if modifyColumnNeedReorg(job.CtxVars) {
+		if job.NeedReorg {
 			err := setDistTaskParam()
 			if err != nil {
 				return err
@@ -4994,7 +4990,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				}
 			case model.ActionModifyColumn:
 				setReorgParam()
-				if modifyColumnNeedReorg(sub.CtxVars) {
+				if job.NeedReorg {
 					err := setDistTaskParam()
 					if err != nil {
 						return err
