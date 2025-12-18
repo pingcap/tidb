@@ -428,10 +428,6 @@ func (sm *Manager) doCleanupTask() {
 	err = sm.cleanupFinishedTasks(tasks)
 	if err != nil {
 		sm.logger.Warn("cleanup routine failed", zap.Error(err))
-		// normally ScheduleEventCounter requires a task ID, but since scheduler
-		// will delete counters after task finished, we use "-" to indicate
-		// it's not related to any specific task.
-		dxfmetric.ScheduleEventCounter.WithLabelValues("-", dxfmetric.EventCleanupFailed).Add(1)
 		return
 	}
 	failpoint.InjectCall("WaitCleanUpFinished")
@@ -458,6 +454,10 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		}
 	}
 	if firstErr != nil {
+		// normally ScheduleEventCounter requires a task ID, but since scheduler
+		// will delete counters after task finished, we use "-" to indicate
+		// it's not related to any specific task.
+		dxfmetric.ScheduleEventCounter.WithLabelValues("-", dxfmetric.EventCleanupFailed).Add(1)
 		sm.logger.Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
 	}
 
