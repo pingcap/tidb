@@ -152,6 +152,9 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 	return leftRegions
 }
 
+// checkRegionConsistency checks the readiness and continuity of regions.
+// if the argument `limitted` is true, regions are regarded as limitted scanned result.
+// so it will not compare `endKey` with the last region's `EndKey`.
 func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo, limitted bool) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
