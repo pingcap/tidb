@@ -133,7 +133,7 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 	}
 
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
+		bufAllocator:           globalColumnAllocator,
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -225,7 +225,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
+		bufAllocator:           globalColumnAllocator,
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -286,7 +286,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
+		bufAllocator:           globalColumnAllocator,
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -305,7 +305,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 // do not check and compute collation.
 func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
+		bufAllocator:           globalColumnAllocator,
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -437,7 +437,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	}
 	b.tp = from.tp
 	b.pbCode = from.pbCode
-	b.bufAllocator = newLocalColumnPool()
+	b.bufAllocator = globalColumnAllocator
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
 		b.ctor = from.ctor.Clone()
@@ -481,7 +481,7 @@ func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Exp
 	var err error
 	if isExplicitCharset {
 		bf = baseBuiltinFunc{
-			bufAllocator:           newLocalColumnPool(),
+			bufAllocator:           globalColumnAllocator,
 			childrenVectorizedOnce: new(sync.Once),
 
 			args: args,
