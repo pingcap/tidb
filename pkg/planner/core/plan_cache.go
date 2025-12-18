@@ -106,33 +106,42 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 3: add metadata lock and check each table's schema version
+	// check global schema version first to skip per-table checks if unchanged.
 	schemaNotMatch := false
-	for i := range stmt.dbName {
-		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
-		if !ok {
-			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
-			if err != nil {
-				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+	if stmt.SchemaVersion == is.SchemaMetaVersion() {
+		// Fast path: just record table IDs for MDL.
+		for i := range stmt.tbls {
+			sctx.GetSessionVars().StmtCtx.RelatedTableIDs[stmt.tbls[i].Meta().ID] = struct{}{}
+		}
+	} else {
+		// Slow path: full per-table checks.
+		for i := range stmt.dbName {
+			tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
+			if !ok {
+				tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
+				if err != nil {
+					return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+				}
+				// Table ID is changed, for example, drop & create table, truncate table.
+				delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
+				tbl = tblByName
 			}
-			// Table ID is changed, for example, drop & create table, truncate table.
-			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
-			tbl = tblByName
+			// newTbl is the 'should be used' table info for this execution.
+			newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], tbl, is)
+			if err != nil {
+				logutil.BgLogger().Warn("meet error during tryLockMDLAndUpdateSchemaIfNecessary", zap.String("table name", tbl.Meta().Name.String()), zap.Error(err))
+				// Invalid the cache key related fields to avoid using plan cache.
+				stmt.RelateVersion[tbl.Meta().ID] = math.MaxUint64
+				schemaNotMatch = true
+				continue
+			}
+			if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+				schemaNotMatch = true
+			}
+			// Update the cache key related fields.
+			stmt.tbls[i] = newTbl
+			stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 		}
-		// newTbl is the 'should be used' table info for this execution.
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], tbl, is)
-		if err != nil {
-			logutil.BgLogger().Warn("meet error during tryLockMDLAndUpdateSchemaIfNecessary", zap.String("table name", tbl.Meta().Name.String()), zap.Error(err))
-			// Invalid the cache key related fields to avoid using plan cache.
-			stmt.RelateVersion[tbl.Meta().ID] = math.MaxUint64
-			schemaNotMatch = true
-			continue
-		}
-		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
-			schemaNotMatch = true
-		}
-		// Update the cache key related fields.
-		stmt.tbls[i] = newTbl
-		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
 
 	// step 4: check schema version

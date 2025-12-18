@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -238,8 +239,60 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	return preparedObj, p, paramCount, nil
 }
 
+// tableIDSlicePool is a pool for int64 slices used in hashInt64Uint64Map.
+var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
+
 func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
-	keys := make([]int64, 0, len(m))
+	n := len(m)
+
+	// Fast path for common cases (covers most scenarios)
+	if n == 0 {
+		return b
+	}
+	if n == 1 {
+		// Single table: no need for allocation or sorting
+		for k, v := range m {
+			b = codec.EncodeInt(b, k)
+			b = codec.EncodeUint(b, v)
+			return b
+		}
+	}
+	if n == 2 {
+		// Two tables: direct comparison without array allocation
+		var k1, k2 int64
+		var v1, v2 uint64
+		i := 0
+		for k, v := range m {
+			if i == 0 {
+				k1, v1 = k, v
+			} else {
+				k2, v2 = k, v
+			}
+			i++
+		}
+		// Ensure sorted order
+		if k1 > k2 {
+			k1, k2 = k2, k1
+			v1, v2 = v2, v1
+		}
+		b = codec.EncodeInt(b, k1)
+		b = codec.EncodeUint(b, v1)
+		b = codec.EncodeInt(b, k2)
+		b = codec.EncodeUint(b, v2)
+		return b
+	}
+
+	// Slow path for multiple tables
+	keys := tableIDSlicePool.Get()[:0]
+	defer tableIDSlicePool.Put(keys)
+
+	// Ensure sufficient capacity
+	if cap(keys) < n {
+		keys = make([]int64, 0, n)
+	}
+
 	for k := range m {
 		keys = append(keys, k)
 	}
