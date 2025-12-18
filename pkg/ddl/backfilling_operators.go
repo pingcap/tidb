@@ -902,7 +902,7 @@ func (w *indexIngestWorker) Close() error {
 	var gerr error
 
 	// write fms to s3
-	if w.subStats.Fms != nil && w.subStats.Fms.NDV() != 0 {
+	if w.subStats != nil && w.subStats.Fms != nil && w.subStats.Fms.NDV() != 0 {
 		logutil.BgLogger().Info("write fms sketch to external storage",
 			zap.Int64("ndv", w.subStats.Fms.NDV()))
 		data, err := json.Marshal(w.subStats)

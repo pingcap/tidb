@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"encoding/json"
 	"hash"
 	"sync"
 	"time"
@@ -277,17 +278,31 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 }
 
 func (s *FMSketch) MarshalJSON() ([]byte, error) {
-	return EncodeFMSketch(s)
+	if s == nil {
+		return []byte("null"), nil
+	}
+
+	protoData, err := EncodeFMSketch(s)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(protoData)
 }
 
 func (s *FMSketch) UnmarshalJSON(data []byte) error {
-	fm, err := DecodeFMSketch(data)
+	if string(data) == "null" {
+		*s = FMSketch{}
+		return nil
+	}
+	var raw []byte
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fm, err := DecodeFMSketch(raw)
 	if err != nil {
 		return err
 	}
-	s.mask = fm.mask
-	s.maxSize = fm.maxSize
-	s.hashset = fm.hashset
+	*s = *fm
 	return nil
 }
 
