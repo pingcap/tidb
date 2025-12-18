@@ -273,7 +273,7 @@ func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource 
 		return goerrors.New("no subtask running")
 	}
 	reader, writer := pipe.GetReaderAndWriter()
-	targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(int(newResource.CPU.Capacity()), r.avgRowSize)
+	targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(int(newResource.CPU.Capacity()), r.avgRowSize, r.job.ReorgMeta.IsDistReorg)
 	currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 	if int32(targetReaderCnt) != currentReaderCnt {
 		reader.TuneWorkerPoolSize(int32(targetReaderCnt), true)

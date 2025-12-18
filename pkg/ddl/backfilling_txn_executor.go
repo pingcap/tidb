@@ -341,8 +341,11 @@ func (b *txnBackfillExecutor) close(force bool) {
 	close(b.resultCh)
 }
 
-func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt int) {
+func expectedIngestWorkerCnt(concurrency, avgRowSize int, isDXF bool) (readerCnt, writerCnt int) {
 	workerCnt := concurrency
+	if isDXF {
+		return workerCnt, workerCnt
+	}
 	if avgRowSize == 0 {
 		// Statistic data not exist, use default concurrency.
 		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
