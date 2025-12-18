@@ -17,7 +17,9 @@ package metering
 import (
 	"context"
 	goerrors "errors"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/metering_sdk/common"
@@ -28,6 +30,7 @@ import (
 	writermock "github.com/pingcap/metering_sdk/writer/mock"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -117,7 +120,7 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 		RegisterRecorder(&proto.TaskBase{ID: 2})
 		require.Contains(t, meter.recorders, int64(2))
 		UnregisterRecorder(2)
-		meter.flush(ctx, 1000000)
+		meter.flush(ctx, 2000000)
 		require.NotContains(t, meter.recorders, int64(2))
 		require.True(t, ctrl.Satisfied())
 	})
@@ -148,7 +151,7 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 			require.EqualValues(t, 2, md.Data[0][putRequestsField])
 			return nil
 		})
-		meter.flush(ctx, 1000000)
+		meter.flush(ctx, 2000000)
 		require.NotContains(t, meter.recorders, int64(1))
 		require.True(t, ctrl.Satisfied())
 	})
@@ -202,12 +205,12 @@ func TestMeterRegisterUnregisterRecorder(t *testing.T) {
 			require.False(t, meter.recorders[1].unregistered)
 			return nil
 		})
-		meter.flush(ctx, 1000000)
+		meter.flush(ctx, 2000000)
 		require.Contains(t, meter.lastFlushedData, int64(1))
 		require.Contains(t, meter.recorders, int64(1))
 
 		UnregisterRecorder(1)
-		meter.flush(ctx, 1000000)
+		meter.flush(ctx, 3000000)
 		require.NotContains(t, meter.lastFlushedData, int64(1))
 		require.NotContains(t, meter.recorders, int64(1))
 	})
@@ -235,8 +238,7 @@ func TestMeterFlush(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	mockWriter := writermock.NewMockMeteringWriter(ctrl)
-	logger, err := zap.NewDevelopment()
-	require.NoError(t, err)
+	logger := zap.Must(zap.NewDevelopment())
 
 	t.Run("normal flush", func(t *testing.T) {
 		meter := newMeterWithWriter(logger, mockWriter)
@@ -266,7 +268,7 @@ func TestMeterFlush(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 
 		// flush again with no new data
-		meter.flush(ctx, 1000000)
+		meter.flush(ctx, 2000000)
 		require.True(t, ctrl.Satisfied())
 
 		// flush with new data, only new data are written.
@@ -279,11 +281,11 @@ func TestMeterFlush(t *testing.T) {
 			}, md.Data[0])
 			return nil
 		})
-		meter.flush(ctx, 1000000)
+		meter.flush(ctx, 3000000)
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("if we failed to write, the data should be accumulated and rewritten next time", func(t *testing.T) {
+	t.Run("if we failed to write, next write should not accumulate data, those should retry later", func(t *testing.T) {
 		meter := newMeterWithWriter(logger, mockWriter)
 		setupMeterForTest(t, meter)
 		r := RegisterRecorder(&proto.TaskBase{ID: 1})
@@ -294,24 +296,197 @@ func TestMeterFlush(t *testing.T) {
 			return goerrors.New("some err")
 		})
 		meter.flush(ctx, 1000000)
-		require.Empty(t, meter.lastFlushedData)
+		// update lastFlushedData even flush failed
+		require.Contains(t, meter.lastFlushedData, int64(1))
+		require.EqualValues(t, 1, meter.lastFlushedData[1].getRequests)
+		// add to pending retry data
+		require.Contains(t, meter.pendingRetryData.data, int64(1000000))
 		require.True(t, ctrl.Satisfied())
 
-		// flush again, we should write the accumulated data
+		// flush again, we should write the incremental data.
 		r.objStoreAccess.Requests.Get.Add(3)
 		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
 			md := data.(*common.MeteringData)
 			require.Len(t, md.Data, 1)
 			checkMeterData(t, map[string]any{
-				getRequestsField: 4,
+				getRequestsField: 3,
 			}, md.Data[0])
 			return nil
 		})
-		meter.flush(ctx, 1000000)
+		meter.flush(ctx, 2000000)
 		require.Contains(t, meter.lastFlushedData, int64(1))
 		require.EqualValues(t, 4, meter.lastFlushedData[1].getRequests)
 		require.True(t, ctrl.Satisfied())
 	})
+}
+
+func TestMeterRetryWrite(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("metering is a feature of nextgen")
+	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	ctx := context.Background()
+	mockWriter := writermock.NewMockMeteringWriter(ctrl)
+	logger := zap.Must(zap.NewDevelopment())
+
+	t.Run("no pending retry data", func(t *testing.T) {
+		meter := newMeterWithWriter(logger, mockWriter)
+		require.Empty(t, meter.pendingRetryData.data)
+		meter.retryWrite(ctx)
+		require.Empty(t, meter.pendingRetryData.data)
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("3 pending items, 1st keeps failing and finally dropped, 2nd succeeds and removed, 3rd success after retry 5 times", func(t *testing.T) {
+		meter := newMeterWithWriter(logger, mockWriter)
+		meter.pendingRetryData.addFailedData(1000000, []map[string]any{{"get_requests": 12}})
+		meter.pendingRetryData.addFailedData(2000000, []map[string]any{{"get_requests": 23}})
+		meter.pendingRetryData.addFailedData(3000000, []map[string]any{{"get_requests": 34}})
+		require.Len(t, meter.pendingRetryData.data, 3)
+		thirdRetryCnt := 0
+		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, data any) error {
+			md := data.(*common.MeteringData)
+			require.Len(t, md.Data, 1)
+			switch md.Timestamp {
+			case 1000000:
+				return goerrors.New("some err")
+			case 2000000:
+			case 3000000:
+				thirdRetryCnt++
+				if thirdRetryCnt < 5 {
+					return goerrors.New("some err")
+				}
+			}
+			return nil
+		}).Times(16)
+		for r := range 10 {
+			meter.retryWrite(ctx)
+			retryCnt := r + 1
+			if retryCnt < 5 {
+				require.Len(t, meter.pendingRetryData.data, 2)
+				require.EqualValues(t, retryCnt, meter.pendingRetryData.data[1000000].retryCnt)
+				require.EqualValues(t, retryCnt, meter.pendingRetryData.data[3000000].retryCnt)
+			} else if retryCnt == 10 {
+				// after 10 retries, the first item should be dropped
+				require.Empty(t, meter.pendingRetryData.data)
+			} else {
+				require.Len(t, meter.pendingRetryData.data, 1)
+				require.EqualValues(t, retryCnt, meter.pendingRetryData.data[1000000].retryCnt)
+			}
+		}
+		require.True(t, ctrl.Satisfied())
+	})
+}
+
+func TestMeterStartFlushLoop(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("metering is a feature of nextgen")
+	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	logger := zap.Must(zap.NewDevelopment())
+	runOneTest := func(t *testing.T, runRecordersFn func() map[int64]uint64, writeFn func(ctx context.Context, data any) error) map[int64]uint64 {
+		ctx, cancel := context.WithCancel(context.Background())
+		mockWriter := writermock.NewMockMeteringWriter(ctrl)
+		mockWriter.EXPECT().Write(gomock.Any(), gomock.Any()).DoAndReturn(writeFn).AnyTimes()
+		mockWriter.EXPECT().Close().Return(nil)
+		meter := newMeterWithWriter(logger, mockWriter)
+		setupMeterForTest(t, meter)
+		var (
+			wg  util.WaitGroupWrapper
+			res map[int64]uint64
+		)
+		synctest.Test(t, func(t *testing.T) {
+			wg.RunWithLog(func() {
+				res = runRecordersFn()
+			})
+			wg.RunWithLog(func() {
+				meter.StartFlushLoop(ctx)
+			})
+			wg.RunWithLog(func() {
+				time.Sleep(time.Hour)
+				cancel()
+			})
+			wg.Wait()
+		})
+		// all pending data should be handled
+		require.Empty(t, meter.pendingRetryData.data)
+		require.True(t, ctrl.Satisfied())
+		return res
+	}
+
+	var (
+		writeMu           sync.Mutex
+		shouldFailTS      = make(map[int64]int)
+		written           = make(map[int64]uint64)
+		firstTimeForTask3 int64
+		lostDataForTask3  uint64
+	)
+	mockWriteFn := func(ctx context.Context, data any) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		md := data.(*common.MeteringData)
+		if _, ok := shouldFailTS[md.Timestamp]; !ok {
+			shouldFailTS[md.Timestamp] = 0
+		}
+		onlyTask3 := len(md.Data) == 1 && md.Data[0]["task_id"].(int64) == 3
+		if onlyTask3 && firstTimeForTask3 == 0 {
+			firstTimeForTask3 = md.Timestamp
+		}
+		cnt := shouldFailTS[md.Timestamp]
+		// for task 1/2, we succeed after 5 tries, for task 3 and its first write,
+		// we always fail.
+		if cnt < 5 {
+			shouldFailTS[md.Timestamp]++
+			return goerrors.New("some err")
+		} else if onlyTask3 && md.Timestamp == firstTimeForTask3 {
+			lostDataForTask3 = md.Data[0][getRequestsField].(uint64)
+			return goerrors.New("some err")
+		}
+		for _, d := range md.Data {
+			written[d["task_id"].(int64)] += d[getRequestsField].(uint64)
+		}
+		return nil
+	}
+	runRecordersFn := func() map[int64]uint64 {
+		r1 := RegisterRecorder(&proto.TaskBase{ID: 1})
+		r2 := RegisterRecorder(&proto.TaskBase{ID: 2})
+		// keeps adding data for the first 40 minutes
+		for range 80 {
+			cnt := uint64(11)
+			r1.objStoreAccess.Requests.Get.Add(cnt)
+			r2.objStoreAccess.Requests.Get.Add(cnt * 3)
+			time.Sleep(30 * time.Second)
+		}
+		UnregisterRecorder(1)
+		UnregisterRecorder(2)
+		time.Sleep(10 * time.Minute)
+		// after 40+10 minutes, add data for r3 for 100 seconds
+		r3 := RegisterRecorder(&proto.TaskBase{ID: 3})
+		for range 10 {
+			cnt := uint64(23)
+			r3.objStoreAccess.Requests.Get.Add(cnt)
+			time.Sleep(10 * time.Second)
+		}
+		UnregisterRecorder(3)
+		return map[int64]uint64{
+			1: r1.objStoreAccess.Requests.Get.Load(),
+			2: r2.objStoreAccess.Requests.Get.Load(),
+			3: r3.objStoreAccess.Requests.Get.Load(),
+		}
+	}
+	expected := runOneTest(t, runRecordersFn, mockWriteFn)
+	require.Equal(t, map[int64]uint64{
+		1: 880,
+		2: 2640,
+		3: 230,
+	}, expected)
+	require.Equal(t, len(expected), len(written))
+	require.Equal(t, expected[1], written[1])
+	require.Equal(t, expected[2], written[2])
+	require.Greater(t, lostDataForTask3, uint64(0))
+	require.Equal(t, expected[3]-lostDataForTask3, written[3])
 }
 
 func TestMeterClose(t *testing.T) {

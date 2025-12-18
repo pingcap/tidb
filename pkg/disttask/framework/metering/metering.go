@@ -127,6 +127,9 @@ func (d *retryData) getDataClone() map[int64]*writeFailData {
 }
 
 func (d *retryData) remove(needRemove []*writeFailData) {
+	if len(needRemove) == 0 {
+		return
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, wd := range needRemove {
@@ -141,6 +144,8 @@ type Meter struct {
 	// taskID -> last flushed data
 	// when flushing, we scrape the latest data from recorders and calculate the
 	// delta and write to the metering storage.
+	// we will store the latest data here regardless of whether the flush is
+	// successful or not,
 	lastFlushedData map[int64]*Data
 	// pendingRetryData is the data that failed to write and need to retry.
 	pendingRetryData retryData
@@ -292,47 +297,51 @@ func (m *Meter) retryLoop(ctx context.Context) {
 		case <-time.After(retryInterval):
 		}
 
-		data := m.pendingRetryData.getDataClone()
-		if len(data) == 0 {
+		m.retryWrite(ctx)
+	}
+}
+
+func (m *Meter) retryWrite(ctx context.Context) {
+	data := m.pendingRetryData.getDataClone()
+	if len(data) == 0 {
+		return
+	}
+
+	var (
+		firstErr   error
+		needRemove = make([]*writeFailData, 0, len(data))
+	)
+	for ts, wd := range data {
+		err := m.WriteMeterData(ctx, ts, m.uuid, wd.items)
+		if err == nil {
+			m.logger.Info("succeed to write metering data after retry",
+				zap.Int64("timestamp", ts), zap.Int("retry-count", wd.retryCnt),
+				zap.Any("data", wd.items))
+			needRemove = append(needRemove, wd)
 			continue
 		}
 
-		var (
-			firstErr   error
-			needRemove = make([]*writeFailData, 0, len(data))
-		)
-		for ts, wd := range data {
-			err := m.WriteMeterData(ctx, ts, m.uuid, wd.items)
-			if err == nil {
-				m.logger.Info("succeed to write metering data after retry",
-					zap.Int64("timestamp", ts), zap.Int("retry-count", wd.retryCnt),
-					zap.Any("data", wd.items))
-				needRemove = append(needRemove, wd)
-				continue
-			}
-
-			if ctx.Err() != nil {
-				break
-			}
-			if firstErr != nil {
-				firstErr = err
-			}
-
-			wd.retryCnt++
-			if wd.retryCnt >= maxRetryCount {
-				m.logger.Warn("dropping metering data after max retry count reached",
-					zap.Int64("timestamp", ts), zap.Int("retry-count", wd.retryCnt),
-					zap.Any("data", wd.items), zap.Error(err))
-				needRemove = append(needRemove, wd)
-			}
+		if ctx.Err() != nil {
+			break
+		}
+		if firstErr == nil {
+			firstErr = err
 		}
 
-		if firstErr != nil {
-			m.logger.Warn("failed to retry writing some metering data", zap.Error(firstErr))
+		wd.retryCnt++
+		if wd.retryCnt >= maxRetryCount {
+			m.logger.Warn("dropping metering data after max retry count reached",
+				zap.Int64("timestamp", ts), zap.Int("retry-count", wd.retryCnt),
+				zap.Any("data", wd.items), zap.Error(err))
+			needRemove = append(needRemove, wd)
 		}
-
-		m.pendingRetryData.remove(needRemove)
 	}
+
+	if firstErr != nil {
+		m.logger.Warn("failed to retry writing some metering data", zap.Error(firstErr))
+	}
+
+	m.pendingRetryData.remove(needRemove)
 }
 
 func (m *Meter) flushLoop(ctx context.Context) {
