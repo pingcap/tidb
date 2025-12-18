@@ -323,10 +323,10 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 	// build hist, topn
 	collector := &statistics.SampleCollector{
 		Samples:   sampleItems,
-		NullCount: 0,
-		Count:     int64(len(sampleItems)), // todo.
+		NullCount: nullCnt,
+		Count:     notNullCnt,
 		FMSketch:  fullFms,
-		TotalSize: int64(len(sampleItems)),
+		TotalSize: totalSize,
 		MemSize:   int64(len(sampleItems)) * (8 + statistics.EmptySampleItemSize + 8),
 	}
 	tp := types.NewFieldType(mysql.TypeBlob)
