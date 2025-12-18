@@ -627,6 +627,7 @@ func getEncodingType(d []byte) byte {
 	}
 }
 
+// convertEncoding converts the encoding of d to tp if needed.
 func convertEncoding(d []byte, tp byte) ([]byte, bool) {
 	gotType := getEncodingType(d)
 	if gotType == tp || (tp != types.KindInt64 && tp != types.KindUint64) {
@@ -638,13 +639,8 @@ func convertEncoding(d []byte, tp byte) ([]byte, bool) {
 		return d, false
 	}
 
-	targetTp := types.NewFieldType(mysql.TypeLonglong)
-	if tp == types.KindUint64 {
-		targetTp.AddFlag(mysql.UnsignedFlag)
-	}
-
-	converted, err := datum.ConvertTo(UTCWithAllowInvalidDateCtx, targetTp)
-	d, _ = codec.EncodeKey(nil, nil, converted)
+	datum, err = types.ConvertBetweenSign(datum, tp == types.KindUint64)
+	d, _ = codec.EncodeKey(nil, nil, datum)
 
 	// If error happens during conversion, it means truncation happens.
 	return d, err != nil
