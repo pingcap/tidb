@@ -278,9 +278,6 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 }
 
 func (s *FMSketch) MarshalJSON() ([]byte, error) {
-	//if s == nil {
-	//	return []byte("null"), nil
-	//}
 	protoData, err := EncodeFMSketch(s)
 	if err != nil {
 		return nil, err
@@ -289,10 +286,6 @@ func (s *FMSketch) MarshalJSON() ([]byte, error) {
 }
 
 func (s *FMSketch) UnmarshalJSON(data []byte) error {
-	//if string(data) == "null" {
-	//	*s = FMSketch{}
-	//	return nil
-	//}
 	var raw []byte
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
