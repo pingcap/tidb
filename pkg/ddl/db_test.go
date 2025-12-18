@@ -49,6 +49,7 @@ import (
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -1212,6 +1213,9 @@ func deleteJobMetaByID(tk *testkit.TestKit, jobID int64) {
 }
 
 func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("resource params are calculated automatically on nextgen for add-index, we don't support alter them")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1294,6 +1298,19 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
 		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX, MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
 	deleteJobMetaByID(tk, 1)
+
+	if kerneltype.IsNextGen() {
+		job := model.Job{
+			ID:   2,
+			Type: model.ActionAddIndex,
+		}
+		insertMockJob2Table(tk, &job)
+		// unsupported job type
+		err := tk.ExecToErr(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
+		require.ErrorIs(t, err, variable.ErrNotSupportedInNextGen)
+		require.ErrorContains(t, err, "Altering ADD INDEX job")
+		deleteJobMetaByID(tk, 2)
+	}
 }
 
 func TestAdminAlterDDLJobCommitFailed(t *testing.T) {
