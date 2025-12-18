@@ -42,11 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
-<<<<<<< HEAD
-	"go.uber.org/zap"
-=======
 	"github.com/tikv/client-go/v2/oracle"
->>>>>>> 8d8cfbbb020 (executor: Fix unstable test TestTiKVClientReadTimeout (#57579))
+	"go.uber.org/zap"
 )
 
 func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
