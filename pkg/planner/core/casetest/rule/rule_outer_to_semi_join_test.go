@@ -28,11 +28,11 @@ func TestOuterToSemiJoin(tt *testing.T) {
 		// A.id is not a primary key to allow NULL values for the test.
 		tk.MustExec("CREATE TABLE A (id INT, val INT, nullable_val INT)")
 		tk.MustExec("CREATE TABLE B (id INT PRIMARY KEY, a_id INT, val INT, non_null_col INT NOT NULL, nullable_col INT)")
-		
+
 		// Insert data into A
 		// A.val=10, 20, NULL, 40
 		tk.MustExec("INSERT INTO A VALUES (1, 10, 100), (2, 20, NULL), (3, NULL, 300), (4, 40, 400), (NULL, 50, 500)")
-		
+
 		// Insert data into B
 		// B.val=10 matches A.val=10.
 		// B.val=NULL matches A.val=NULL via <=>.
