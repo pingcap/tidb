@@ -355,19 +355,3 @@ func TestIssue64645(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"IndexRangeScan"})
 }
-
-func TestABC(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`CREATE TABLE Table_A (
-    id INT,
-    name VARCHAR(50)
-);`)
-	tk.MustExec(`CREATE TABLE Table_B (
-    id INT, -- Join Key
-    info VARCHAR(50)
-);`)
-	tk.MustQuery(`SELECT A.* FROM Table_A A 
-LEFT JOIN Table_B B ON A.id = B.id 
-WHERE B.id IS NULL;`)
-}

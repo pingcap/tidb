@@ -35,8 +35,8 @@ const (
 	FlagCollectPredicateColumnsPoint
 	FlagPushDownAgg
 	FlagDeriveTopNFromWindow
-	FlagPredicateSimplification
 	FlagOuterJoinToSemiJoin
+	FlagPredicateSimplification
 	FlagPushDownTopN
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder

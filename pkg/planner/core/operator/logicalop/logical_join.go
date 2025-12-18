@@ -278,9 +278,9 @@ func filterOutNullEQ4ConvertAntiJoin(inner int, sf []*expression.ScalarFunction)
 			if ok {
 				var col *expression.Column
 				if inner == 0 {
-					col = col1
-				} else {
 					col = col2
+				} else {
+					col = col1
 				}
 				if !yield(col) {
 					// yield will retun false if the calling
@@ -303,9 +303,9 @@ func filterOutOtherCondition4ConvertAntiJoin(inner int, sf []expression.Expressi
 					if ok {
 						var col *expression.Column
 						if inner == 0 {
-							col = col1
-						} else {
 							col = col2
+						} else {
+							col = col1
 						}
 						if !yield(col) {
 							// yield will retun false if the calling
