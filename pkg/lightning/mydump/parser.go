@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -691,7 +692,9 @@ func OpenReader(
 		}
 		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path, nil)
 	default:
-		reader, err = store.Open(ctx, fileMeta.Path, nil)
+		reader, err = store.Open(ctx, fileMeta.Path, &storage.ReaderOption{
+			PrefetchSize: 160 * units.KiB,
+		})
 	}
 	return
 }
