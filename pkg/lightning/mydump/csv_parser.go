@@ -67,9 +67,9 @@ type CSVParser struct {
 	// special).
 	// newLineByteSet is used in strict-format CSV dividing (so the first
 	// characters of the terminator are special).
-	quoteByteSet   byteSet
-	unquoteByteSet byteSet
-	newLineByteSet byteSet
+	quoteByteSet   *byteSet
+	unquoteByteSet *byteSet
+	newLineByteSet *byteSet
 
 	// recordBuffer holds the unescaped fields, one after another.
 	// The fields can be accessed by using the indexes in fieldIndexes.
@@ -464,7 +464,7 @@ outside:
 			parser.pos = oldPos + int64(idx+len(parser.startingBy))
 		}
 
-		content, firstByte, err := parser.readUntil(&parser.unquoteByteSet)
+		content, firstByte, err := parser.readUntil(parser.unquoteByteSet)
 
 		if len(content) > 0 {
 			isEmptyLine = false
@@ -561,7 +561,7 @@ outside:
 func (parser *CSVParser) readQuotedField() error {
 	for {
 		prevPos := parser.pos
-		content, terminator, err := parser.readUntil(&parser.quoteByteSet)
+		content, terminator, err := parser.readUntil(parser.quoteByteSet)
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				// return the position of quote to the caller.
@@ -719,7 +719,7 @@ func (parser *CSVParser) ReadUntilTerminator() ([]byte, int64, error) {
 func (parser *CSVParser) readUntilTerminator() ([]byte, int64, error) {
 	var ret []byte
 	for {
-		content, firstByte, err := parser.readUntil(&parser.newLineByteSet)
+		content, firstByte, err := parser.readUntil(parser.newLineByteSet)
 		ret = append(ret, content...)
 		if err != nil {
 			return ret, parser.pos, err
