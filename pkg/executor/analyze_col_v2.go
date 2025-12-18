@@ -818,6 +818,10 @@ workLoop:
 				logutil.BgLogger().Info("analyze build index sample collector",
 					zap.Int64("ndv", collector.FMSketch.NDV()),
 					zap.Int("sampleItemsLen", len(collector.Samples)),
+					zap.Int64("count", collector.Count),
+					zap.Int64("total-size", collector.TotalSize),
+					zap.Int64("null-count", collector.NullCount),
+					zap.Int64("hist-mem-usage", hist.MemoryUsage()),
 					zap.Any("hist", hist),
 					zap.Any("topn", topn),
 				)
