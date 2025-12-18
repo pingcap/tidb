@@ -2594,7 +2594,6 @@ func writeChunk(
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
 	tblInfo *model.TableInfo,
-	fms *statistics.FMSketch,
 	subStats *statistics.SubStats,
 ) (rowCnt int, bytes int, sampledCnt int, err error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
@@ -2683,37 +2682,36 @@ func writeChunk(
 				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
 				return 0, totalBytes, 0, errors.Trace(err)
 			}
+			totalBytes += int(kvBytes)
 
 			//sample and write to s3
-			fms.InsertIndexVal(loc, idxData[0])
 			if subStats != nil {
+				// fms
 				subStats.Fms.InsertIndexVal(loc, idxData[0])
-			}
-			if idxData[0].IsNull() {
-				subStats.NullCnt++
-			} else {
-				subStats.NotNullCnt++
-				s, err := codec.EstimateValueSize(typeCtx, idxData[0])
-				if err != nil {
-					return 0, totalBytes, 0, errors.Trace(err)
+				// cnt, size
+				if idxData[0].IsNull() {
+					subStats.NullCnt++
+				} else {
+					subStats.NotNullCnt++
+					s, err := codec.EstimateValueSize(typeCtx, idxData[0])
+					if err != nil {
+						return 0, totalBytes, 0, errors.Trace(err)
+					}
+					subStats.TotalSize += int64(s)
 				}
-				subStats.TotalSize += int64(s)
-			}
-
-			if len(statsWriters) != 0 && sample() {
-				// logutil.DDLLogger().Info("sample index kv", zap.Int64("indexID", index.Meta().ID), zap.Int64("handle", handleDataBuf[0].GetInt64()))
-				_, err := writeOneKV(ctx, statsWriters[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
-				if err != nil {
-					return 0, totalBytes, 0, errors.Trace(err)
+				// sample
+				if len(statsWriters) != 0 && sample() {
+					// logutil.DDLLogger().Info("sample index kv", zap.Int64("indexID", index.Meta().ID), zap.Int64("handle", handleDataBuf[0].GetInt64()))
+					_, err := writeOneKV(ctx, statsWriters[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+					if err != nil {
+						return 0, totalBytes, 0, errors.Trace(err)
+					}
+					sampled++
 				}
-				sampled++
 			}
-			totalBytes += int(kvBytes)
 		}
 		count++
 	}
-	ks, vs := fms.KV()
-	logutil.DDLLogger().Debug("fm sketch hashset by index", zap.Uint64s("k", ks), zap.Bools("v", vs))
 	return count, totalBytes, sampled, nil
 }
 

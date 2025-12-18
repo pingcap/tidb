@@ -684,22 +684,21 @@ func NewWriteExternalStoreOperator(
 			}
 
 			w := &indexIngestWorker{
-				ctx:          ctx,
-				tbl:          tbl,
-				indexes:      indexes,
-				copCtx:       copCtx,
-				se:           nil,
-				sessPool:     sessPool,
-				writers:      writers,
-				statsWriter:  statsWrite,
-				srcChunkPool: srcChunkPool,
-				reorgMeta:    reorgMeta,
-				totalCount:   totalCount,
-				sampledCount: sampledCount,
-				collector:    collector,
-				extStore:     store,
-				fms:          statistics.NewFMSketch(statistics.MaxSketchSize),
-				fmsS3Path:    path.Join("fms", strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10)),
+				ctx:            ctx,
+				tbl:            tbl,
+				indexes:        indexes,
+				copCtx:         copCtx,
+				se:             nil,
+				sessPool:       sessPool,
+				writers:        writers,
+				statsWriter:    statsWrite,
+				srcChunkPool:   srcChunkPool,
+				reorgMeta:      reorgMeta,
+				totalCount:     totalCount,
+				sampledCount:   sampledCount,
+				collector:      collector,
+				extStore:       store,
+				subStatsS3Path: path.Join("fms", strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10)),
 				subStats: &statistics.SubStats{
 					Fms: statistics.NewFMSketch(statistics.MaxSketchSize),
 				},
@@ -817,13 +816,12 @@ type indexIngestWorker struct {
 	statsWriter  []ingest.Writer
 	srcChunkPool *sync.Pool
 	// only available in global sort
-	totalCount   *atomic.Int64
-	sampledCount *atomic.Int64
-	collector    execute.Collector
-	extStore     storage.ExternalStorage
-	fms          *statistics.FMSketch
-	subStats     *statistics.SubStats
-	fmsS3Path    string
+	totalCount     *atomic.Int64
+	sampledCount   *atomic.Int64
+	collector      execute.Collector
+	extStore       storage.ExternalStorage
+	subStats       *statistics.SubStats
+	subStatsS3Path string
 }
 
 func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) error {
@@ -902,14 +900,14 @@ func (w *indexIngestWorker) Close() error {
 	var gerr error
 
 	// write fms to s3
-	if w.subStats != nil && w.subStats.Fms != nil && w.subStats.Fms.NDV() != 0 {
-		logutil.BgLogger().Info("write fms sketch to external storage",
+	if w.subStats != nil {
+		logutil.BgLogger().Info("write sub stats to external storage",
 			zap.Int64("ndv", w.subStats.Fms.NDV()))
 		data, err := json.Marshal(w.subStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		path := path.Join(w.fmsS3Path, uuid.New().String(), "fms.json")
+		path := path.Join(w.subStatsS3Path, uuid.New().String(), "fms.json")
 		w.extStore.WriteFile(w.ctx, path, data)
 	}
 
@@ -956,7 +954,7 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes i
 		// skip running the checker in TiDB side.
 		indexConditionCheckers = nil
 	}
-	cnt, kvBytes, sampled, err := writeChunk(w.ctx, w.writers, w.statsWriter, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta(), w.fms, w.subStats)
+	cnt, kvBytes, sampled, err := writeChunk(w.ctx, w.writers, w.statsWriter, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta(), w.subStats)
 	if err != nil || cnt == 0 {
 		return 0, 0, 0, err
 	}
