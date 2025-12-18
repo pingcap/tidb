@@ -1132,8 +1132,13 @@ func (local *Backend) generateAndSendJob(
 						}
 						return err
 					}
+					// we need to increase the ref count before sending jobs to
+					// jobToWorkerCh, in case some job finished quickly and decrease
+					// the ref count to zero and cause the data being released.
 					for _, job := range jobs {
 						job.ref(jobWg)
+					}
+					for _, job := range jobs {
 						select {
 						case <-egCtx.Done():
 							// this job is not put into jobToWorkerCh
@@ -1276,6 +1281,29 @@ func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
 	return ext
 }
 
+// verifyImportedStatistics verifies the imported statistics for external engines.
+// It checks if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used (which are not yet implemented),
+// and verifies that the imported KV count matches the expected one.
+func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
+	// Check if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used.
+	// These options are not yet implemented for local backend, so we skip
+	// the statistics verification and return an error to remind future
+	// implementers to add support for this check.
+	if extEngine, ok := e.(*external.Engine); ok {
+		failpoint.Inject("skipOnDuplicateKeyCheck", func(_ failpoint.Value) {
+			failpoint.Return(nil)
+		})
+		// Verify the imported statistics after import.
+		// For external engine, use the total number of KVs loaded in LoadIngestData
+		// (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
+		expectedKVCount := extEngine.GetTotalLoadedKVsCount()
+		if importedKVCount != expectedKVCount {
+			return errors.Errorf("imported length mismatch, expected %d, got %d", expectedKVCount, importedKVCount)
+		}
+	}
+	return nil
+}
+
 // ImportEngine imports an engine to TiKV.
 func (local *Backend) ImportEngine(
 	ctx context.Context,
@@ -1391,6 +1419,11 @@ func (local *Backend) ImportEngine(
 	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
+
+		if err := verifyImportedStatistics(e, importedLength); err != nil {
+			return err
+		}
+
 		tidblogutil.Logger(ctx).Info("import engine success",
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),

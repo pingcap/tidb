@@ -348,7 +348,13 @@ type Summary struct {
 	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
 
 	// ImportedRows is the number of rows imported into TiKV.
-	ImportedRows int64 `json:"row-count,omitempty"`
+	// conflicted rows are excluded from this count if using global-sort.
+	ImportedRows   int64  `json:"row-count,omitempty"`
+	ConflictRowCnt uint64 `json:"conflict-row-count,omitempty"`
+	// TooManyConflicts indicates there are too many conflicted rows that we
+	// cannot deduplicate during collecting its checksum, so we will skip later
+	// checksum step.
+	TooManyConflicts bool `json:"too-many-conflicts,omitempty"`
 }
 
 // LoadDataController load data controller.

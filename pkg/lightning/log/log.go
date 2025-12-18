@@ -16,12 +16,12 @@ package log
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"os"
-	"slices"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	pclog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -194,17 +194,28 @@ func IsContextCanceledError(err error) bool {
 		return false
 	}
 	err = errors.Cause(err)
-	if err == context.Canceled || status.Code(err) == codes.Canceled {
+	if goerrors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 		return true
 	}
 
-	// see https://github.com/aws/aws-sdk-go/blob/9d1f49ba/aws/credentials/credentials.go#L246-L249
-	// 2 cases that have meet:
-	// 	awserr.New("RequestCanceled", "request context canceled", err) and the nested err is context.Canceled
-	// 	awserr.New( "MultipartUpload", "upload multipart failed", err) and the nested err is the upper one
-	if v, ok := err.(awserr.BatchedErrors); ok {
-		return slices.ContainsFunc(v.OrigErrs(), IsContextCanceledError)
+	// https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/handle-errors.html
+	// In AWS SDK v2, check for smithy CanceledError type
+	var canceledError *smithy.CanceledError
+	if goerrors.As(err, &canceledError) {
+		return true
 	}
+
+	// Check for smithy operation errors that wrap context cancellation
+	var opErr *smithy.OperationError
+	if goerrors.As(err, &opErr) {
+		if goerrors.Is(opErr.Unwrap(), context.Canceled) || status.Code(opErr.Unwrap()) == codes.Canceled {
+			return true
+		}
+		if goerrors.As(opErr.Unwrap(), &canceledError) {
+			return true
+		}
+	}
+
 	return false
 }
 
