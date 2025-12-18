@@ -92,9 +92,9 @@ func NextPowerOfTwo(i int64) int64 {
 	return i
 }
 
-// Divide2Batches divides 'total' into 'batches', and returns the size of each batch.
-// Σ(batchSizes) = 'total'. if 'total' < 'batches', we return 'total' batches with size 1.
-// 'total' is allowed to be 0.
+// Divide2Batches divides 'total' into 'batches'. It returns a slice of sizes
+// whose sum equals total. If total < batches, it returns total parts of size 1.
+// If total equals 0, it returns an empty slice. Batches must be > 0.
 func Divide2Batches[T constraints.Integer](total, batches T) []T {
 	result := make([]T, 0, batches)
 	quotient := total / batches
