@@ -236,7 +236,7 @@ type ScanFunc = func(key, value []byte) error
 type ScanProcessor interface {
 	// Process accepts key and value, should not keep reference to them.
 	// Returns ErrScanBreak will break the scan loop.
-	Process(key, value []byte) error
+	Process(key, value []byte, commitTS uint64) error
 	// SkipValue returns if we can skip the value.
 	SkipValue() bool
 }
@@ -278,7 +278,7 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 				return errors.Trace(err)
 			}
 		}
-		err = proc.Process(key, val)
+		err = proc.Process(key, val, item.Version())
 		if err != nil {
 			if err == ErrScanBreak {
 				break
@@ -344,7 +344,7 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 				return errors.Trace(err)
 			}
 		}
-		err = proc.Process(key, val)
+		err = proc.Process(key, val, item.Version())
 		if err != nil {
 			if err == ErrScanBreak {
 				break
