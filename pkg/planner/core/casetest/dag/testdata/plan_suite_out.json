@@ -466,7 +466,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.c and t1.b=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
-        "Best": "IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[NULL NULL,NULL NULL]]->Sel([eq(1, test.t.c)]), Table(t))}(test.t.b,test.t.c)"
+        "Best": "IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[NULL NULL,NULL NULL]]->Sel([eq(test.t.c, 1)]), Table(t))}(test.t.b,test.t.c)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.b and t1.c=1 and t2.c=1 and t2.d > t1.d-10 and t2.d < t1.d+10",

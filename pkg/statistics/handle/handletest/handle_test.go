@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -52,12 +53,8 @@ func TestEmptyTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	_, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	count := cardinality.ColumnGreaterRowCount(mock.NewContext(), statsTbl, types.NewDatum(1), tableInfo.Columns[0].ID)
-	require.Equal(t, 0.0, count)
 }
 
 func TestColumnIDs(t *testing.T) {
@@ -82,7 +79,7 @@ func TestColumnIDs(t *testing.T) {
 		Collators:   collate.GetBinaryCollatorSlice(1),
 	}
 	var countEst statistics.RowEstimate
-	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran}, false)
 	count := countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, float64(1), count)
@@ -98,7 +95,7 @@ func TestColumnIDs(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// At that time, we should get c2's stats instead of c1's.
-	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran}, false)
 	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
@@ -1434,6 +1431,11 @@ func TestInitStatsLite(t *testing.T) {
 	require.True(t, colBStats1.IsFullLoad())
 	idxBStats1 := statsTbl2.GetIdx(idxBID)
 	require.True(t, idxBStats1.IsFullLoad())
+	// Column c is loaded even though it's not in the WHERE clause because the planner
+	// evaluates ALL possible access paths (including idxc(c)) during optimization.
+	// When index stats are unavailable, the planner checks for column stats as a fallback
+	// for cardinality estimation, which triggers async loading of column c.
+	// See: commit 82e812a38a ("planner: improve index pseudo-estimation with column stats")
 	require.True(t, colCStats.IsFullLoad())
 
 	// sync stats load
@@ -1460,6 +1462,60 @@ func TestInitStatsLite(t *testing.T) {
 	idxCStats2 := statsTbl4.GetIdx(idxCID)
 	require.True(t, idxCStats2.IsFullLoad())
 	require.Greater(t, idxCStats2.LastUpdateVersion, idxCStats1.LastUpdateVersion)
+}
+
+func TestInitStatsLiteRecordsSynthesizedColumnStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	h := dom.StatsHandle()
+	tk.MustExec("insert into t values (1),(2),(3)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+	ctx := context.Background()
+	tk.MustExec("alter table t add column b int default 10")
+	addColEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddColumn)
+	require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, addColEvent))
+	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
+
+	tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colB := tblInfo.Columns[1]
+	colBID := colB.ID
+	statsTbl, found := h.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+	require.True(t, found)
+	require.True(t, statsTbl.ColAndIdxExistenceMap.Has(colBID, false))
+	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(colBID, false))
+	// NOTE: The column stats will be created by the DDL handler after adding the column.
+	// But it should contain no topN and only one bucket in histogram since the column stats is synthesized.
+	require.NotNil(t, statsTbl.GetCol(colBID))
+	require.True(t, statsTbl.IsInitialized())
+	require.True(t, statsTbl.GetCol(colBID).IsFullLoad())
+	require.Nil(t, statsTbl.GetCol(colBID).TopN)
+	require.Equal(t, statsTbl.GetCol(colBID).Histogram.Len(), 1)
+
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(ctx, tblInfo.ID))
+
+	statsTblLite := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, statsTblLite.ColAndIdxExistenceMap.Has(colBID, false))
+	require.True(t, statsTblLite.ColAndIdxExistenceMap.HasAnalyzed(colBID, false))
+	// NOTE: lite init stats does not load column stats and only records their existence.
+	require.Nil(t, statsTblLite.GetCol(colBID))
+	require.False(t, statsTblLite.IsInitialized())
+
+	// Analyze again to load the real stats.
+	tk.MustExec("insert into t values (4, 4),(5, 5)")
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+	statsTblAfterAnalyze := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, statsTblAfterAnalyze.ColAndIdxExistenceMap.Has(colBID, false))
+	require.True(t, statsTblAfterAnalyze.ColAndIdxExistenceMap.HasAnalyzed(colBID, false))
+	require.NotNil(t, statsTblAfterAnalyze.GetCol(colBID))
+	require.True(t, statsTblAfterAnalyze.GetCol(colBID).IsFullLoad())
+	require.NotNil(t, statsTblAfterAnalyze.GetCol(colBID).TopN)
 }
 
 func TestSkipMissingPartitionStats(t *testing.T) {

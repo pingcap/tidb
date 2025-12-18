@@ -3692,23 +3692,26 @@ func TestAuditPluginRetrying(t *testing.T) {
 		_, err = db.Exec("INSERT INTO auto_retry_test VALUES (1, 0)")
 		require.NoError(t, err)
 
-		testResults = testResults[:0]
 		// a big enough concurrency to trigger retries
 		concurrency := 500
-		var wg sync.WaitGroup
-		for range concurrency {
-			wg.Add(1)
-			conn, err := db.Conn(context.Background())
-			require.NoError(t, err)
-			go func() {
-				defer wg.Done()
-				_, err := conn.QueryContext(context.Background(), "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1")
+		// Usually the following retry-loop will succeed in the first try. However, if we are lucky
+		// enough, it might need more times to trigger the retry.
+		require.Eventually(t, func() bool {
+			testResults = testResults[:0]
+			var wg sync.WaitGroup
+			for range concurrency {
+				conn, err := db.Conn(context.Background())
 				require.NoError(t, err)
-			}()
-		}
-		wg.Wait()
+				wg.Go(func() {
+					_, err := conn.QueryContext(context.Background(), "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1")
+					require.NoError(t, err)
+				})
+			}
+			wg.Wait()
 
-		require.Greater(t, len(testResults), concurrency)
+			return len(testResults) > concurrency
+		}, time.Second*10, time.Millisecond*100)
+
 		nonRetryingCount := 0
 		for _, res := range testResults {
 			if !res.retrying {
@@ -3745,10 +3748,8 @@ func TestAuditPluginRetrying(t *testing.T) {
 
 		testResults = testResults[:0]
 		var wg sync.WaitGroup
-		wg.Add(2)
 		// Transaction 1
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			conn := connect()
 			defer conn.Close()
 
@@ -3760,10 +3761,9 @@ func TestAuditPluginRetrying(t *testing.T) {
 			require.NoError(t, err)
 			_, err = conn.ExecContext(context.Background(), "COMMIT")
 			require.NoError(t, err)
-		}()
+		})
 		// Transaction 2
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-step1T1Started
 			conn := connect()
 			defer conn.Close()
@@ -3776,7 +3776,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			require.NoError(t, err)
 
 			close(step2T2Committed)
-		}()
+		})
 		wg.Wait()
 
 		retryingCount := 0

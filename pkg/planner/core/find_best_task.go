@@ -1020,9 +1020,6 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		return property.PropNotMatched
 	}
 	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
-		if path.Index == nil || path.Index.VectorInfo == nil {
-			return property.PropNotMatched
-		}
 		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
 			return property.PropNotMatched
 		}
@@ -2173,7 +2170,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
 		}
 		cop.TablePlan = ts
-		cop.IndexLookUpPushDown = candidate.path.IsIndexLookUpPushDown
+		cop.IndexLookUpPushDownBy = candidate.path.IndexLookUpPushDownBy
 	}
 	task = cop
 	if cop.TablePlan != nil && ds.TableInfo.IsCommonHandle {

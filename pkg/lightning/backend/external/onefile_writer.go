@@ -212,6 +212,7 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 			}
 		case engineapi.OnDuplicateKeyError:
 			return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
+			// default is OnDuplicateKeyRemove, we will not write for duplicates.
 		}
 	} else {
 		return w.onNextPivot(ctx, idxKey, idxVal)

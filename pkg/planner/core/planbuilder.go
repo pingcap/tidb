@@ -1182,7 +1182,7 @@ func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *m
 	return indexInfo != nil && !indexInfo.IsColumnarIndex()
 }
 
-func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
+func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo, suppressWarning bool) bool {
 	unSupportedReason := ""
 	sessionVars := ctx.GetSessionVars()
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion < 1 {
@@ -1206,10 +1206,27 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	}
 
 	if unSupportedReason != "" {
-		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
+		if !suppressWarning {
+			ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
+		}
 		return false
 	}
 	return true
+}
+
+func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
+	policy := ctx.GetSessionVars().IndexLookUpPushDownPolicy
+	switch policy {
+	case vardef.IndexLookUpPushDownPolicyForce:
+	case vardef.IndexLookUpPushDownPolicyAffinityForce:
+		if tblInfo.Affinity == nil {
+			// No affinity info, should not auto push down the index look up.
+			return false
+		}
+	default:
+		return false
+	}
+	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
@@ -1251,6 +1268,23 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
 
+	// When NO_INDEX_LOOKUP_PUSHDOWN hint is specified, we should set `forceNoIndexLookUpPushDown = true` to avoid
+	// using index look up push down even if other hint or system variable `tidb_index_lookup_pushdown_policy`
+	// tries to enable it.
+	forceNoIndexLookUpPushDown := false
+	if len(tableHints.NoIndexLookUpPushDown) > 0 {
+		for _, h := range tableHints.NoIndexLookUpPushDown {
+			if h.Match(&hint.HintedTable{
+				DBName:  dbName,
+				TblName: tblName,
+			}) {
+				h.Matched = true
+				forceNoIndexLookUpPushDown = true
+				break
+			}
+		}
+	}
+
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			// Filter out invisible index, because they are not visible for optimizer
@@ -1287,6 +1321,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				continue
 			}
 			path := &util.AccessPath{Index: index}
+			if !forceNoIndexLookUpPushDown && checkAutoForceIndexLookUpPushDown(ctx, tblInfo, index) {
+				path.IndexLookUpPushDownBy = util.IndexLookUpPushDownBySysVar
+			}
 			publicPaths = append(publicPaths, path)
 		}
 	}
@@ -1401,10 +1438,17 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				// Currently we only support to hint the index look up push down for comment-style sql hints.
 				// So only i >= indexHintsLen may have the hints here.
 				if _, ok := indexLookUpPushDownHints[i]; ok {
-					if !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index) {
+					if forceNoIndexLookUpPushDown {
+						ctx.GetSessionVars().StmtCtx.SetHintWarning(
+							"hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified",
+						)
 						continue
 					}
-					path.IsIndexLookUpPushDown = true
+
+					if !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index, false) {
+						continue
+					}
+					path.IndexLookUpPushDownBy = util.IndexLookUpPushDownByHint
 				}
 			}
 			available = append(available, path)
@@ -3583,7 +3627,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	buildPattern := true
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation, ast.ShowAffinity:
 		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
@@ -5814,13 +5858,6 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
-		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
-			origin := stmtCtx.EnableOptimizeTrace
-			stmtCtx.EnableOptimizeTrace = true
-			defer func() {
-				stmtCtx.EnableOptimizeTrace = origin
-			}()
-		}
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
 		if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
@@ -6112,6 +6149,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes
+	case ast.ShowAffinity:
+		names = []string{"Db_name", "Table_name", "Partition_name", "Leader_store_id", "Voter_store_ids", "Status", "Region_count", "Affinity_region_count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong}
 	}
 	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }

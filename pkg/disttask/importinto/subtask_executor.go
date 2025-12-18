@@ -136,6 +136,17 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		)
 		localChecksum.AddRawGroup(id, cksum.Size, cksum.KVs, cksum.Sum)
 	}
+	encodeStepChecksum := localChecksum.MergedChecksum()
+	deletedRowsChecksum := subtaskMeta.DeletedRowsChecksum.ToKVChecksum()
+	finalChecksum := encodeStepChecksum
+	finalChecksum.Sub(deletedRowsChecksum)
+	callLog.Info("checksum info", zap.Stringer("encodeStepSum", &encodeStepChecksum),
+		zap.Stringer("deletedRowsSum", deletedRowsChecksum),
+		zap.Stringer("final", &finalChecksum))
+	if subtaskMeta.TooManyConflictsFromIndex {
+		callLog.Info("too many conflicts from index, skip verify checksum, as the checksum of deleted rows may be inaccurate")
+		return nil
+	}
 
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if kerneltype.IsNextGen() {
@@ -143,7 +154,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		mgr := local.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
 			uint(plan.DistSQLScanConcurrency), bfWeight, resourcegroup.DefaultResourceGroupName)
 		defer mgr.Close()
-		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+		return importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
 			func() (*local.RemoteChecksum, error) {
 				ctxWithLogger := logutil.WithLogger(ctx, logger)
 				return mgr.Checksum(ctxWithLogger, &checkpoints.TidbTableInfo{
@@ -156,7 +167,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 	}
 
 	return p.taskTbl.WithNewSession(func(se sessionctx.Context) error {
-		err = importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+		err = importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
 			func() (*local.RemoteChecksum, error) {
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
 			},
