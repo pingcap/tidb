@@ -838,7 +838,7 @@ bazel_ddltest: failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_lint
 bazel_lint: bazel_prepare
-	bazel build //... --//build:with_nogo_flag=$(NOGO_FLAG)
+	bazel build $(BAZEL_CMD_CONFIG) //... --//build:with_nogo_flag=$(NOGO_FLAG)
 
 .PHONY: docker
 docker: ## Build TiDB Docker image
