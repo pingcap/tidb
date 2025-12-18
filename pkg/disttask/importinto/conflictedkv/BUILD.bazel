@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "collector.go",
         "deleter.go",
+        "doc.go",
         "handler.go",
         "row_handle.go",
     ],

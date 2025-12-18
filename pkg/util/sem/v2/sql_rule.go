@@ -119,6 +119,10 @@ var SelectIntoFileRule SQLRule = func(stmt ast.StmtNode) bool {
 var ImportFromLocalRule SQLRule = func(stmt ast.StmtNode) bool {
 	switch stmt := stmt.(type) {
 	case *ast.ImportIntoStmt:
+		// Allow `IMPORT INTO ... FROM SELECT ...`, whose path is empty.
+		if stmt.Select != nil {
+			return false
+		}
 		u, err := url.Parse(stmt.Path)
 		if err != nil {
 			return false

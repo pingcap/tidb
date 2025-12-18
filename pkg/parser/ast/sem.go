@@ -250,6 +250,8 @@ const (
 	ShowPlanCommand = "SHOW PLAN"
 	// ShowDistributionJobsCommand represents SHOW DISTRIBUTION JOBS statement
 	ShowDistributionJobsCommand = "SHOW DISTRIBUTION JOB"
+	// ShowAffinityCommand represents SHOW AFFINITY statement
+	ShowAffinityCommand = "SHOW AFFINITY"
 )
 
 // Admin Commands
@@ -823,6 +825,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowDistributionsCommand
 	case ShowDistributionJobs:
 		return ShowDistributionJobsCommand
+	case ShowAffinity:
+		return ShowAffinityCommand
 	default:
 		return UnknownCommand
 	}

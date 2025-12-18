@@ -71,6 +71,7 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	atomic2 "go.uber.org/atomic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -2301,6 +2302,7 @@ func TestExternalEngine(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipOnDuplicateKeyCheck", "return(true)")
 	ctx := context.Background()
 	dir := t.TempDir()
 	storageURI := "file://" + filepath.ToSlash(dir)
@@ -2538,4 +2540,349 @@ func TestTotalMemoryConsume(t *testing.T) {
 	err = b.CloseEngine(ctx, &backend.EngineConfig{}, engineID)
 	require.NoError(t, err)
 	b.CloseEngineMgr()
+}
+
+// refCountIngestData is a mock IngestData that tracks reference count.
+type refCountIngestData struct {
+	mockIngestData
+	refCount int64
+	mu       sync.Mutex
+	cleaned  bool
+}
+
+func (r *refCountIngestData) IncRef() {
+	time.Sleep(10 * time.Millisecond) // simulate some delay
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.refCount++
+}
+
+func (r *refCountIngestData) DecRef() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.refCount--
+	if r.refCount == 0 {
+		r.cleaned = true
+	}
+}
+
+func (r *refCountIngestData) GetRefCount() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.refCount
+}
+
+func (r *refCountIngestData) IsCleaned() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cleaned
+}
+
+// TestRefAllJobsBeforeSending verifies that all jobs are ref'd before sending to jobToWorkerCh.
+// This test ensures that even if some empty jobs finish quickly, the ingestData won't be
+// cleaned unexpectedly before other jobs can access it.
+func TestRefAllJobsBeforeSending(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+
+	ctx := context.Background()
+	local := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: *atomic2.NewInt32(2),
+			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
+		},
+		splitCli: initTestSplitClient([][]byte{[]byte("a"), []byte("z")}, nil),
+		pdCli:    &mockPdClient{},
+	}
+	var err error
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	require.NoError(t, err)
+
+	// Create a refCountIngestData that tracks reference count
+	data := &refCountIngestData{
+		mockIngestData: mockIngestData{
+			{[]byte("b"), []byte("b")},
+			{[]byte("c"), []byte("c")},
+			{[]byte("d"), []byte("d")},
+		},
+	}
+
+	// Create multiple jobs: some empty, some with data
+	// Empty jobs will finish quickly, but the ingestData should not be cleaned
+	// until all jobs are done.
+	jobRanges := []engineapi.Range{
+		{Start: []byte("a"), End: []byte("b")}, // empty job
+		{Start: []byte("b"), End: []byte("c")}, // job with data
+		{Start: []byte("c"), End: []byte("d")}, // job with data
+		{Start: []byte("d"), End: []byte("e")}, // empty job
+		{Start: []byte("e"), End: []byte("f")}, // empty job
+	}
+
+	// Use fakeRegionJobs to inject jobs
+	key := [2]string{string(jobRanges[0].Start), string(jobRanges[len(jobRanges)-1].End)}
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		key: {
+			jobs: []*regionJob{
+				// Empty job 1
+				{
+					keyRange:   jobRanges[0],
+					stage:      regionScanned,
+					ingestData: data,
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Id:       1,
+							StartKey: []byte("a"),
+							EndKey:   []byte("b"),
+							Peers:    []*metapb.Peer{{Id: 1, StoreId: 1}},
+						},
+						Leader: &metapb.Peer{Id: 1, StoreId: 1},
+					},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{emptyJob: true},
+								err:    nil,
+							},
+						},
+					},
+				},
+				// Job with data 1
+				{
+					keyRange:   jobRanges[1],
+					stage:      regionScanned,
+					ingestData: data,
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Id:       2,
+							StartKey: []byte("b"),
+							EndKey:   []byte("c"),
+							Peers:    []*metapb.Peer{{Id: 2, StoreId: 1}},
+						},
+						Leader: &metapb.Peer{Id: 2, StoreId: 1},
+					},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{
+									emptyJob:   false,
+									count:      1,
+									totalBytes: 2,
+									sstMeta:    []*sst.SSTMeta{{}},
+								},
+								err: nil,
+							},
+							ingest: injectedIngestBehaviour{err: nil},
+						},
+					},
+				},
+				// Job with data 2
+				{
+					keyRange:   jobRanges[2],
+					stage:      regionScanned,
+					ingestData: data,
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Id:       3,
+							StartKey: []byte("c"),
+							EndKey:   []byte("d"),
+							Peers:    []*metapb.Peer{{Id: 3, StoreId: 1}},
+						},
+						Leader: &metapb.Peer{Id: 3, StoreId: 1},
+					},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{
+									emptyJob:   false,
+									count:      1,
+									totalBytes: 2,
+									sstMeta:    []*sst.SSTMeta{{}},
+								},
+								err: nil,
+							},
+							ingest: injectedIngestBehaviour{err: nil},
+						},
+					},
+				},
+				// Empty job 2
+				{
+					keyRange:   jobRanges[3],
+					stage:      regionScanned,
+					ingestData: data,
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Id:       4,
+							StartKey: []byte("d"),
+							EndKey:   []byte("e"),
+							Peers:    []*metapb.Peer{{Id: 4, StoreId: 1}},
+						},
+						Leader: &metapb.Peer{Id: 4, StoreId: 1},
+					},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{emptyJob: true},
+								err:    nil,
+							},
+						},
+					},
+				},
+				// Empty job 3
+				{
+					keyRange:   jobRanges[4],
+					stage:      regionScanned,
+					ingestData: data,
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Id:       5,
+							StartKey: []byte("e"),
+							EndKey:   []byte("f"),
+							Peers:    []*metapb.Peer{{Id: 5, StoreId: 1}},
+						},
+						Leader: &metapb.Peer{Id: 5, StoreId: 1},
+					},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{emptyJob: true},
+								err:    nil,
+							},
+						},
+					},
+				},
+			},
+			err: nil,
+		},
+	}
+	t.Cleanup(func() {
+		fakeRegionJobs = nil
+	})
+
+	// Create a mock engine that returns the data and ranges
+	mockEngine := &mockEngineWithData{
+		data:   data,
+		ranges: jobRanges,
+	}
+
+	jobToWorkerCh := make(chan *regionJob, 10)
+	var jobWg sync.WaitGroup
+
+	// Track jobs received and their ref counts
+	receivedJobs := make([]*regionJob, 0)
+	var receivedMu sync.Mutex
+	done := make(chan struct{})
+
+	// Start a goroutine to consume jobs and simulate fast processing of empty jobs
+	go func() {
+		defer close(done)
+		for job := range jobToWorkerCh {
+			receivedMu.Lock()
+			receivedJobs = append(receivedJobs, job)
+			receivedMu.Unlock()
+
+			// Simulate fast processing of empty jobs - they finish immediately
+			// The key point is: even if empty jobs finish quickly and call done(),
+			// the ingestData should not be cleaned because other jobs still hold references
+			if job.writeResult != nil && job.writeResult.emptyJob {
+				// Empty job finishes quickly - this simulates the bug scenario
+				// where empty jobs finish before other jobs are processed
+				job.convertStageTo(ingested)
+				job.done(&jobWg)
+			} else {
+				// For non-empty jobs, verify that ingestData is still accessible
+				// This is the critical check: even after empty jobs finished,
+				// non-empty jobs should still be able to access ingestData
+				require.False(t, data.IsCleaned(), "ingestData should not be cleaned while non-empty jobs are still processing")
+
+				// Simulate processing the non-empty job
+				job.convertStageTo(ingested)
+				job.done(&jobWg)
+			}
+		}
+	}()
+
+	// Generate and send jobs
+	// The fix ensures all jobs are ref'd before sending to jobToWorkerCh
+	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), jobToWorkerCh, &jobWg)
+	require.NoError(t, err)
+
+	// Wait for all jobs to be processed
+	jobWg.Wait()
+	close(jobToWorkerCh)
+	<-done
+
+	// Verify all jobs were received and processed
+	receivedMu.Lock()
+	require.Equal(t, 5, len(receivedJobs), "all 5 jobs should be received")
+	receivedMu.Unlock()
+
+	// Verify that ingestData was not cleaned prematurely
+	// The key verification: after all jobs are done, the ref count should be 0
+	// But importantly, we verified during processing that it wasn't cleaned early
+	require.True(t, data.GetRefCount() == 0, "ref count should be 0 after all jobs are done")
+}
+
+// mockEngineWithData is a mock engine that implements engineapi.Engine
+type mockEngineWithData struct {
+	data   engineapi.IngestData
+	ranges []engineapi.Range
+}
+
+func (m *mockEngineWithData) ID() string {
+	return "mock-engine"
+}
+
+func (m *mockEngineWithData) LoadIngestData(ctx context.Context, ch chan<- engineapi.DataAndRanges) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case ch <- engineapi.DataAndRanges{
+		Data:         m.data,
+		SortedRanges: m.ranges,
+	}:
+	}
+	// Don't close the channel here - generateAndSendJob will close it
+	return nil
+}
+
+func (m *mockEngineWithData) KVStatistics() (totalKVSize int64, totalKVCount int64) {
+	return 0, 0
+}
+
+func (m *mockEngineWithData) ImportedStatistics() (importedKVSize int64, importedKVCount int64) {
+	return 0, 0
+}
+
+func (m *mockEngineWithData) ConflictInfo() engineapi.ConflictInfo {
+	return engineapi.ConflictInfo{
+		Count: 0,
+		Files: nil,
+	}
+}
+
+func (m *mockEngineWithData) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	if len(m.ranges) == 0 {
+		return nil, nil, nil
+	}
+	return m.ranges[0].Start, m.ranges[len(m.ranges)-1].End, nil
+}
+
+func (m *mockEngineWithData) GetRegionSplitKeys() ([][]byte, error) {
+	keys := make([][]byte, 0, len(m.ranges)+1)
+	for _, r := range m.ranges {
+		keys = append(keys, r.Start)
+	}
+	if len(m.ranges) > 0 {
+		keys = append(keys, m.ranges[len(m.ranges)-1].End)
+	}
+	return keys, nil
+}
+
+func (m *mockEngineWithData) Close() error {
+	return nil
 }

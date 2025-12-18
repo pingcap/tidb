@@ -296,7 +296,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	if path != "" {
 		require.NoError(t, controller.InitDataStore(ctx))
 	}
-	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", &storeHelper{kvStore: store})
+	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", store)
 	require.NoError(t, err)
 	return ti
 }
