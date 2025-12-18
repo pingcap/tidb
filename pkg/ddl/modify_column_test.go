@@ -1375,78 +1375,113 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 		createTableSQL  string
 		modifySQL       string
 		embeddedAnalyze bool
-		checkResult     bool
 		queries         []query
 	}
 
 	tcs := []testCase{
 		{
-			// Check stats correctness after modifying column without any reorg
-			// We don't add index on b, because these indexes need reorg due to NeedRestoreData changes.
+			// Reorg: none
+			// Recollected stats: none
+			// Old stats still valid: a, b, i1
 			caseName:        "no reorg without analyze",
 			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a)) partition by hash(a) partitions 4",
 			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
 			embeddedAnalyze: false,
-			checkResult:     true,
 			queries: []query{
 				{"a < 10", "i1"},
-				{"a <= 10", ""},
-				{"a > 10", "i1"},
-				{"a >= 10", ""},
-				{"a = 10", "i1"},
-				{"a = -1", ""},
+				{"a >= 10", "i1"},
+				{"a = 100", "i1"},
+				{"a = -1", "i1"},
+				{"a != 200", "i1"},
+
+				{"a > 50", ""},
+				{"a <= 150", ""},
+				{"a = 200", ""},
+				{"a = -100", ""},
+				{"a != 100", ""},
+
 				{"b < '10'", ""},
-				{"b <= '10'", ""},
-				{"b > '10'", ""},
-				{"b >= '10'", ""},
-				{"b = '10'", ""},
-				{"b = 'non-exist'", ""},
+				{"b >= '100'", ""},
+				{"b = '100'", ""},
+				{"b != 'non-exist'", ""},
+				{"b != '200'", ""},
 			},
 		},
 		{
-			// Only indexes are rewritten.
-			// The row data remains the same, so the stats are still valid.
-			caseName:        "row and index reorg with analyze",
+			// Reorg: i2
+			// Recollected stats: b, i2
+			// Old stats still valid: a
+			caseName:        "signed to unsigned with analyze",
+			createTableSQL:  "create table t (a bigint, b bigint, index i2(b))",
+			modifySQL:       "alter table t modify column a int unsigned, modify column b int unsigned",
+			embeddedAnalyze: true,
+			queries: []query{
+				{"a < 10", ""},
+				{"a >= 10", ""},
+				{"a = 100", ""},
+				{"a = -1", ""},
+				{"a != 200", ""},
+
+				{"b < '10'", ""},
+				{"b >= '100'", ""},
+				{"b = '100'", ""},
+				{"b != 'non-exist'", ""},
+				{"b != '200'", ""},
+
+				{"b > '50'", "i2"},
+				{"b <= '150'", "i2"},
+				{"b = '200'", "i2"},
+				{"b != 'non-exist'", "i2"},
+				{"b != '100'", "i2"},
+			},
+		},
+		{
+			// Reorg: i1, i2
+			// Recollected stats: a, b, i1, i2
+			caseName:        "all indexes reorg with analyze",
 			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
 			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
 			embeddedAnalyze: true,
-			checkResult:     true,
 			queries: []query{
-				{"a < 10", "i1"},
-				{"a <= 10", ""},
-				{"a > 10", "i1"},
+				{"a < 10", ""},
 				{"a >= 10", ""},
-				{"a = 10", "i1"},
+				{"a = 100", ""},
 				{"a = -1", ""},
+				{"a != 200", ""},
+
+				{"a < 10", "i1"},
+				{"a >= 10", "i1"},
+				{"a = 100", "i1"},
+				{"a = -1", "i1"},
+				{"a != 200", "i1"},
+
 				{"b < '10'", ""},
-				{"b <= '10'", "i2"},
-				{"b > '10'", ""},
-				{"b >= '10'", "i2"},
-				{"b = '10'", ""},
-				{"b = 'non-exist'", "i2"},
+				{"b >= '100'", ""},
+				{"b = '100'", ""},
+				{"b != 'non-exist'", ""},
+				{"b != '200'", ""},
+
+				{"b > '50'", "i2"},
+				{"b <= '150'", "i2"},
+				{"b = '200'", "i2"},
+				{"b != 'non-exist'", "i2"},
+				{"b != '100'", "i2"},
 			},
 		},
 		{
-			// Both row and index reorg happen, but with no embedded analyze.
-			// All the stats become invalid, so don't check the results.
-			caseName:        "row and index reorg without analyze",
+			// Reorg: b, i1, i2
+			// Recollected stats: none
+			// Old stats still valid: a
+			caseName:        "partial reorg without analyze",
 			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
 			modifySQL:       "alter table t modify column a int unsigned, modify column b varchar(16) collate utf8mb4_general_ci",
 			embeddedAnalyze: false,
-			checkResult:     false,
 			queries: []query{
-				{"a < 10", "i1"},
-				{"a <= 10", ""},
-				{"a > 10", "i1"},
+				{"a < 10", ""},
 				{"a >= 10", ""},
-				{"a = 10", "i1"},
+				{"a = 100", ""},
 				{"a = -1", ""},
-				{"b < '10'", ""},
-				{"b <= '10'", "i2"},
-				{"b > '10'", ""},
-				{"b >= '10'", "i2"},
-				{"b = '10'", ""},
-				{"b = 'non-exist'", "i2"},
+				{"a != 200", ""},
 			},
 		},
 	}
@@ -1454,7 +1489,7 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_stats_update_during_ddl = true;")
+	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
 
 	for _, tc := range tcs {
 		t.Run(tc.caseName, func(t *testing.T) {
@@ -1464,6 +1499,10 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 
 			for i := range 128 {
 				tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+			}
+			// Insert some hotspot values.
+			for range 32 {
+				tk.MustExec("insert into t values (100, 100), (200, 200)")
 			}
 
 			tk.MustExec("analyze table t columns a, b")
@@ -1478,14 +1517,7 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 
 			for i, q := range tc.queries {
 				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
-				if tc.checkResult {
-					require.Equal(t, oldRs[i], rs[0][1].(string), "predicate: %s", tc.queries[i].pred)
-				} else {
-					// For index selectivity, the stats is missing here.
-					if q.idx != "" {
-						require.Contains(t, rs[len(rs)-1][len(rs[0])-1], "missing")
-					}
-				}
+				require.Equal(t, oldRs[i], rs[0][1].(string), "predicate: %s", tc.queries[i].pred)
 			}
 		})
 	}
