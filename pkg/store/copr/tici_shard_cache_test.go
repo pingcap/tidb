@@ -172,7 +172,7 @@ func newMockClientWithFullRange(rng *rand.Rand) *mockClient {
 		const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 		b := make([]byte, length)
 		for i := range b {
-			b[i] = byte(letters[rng.Intn(len(letters))])
+			b[i] = letters[rng.Intn(len(letters))]
 		}
 		return b
 	}
@@ -194,35 +194,35 @@ func newMockClientWithFullRange(rng *rand.Rand) *mockClient {
 	return &mockClient{shards: shards, randomBound: unique, rng: rng}
 }
 
-func (c *mockClient) genRandomRangeBetween(start, end []byte) []byte {
+func (m *mockClient) genRandomRangeBetween(start, end []byte) []byte {
 	var startIdx, endIdx int
 	if len(start) == 0 {
 		startIdx = -1
 	} else {
-		startIdx = sort.Search(len(c.randomBound), func(i int) bool {
-			return bytes.Compare(c.randomBound[i], start) > 0
+		startIdx = sort.Search(len(m.randomBound), func(i int) bool {
+			return bytes.Compare(m.randomBound[i], start) > 0
 		})
 	}
 	if len(end) == 0 {
-		endIdx = len(c.randomBound)
+		endIdx = len(m.randomBound)
 	} else {
-		endIdx = sort.Search(len(c.randomBound), func(i int) bool {
-			return bytes.Compare(c.randomBound[i], end) > 0
+		endIdx = sort.Search(len(m.randomBound), func(i int) bool {
+			return bytes.Compare(m.randomBound[i], end) > 0
 		})
 	}
 	if endIdx-startIdx <= 1 {
 		return nil
 	}
-	return c.randomBound[c.rng.Intn(endIdx-startIdx-1)+startIdx+1]
+	return m.randomBound[m.rng.Intn(endIdx-startIdx-1)+startIdx+1]
 }
 
-func (c *mockClient) randomSplitOne() {
-	if len(c.shards) == 0 {
+func (m *mockClient) randomSplitOne() {
+	if len(m.shards) == 0 {
 		return
 	}
-	idx := c.rng.Intn(len(c.shards))
-	s := c.shards[idx]
-	midKey := c.genRandomRangeBetween(s.StartKey, s.EndKey)
+	idx := m.rng.Intn(len(m.shards))
+	s := m.shards[idx]
+	midKey := m.genRandomRangeBetween(s.StartKey, s.EndKey)
 	if midKey == nil {
 		return
 	}
@@ -237,23 +237,23 @@ func (c *mockClient) randomSplitOne() {
 	}
 	shard2 := &ShardWithAddr{
 		Shard: Shard{
-			ShardID:  uint64(c.rng.Int63n(1000)),
+			ShardID:  uint64(m.rng.Int63n(1000)),
 			Epoch:    s.Epoch + 1,
 			StartKey: midKey,
 			EndKey:   s.EndKey,
 		},
 		localCacheAddrs: []string{fmt.Sprintf("addr-%d-2", s.ShardID)},
 	}
-	c.shards = append(c.shards[:idx], append([]*ShardWithAddr{shard1, shard2}, c.shards[idx+1:]...)...)
+	m.shards = append(m.shards[:idx], append([]*ShardWithAddr{shard1, shard2}, m.shards[idx+1:]...)...)
 }
 
-func (c *mockClient) randomMergeOne() {
-	if len(c.shards) < 2 {
+func (m *mockClient) randomMergeOne() {
+	if len(m.shards) < 2 {
 		return
 	}
-	idx := c.rng.Intn(len(c.shards) - 1)
-	s1 := c.shards[idx]
-	s2 := c.shards[idx+1]
+	idx := m.rng.Intn(len(m.shards) - 1)
+	s1 := m.shards[idx]
+	s2 := m.shards[idx+1]
 	if !bytes.Equal(s1.EndKey, s2.StartKey) {
 		panic("Test Fail")
 	}
@@ -266,7 +266,7 @@ func (c *mockClient) randomMergeOne() {
 		},
 		localCacheAddrs: []string{fmt.Sprintf("addr-%d-merged", s1.ShardID)},
 	}
-	c.shards = append(c.shards[:idx], append([]*ShardWithAddr{merged}, c.shards[idx+2:]...)...)
+	m.shards = append(m.shards[:idx], append([]*ShardWithAddr{merged}, m.shards[idx+2:]...)...)
 }
 
 func TestShardCacheRandomRangesNoOverlapOrMissing(t *testing.T) {
