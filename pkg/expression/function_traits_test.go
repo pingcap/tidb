@@ -278,8 +278,6 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"upper",
 		"uuid_timestamp",
 		"uuid_to_bin",
-		"uuid_v4",
-		"uuid_v7",
 		"uuid_version",
 		"validate_password_strength",
 		"vec_as_text",
