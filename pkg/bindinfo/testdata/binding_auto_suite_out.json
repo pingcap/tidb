@@ -156,7 +156,7 @@
         "Fixes": "[52869]"
       },
       {
-        "Vars": "[tidb_opt_hash_agg_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_ordering_index_selectivity_ratio tidb_opt_prefer_range_scan tidb_opt_selectivity_factor tidb_opt_stream_agg_cost_factor tidb_opt_topn_cost_factor]",
+        "Vars": "[tidb_opt_hash_agg_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_ordering_index_selectivity_ratio tidb_opt_prefer_range_scan tidb_opt_stream_agg_cost_factor tidb_opt_topn_cost_factor]",
         "Fixes": "[52869]"
       },
       {
