@@ -122,7 +122,7 @@ func NewAddIndexIngestPipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgMeta.IsDistReorg)
 
 	failpoint.InjectCall("beforeAddIndexScan")
 
@@ -180,7 +180,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgMeta.IsDistReorg)
 
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
