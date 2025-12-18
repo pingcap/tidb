@@ -15,8 +15,7 @@
           "      └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
         ],
         "Result": [
-          "1 10 100 101 1 100 1 1",
-          "2 20 <nil> 102 2 200 2 <nil>"
+          "1 10 100 101 1 10 1 1"
         ]
       },
       {
@@ -31,7 +30,6 @@
         ],
         "Result": [
           "1 10 100",
-          "2 20 <nil>",
           "<nil> 50 500"
         ]
       },
@@ -46,9 +44,7 @@
           "  └─Selection cop[tikv]  not(isnull(test.a.id))",
           "    └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
         ],
-        "Result": [
-          "2 20 <nil>"
-        ]
+        "Result": null
       },
       {
         "SQL": "select A.* from A left join B on A.id = B.a_id where B.id IS NULL",
@@ -61,7 +57,7 @@
           "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
         ],
         "Result": [
-          "3 30 300",
+          "3 <nil> 300",
           "4 40 400",
           "<nil> 50 500"
         ]
@@ -77,7 +73,7 @@
           "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
         ],
         "Result": [
-          "3 30 300",
+          "3 <nil> 300",
           "4 40 400",
           "<nil> 50 500"
         ]
@@ -92,21 +88,20 @@
           "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
         ],
         "Result": [
-          "3 30 300",
+          "3 <nil> 300",
           "4 40 400"
         ]
       },
       {
-        "SQL": "select A.* from A left join B on A.id = B.a_id where B.id is null and A.val > 30 order by A.id",
+        "SQL": "select A.* from A left join B on A.id = B.a_id where B.id is null and A.val > 30",
         "Plan": [
-          "Sort root  test.a.id",
-          "└─HashJoin root  anti semi join, left side:TableReader, equal:[eq(test.a.id, test.b.a_id)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  gt(test.a.val, 30)",
-          "  │   └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) root  data:Selection",
-          "    └─Selection cop[tikv]  not(isnull(test.b.a_id))",
-          "      └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
+          "HashJoin root  anti semi join, left side:TableReader, equal:[eq(test.a.id, test.b.a_id)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  gt(test.a.val, 30)",
+          "│   └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.b.a_id))",
+          "    └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
         ],
         "Result": [
           "<nil> 50 500",
@@ -127,7 +122,7 @@
         ],
         "Result": [
           "2 20 <nil>",
-          "3 30 300",
+          "3 <nil> 300",
           "4 40 400",
           "<nil> 50 500"
         ]
@@ -145,8 +140,7 @@
           "      └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
         ],
         "Result": [
-          "2 20 <nil>",
-          "3 30 300",
+          "3 <nil> 300",
           "4 40 400",
           "<nil> 50 500"
         ]
@@ -164,7 +158,7 @@
         "Result": [
           "1 10 100",
           "2 20 <nil>",
-          "3 30 300",
+          "3 <nil> 300",
           "4 40 400",
           "<nil> 50 500"
         ]
@@ -181,20 +175,18 @@
           "    └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
         ],
         "Result": [
-          "102 2 200 2 <nil>"
+          "102 2 <nil> 2 <nil>"
         ]
       },
       {
         "SQL": "select B.* from A right join B on A.id = B.a_id where A.id IS NULL",
         "Plan": [
-          "Projection root  test.b.id, test.b.a_id, test.b.val, test.b.non_null_col, test.b.nullable_col",
-          "└─Selection root  isnull(test.a.id)",
-          "  └─HashJoin root  right outer join, left side:TableReader, equal:[eq(test.a.id, test.b.a_id)]",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.a.id))",
-          "    │   └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) root  data:TableFullScan",
-          "      └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
+          "HashJoin root  anti semi join, left side:TableReader, equal:[eq(test.b.a_id, test.a.id)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.a.id))",
+          "│   └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
         ],
         "Result": [
           "103 5 500 5 5",
@@ -218,22 +210,50 @@
         ]
       },
       {
-        "SQL": "select B.* from A right join B on A.id = B.a_id where A.id is null and B.val > 100 order by B.id",
+        "SQL": "select B.* from A right join B on A.id = B.a_id where A.id is null and B.val > 100",
         "Plan": [
-          "Sort root  test.b.id",
-          "└─Projection root  test.b.id, test.b.a_id, test.b.val, test.b.non_null_col, test.b.nullable_col",
-          "  └─Selection root  isnull(test.a.id)",
-          "    └─HashJoin root  right outer join, left side:TableReader, equal:[eq(test.a.id, test.b.a_id)]",
-          "      ├─TableReader(Build) root  data:Selection",
-          "      │ └─Selection cop[tikv]  gt(test.b.val, 100)",
-          "      │   └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) root  data:Selection",
-          "        └─Selection cop[tikv]  not(isnull(test.a.id))",
-          "          └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+          "HashJoin root  anti semi join, left side:TableReader, equal:[eq(test.b.a_id, test.a.id)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  gt(test.b.val, 100)",
+          "│   └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.a.id))",
+          "    └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "104 <nil> 600 6 6",
+          "103 5 500 5 5"
+        ]
+      },
+      {
+        "SQL": "select B.* from A right join B on A.val <=> B.val where A.id IS NULL",
+        "Plan": [
+          "Projection root  test.b.id, test.b.a_id, test.b.val, test.b.non_null_col, test.b.nullable_col",
+          "└─Selection root  isnull(test.a.id)",
+          "  └─HashJoin root  right outer join, left side:TableReader, equal:[nulleq(test.a.val, test.b.val)]",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
         ],
         "Result": [
           "103 5 500 5 5",
           "104 <nil> 600 6 6"
+        ]
+      },
+      {
+        "SQL": "select B.* from A right join B on A.val <=> B.val where A.id IS NOT NULL",
+        "Plan": [
+          "HashJoin root  inner join, equal:[nulleq(test.a.val, test.b.val)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.a.id))",
+          "│   └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "101 1 10 1 1",
+          "102 2 <nil> 2 <nil>"
         ]
       },
       {
@@ -249,7 +269,7 @@
           "      └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
         ],
         "Result": [
-          "102 2 200 2 <nil>",
+          "102 2 <nil> 2 <nil>",
           "103 5 500 5 5",
           "104 <nil> 600 6 6"
         ]
@@ -303,14 +323,12 @@
       {
         "SQL": "select B.* from A right join B on A.id > B.a_id where A.id is null",
         "Plan": [
-          "Projection root  test.b.id, test.b.a_id, test.b.val, test.b.non_null_col, test.b.nullable_col",
-          "└─Selection root  isnull(test.a.id)",
-          "  └─HashJoin root  CARTESIAN right outer join, left side:TableReader, other cond:gt(test.a.id, test.b.a_id)",
-          "    ├─TableReader(Build) root  data:Selection",
-          "    │ └─Selection cop[tikv]  not(isnull(test.a.id))",
-          "    │   └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) root  data:TableFullScan",
-          "      └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
+          "HashJoin root  CARTESIAN anti semi join, left side:TableReader, other cond:gt(test.a.id, test.b.a_id)",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.a.id))",
+          "│   └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo"
         ],
         "Result": [
           "103 5 500 5 5",
@@ -330,9 +348,7 @@
         ],
         "Result": [
           "2 20 <nil>",
-          "3 30 300",
-          "3 30 300",
-          "4 40 400",
+          "3 <nil> 300",
           "4 40 400"
         ]
       },
@@ -350,9 +366,92 @@
         ],
         "Result": [
           "1 10 100",
-          "3 30 300",
+          "3 <nil> 300",
           "4 40 400",
           "<nil> 50 500"
+        ]
+      },
+      {
+        "SQL": "select A.* from A left join B on A.val = B.val where B.id IS NULL",
+        "Plan": [
+          "HashJoin root  anti semi join, left side:TableReader, equal:[eq(test.a.val, test.b.val)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.b.val))",
+          "│   └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 20 <nil>",
+          "3 <nil> 300",
+          "4 40 400",
+          "<nil> 50 500"
+        ]
+      },
+      {
+        "SQL": "select A.* from A left join B on A.val = B.val where B.non_null_col IS NULL",
+        "Plan": [
+          "HashJoin root  anti semi join, left side:TableReader, equal:[eq(test.a.val, test.b.val)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.b.val))",
+          "│   └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 20 <nil>",
+          "3 <nil> 300",
+          "4 40 400",
+          "<nil> 50 500"
+        ]
+      },
+      {
+        "SQL": "select A.* from A left join B on A.val = B.val where B.nullable_col IS NULL",
+        "Plan": [
+          "Projection root  test.a.id, test.a.val, test.a.nullable_val",
+          "└─Selection root  isnull(test.b.nullable_col)",
+          "  └─HashJoin root  left outer join, left side:TableReader, equal:[eq(test.a.val, test.b.val)]",
+          "    ├─TableReader(Build) root  data:Selection",
+          "    │ └─Selection cop[tikv]  not(isnull(test.b.val))",
+          "    │   └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 20 <nil>",
+          "3 <nil> 300",
+          "4 40 400",
+          "<nil> 50 500"
+        ]
+      },
+      {
+        "SQL": "select A.* from A left join B on A.val <=> B.val where B.id IS NULL",
+        "Plan": [
+          "HashJoin root  anti semi join, left side:TableReader, equal:[nulleq(test.a.val, test.b.val)]",
+          "├─TableReader(Build) root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 20 <nil>",
+          "4 40 400",
+          "<nil> 50 500"
+        ]
+      },
+      {
+        "SQL": "select A.* from A left join B on A.val <=> B.val where B.non_null_col > 0",
+        "Plan": [
+          "HashJoin root  inner join, equal:[nulleq(test.a.val, test.b.val)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  gt(test.b.non_null_col, 0)",
+          "│   └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 10 100",
+          "3 <nil> 300"
         ]
       }
     ]
