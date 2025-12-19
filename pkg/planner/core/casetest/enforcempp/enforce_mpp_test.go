@@ -674,10 +674,9 @@ func TestReadCommittedWithTiflash(t *testing.T) {
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	testkit.SetTiFlashReplica(t, dom, "test", "t2")
 	tk.MustExec(`set tx_isolation="READ-COMMITTED";`)
-
-	tk.MustExec("begin;")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tidb,tiflash\"")
-	tk.MustQuery(`explain format='plan_tree' select * from t1 join t2 on t1.a=t2.b where t1.a in (1,2);`).Check(testkit.Rows(
+	tk.MustExec("begin;")
+	tk.MustQuery(`explain format='plan_tree' select /*+ set_var(tidb_enforce_mpp=on) */ * from t1 join t2 on t1.a=t2.b where t1.a in (1,2);`).Check(testkit.Rows(
 		`TableReader root  MppVersion: 3, data:ExchangeSender`,
 		`└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough`,
 		`  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]`,
@@ -685,5 +684,11 @@ func TestReadCommittedWithTiflash(t *testing.T) {
 		`    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST`,
 		`    │   └─TableRangeScan mpp[tiflash] table:t1 range:[1,1], [2,2], keep order:false, stats:pseudo`,
 		`    └─TableFullScan(Probe) mpp[tiflash] table:t2 pushed down filter:in(test.t2.b, 1, 2), not(isnull(test.t2.b)), keep order:false, stats:pseudo`))
+	tk.MustQuery(`explain format='plan_tree' select * from t1 join t2 on t1.a=t2.b where t1.a in (1,2);`).Check(testkit.Rows(
+		`HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.b)]`,
+		`├─Batch_Point_Get(Build) root table:t1 handle:[1 2], keep order:false, desc:false`,
+		`└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender`,
+		`  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough`,
+		`    └─TableFullScan mpp[tiflash] table:t2 pushed down filter:in(test.t2.b, 1, 2), not(isnull(test.t2.b)), keep order:false, stats:pseudo`))
 	tk.MustExec("commit;")
 }
