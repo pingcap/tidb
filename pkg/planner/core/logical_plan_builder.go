@@ -505,6 +505,7 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	} else {
 		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
 	}
+
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiKV {
@@ -522,7 +523,11 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.TblName.O + "` from TiKV.")
 		}
 	}
-	if hintTbl := hintInfo.IfPreferTiFlash(alias); hintTbl != nil {
+	tableMeta := ds.Table.Meta()
+	if hintTbl := hintInfo.IfPreferTiFlash(alias); hintTbl != nil ||
+		(ds.SCtx().GetSessionVars().IsMPPEnforced() &&
+			tableMeta.TiFlashReplica != nil && tableMeta.TiFlashReplica.Available &&
+			ds.Table.Meta().TiFlashReplica.Count > 0) {
 		// `ds.PreferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
 		// We can't support read a table from two different storages, even partition table.
 		if ds.PreferStoreType != 0 {
@@ -535,7 +540,9 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				ds.PreferStoreType |= h.PreferTiFlash
-				ds.PreferPartitions[h.PreferTiFlash] = hintTbl.Partitions
+				if hintTbl != nil {
+					ds.PreferPartitions[h.PreferTiFlash] = hintTbl.Partitions
+				}
 				break
 			}
 		}

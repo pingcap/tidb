@@ -3511,10 +3511,10 @@
       {
         "SQL": "select count(*) from t",
         "Plan": [
-          "HashAgg root  funcs:count(Column#12)->Column#10",
+          "HashAgg root  funcs:count(Column#11)->Column#10",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column#12",
+          "    └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column#11",
           "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -3522,10 +3522,10 @@
       {
         "SQL": "select count(1), count(3.1415), count(0), count(null) from t -- every count but count(null) can be rewritten",
         "Plan": [
-          "HashAgg root  funcs:count(Column#18)->Column#10, funcs:count(Column#19)->Column#11, funcs:count(Column#20)->Column#12, funcs:count(Column#21)->Column#13",
+          "HashAgg root  funcs:count(Column#14)->Column#10, funcs:count(Column#15)->Column#11, funcs:count(Column#16)->Column#12, funcs:count(Column#17)->Column#13",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column#18, funcs:count(test.t.d)->Column#19, funcs:count(test.t.d)->Column#20, funcs:count(NULL)->Column#21",
+          "    └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column#14, funcs:count(test.t.d)->Column#15, funcs:count(test.t.d)->Column#16, funcs:count(NULL)->Column#17",
           "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -3544,10 +3544,10 @@
       {
         "SQL": "select count(*) from t_pick_row_id",
         "Plan": [
-          "HashAgg root  funcs:count(Column#5)->Column#3",
+          "HashAgg root  funcs:count(Column#4)->Column#3",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(test.t_pick_row_id._tidb_rowid)->Column#5",
+          "    └─HashAgg mpp[tiflash]  funcs:count(test.t_pick_row_id._tidb_rowid)->Column#4",
           "      └─TableFullScan mpp[tiflash] table:t_pick_row_id keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -3556,10 +3556,10 @@
         "SQL": "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
         "Plan": [
           "HashJoin root  inner join, equal:[eq(test.t.a, Column#10)]",
-          "├─HashAgg(Build) root  funcs:count(Column#22)->Column#10",
+          "├─HashAgg(Build) root  funcs:count(Column#21)->Column#10",
           "│ └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "│   └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "│     └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column#22",
+          "│     └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column#21",
           "│       └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
@@ -3575,10 +3575,10 @@
           "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan mpp[tiflash] table:outTable keep order:false, stats:pseudo",
-          "  └─HashAgg(Probe) root  funcs:count(Column#21)->Column#19",
+          "  └─HashAgg(Probe) root  funcs:count(Column#20)->Column#19",
           "    └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "        └─HashAgg mpp[tiflash]  funcs:count(1)->Column#21",
+          "        └─HashAgg mpp[tiflash]  funcs:count(1)->Column#20",
           "          └─Selection mpp[tiflash]  eq(cast(test.t.a, double BINARY), cast(test.t.b, double BINARY))",
           "            └─TableFullScan mpp[tiflash] table:inn keep order:false, stats:pseudo"
         ],
@@ -3606,7 +3606,7 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  Column#10",
-          "    └─HashAgg mpp[tiflash]  funcs:count(distinct Column#14)->Column#10",
+          "    └─HashAgg mpp[tiflash]  funcs:count(distinct Column#12)->Column#10",
           "      └─ExchangeReceiver mpp[tiflash]  ",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─HashAgg mpp[tiflash]  group by:1, ",
@@ -3617,10 +3617,10 @@
       {
         "SQL": "select count(1), count(a), count(b) from t -- keep count(1)",
         "Plan": [
-          "HashAgg root  funcs:count(Column#16)->Column#10, funcs:count(Column#17)->Column#11, funcs:count(Column#18)->Column#12",
+          "HashAgg root  funcs:count(Column#13)->Column#10, funcs:count(Column#14)->Column#11, funcs:count(Column#15)->Column#12",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#16, funcs:count(test.t.a)->Column#17, funcs:count(test.t.b)->Column#18",
+          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#13, funcs:count(test.t.a)->Column#14, funcs:count(test.t.b)->Column#15",
           "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -3642,11 +3642,11 @@
       {
         "SQL": "select sum(a) from t -- sum shouldn't be rewritten",
         "Plan": [
-          "HashAgg root  funcs:sum(Column#12)->Column#10",
+          "HashAgg root  funcs:sum(Column#11)->Column#10",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:sum(Column#15)->Column#12",
-          "      └─Projection mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#15",
+          "    └─HashAgg mpp[tiflash]  funcs:sum(Column#13)->Column#11",
+          "      └─Projection mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#13",
           "        └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
