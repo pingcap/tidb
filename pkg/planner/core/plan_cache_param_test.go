@@ -302,18 +302,6 @@ func TestGetParamSQLWithoutMutationConsistency(t *testing.T) {
 	}
 }
 
-// BenchmarkGetParamSQLWithoutMutation benchmarks the optimized single-pass function.
-func BenchmarkGetParamSQLWithoutMutation(b *testing.B) {
-	paymentInsertHistory := `INSERT INTO history (h_c_d_id, h_c_w_id, h_c_id, h_d_id, h_w_id, h_date, h_amount, h_data) VALUES (1, 2, 3, 4, 5, 6, 7, 8)`
-	stmt, err := parser.New().ParseOneStmt(paymentInsertHistory, "", "")
-	require.Nil(b, err)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		GetParamSQLFromASTWithoutMutation(stmt)
-	}
-}
-
 // BenchmarkGetParamSQLComparison provides side-by-side benchmark comparison.
 func BenchmarkGetParamSQLComparison(b *testing.B) {
 	// Short SELECT query
