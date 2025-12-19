@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -133,7 +134,7 @@ func (pq *AnalysisPriorityQueue) IsInitialized() bool {
 }
 
 // Initialize initializes the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Initialize(ctx context.Context) error {
 	pq.syncFields.mu.Lock()
 	if pq.syncFields.initialized {
@@ -141,14 +142,12 @@ func (pq *AnalysisPriorityQueue) Initialize(ctx context.Context) error {
 		pq.syncFields.mu.Unlock()
 		return nil
 	}
-	pq.syncFields.mu.Unlock()
 
 	start := time.Now()
 	defer func() {
 		statslogutil.StatsLogger().Info("Priority queue initialized", zap.Duration("duration", time.Since(start)))
 	}()
 
-	pq.syncFields.mu.Lock()
 	if err := pq.rebuildWithoutLock(ctx); err != nil {
 		pq.syncFields.mu.Unlock()
 		pq.Close()
@@ -160,10 +159,12 @@ func (pq *AnalysisPriorityQueue) Initialize(ctx context.Context) error {
 	pq.syncFields.runningJobs = make(map[int64]struct{})
 	pq.syncFields.mustRetryJobs = make(map[int64]struct{})
 	pq.syncFields.initialized = true
+	// Start a goroutine to maintain the priority queue.
+	// Put it here to avoid data race when calling Initialize and Close concurrently.
+	// Otherwise, it may cause a data race issue.
+	pq.wg.Run(pq.run)
 	pq.syncFields.mu.Unlock()
 
-	// Start a goroutine to maintain the priority queue.
-	pq.wg.Run(pq.run)
 	return nil
 }
 
@@ -352,20 +353,54 @@ func (pq *AnalysisPriorityQueue) run() {
 	mustRetryJobRequeueInterval := time.NewTicker(mustRetryJobRequeueInterval)
 	defer mustRetryJobRequeueInterval.Stop()
 
+	// HACK: Inject a failpoint to speed up DML changes processing for testing.
+	// This simulates a scenario where DML changes are processed very frequently to verify
+	// that the priority queue can be closed gracefully without deadlock.
+	// The known deadlock occurs in the following scenario:
+	// 1. The priority queue is closing: it holds the lock and waits for the `run` goroutine to exit.
+	// 2. The `run` goroutine tries to acquire the lock to process DML changes.
+	// 3. The lock is unavailable, so the `run` goroutine blocks.
+	// 4. The Close() function waits for the `run` goroutine to exit, but the `run` goroutine
+	//    is waiting for the lock held by Close(). This causes a deadlock.
+	// So in this failpoint, we use a separate ticker to ensure that DML changes are processed frequently.
+	// And it does not check for context cancellation in every iteration to maximize the chance of deadlock.
+	failpoint.Inject("tryBlockCloseAnalysisPriorityQueue", func() {
+		rapidTicker := time.NewTicker(time.Millisecond * 10)
+		defer rapidTicker.Stop()
+		waitFor := time.After(time.Second * 5)
+		for {
+			select {
+			// Should exit after 5 seconds to avoid blocking forever.
+			case <-waitFor:
+				return
+			case <-rapidTicker.C:
+				pq.ProcessDMLChanges()
+			}
+		}
+	})
 	for {
 		select {
+		// NOTE: Use a nested select to give pq.ctx.Done() higher priority to make sure we can exit the goroutine as soon as possible.
 		case <-pq.ctx.Done():
 			statslogutil.StatsLogger().Info("Priority queue stopped")
 			return
-		case <-dmlChangesFetchInterval.C:
-			queueSamplerLogger().Info("Start to fetch DML changes of tables")
-			pq.ProcessDMLChanges()
-		case <-timeRefreshInterval.C:
-			queueSamplerLogger().Info("Start to refresh last analysis durations of jobs")
-			pq.RefreshLastAnalysisDuration()
-		case <-mustRetryJobRequeueInterval.C:
-			queueSamplerLogger().Info("Start to requeue must retry jobs")
-			pq.RequeueMustRetryJobs()
+		default:
+			select {
+			// NOTE: This is necessary to check for context cancellation in the inner select.
+			// Otherwise, it may block for a while until one of the tickers fires.
+			case <-pq.ctx.Done():
+				statslogutil.StatsLogger().Info("Priority queue stopped")
+				return
+			case <-dmlChangesFetchInterval.C:
+				queueSamplerLogger().Info("Start to fetch DML changes of tables")
+				pq.ProcessDMLChanges()
+			case <-timeRefreshInterval.C:
+				queueSamplerLogger().Info("Start to refresh last analysis durations of jobs")
+				pq.RefreshLastAnalysisDuration()
+			case <-mustRetryJobRequeueInterval.C:
+				queueSamplerLogger().Info("Start to requeue must retry jobs")
+				pq.RequeueMustRetryJobs()
+			}
 		}
 	}
 }
@@ -902,8 +937,8 @@ func (pq *AnalysisPriorityQueue) Snapshot() (
 // Note: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Close() {
 	pq.syncFields.mu.Lock()
-	defer pq.syncFields.mu.Unlock()
 	if !pq.syncFields.initialized {
+		pq.syncFields.mu.Unlock()
 		return
 	}
 
@@ -911,8 +946,13 @@ func (pq *AnalysisPriorityQueue) Close() {
 	if pq.syncFields.cancel != nil {
 		pq.syncFields.cancel()
 	}
+	pq.syncFields.mu.Unlock()
+
+	// NOTE: We should wait outside the lock to avoid deadlock.
 	pq.wg.Wait()
 
+	pq.syncFields.mu.Lock()
+	defer pq.syncFields.mu.Unlock()
 	// Reset the initialized flag to allow the priority queue to be closed and re-initialized.
 	pq.syncFields.initialized = false
 	// The rest fields will be reset when the priority queue is initialized.
