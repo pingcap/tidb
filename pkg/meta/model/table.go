@@ -209,6 +209,9 @@ type TableInfo struct {
 	// If it is nil, it means no affinity
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
 
+	// TableSplitPolicy stores region split policy.
+	TableSplitPolicy *RegionSplitPolicy `json:"table_split_policy,omitempty"`
+
 	// Revision is per table schema's version, it will be increased when the schema changed.
 	Revision uint64 `json:"revision"`
 
@@ -283,6 +286,9 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
+	}
+	if t.TableSplitPolicy != nil {
+		nt.TableSplitPolicy = t.TableSplitPolicy.Clone()
 	}
 
 	if t.Affinity != nil {
