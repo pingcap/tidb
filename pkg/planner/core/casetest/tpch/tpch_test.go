@@ -157,13 +157,8 @@ func TestQ3RCAndDisableTikv(t *testing.T) {
 		tk.MustExec("SET tidb_enforce_mpp=1")
 		tk.MustQuery(input[i] + " for update").Check(testkit.Rows(output[i].ForUpdateAndEnforce...))
 		tk.MustExec("SET tidb_enforce_mpp=0")
-
 	}
 	tk.MustExec(`commit;`)
-}
-
-func testQ3(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string, enableRC bool) {
-
 }
 
 func TestQ4(t *testing.T) {
