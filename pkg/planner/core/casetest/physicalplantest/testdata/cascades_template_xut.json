@@ -174,7 +174,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1]) */ /*+ use_index(t1) */ /*+ agg_to_cop() hash_agg() */  bit_and(t1.col_2) as r0, bit_xor(t1.col_2) as r1 , substring(t1.col_2 ,4) as r2 from t1 where t1.col_1 in ('04:00:09.00' ,'21:06:18.00' ,'18:43:53.00') group by t1.col_1,t1.col_2  having not(t1.col_1 <> '06:32:23.00');",
         "Plan": [
-          "Projection root  ifnull(cast(test.t1.col_2, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#7, ifnull(cast(test.t1.col_2, bigint(21) UNSIGNED BINARY), 0)->Column#8, substring(cast(test.t1.col_2, var_string(20)), 4)->Column#9",
+          "Projection root  ifnull(cast(test.t1.col_2, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column, ifnull(cast(test.t1.col_2, bigint(21) UNSIGNED BINARY), 0)->Column, substring(cast(test.t1.col_2, var_string(20)), 4)->Column",
           "└─TableDual root  rows:0"
         ],
         "Warn": [
