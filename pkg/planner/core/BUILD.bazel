@@ -216,6 +216,7 @@ go_test(
         "integration_test.go",
         "logical_plans_test.go",
         "main_test.go",
+        "non_prep_cache_test.go",
         "optimizer_test.go",
         "physical_plan_test.go",
         "plan_cache_instance_test.go",
