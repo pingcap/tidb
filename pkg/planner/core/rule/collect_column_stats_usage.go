@@ -17,6 +17,7 @@ package rule
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -161,6 +162,9 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	}
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
+	// Note: WHERE/join/ordering columns for index pruning are now collected separately
+	// in collectWhereColumnsForIndexPruning, collectJoinColumnsForIndexPruning, and
+	// collectOrderingColumnsForIndexPruning functions called from CollectColumnStatsUsage
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.LogicalJoin) {
@@ -199,16 +203,181 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
+// collectWhereColumnsForIndexPruning collects WHERE/filter columns for each DataSource.
+// These are columns that appear in local filter predicates (conditions that reference only this table's columns).
+// This information is used for index pruning to identify which indexes are likely to be useful.
+func collectWhereColumnsForIndexPruning(plan base.LogicalPlan) map[*logicalop.DataSource][]*expression.Column {
+	result := make(map[*logicalop.DataSource][]*expression.Column)
+
+	var walk func(base.LogicalPlan)
+	walk = func(lp base.LogicalPlan) {
+		if ds, ok := lp.(*logicalop.DataSource); ok {
+			colSet := make(map[int64]struct{})
+			var cols []*expression.Column
+
+			// Process both PushedDownConds and AllConds to capture all WHERE conditions
+			// PushedDownConds: conditions that can be pushed to storage
+			// AllConds: includes OR conditions and other predicates not pushed down
+			allConds := make([]expression.Expression, 0, len(ds.PushedDownConds)+len(ds.AllConds))
+			allConds = append(allConds, ds.PushedDownConds...)
+			allConds = append(allConds, ds.AllConds...)
+
+			for _, cond := range allConds {
+				condCols := expression.ExtractColumns(cond)
+				// Only keep columns from this DataSource (local WHERE conditions)
+				allLocal := true
+				for _, col := range condCols {
+					if !ds.Schema().Contains(col) {
+						allLocal = false
+						break
+					}
+				}
+				if allLocal {
+					for _, col := range condCols {
+						if _, exists := colSet[col.UniqueID]; !exists {
+							cols = append(cols, col)
+							colSet[col.UniqueID] = struct{}{}
+						}
+					}
+				}
+			}
+			result[ds] = cols
+		}
+
+		for _, child := range lp.Children() {
+			walk(child)
+		}
+	}
+
+	walk(plan)
+	return result
+}
+
+// collectJoinColumnsForIndexPruning collects join columns for each DataSource.
+// These are columns that participate in join predicates with other tables.
+// Join columns are propagated down the tree from join nodes to datasources.
+func collectJoinColumnsForIndexPruning(plan base.LogicalPlan) map[*logicalop.DataSource][]*expression.Column {
+	result := make(map[*logicalop.DataSource][]*expression.Column)
+
+	var walk func(base.LogicalPlan, []*expression.Column)
+	walk = func(lp base.LogicalPlan, accumulatedJoinCols []*expression.Column) {
+		currentJoinCols := accumulatedJoinCols
+
+		// Extract join columns from this node if it's a join
+		switch x := lp.(type) {
+		case *logicalop.LogicalJoin:
+			// Only extract from EqualConditions and OtherConditions
+			// LeftConditions and RightConditions are local filters, not join conditions
+			for _, cond := range x.EqualConditions {
+				currentJoinCols = append(currentJoinCols, expression.ExtractColumns(cond)...)
+			}
+			for _, cond := range x.OtherConditions {
+				currentJoinCols = append(currentJoinCols, expression.ExtractColumns(cond)...)
+			}
+		case *logicalop.LogicalApply:
+			for _, cond := range x.EqualConditions {
+				currentJoinCols = append(currentJoinCols, expression.ExtractColumns(cond)...)
+			}
+			for _, cond := range x.OtherConditions {
+				currentJoinCols = append(currentJoinCols, expression.ExtractColumns(cond)...)
+			}
+		}
+
+		// At DataSource, filter to columns from this table
+		if ds, ok := lp.(*logicalop.DataSource); ok {
+			colSet := make(map[int64]struct{})
+			var cols []*expression.Column
+			for _, col := range currentJoinCols {
+				if ds.Schema().Contains(col) {
+					if _, exists := colSet[col.UniqueID]; !exists {
+						cols = append(cols, col)
+						colSet[col.UniqueID] = struct{}{}
+					}
+				}
+			}
+			result[ds] = cols
+		}
+
+		// Recurse to children, passing down accumulated join columns
+		for _, child := range lp.Children() {
+			walk(child, currentJoinCols)
+		}
+	}
+
+	walk(plan, nil)
+	return result
+}
+
+// collectOrderingColumnsForIndexPruning collects columns that require ordered access for each DataSource.
+// This includes columns used in ORDER BY, MIN/MAX aggregates, and window function ordering.
+// Indexes on these columns can eliminate sorting or enable efficient min/max retrieval.
+func collectOrderingColumnsForIndexPruning(plan base.LogicalPlan) map[*logicalop.DataSource][]*expression.Column {
+	result := make(map[*logicalop.DataSource][]*expression.Column)
+
+	var walk func(base.LogicalPlan, []*expression.Column)
+	walk = func(lp base.LogicalPlan, orderingCols []*expression.Column) {
+		currentOrderingCols := orderingCols
+
+		// Extract ordering columns from this node
+		switch x := lp.(type) {
+		case *logicalop.LogicalSort:
+			for _, item := range x.ByItems {
+				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Expr)...)
+			}
+		case *logicalop.LogicalTopN:
+			for _, item := range x.ByItems {
+				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Expr)...)
+			}
+		case *logicalop.LogicalWindow:
+			for _, item := range x.OrderBy {
+				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Col)...)
+			}
+		case *logicalop.LogicalAggregation:
+			// MIN/MAX aggregates can benefit from ordered indexes
+			for _, aggFunc := range x.AggFuncs {
+				if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax {
+					currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)...)
+				}
+			}
+		}
+
+		// At DataSource, filter to columns from this table
+		if ds, ok := lp.(*logicalop.DataSource); ok {
+			colSet := make(map[int64]struct{})
+			var cols []*expression.Column
+			for _, col := range currentOrderingCols {
+				if ds.Schema().Contains(col) {
+					if _, exists := colSet[col.UniqueID]; !exists {
+						cols = append(cols, col)
+						colSet[col.UniqueID] = struct{}{}
+					}
+				}
+			}
+			result[ds] = cols
+		}
+
+		// Recurse to children, passing down ordering requirements
+		for _, child := range lp.Children() {
+			walk(child, currentOrderingCols)
+		}
+	}
+
+	walk(plan, nil)
+	return result
+}
+
 // collectFromPlan will dive into the tree to collect base column stats usage, in this process
 // we also make the use of the dive process down to passing the parent operator's column groups
 // requirement to notify the underlying datasource to maintain the possible group ndv.
 func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expression.Column, lp base.LogicalPlan) {
 	// derive the new current op's new asked column groups accordingly.
 	curColGroups := lp.ExtractColGroups(askedColGroups)
+
 	for _, child := range lp.Children() {
 		// passing the new asked column groups down.
 		c.collectFromPlan(curColGroups, child)
 	}
+
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
 		c.collectPredicateColumnsForDataSource(askedColGroups, x)
@@ -262,11 +431,13 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
+		// Note: Ordering columns already extracted above before visiting children
 	case *logicalop.LogicalTopN:
 		// Assume statistics of all the columns in ByItems are needed.
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr}, false)
 		}
+		// Note: Ordering columns already extracted above before visiting children
 	case *logicalop.LogicalUnionAll:
 		c.collectPredicateColumnsForUnionAll(x)
 	case *logicalop.LogicalPartitionUnionAll:
@@ -327,5 +498,28 @@ func CollectColumnStatsUsage(lp base.LogicalPlan) (
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
+
+	// Collect columns for index pruning only if the feature is enabled (threshold > -1)
+	// This allows the feature to be completely disabled if needed
+	threshold := lp.SCtx().GetSessionVars().OptIndexPruneThreshold
+	if threshold >= 0 {
+		// Run three simple, independent traversals to collect columns for index pruning
+		// Each traversal is straightforward with no complex state management
+		whereColsByDS := collectWhereColumnsForIndexPruning(lp)
+		joinColsByDS := collectJoinColumnsForIndexPruning(lp)
+		orderingColsByDS := collectOrderingColumnsForIndexPruning(lp)
+
+		// Populate DataSource fields with the collected columns
+		for ds, cols := range whereColsByDS {
+			ds.WhereColumns = cols
+		}
+		for ds, cols := range joinColsByDS {
+			ds.JoinColumns = cols
+		}
+		for ds, cols := range orderingColsByDS {
+			ds.OrderingColumns = cols
+		}
+	}
+
 	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs, collector.operatorNum
 }
