@@ -903,3 +903,55 @@ Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`
 update parent set ref = 3 where id = 2;
 Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__update`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
 update ignore parent set ref = 3 where id = 2;
+DROP TABLE IF EXISTS t, tp;
+CREATE TABLE t (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED);
+CREATE TABLE tp (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED)
+PARTITION BY RANGE (a) (
+PARTITION p0 VALUES LESS THAN (5),
+PARTITION p1 VALUES LESS THAN (11),
+PARTITION p2 VALUES LESS THAN (20)
+);
+INSERT INTO tp(a,b) VALUES (2,2),(4,4),(6,6);
+INSERT INTO t(a,b) VALUES (12,12),(14,14),(15,15),(16,16);
+SELECT *, _tidb_rowid FROM t ORDER BY a;
+a	b	dt	_tidb_rowid
+12	12	NULL	1
+14	14	NULL	2
+15	15	NULL	3
+16	16	NULL	4
+SELECT *, _tidb_rowid FROM tp ORDER BY a;
+a	b	dt	_tidb_rowid
+2	2	NULL	1
+4	4	NULL	2
+6	6	NULL	3
+ALTER TABLE tp EXCHANGE PARTITION p2 WITH TABLE t;
+SELECT *, _tidb_rowid FROM tp ORDER BY a;
+a	b	dt	_tidb_rowid
+2	2	NULL	1
+4	4	NULL	2
+6	6	NULL	3
+12	12	NULL	1
+14	14	NULL	2
+15	15	NULL	3
+16	16	NULL	4
+UPDATE tp SET dt = '2025-12-16';
+SELECT *, _tidb_rowid FROM tp ORDER BY a;
+a	b	dt	_tidb_rowid
+2	2	2025-12-16	1
+4	4	2025-12-16	2
+6	6	2025-12-16	3
+12	12	2025-12-16	1
+14	14	2025-12-16	2
+15	15	2025-12-16	3
+16	16	2025-12-16	4
+UPDATE tp SET b = 333;
+SELECT *, _tidb_rowid FROM tp ORDER BY a;
+a	b	dt	_tidb_rowid
+2	333	2025-12-16	1
+4	333	2025-12-16	2
+6	333	2025-12-16	3
+12	333	2025-12-16	1
+14	333	2025-12-16	2
+15	333	2025-12-16	3
+16	333	2025-12-16	4
+DROP TABLE t, tp;

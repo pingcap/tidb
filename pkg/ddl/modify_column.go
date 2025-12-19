@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -58,6 +59,14 @@ func hasModifyFlag(col *model.ColumnInfo) bool {
 
 func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
+}
+
+func isIntegerChange(from, to *model.ColumnInfo) bool {
+	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
+}
+
+func isCharChange(from, to *model.ColumnInfo) bool {
+	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
 }
 
 // getModifyColumnType gets the modify column type.
@@ -85,6 +94,11 @@ func getModifyColumnType(
 
 	// For backward compatibility
 	if args.ModifyColumnType == mysql.TypeNull {
+		return model.ModifyTypeReorg
+	}
+
+	// FIXME(joechenrh): handle TiFlash replica case
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
 		return model.ModifyTypeReorg
 	}
 
@@ -747,40 +761,41 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 }
 
 func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	if mysql.IsIntegerType(oldCol.GetType()) && mysql.IsIntegerType(changingCol.GetType()) {
-		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
+	if isIntegerChange(oldCol, changingCol) {
+		return mysql.HasUnsignedFlag(oldCol.GetFlag()) !=
+			mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
 
-	// CHAR/VARCHAR
-	if !types.IsTypeChar(oldCol.GetType()) || !types.IsTypeChar(changingCol.GetType()) {
-		return true
-	}
+	intest.Assert(isCharChange(oldCol, changingCol))
 
-	// Check index key part, ref tablecodec.GenIndexKey
-	if oldCol.GetCollate() != changingCol.GetCollate() {
-		return true
-	}
-
-	// Check index value part, ref tablecodec.GenIndexValuePortal
-	// TODO(joechenrh): It's better to check each index here, because not all indexes need
-	// reorg even if the below condition is true.
-	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
+	// Index key part(tablecodec.GenIndexKey) has been checked by needRowReorg.
+	// Here we just check index value part(ref tablecodec.GenIndexValuePortal).
+	// TODO(joechenrh): It's better to check each index here, because not all
+	// indexes need reorg even if the below condition is true.
+	return types.NeedRestoredData(&oldCol.FieldType) !=
+		types.NeedRestoredData(&changingCol.FieldType)
 }
 
 func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	oldTp := oldCol.GetType()
-	changingTp := changingCol.GetType()
-
-	if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
+	// Integer changes can skip reorg
+	if isIntegerChange(oldCol, changingCol) {
 		return false
 	}
 
-	// _bin collation has padding, it must need reorg.
-	if types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType) {
+	// Other changes except char changes need row reorg.
+	if !isCharChange(oldCol, changingCol) {
 		return true
 	}
 
-	return !types.IsTypeChar(oldTp) || !types.IsTypeChar(changingTp)
+	// Imcompatible collations need row reorg too. This is to make statistics work.
+	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
+		return true
+	}
+
+	// We have checked charset and collation before, only need to check binary
+	// string, which needs padding.
+	return types.IsBinaryStr(&oldCol.FieldType) ||
+		types.IsBinaryStr(&changingCol.FieldType)
 }
 
 // checkModifyColumnData checks the values of the old column data
