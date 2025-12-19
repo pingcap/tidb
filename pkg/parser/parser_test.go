@@ -468,12 +468,18 @@ func TestRecommendIndex(t *testing.T) {
 		{"recommend index run", true, "RECOMMEND INDEX RUN"},
 		{"recommend index run with A = 1", true, "RECOMMEND INDEX RUN WITH A = 1"},
 		{"recommend index run with A = 1, B = 2", true, "RECOMMEND INDEX RUN WITH A = 1, B = 2"},
-		{"recommend index run for 'select * from t where a=1'", true,
-			"RECOMMEND INDEX RUN FOR 'select * from t where a=1'"},
-		{"recommend index run for 'select * from t where a=1' with A = 1", true,
-			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
-		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
-			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{
+			"recommend index run for 'select * from t where a=1'", true,
+			"RECOMMEND INDEX RUN FOR 'select * from t where a=1'",
+		},
+		{
+			"recommend index run for 'select * from t where a=1' with A = 1", true,
+			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1",
+		},
+		{
+			"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
+			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2",
+		},
 		{"recommend index show option", true, "RECOMMEND INDEX SHOW OPTION"},
 		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
 		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
@@ -1486,7 +1492,6 @@ func TestSetVariable(t *testing.T) {
 		IsInstance bool
 		IsSystem   bool
 	}{
-
 		// Set system variable xx.xx, although xx.xx isn't a system variable, the parser should accept it.
 		{"set xx.xx = 666", "xx.xx", false, false, true},
 		// Set session system variable xx.xx
@@ -3032,10 +3037,10 @@ func TestDDL(t *testing.T) {
 		{"create table t (j json default (json_quote('foobar')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_QUOTE(_UTF8MB4'foobar')))"},
 		{"create table t (c char(33) default (nonexistingfunc('foobar')))", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT (NONEXISTINGFUNC(_UTF8MB4'foobar')))"},
 		{"create table t (c char(33) default 'foobar')", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT _UTF8MB4'foobar')"},
-		{"create table t (c char(33) default ('foobar'))", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT _UTF8MB4'foobar')"},
-		{"create table t (i int default (0))", true, "CREATE TABLE `t` (`i` INT DEFAULT 0)"},
-		{"create table t (i int default (-1))", true, "CREATE TABLE `t` (`i` INT DEFAULT -1)"},
-		{"create table t (i int default (+1))", true, "CREATE TABLE `t` (`i` INT DEFAULT +1)"},
+		{"create table t (c char(33) default ('foobar'))", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT (_UTF8MB4'foobar'))"},
+		{"create table t (i int default (0))", true, "CREATE TABLE `t` (`i` INT DEFAULT (0))"},
+		{"create table t (i int default (-1))", true, "CREATE TABLE `t` (`i` INT DEFAULT (-1))"},
+		{"create table t (i int default (+1))", true, "CREATE TABLE `t` (`i` INT DEFAULT (+1))"},
 		// For column default expression with column reference
 		{"create table t (a int, b int, c char(33) default (b))", true, "CREATE TABLE `t` (`a` INT,`b` INT,`c` CHAR(33) DEFAULT (`b`))"},
 		{"create table t (a int, b int, c char(33) default `b`)", false, ""},
@@ -5512,14 +5517,22 @@ func TestSetOperator(t *testing.T) {
 		{"select 1 union distinct (select 1 except all select 1 intersect select 1)", true, "SELECT 1 UNION (SELECT 1 EXCEPT ALL SELECT 1 INTERSECT SELECT 1)"},
 
 		// https://github.com/pingcap/tidb/issues/49874
-		{"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1)", true,
-			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1)"},
-		{"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1) order by pk limit 2", true,
-			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2"},
-		{"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk limit 2", true,
-			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2"},
-		{"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk", true,
-			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk`"},
+		{
+			"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1)", true,
+			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1)",
+		},
+		{
+			"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1) order by pk limit 2", true,
+			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2",
+		},
+		{
+			"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk limit 2", true,
+			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2",
+		},
+		{
+			"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk", true,
+			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk`",
+		},
 	}
 	RunTest(t, table, false)
 }
@@ -6492,13 +6505,15 @@ func TestTablePartition(t *testing.T) {
 		    partition by range (id)
 		    subpartition by hash (id)
 		    (partition p0 values less than (42))`, true, "CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) SUBPARTITION BY HASH (`id`) (PARTITION `p0` VALUES LESS THAN (42))"},
-		{`create table t1 (a varchar(5), b int signed, c varchar(10), d datetime)
+		{
+			`create table t1 (a varchar(5), b int signed, c varchar(10), d datetime)
 		partition by range columns(b,c)
 		subpartition by hash(to_seconds(d))
 		( partition p0 values less than (2, 'b'),
 		  partition p1 values less than (4, 'd'),
 		  partition p2 values less than (10, 'za'));`, true,
-			"CREATE TABLE `t1` (`a` VARCHAR(5),`b` INT,`c` VARCHAR(10),`d` DATETIME) PARTITION BY RANGE COLUMNS (`b`,`c`) SUBPARTITION BY HASH (TO_SECONDS(`d`)) (PARTITION `p0` VALUES LESS THAN (2, _UTF8MB4'b'),PARTITION `p1` VALUES LESS THAN (4, _UTF8MB4'd'),PARTITION `p2` VALUES LESS THAN (10, _UTF8MB4'za'))"},
+			"CREATE TABLE `t1` (`a` VARCHAR(5),`b` INT,`c` VARCHAR(10),`d` DATETIME) PARTITION BY RANGE COLUMNS (`b`,`c`) SUBPARTITION BY HASH (TO_SECONDS(`d`)) (PARTITION `p0` VALUES LESS THAN (2, _UTF8MB4'b'),PARTITION `p1` VALUES LESS THAN (4, _UTF8MB4'd'),PARTITION `p2` VALUES LESS THAN (10, _UTF8MB4'za'))",
+		},
 		{`CREATE TABLE t1 (a INT, b TIMESTAMP DEFAULT '0000-00-00 00:00:00')
 ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `t1` (`a` INT,`b` TIMESTAMP DEFAULT _UTF8MB4'0000-00-00 00:00:00') ENGINE = INNODB PARTITION BY LINEAR HASH (`a`) PARTITIONS 1"},
 
@@ -7046,8 +7061,7 @@ func CleanNodeText(node ast.Node) {
 
 // nodeTextCleaner clean the text of a node and it's child node.
 // For test only.
-type nodeTextCleaner struct {
-}
+type nodeTextCleaner struct{}
 
 func cleanPartition(n ast.Node) {
 	if p, ok := n.(*ast.PartitionOptions); ok && p != nil {
@@ -7768,57 +7782,105 @@ func TestCharsetIntroducer(t *testing.T) {
 func TestNonTransactionalDML(t *testing.T) {
 	cases := []testCase{
 		// deletes
-		{"batch on c limit 10 delete from t where c = 10", true,
-			"BATCH ON `c` LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
-		{"batch on c limit 10 dry run delete from t where c = 10", true,
-			"BATCH ON `c` LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
-		{"batch on c limit 10 dry run query delete from t where c = 10", true,
-			"BATCH ON `c` LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
-		{"batch limit 10 delete from t where c = 10", true,
-			"BATCH LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
-		{"batch limit 10 dry run delete from t where c = 10", true,
-			"BATCH LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
-		{"batch limit 10 dry run query delete from t where c = 10", true,
-			"BATCH LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
+		{
+			"batch on c limit 10 delete from t where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DELETE FROM `t` WHERE `c`=10",
+		},
+		{
+			"batch on c limit 10 dry run delete from t where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10",
+		},
+		{
+			"batch on c limit 10 dry run query delete from t where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10",
+		},
+		{
+			"batch limit 10 delete from t where c = 10", true,
+			"BATCH LIMIT 10 DELETE FROM `t` WHERE `c`=10",
+		},
+		{
+			"batch limit 10 dry run delete from t where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10",
+		},
+		{
+			"batch limit 10 dry run query delete from t where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10",
+		},
 		// updates
-		{"batch on c limit 10 update t set c = 10", true,
-			"BATCH ON `c` LIMIT 10 UPDATE `t` SET `c`=10"},
-		{"batch on c limit 10 dry run update t set c = 10", true,
-			"BATCH ON `c` LIMIT 10 DRY RUN UPDATE `t` SET `c`=10"},
-		{"batch on c limit 10 dry run query update t set c = 10", true,
-			"BATCH ON `c` LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10"},
-		{"batch limit 10 update t set c = 10", true,
-			"BATCH LIMIT 10 UPDATE `t` SET `c`=10"},
-		{"batch limit 10 dry run update t set c = 10", true,
-			"BATCH LIMIT 10 DRY RUN UPDATE `t` SET `c`=10"},
-		{"batch limit 10 dry run query update t set c = 10", true,
-			"BATCH LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10"},
+		{
+			"batch on c limit 10 update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 UPDATE `t` SET `c`=10",
+		},
+		{
+			"batch on c limit 10 dry run update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN UPDATE `t` SET `c`=10",
+		},
+		{
+			"batch on c limit 10 dry run query update t set c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10",
+		},
+		{
+			"batch limit 10 update t set c = 10", true,
+			"BATCH LIMIT 10 UPDATE `t` SET `c`=10",
+		},
+		{
+			"batch limit 10 dry run update t set c = 10", true,
+			"BATCH LIMIT 10 DRY RUN UPDATE `t` SET `c`=10",
+		},
+		{
+			"batch limit 10 dry run query update t set c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY UPDATE `t` SET `c`=10",
+		},
 		// inserts
-		{"batch on c limit 10 insert into t1 select * from t2 where c = 10", true,
-			"BATCH ON `c` LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
-		{"batch on c limit 10 dry run insert into t1 select * from t2 where c = 10", true,
-			"BATCH ON `c` LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
-		{"batch on c limit 10 dry run query insert into t1 select * from t2 where c = 10", true,
-			"BATCH ON `c` LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
-		{"batch limit 10 insert into t1 select * from t2 where c = 10", true,
-			"BATCH LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
-		{"batch limit 10 dry run insert into t1 select * from t2 where c = 10", true,
-			"BATCH LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
-		{"batch limit 10 dry run query insert into t1 select * from t2 where c = 10", true,
-			"BATCH LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10"},
+		{
+			"batch on c limit 10 insert into t1 select * from t2 where c = 10", true,
+			"BATCH ON `c` LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10",
+		},
+		{
+			"batch on c limit 10 dry run insert into t1 select * from t2 where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10",
+		},
+		{
+			"batch on c limit 10 dry run query insert into t1 select * from t2 where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10",
+		},
+		{
+			"batch limit 10 insert into t1 select * from t2 where c = 10", true,
+			"BATCH LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10",
+		},
+		{
+			"batch limit 10 dry run insert into t1 select * from t2 where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10",
+		},
+		{
+			"batch limit 10 dry run query insert into t1 select * from t2 where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10",
+		},
 		// inserts on duplicate key update
-		{"batch on c limit 10 insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
-			"BATCH ON `c` LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
-		{"batch on c limit 10 dry run insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
-			"BATCH ON `c` LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
-		{"batch on c limit 10 dry run query insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
-			"BATCH ON `c` LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
-		{"batch limit 10 insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
-			"BATCH LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
-		{"batch limit 10 dry run insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
-			"BATCH LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
-		{"batch limit 10 dry run query insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
-			"BATCH LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`"},
+		{
+			"batch on c limit 10 insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH ON `c` LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`",
+		},
+		{
+			"batch on c limit 10 dry run insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`",
+		},
+		{
+			"batch on c limit 10 dry run query insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`",
+		},
+		{
+			"batch limit 10 insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH LIMIT 10 INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`",
+		},
+		{
+			"batch limit 10 dry run insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH LIMIT 10 DRY RUN INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`",
+		},
+		{
+			"batch limit 10 dry run query insert into t1 select * from t2 where c = 10 on duplicate key update t1.val = t2.val", true,
+			"BATCH LIMIT 10 DRY RUN QUERY INSERT INTO `t1` SELECT * FROM `t2` WHERE `c`=10 ON DUPLICATE KEY UPDATE `t1`.`val`=`t2`.`val`",
+		},
 	}
 
 	RunTest(t, cases, false)
