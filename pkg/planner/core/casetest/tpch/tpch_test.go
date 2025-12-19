@@ -133,14 +133,12 @@ func testQ3(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, cal
 			tk.MustExec("SET tidb_enforce_mpp=1")
 			output[i].ForUpdateAndEnforce = testdata.ConvertRowsToStrings(tk.MustQuery(input[i] + " for update").Rows())
 			tk.MustExec("SET tidb_enforce_mpp=0")
-
 		})
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 		tk.MustQuery(input[i] + " for update").Check(testkit.Rows(output[i].ForUpdate...))
 		tk.MustExec("SET tidb_enforce_mpp=1")
 		tk.MustQuery(input[i] + " for update").Check(testkit.Rows(output[i].ForUpdateAndEnforce...))
 		tk.MustExec("SET tidb_enforce_mpp=0")
-
 	}
 	if enableRC {
 		tk.MustExec(`commit;`)
