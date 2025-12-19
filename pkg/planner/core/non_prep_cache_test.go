@@ -122,6 +122,7 @@ func BenchmarkNonPrepPlanCacheOptimization(b *testing.B) {
 		// Cacheable SQL benefits from skipping cacheability check.
 		tk := testkit.NewTestKit(b, store)
 		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_bench")
 		tk.MustExec("create table t_bench (id int primary key, name varchar(100))")
 		tk.MustExec("insert into t_bench values (1, 'a'), (2, 'b'), (3, 'c')")
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
@@ -141,6 +142,7 @@ func BenchmarkNonPrepPlanCacheOptimization(b *testing.B) {
 		// Uncacheable: JSON column in WHERE clause requires type checking.
 		tk := testkit.NewTestKit(b, store)
 		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_json")
 		tk.MustExec("create table t_json (id int, data json)")
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
 
@@ -160,6 +162,7 @@ func BenchmarkNonPrepPlanCacheOptimization(b *testing.B) {
 		// Uncacheable: ENUM column in WHERE clause requires type checking.
 		tk := testkit.NewTestKit(b, store)
 		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_enum")
 		tk.MustExec("create table t_enum (id int, status enum('active','inactive'))")
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
 
@@ -179,6 +182,7 @@ func BenchmarkNonPrepPlanCacheOptimization(b *testing.B) {
 		// Uncacheable: DATABASE() is in UnCacheableFunctions.
 		tk := testkit.NewTestKit(b, store)
 		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_func")
 		tk.MustExec("create table t_func (id int, name varchar(100))")
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
 
@@ -198,6 +202,7 @@ func BenchmarkNonPrepPlanCacheOptimization(b *testing.B) {
 		// Uncacheable: Multiple tables with special column types.
 		tk := testkit.NewTestKit(b, store)
 		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1_multi, t2_multi")
 		tk.MustExec("create table t1_multi (id int, data json)")
 		tk.MustExec("create table t2_multi (id int, status enum('on','off'))")
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
