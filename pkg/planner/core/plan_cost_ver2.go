@@ -313,6 +313,7 @@ func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property
 	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
+	concurrency = min(concurrency, rows) // avoid too high concurrency for small table
 	childType := property.CopSingleReadTaskType
 	if p.StoreType == kv.TiFlash { // mpp protocol
 		childType = property.MppTaskType
