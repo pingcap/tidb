@@ -150,7 +150,6 @@ func TestQ3RCAndDisableTikv(t *testing.T) {
 			tk.MustExec("SET tidb_enforce_mpp=1")
 			output[i].ForUpdateAndEnforce = testdata.ConvertRowsToStrings(tk.MustQuery(input[i] + " for update").Rows())
 			tk.MustExec("SET tidb_enforce_mpp=0")
-
 		})
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 		tk.MustQuery(input[i] + " for update").Check(testkit.Rows(output[i].ForUpdate...))
