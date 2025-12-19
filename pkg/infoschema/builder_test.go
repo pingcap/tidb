@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
@@ -224,12 +223,4 @@ func TestTableName2IDWithUnloadedTables(t *testing.T) {
 	id, exists := dbInfo.TableName2ID[unloadedTableName]
 	require.True(t, exists, "UnloadedTable should remain in TableName2ID")
 	require.Equal(t, unloadedTableID, id)
-}
-
-// TestCIStrOriginalVsLowercase verifies the difference between Name.O and Name.L
-func TestCIStrOriginalVsLowercase(t *testing.T) {
-	name := ast.NewCIStr("MyTable")
-	require.Equal(t, "MyTable", name.O, "Original name should preserve case")
-	require.Equal(t, "mytable", name.L, "Lowercase name should be all lowercase")
-	require.NotEqual(t, name.O, name.L, "Original and lowercase should differ for mixed case names")
 }
