@@ -263,6 +263,7 @@ type IndexInfo struct {
 	// 1=v1 with partition ID in key and value.
 	// 2=v2 with partition ID in key only (TODO).
 	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
+	RegionSplitPolicy  *RegionSplitPolicy `json:"region_split_policy,omitempty"` // RegionSplitPolicy is the persistent split policy.
 }
 
 // Hash64 implement HashEquals interface.
@@ -301,6 +302,9 @@ func (index *IndexInfo) Clone() *IndexInfo {
 		for i := range index.AffectColumn {
 			ni.AffectColumn[i] = index.AffectColumn[i].Clone()
 		}
+	}
+	if index.RegionSplitPolicy != nil {
+		ni.RegionSplitPolicy = index.RegionSplitPolicy.Clone()
 	}
 	return &ni
 }
@@ -380,6 +384,35 @@ func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 		return ColumnarIndexTypeFulltext
 	}
 	return ColumnarIndexTypeNA
+}
+
+// RegionSplitPolicy defines the persistent region split policy for an index
+type RegionSplitPolicy struct {
+	// Lower bound values (stored as string representation)
+	Lower []string `json:"lower"`
+
+	// Upper bound values (stored as string representation)
+	Upper []string `json:"upper"`
+
+	// Number of regions to split into
+	Regions int64 `json:"regions"`
+}
+
+// Clone clones RegionSplitPolicy
+func (r *RegionSplitPolicy) Clone() *RegionSplitPolicy {
+	if r == nil {
+		return nil
+	}
+	nr := *r
+	if len(r.Lower) > 0 {
+		nr.Lower = make([]string, len(r.Lower))
+		copy(nr.Lower, r.Lower)
+	}
+	if len(r.Upper) > 0 {
+		nr.Upper = make([]string, len(r.Upper))
+		copy(nr.Upper, r.Upper)
+	}
+	return &nr
 }
 
 // HasCondition checks whether the index has a partial index condition.
