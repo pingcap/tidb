@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -370,7 +371,9 @@ func TestSplitForOneSubtask(t *testing.T) {
 	require.Len(t, spec, 1)
 	writeSpec := spec[0].(*WriteIngestSpec)
 	require.Equal(t, "test-group", writeSpec.KVGroup)
-	require.Equal(t, [][]byte{
-		[]byte("00000"), []byte("00096"), []byte("00139\x00"),
-	}, writeSpec.RangeSplitKeys)
+	expectedRangeSplitKeys := [][]byte{[]byte("00000"), []byte("00096"), []byte("00139\x00")}
+	if kerneltype.IsNextGen() {
+		expectedRangeSplitKeys = [][]byte{[]byte("00000"), []byte("00139\x00")}
+	}
+	require.Equal(t, expectedRangeSplitKeys, writeSpec.RangeSplitKeys)
 }

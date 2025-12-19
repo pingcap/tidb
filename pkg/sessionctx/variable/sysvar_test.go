@@ -108,7 +108,9 @@ func TestTiDBTraceEventSysVar(t *testing.T) {
 	err := sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["*"], "dump_trigger": {"type": "sampling", "sampling": 1}}`)
 	require.NoError(t, err)
 	var config traceevent.FlightRecorderConfig
-	config.Initialize()
+	config.EnabledCategories = []string{"*"}
+	config.DumpTrigger.Type = "sampling"
+	config.DumpTrigger.Sampling = 1
 	require.Equal(t, traceevent.GetFlightRecorder().Config, &config)
 
 	config.DumpTrigger.Sampling = 10
@@ -1877,13 +1879,6 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 		expectError         bool
 	}{
 		{
-			name:                "Both enabled, valid input",
-			autoAnalyze:         true,
-			autoAnalyzePriority: true,
-			input:               "10",
-			expectError:         false,
-		},
-		{
 			name:                "Auto analyze disabled",
 			autoAnalyze:         false,
 			autoAnalyzePriority: true,
@@ -1903,6 +1898,14 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			autoAnalyzePriority: false,
 			input:               "10",
 			expectError:         true,
+		},
+		// Last so it ends as its defaults
+		{
+			name:                "Both enabled, valid input",
+			autoAnalyze:         true,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         false,
 		},
 	}
 

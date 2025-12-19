@@ -15,7 +15,6 @@
 package recording
 
 import (
-	"context"
 	"net/http"
 	"testing"
 
@@ -28,28 +27,17 @@ func TestRequestsRecording(t *testing.T) {
 		require.Equal(t, get, r.Get.Load())
 		require.Equal(t, put, r.Put.Load())
 	}
-	r.Rec(nil)
+	r.rec(nil)
 	checkValFn(0, 0)
-	r.Rec(&http.Request{Method: http.MethodGet})
+	r.rec(&http.Request{Method: http.MethodGet})
 	checkValFn(1, 0)
-	r.Rec(&http.Request{Method: http.MethodHead})
+	r.rec(&http.Request{Method: http.MethodHead})
 	checkValFn(2, 0)
-	r.Rec(&http.Request{Method: http.MethodPut})
+	r.rec(&http.Request{Method: http.MethodPut})
 	checkValFn(2, 1)
-	r.Rec(&http.Request{Method: http.MethodPost})
+	r.rec(&http.Request{Method: http.MethodPost})
 	checkValFn(2, 2)
 	// not recorded now
-	r.Rec(&http.Request{Method: http.MethodDelete})
+	r.rec(&http.Request{Method: http.MethodDelete})
 	checkValFn(2, 2)
-}
-
-func TestWithRequests(t *testing.T) {
-	r := Requests{}
-	ctx := WithRequests(context.Background(), &r)
-	gotR := GetRequests(ctx)
-	gotR.Rec(&http.Request{Method: http.MethodGet})
-	gotR.Rec(&http.Request{Method: http.MethodPut})
-
-	require.Equal(t, uint64(1), r.Get.Load())
-	require.Equal(t, uint64(1), r.Put.Load())
 }

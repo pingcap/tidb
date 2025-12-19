@@ -42,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -270,6 +272,9 @@ func (e *BaseTaskExecutor) Run() {
 		}
 		metering.UnregisterRecorder(e.GetTaskBase().ID)
 	}()
+
+	trace := traceevent.NewTrace()
+	ctx := tracing.WithFlightRecorder(e.ctx, trace)
 	// task executor occupies resources, if there's no subtask to run for 10s,
 	// we release the resources so that other tasks can use them.
 	// 300ms + 600ms + 1.2s + 2s * 4 = 10.1s
@@ -277,6 +282,7 @@ func (e *BaseTaskExecutor) Run() {
 	checkInterval, noSubtaskCheckCnt := SubtaskCheckInterval, 0
 	skipBackoff := false
 	for {
+		trace.DiscardOrFlush(ctx)
 		if e.ctx.Err() != nil {
 			return
 		}
@@ -290,7 +296,7 @@ func (e *BaseTaskExecutor) Run() {
 		skipBackoff = false
 		oldTask := e.task.Load()
 		failpoint.InjectCall("beforeGetTaskByIDInRun", oldTask.ID)
-		newTask, err := e.taskTable.GetTaskByID(e.ctx, oldTask.ID)
+		newTask, err := e.taskTable.GetTaskByID(ctx, oldTask.ID)
 		if err != nil {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
@@ -337,7 +343,7 @@ func (e *BaseTaskExecutor) Run() {
 			return
 		}
 
-		subtask, err := e.taskTable.GetFirstSubtaskInStates(e.ctx, e.execID, task.ID, task.Step,
+		subtask, err := e.taskTable.GetFirstSubtaskInStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
 			e.logger.Warn("get first subtask meets error", zap.Error(err))
@@ -599,7 +605,7 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 			return
 		}
 
-		// after application reduced memory usage, the garbage might not recycle
+		// After reducing memory usage, garbage may not be recycled
 		// in time, so we trigger GC here.
 		//nolint: revive
 		runtime.GC()

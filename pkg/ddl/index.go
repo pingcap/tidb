@@ -691,7 +691,7 @@ func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ er
 
 func setIndexVisibility(tblInfo *model.TableInfo, name ast.CIStr, invisible bool) {
 	for _, idx := range tblInfo.Indices {
-		if idx.Name.L == name.L || getChangingIndexOriginName(idx) == name.O {
+		if idx.Name.L == name.L || idx.GetChangingOriginName() == name.O {
 			idx.Invisible = invisible
 		}
 	}
@@ -1192,28 +1192,16 @@ SwitchIndexState:
 			if !done {
 				return ver, err
 			}
-			if checkAnalyzeNecessary(job, allIndexInfos, tblInfo) {
+			// For multi-schema change, analyze is done by parent job.
+			if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			} else {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
 				checkAndMarkNonRevertible(job)
 			}
 		case model.AnalyzeStateRunning:
-			// after all old index data are reorged. re-analyze it.
-			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			failpoint.InjectCall("analyzeTableDone", job)
-			if done || timedOut || failed {
-				if done {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
-				}
-				if timedOut {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
-				}
-				if failed {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
-				}
-				checkAndMarkNonRevertible(job)
-			}
+			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
+			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			// Set column index flag.
 			for _, indexInfo := range allIndexInfos {
@@ -1273,7 +1261,6 @@ SwitchIndexState:
 				zap.String("charset", job.Charset),
 				zap.String("collation", job.Collate))
 		}
-
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State)
 	}
@@ -1415,15 +1402,48 @@ func (w *worker) analyzeStatusDecision(job *model.Job, dbName, tblName string, s
 	}
 }
 
-// analyzeTableAfterCreateIndex analyzes the table after creating index.
-func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) (done, timedOut, failed bool) {
-	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
-	if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.NeedAnalyze {
-		// If the job is a multi-schema-change job,
-		// we only analyze the table once after all schema changes are done.
-		return true, false, false
+// doAnalyzeWithoutReorg performs analyze for the table if needed without the logic of
+// reorg and and returns whether the table info is updated.
+func (w *worker) doAnalyzeWithoutReorg(job *model.Job, tblInfo *model.TableInfo) (finished bool) {
+	switch job.ReorgMeta.AnalyzeState {
+	case model.AnalyzeStateNone:
+		if checkNeedAnalyze(job, tblInfo) {
+			// Start analyze for the next time.
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+		} else {
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+		}
+		return false
+	case model.AnalyzeStateRunning:
+		w.startAnalyzeAndWait(job, tblInfo)
+		return false
+	default:
+		logutil.DDLLogger().Info("analyze skipped or finished for multi-schema change",
+			zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
+		return true
 	}
+}
 
+func (w *worker) startAnalyzeAndWait(job *model.Job, tblInfo *model.TableInfo) {
+	done, timedOut, failed := w.analyzeTableInner(job, tblInfo, job.SchemaName)
+	failpoint.InjectCall("analyzeTableDone", job)
+	if done || timedOut || failed {
+		if done {
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+		}
+		if timedOut {
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
+		}
+		if failed {
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
+		}
+	}
+}
+
+// analyzeTableInner analyzes the table after creating index/modify column.
+func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbName string) (done, timedOut, failed bool) {
+	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
+	tblName := tblInfo.Name.L
 	cumulativeTimeout, found := w.ddlCtx.getAnalyzeCumulativeTimeout(job.ID)
 	if !found {
 		cumulativeTimeout = DefaultCumulativeTimeout
@@ -2706,6 +2726,7 @@ func writeOneKV(
 		if err != nil {
 			return kvBytes, errors.Trace(err)
 		}
+		// TODO this size doesn't consider keyspace prefix.
 		kvBytes += int64(len(key) + len(idxVal))
 		failpoint.Inject("mockLocalWriterError", func() {
 			failpoint.Return(0, errors.New("mock engine error"))
@@ -2937,10 +2958,8 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 
 // TaskKeyBuilder is used to build task key for the backfill job.
 type TaskKeyBuilder struct {
-	keyspace       string
 	multiSchemaSeq int32
 	mergeTempIdx   bool
-	jobID          int64
 }
 
 // NewTaskKeyBuilder creates a new TaskKeyBuilder.
@@ -3375,6 +3394,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	// REORGANIZE PARTITION - (re)create indexes on partitions to be added (3)
 	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions (4)
 	// (i.e. pi.Definitions - pi.DroppingDefinitions)
+	// MODIFY COLUMN - no change in partitions, just use pi.Definitions (5)
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
 		// case 1, 3 or 4
 		if len(pi.AddingDefinitions) == 0 {
@@ -3415,6 +3435,9 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
 			}
 		}
+	} else if len(pi.DroppingDefinitions) == 0 {
+		// case 5
+		pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
 	} else {
 		// case 2
 		pid, err = findNextPartitionID(currPhysicalTableID, pi.DroppingDefinitions)
@@ -3773,7 +3796,7 @@ func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName ast.CIStr) []c
 	// In this case, we would create a temporary index like $$i($a, $b), so the latter should be chosen.
 	result := normalIdxInfos
 	for _, tmpIdx := range tempIdxInfos {
-		origName := getChangingIndexOriginName(tmpIdx.IndexInfo)
+		origName := tmpIdx.IndexInfo.GetChangingOriginName()
 		for i, normIdx := range normalIdxInfos {
 			if normIdx.IndexInfo.Name.O == origName {
 				result[i] = tmpIdx
@@ -3821,8 +3844,8 @@ func renameIndexes(tblInfo *model.TableInfo, from, to ast.CIStr) {
 		if idx.Name.L == from.L {
 			idx.Name = to
 		} else if isTempIndex(idx, tblInfo) &&
-			(getChangingIndexOriginName(idx) == from.O ||
-				getRemovingObjOriginName(idx.Name.O) == from.O) {
+			(idx.GetChangingOriginName() == from.O ||
+				idx.GetRemovingOriginName() == from.O) {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}

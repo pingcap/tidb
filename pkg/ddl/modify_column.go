@@ -42,56 +42,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
-
-// ModifyColumnType is used to indicate what type of modify column job it is.
-// Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
-// https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
-const (
-	ModifyTypeNone byte = iota
-	// modify column that guarantees no reorganization or check is needed.
-	ModifyTypeNoReorg
-
-	// modify column that don't need to reorg the data, but need to check the existing data.
-	ModifyTypeNoReorgWithCheck
-
-	// modify column that only needs to reorg the index
-	ModifyTypeIndexReorg
-
-	// modify column that needs to reorg both the row and index data.
-	ModifyTypeReorg
-
-	// A special type for varchar->char conversion with data precheck.
-	ModifyTypePrecheck
-)
-
-func typeToString(tp byte) string {
-	switch tp {
-	case ModifyTypeNone:
-		return "none"
-	case ModifyTypeNoReorg:
-		return "modify meta only"
-	case ModifyTypeNoReorgWithCheck:
-		return "modify meta only with range check"
-	case ModifyTypeIndexReorg:
-		return "reorg index only"
-	case ModifyTypeReorg:
-		return "reorg row and index"
-	case ModifyTypePrecheck:
-		return "prechecking"
-	}
-
-	return ""
-}
 
 func hasModifyFlag(col *model.ColumnInfo) bool {
 	return col.ChangingFieldType != nil || mysql.HasPreventNullInsertFlag(col.GetFlag())
@@ -99,6 +59,14 @@ func hasModifyFlag(col *model.ColumnInfo) bool {
 
 func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
+}
+
+func isIntegerChange(from, to *model.ColumnInfo) bool {
+	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
+}
+
+func isCharChange(from, to *model.ColumnInfo) bool {
+	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
 }
 
 // getModifyColumnType gets the modify column type.
@@ -119,40 +87,50 @@ func getModifyColumnType(
 	if noReorgDataStrict(tblInfo, oldCol, args.Column) {
 		// It's not NULL->NOTNULL change
 		if !isNullToNotNullChange(oldCol, newCol) {
-			return ModifyTypeNoReorg
+			return model.ModifyTypeNoReorg
 		}
-		return ModifyTypeNoReorgWithCheck
+		return model.ModifyTypeNoReorgWithCheck
 	}
 
 	// For backward compatibility
 	if args.ModifyColumnType == mysql.TypeNull {
-		return ModifyTypeReorg
+		return model.ModifyTypeReorg
 	}
 
-	// FIXME(joechenrh): handle partition table case
-	if tblInfo.Partition != nil {
-		return ModifyTypeReorg
+	// FIXME(joechenrh): handle partition and TiFlash replica case
+	if tblInfo.Partition != nil || (tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0) {
+		return model.ModifyTypeReorg
 	}
 
 	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
-			failpoint.Return(ModifyTypeReorg)
+			failpoint.Return(model.ModifyTypeReorg)
 		}
 	})
 
+	// FIXME(joechenrh): remove this when stats correctness is resolved.
+	// Since stats may store bytes encoded by codec.EncodeKey, we should disable the optimization
+	// if the same data produces different encoded bytes for the old and new types.
+	if (isIntegerChange(oldCol, args.Column) &&
+		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
+		(isCharChange(oldCol, args.Column) &&
+			!collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
+		return model.ModifyTypeReorg
+	}
+
 	if !sqlMode.HasStrictMode() {
-		return ModifyTypeReorg
+		return model.ModifyTypeReorg
 	}
 
 	if needRowReorg(oldCol, args.Column) {
-		return ModifyTypeReorg
+		return model.ModifyTypeReorg
 	}
 
 	relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
 	if len(relatedIndexes) == 0 || !needIndexReorg(oldCol, args.Column) {
-		return ModifyTypeNoReorgWithCheck
+		return model.ModifyTypeNoReorgWithCheck
 	}
-	return ModifyTypeIndexReorg
+	return model.ModifyTypeIndexReorg
 }
 
 func getChangingCol(
@@ -163,7 +141,7 @@ func getChangingCol(
 	changingCol := args.ChangingColumn
 	if changingCol == nil {
 		changingCol = args.Column.Clone()
-		changingCol.Name = ast.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
+		changingCol.Name = ast.NewCIStr(model.GenUniqueChangingColumnName(tblInfo, oldCol))
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 		InitAndAddColumnToTable(tblInfo, changingCol)
 
@@ -175,7 +153,7 @@ func getChangingCol(
 				// We create a temp index for each normal index.
 				tmpIdx := info.IndexInfo.Clone()
 				tmpIdx.ID = newIdxID
-				tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
+				tmpIdx.Name = ast.NewCIStr(model.GenUniqueChangingIndexName(tblInfo, info.IndexInfo))
 				UpdateIndexCol(tmpIdx.Columns[info.Offset], changingCol)
 				tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 			} else {
@@ -226,7 +204,7 @@ func initializeChangingIndexes(
 			tmpIdx := info.IndexInfo.Clone()
 			tmpIdx.State = model.StateNone
 			tmpIdx.ID = newIdxID
-			tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
+			tmpIdx.Name = ast.NewCIStr(model.GenUniqueChangingIndexName(tblInfo, info.IndexInfo))
 			tmpIdx.Columns[info.Offset].UseChangingType = true
 			UpdateIndexCol(tmpIdx.Columns[info.Offset], tmpCol)
 			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
@@ -276,7 +254,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	// For first time running this job, or the job from older version,
 	// we need to fill the ModifyColumnType.
-	if args.ModifyColumnType == ModifyTypeNone ||
+	if args.ModifyColumnType == model.ModifyTypeNone ||
 		args.ModifyColumnType == mysql.TypeNull {
 		// Check the modify types again, as the type may be changed by other no-reorg modify-column jobs.
 		// For example, there are two DDLs submitted in parallel:
@@ -296,25 +274,25 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
 			zap.Int64("oldColumnID", oldCol.ID),
-			zap.String("type", typeToString(args.ModifyColumnType)),
+			zap.String("type", model.ModifyTypeToString(args.ModifyColumnType)),
 		)
 		if oldCol.GetType() == mysql.TypeVarchar && args.Column.GetType() == mysql.TypeString &&
-			(args.ModifyColumnType == ModifyTypeNoReorgWithCheck ||
-				args.ModifyColumnType == ModifyTypeIndexReorg) {
+			(args.ModifyColumnType == model.ModifyTypeNoReorgWithCheck ||
+				args.ModifyColumnType == model.ModifyTypeIndexReorg) {
 			logutil.DDLLogger().Info("meet varchar to char modify column, change type to precheck")
-			args.ModifyColumnType = ModifyTypePrecheck
+			args.ModifyColumnType = model.ModifyTypePrecheck
 		}
 	}
 
 	if job.IsRollingback() {
 		switch args.ModifyColumnType {
-		case ModifyTypePrecheck, ModifyTypeNoReorg, ModifyTypeNoReorgWithCheck:
+		case model.ModifyTypePrecheck, model.ModifyTypeNoReorg, model.ModifyTypeNoReorgWithCheck:
 			// For those column-type-change jobs which don't need reorg, or checking.
 			return rollbackModifyColumnJob(jobCtx, tblInfo, job, args.Column, oldCol)
-		case ModifyTypeReorg:
+		case model.ModifyTypeReorg:
 			// For those column-type-change jobs which need reorg.
 			return rollbackModifyColumnJobWithReorg(jobCtx, tblInfo, job, oldCol, args)
-		case ModifyTypeIndexReorg:
+		case model.ModifyTypeIndexReorg:
 			// For those column-type-change jobs which reorg the index only.
 			return rollbackModifyColumnJobWithIndexReorg(jobCtx, tblInfo, job, oldCol, args)
 		}
@@ -345,11 +323,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	switch args.ModifyColumnType {
-	case ModifyTypePrecheck:
+	case model.ModifyTypePrecheck:
 		return w.precheckForVarcharToChar(jobCtx, job, args, dbInfo, tblInfo, oldCol)
-	case ModifyTypeNoReorgWithCheck:
+	case model.ModifyTypeNoReorgWithCheck:
 		return w.doModifyColumnWithCheck(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
-	case ModifyTypeNoReorg:
+	case model.ModifyTypeNoReorg:
 		return w.doModifyColumnNoCheck(jobCtx, job, tblInfo, args.Column, oldCol, args.Position)
 	}
 
@@ -357,10 +335,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	if err = isGeneratedRelatedColumn(tblInfo, args.Column, oldCol); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-	if tblInfo.Partition != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
 	}
 	if isColumnarIndexColumn(tblInfo, oldCol) {
 		job.State = model.JobStateCancelled
@@ -371,9 +345,17 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in primary key")
 	}
 
+	if job.SchemaState == model.StateNone {
+		err = postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+	}
+
 	defer checkTableInfo(tblInfo)
 
-	if args.ModifyColumnType == ModifyTypeIndexReorg {
+	if args.ModifyColumnType == model.ModifyTypeIndexReorg {
 		if err := initializeChangingIndexes(args, tblInfo, oldCol); err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -512,7 +494,7 @@ func getModifyColumnInfo(
 	} else {
 		// Lower version TiDB doesn't persist the old column ID to job arguments.
 		// We have to use the old column name to locate the old column.
-		oldCol = model.FindColumnInfo(tblInfo.Columns, getRemovingObjName(args.OldColumnName.L))
+		oldCol = model.FindColumnInfo(tblInfo.Columns, model.GenRemovingObjName(args.OldColumnName.L))
 		if oldCol == nil {
 			// The old column maybe not in removing state.
 			oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
@@ -625,7 +607,7 @@ func (w *worker) precheckForVarcharToChar(
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
 			zap.Int64("oldColumnID", oldCol.ID),
-			zap.String("type", typeToString(args.ModifyColumnType)),
+			zap.String("type", model.ModifyTypeToString(args.ModifyColumnType)),
 		)
 		return ver, nil
 	}
@@ -647,7 +629,7 @@ func (w *worker) precheckForVarcharToChar(
 		zap.String("oldColumnName", args.OldColumnName.L),
 		zap.Int64("oldColumnID", oldCol.ID),
 	)
-	args.ModifyColumnType = ModifyTypeReorg
+	args.ModifyColumnType = model.ModifyTypeReorg
 	return ver, nil
 }
 
@@ -789,17 +771,14 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 }
 
 func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	if mysql.IsIntegerType(oldCol.GetType()) && mysql.IsIntegerType(changingCol.GetType()) {
+	if isIntegerChange(oldCol, changingCol) {
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
 
-	// CHAR/VARCHAR
-	if !types.IsTypeChar(oldCol.GetType()) || !types.IsTypeChar(changingCol.GetType()) {
-		return true
-	}
+	intest.Assert(isCharChange(oldCol, changingCol))
 
 	// Check index key part, ref tablecodec.GenIndexKey
-	if oldCol.GetCollate() != changingCol.GetCollate() {
+	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
 		return true
 	}
 
@@ -810,19 +789,18 @@ func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 }
 
 func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	oldTp := oldCol.GetType()
-	changingTp := changingCol.GetType()
-
-	if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
+	// Integer changes can skip reorg
+	if isIntegerChange(oldCol, changingCol) {
 		return false
 	}
 
-	// _bin collation has padding, it must need reorg.
-	if types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType) {
+	// Other changes except char changes need row reorg.
+	if !isCharChange(oldCol, changingCol) {
 		return true
 	}
 
-	return !types.IsTypeChar(oldTp) || !types.IsTypeChar(changingTp)
+	// We have checked charset before, only need to check binary string, which needs padding.
+	return types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType)
 }
 
 // checkModifyColumnData checks the values of the old column data
@@ -927,13 +905,13 @@ func reorderChangingIdx(oldIdxInfos []*model.IndexInfo, changingIdxInfos []*mode
 	for _, cIdx := range changingIdxInfos {
 		origName := cIdx.Name.O
 		if cIdx.State != model.StatePublic {
-			origName = getChangingIndexOriginName(cIdx)
+			origName = cIdx.GetChangingOriginName()
 		}
 		nameToChanging[origName] = cIdx
 	}
 
 	for i, oldIdx := range oldIdxInfos {
-		changingIdxInfos[i] = nameToChanging[getRemovingObjOriginName(oldIdx.Name.O)]
+		changingIdxInfos[i] = nameToChanging[oldIdx.GetRemovingOriginName()]
 	}
 }
 
@@ -966,7 +944,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// none -> delete only
 		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
 		job.ReorgMeta.Stage = model.ReorgStageModifyColumnUpdateColumn
-		err := initForReorgIndexes(w, job, changingIdxs)
+		err = initForReorgIndexes(w, job, changingIdxs)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
@@ -1062,7 +1040,8 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				if checkAnalyzeNecessary(job, changingIdxs, tblInfo) {
+				// For multi-schema change, analyze is done by parent job.
+				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				} else {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
@@ -1070,20 +1049,8 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 			}
 		case model.AnalyzeStateRunning:
-			// after all old index data are reorged. re-analyze it.
-			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done || timedOut || failed {
-				if done {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
-				}
-				if timedOut {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
-				}
-				if failed {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
-				}
-				checkAndMarkNonRevertible(job)
-			}
+			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
+			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
@@ -1150,7 +1117,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
-			return ver, errors.Errorf(errMsg)
+			return ver, errors.Errorf("%s", errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
@@ -1177,7 +1144,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		// the second half is changingIdxInfos isn't true now, so we need to
 		// find the oldIdxInfos again.
 		for _, idx := range allIdxs {
-			if strings.HasPrefix(idx.Name.O, removingObjPrefix) {
+			if idx.IsRemoving() {
 				oldIdxInfos = append(oldIdxInfos, idx)
 			}
 		}
@@ -1281,7 +1248,8 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnCompleted
 			case model.ReorgStageModifyColumnCompleted:
-				if checkAnalyzeNecessary(job, changingIdxInfos, tblInfo) {
+				// For multi-schema change, analyze is done by parent job.
+				if job.MultiSchemaInfo == nil && checkNeedAnalyze(job, tblInfo) {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				} else {
 					job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
@@ -1289,21 +1257,9 @@ func (w *worker) doModifyColumnIndexReorg(
 				}
 			}
 		case model.AnalyzeStateRunning:
-			// after all old index data are reorged. re-analyze it.
-			done, timedOut, failed := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done || timedOut || failed {
-				if done {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
-				}
-				if timedOut {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateTimeout
-				}
-				if failed {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateFailed
-				}
-				checkAndMarkNonRevertible(job)
-			}
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout:
+			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
+			w.startAnalyzeAndWait(job, tblInfo)
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType
@@ -1355,35 +1311,12 @@ func (w *worker) doModifyColumnIndexReorg(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
-			return ver, errors.Errorf(errMsg)
+			return ver, errors.Errorf("%s", errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", oldIdxInfos[0].State)
 	}
 	return ver, errors.Trace(err)
-}
-
-func checkAnalyzeNecessary(job *model.Job, changingIdxes []*model.IndexInfo, tbl *model.TableInfo) bool {
-	analyzeVer := vardef.DefTiDBAnalyzeVersion
-	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
-		analyzeVer = variable.TidbOptInt(val, analyzeVer)
-	}
-	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
-	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
-		enableDDLAnalyze = variable.TiDBOptOn(val)
-	}
-	hasPartition := tbl.GetPartitionInfo() != nil
-	hasChangingIdx := len(changingIdxes) > 0
-
-	if enableDDLAnalyze && hasChangingIdx && !hasPartition && analyzeVer == 2 {
-		return true
-	}
-	logutil.DDLLogger().Info("skip analyze",
-		zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
-		zap.Bool("is partitioned table", hasPartition),
-		zap.Int("affected indexes count", len(changingIdxes)),
-		zap.Int("tidb_analyze_version", analyzeVer))
-	return false
 }
 
 // checkAndMarkNonRevertible should be called when the job is in the final revertible state before public.
@@ -1476,6 +1409,130 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 	return nil
 }
 
+func preCheckPartitionModifiableColumn(sctx sessionctx.Context, t table.Table, col, newCol *table.Column) error {
+	// Check that the column change does not affect the partitioning column
+	// It must keep the same type, int [unsigned], [var]char, date[time]
+	if t.Meta().Partition != nil {
+		pt, ok := t.(table.PartitionedTable)
+		if !ok {
+			// Should never happen!
+			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
+		}
+		for _, name := range pt.GetPartitionColumnNames() {
+			if strings.EqualFold(name.L, col.Name.L) {
+				return checkPartitionColumnModifiable(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+			}
+		}
+	}
+	return nil
+}
+
+func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	// Check that the column change does not affect the partitioning column
+	// It must keep the same type, int [unsigned], [var]char, date[time]
+	if tblInfo.Partition != nil {
+		sctx, err := w.sessPool.Get()
+		if err != nil {
+			return err
+		}
+		defer w.sessPool.Put(sctx)
+		if len(tblInfo.Partition.Columns) > 0 {
+			for _, pc := range tblInfo.Partition.Columns {
+				if strings.EqualFold(pc.L, col.Name.L) {
+					err := checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+			return nil
+		}
+		partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		var partCol *model.ColumnInfo
+		for _, pc := range partCols {
+			if strings.EqualFold(pc.Name.L, col.Name.L) {
+				partCol = pc
+				break
+			}
+		}
+		if partCol != nil {
+			return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+		}
+	}
+	return nil
+}
+
+func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	if col.Name.L != newCol.Name.L {
+		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
+	}
+	if !isColTypeAllowedAsPartitioningCol(tblInfo.Partition.Type, newCol.FieldType) {
+		return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
+	}
+	pi := tblInfo.GetPartitionInfo()
+	if len(pi.Columns) == 0 {
+		// non COLUMNS partitioning, only checks INTs, not their actual range
+		// There are many edge cases, like when truncating SQL Mode is allowed
+		// which will change the partitioning expression value resulting in a
+		// different partition. Better be safe and not allow decreasing of length.
+		// TODO: Should we allow it in strict mode? Wait for a use case / request.
+		if newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
+			return dbterror.ErrUnsupportedModifyColumn.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+		}
+	}
+	// Basically only allow changes of the length/decimals for the column
+	// Note that enum is not allowed, so elems are not checked
+	// TODO: support partition by ENUM
+	if newCol.FieldType.EvalType() != col.FieldType.EvalType() ||
+		newCol.FieldType.GetFlag() != col.FieldType.GetFlag() ||
+		newCol.FieldType.GetCollate() != col.FieldType.GetCollate() ||
+		newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
+	}
+	// Generate a new PartitionInfo and validate it together with the new column definition
+	// Checks if all partition definition values are compatible.
+	// Similar to what buildRangePartitionDefinitions would do in terms of checks.
+
+	newTblInfo := *tblInfo
+	// Replace col with newCol and see if we can generate a new SHOW CREATE TABLE
+	// and reparse it and build new partition definitions (which will do additional
+	// checks columns vs partition definition values
+	newCols := make([]*model.ColumnInfo, 0, len(newTblInfo.Columns))
+	for _, c := range newTblInfo.Columns {
+		if c.ID == col.ID {
+			newCols = append(newCols, newCol)
+			continue
+		}
+		newCols = append(newCols, c)
+	}
+	newTblInfo.Columns = newCols
+
+	var buf bytes.Buffer
+	AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
+	// Ignoring warnings
+	stmt, _, err := parser.New().ParseSQL("ALTER TABLE t " + buf.String())
+	if err != nil {
+		// Should never happen!
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
+	}
+	at, ok := stmt[0].(*ast.AlterTableStmt)
+	if !ok || len(at.Specs) != 1 || at.Specs[0].Partition == nil {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
+	}
+	pAst := at.Specs[0].Partition
+	_, err = buildPartitionDefinitionsInfo(
+		exprctx.CtxWithHandleTruncateErrLevel(sctx.GetExprCtx(), errctx.LevelError),
+		pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)),
+	)
+	if err != nil {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
+	}
+	return nil
+}
+
 var colStateOrd = map[model.SchemaState]int{
 	model.StateNone:                 0,
 	model.StateDeleteOnly:           1,
@@ -1503,11 +1560,11 @@ func checkTableInfo(tblInfo *model.TableInfo) {
 			intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
 			depCol := tblInfo.Columns[offset]
 			switch {
-			case strings.HasPrefix(col.Name.O, changingColumnPrefix):
-				name := getChangingColumnOriginName(col)
+			case col.IsChanging():
+				name := col.GetChangingOriginName()
 				intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
-			case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
-				name := getRemovingObjOriginName(depCol.Name.O)
+			case depCol.IsRemoving():
+				name := depCol.GetRemovingOriginName()
 				intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
 			}
 		}
@@ -1621,9 +1678,6 @@ func GetModifiableColumnJob(
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if t.Meta().Partition != nil {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
-		}
 		if isColumnarIndexColumn(t.Meta(), col.ColumnInfo) {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column")
 		}
@@ -1637,91 +1691,9 @@ func GetModifiableColumnJob(
 		}
 	}
 
-	// Check that the column change does not affect the partitioning column
-	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if t.Meta().Partition != nil {
-		pt, ok := t.(table.PartitionedTable)
-		if !ok {
-			// Should never happen!
-			return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
-		}
-		isPartitioningColumn := false
-		for _, name := range pt.GetPartitionColumnNames() {
-			if strings.EqualFold(name.L, col.Name.L) {
-				isPartitioningColumn = true
-				break
-			}
-		}
-		if isPartitioningColumn {
-			// TODO: update the partitioning columns with new names if column is renamed
-			// Would be an extension from MySQL which does not support it.
-			if col.Name.L != newCol.Name.L {
-				return nil, dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
-			}
-			if !isColTypeAllowedAsPartitioningCol(t.Meta().Partition.Type, newCol.FieldType) {
-				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
-			}
-			pi := pt.Meta().GetPartitionInfo()
-			if len(pi.Columns) == 0 {
-				// non COLUMNS partitioning, only checks INTs, not their actual range
-				// There are many edge cases, like when truncating SQL Mode is allowed
-				// which will change the partitioning expression value resulting in a
-				// different partition. Better be safe and not allow decreasing of length.
-				// TODO: Should we allow it in strict mode? Wait for a use case / request.
-				if newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
-					return nil, dbterror.ErrUnsupportedModifyCollation.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
-				}
-			}
-			// Basically only allow changes of the length/decimals for the column
-			// Note that enum is not allowed, so elems are not checked
-			// TODO: support partition by ENUM
-			if newCol.FieldType.EvalType() != col.FieldType.EvalType() ||
-				newCol.FieldType.GetFlag() != col.FieldType.GetFlag() ||
-				newCol.FieldType.GetCollate() != col.FieldType.GetCollate() ||
-				newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
-			}
-			// Generate a new PartitionInfo and validate it together with the new column definition
-			// Checks if all partition definition values are compatible.
-			// Similar to what buildRangePartitionDefinitions would do in terms of checks.
-
-			tblInfo := pt.Meta()
-			newTblInfo := *tblInfo
-			// Replace col with newCol and see if we can generate a new SHOW CREATE TABLE
-			// and reparse it and build new partition definitions (which will do additional
-			// checks columns vs partition definition values
-			newCols := make([]*model.ColumnInfo, 0, len(newTblInfo.Columns))
-			for _, c := range newTblInfo.Columns {
-				if c.ID == col.ID {
-					newCols = append(newCols, newCol.ColumnInfo)
-					continue
-				}
-				newCols = append(newCols, c)
-			}
-			newTblInfo.Columns = newCols
-
-			var buf bytes.Buffer
-			AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
-			// The parser supports ALTER TABLE ... PARTITION BY ... even if the ddl code does not yet :)
-			// Ignoring warnings
-			stmt, _, err := parser.New().ParseSQL("ALTER TABLE t " + buf.String())
-			if err != nil {
-				// Should never happen!
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
-			}
-			at, ok := stmt[0].(*ast.AlterTableStmt)
-			if !ok || len(at.Specs) != 1 || at.Specs[0].Partition == nil {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
-			}
-			pAst := at.Specs[0].Partition
-			_, err = buildPartitionDefinitionsInfo(
-				exprctx.CtxWithHandleTruncateErrLevel(sctx.GetExprCtx(), errctx.LevelError),
-				pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)),
-			)
-			if err != nil {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
-			}
-		}
+	err = preCheckPartitionModifiableColumn(sctx, t, col, newCol)
+	if err != nil {
+		return nil, err
 	}
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
@@ -1792,7 +1764,7 @@ func GetModifiableColumnJob(
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		CtxVars:        []any{mayNeedChangeColData},
+		NeedReorg:      mayNeedChangeColData,
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),

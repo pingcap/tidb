@@ -918,7 +918,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		if riskResult > 0 && leftDidNotLose && totalSum >= 0 && predicateResult > 1 {
 			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 		}
-		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < 1 {
+		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < -1 {
 			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 		}
 		return 0, false // No winner (0). Do not return the pseudo result
@@ -1019,9 +1019,6 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		return property.PropNotMatched
 	}
 	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
-		if path.Index == nil || path.Index.VectorInfo == nil {
-			return property.PropNotMatched
-		}
 		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
 			return property.PropNotMatched
 		}
@@ -2176,7 +2173,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
 		}
 		cop.TablePlan = ts
-		cop.IndexLookUpPushDown = candidate.path.IsIndexLookUpPushDown
+		cop.IndexLookUpPushDownBy = candidate.path.IndexLookUpPushDownBy
 	}
 	task = cop
 	if cop.TablePlan != nil && ds.TableInfo.IsCommonHandle {

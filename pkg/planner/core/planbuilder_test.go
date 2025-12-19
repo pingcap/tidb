@@ -333,7 +333,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 		ExtraHandleCol: col,
 		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}
-	indexLookup = indexLookup.Init(ctx, 0, false)
+	indexLookup = indexLookup.Init(ctx, 0, util.IndexLookUpPushDownNone)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
@@ -757,8 +757,8 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 			Name:   ast.NewCIStr("t1"),
 		},
 		{
-			Schema: ast.NewCIStr("test"),
-			Name:   ast.NewCIStr("t2"),
+			Schema: ast.NewCIStr("Test"),
+			Name:   ast.NewCIStr("T2"),
 		},
 	}
 
@@ -768,6 +768,8 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, "t1", pb.visitInfo[0].table)
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
+	require.Equal(t, "test", pb.visitInfo[2].db)
+	require.Equal(t, "t2", pb.visitInfo[2].table)
 }
 
 func TestBuildRefreshStatsPrivileges(t *testing.T) {
@@ -1198,7 +1200,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		TablePlan: tablePlan,
 		IndexPlan: indexPlan,
 		KeepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
 	check(reader)
 	cloned, err := reader.Clone(ctx)
 	require.NoError(t, err)
@@ -1266,7 +1268,7 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 		TablePlan: projectionPlan,
 		IndexPlan: limitPlan,
 		KeepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), true)
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
 	check(reader)
 	cloned, err = reader.Clone(ctx)
 	require.NoError(t, err)

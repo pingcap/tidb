@@ -22,12 +22,14 @@ go_test(
     name = "traceevent_test",
     timeout = "short",
     srcs = [
+        "adapter_test.go",
         "flightrecorder_test.go",
         "integration_test.go",
         "traceevent_test.go",
     ],
     embed = [":traceevent"],
     flaky = True,
+    shard_count = 1,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

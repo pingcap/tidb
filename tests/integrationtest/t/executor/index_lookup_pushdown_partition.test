@@ -1,0 +1,69 @@
+drop table if exists tp1, tp2;
+
+# wait regions split after create table to make the test stable
+set @@tidb_scatter_region='table';
+
+# int handle
+create table tp1 (a int primary key, b int, c int, key b(b), key c(c) global) partition by hash(a) partitions 4;
+insert into tp1 values (1, 10, 10), (2, 9, 20), (3, 8, 30), (4, 7, 40), (5, 6, 50), (6, 5, 60);
+explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 and a > 1 limit 3;
+select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 and a > 1 limit 3;
+explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 order by a limit 3;
+select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 order by a limit 3;
+
+# test tidb_index_lookup_pushdown_policy
+select @@tidb_index_lookup_pushdown_policy;
+explain select * from tp1 where b=20;
+set @@tidb_index_lookup_pushdown_policy='force';
+explain select * from tp1 where b=20;
+set @@tidb_index_lookup_pushdown_policy='affinity-force';
+explain select * from tp1 where b=20;
+alter table tp1 affinity = 'partition';
+explain select * from tp1 where b=20;
+set @@tidb_index_lookup_pushdown_policy='hint-only';
+select @@tidb_index_lookup_pushdown_policy;
+
+# global index not supported
+--enable_warnings
+explain select /*+ index_lookup_pushdown(tp1, c) */ * from tp1;
+--disable_warnings
+
+# common handle
+create table tp2 (
+    id1 varchar(32),
+    id2 int,
+    a int,
+    b int,
+    primary key (id1, id2),
+    index a(a)
+)
+PARTITION BY RANGE COLUMNS (id1) (
+    PARTITION p0 VALUES LESS THAN ('c'),
+    PARTITION p1 VALUES LESS THAN ('e'),
+    PARTITION p2 VALUES LESS THAN ('g'),
+    PARTITION p3 VALUES LESS THAN MAXVALUE
+);
+insert into tp2 values
+('a', 1, 99, 10),
+('b', 2, 88, 20),
+('c', 3, 77, 30),
+('d', 4, 66, 40),
+('e', 5, 55, 50),
+('f', 6, 44, 60),
+('g', 7, 33, 70),
+('h', 8, 22, 80);
+explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 where a > 33 limit 5;
+select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 where a > 33 limit 5;
+
+# specify the partition
+explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 partition (p1);
+select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 partition (p1);
+
+# extra handle
+create table tp3 (a int, b int, c int, key b(b)) partition by hash(a) partitions 4;
+insert into tp3 values (1, 10, 10), (2, 9, 20), (3, 8, 30), (4, 7, 40), (5, 6, 50), (6, 5, 60);
+explain select /*+ index_lookup_pushdown(tp3, b) */ * from tp3;
+select /*+ index_lookup_pushdown(tp3, b) */ * from tp3;
+
+# restore tidb_scatter_region
+set @@tidb_scatter_region=default;
