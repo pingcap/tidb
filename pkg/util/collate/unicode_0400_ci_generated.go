@@ -148,7 +148,12 @@ func (uc *unicodeCICollator) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
 }
 
-// MaxLenOneByte implements Collator interface.
-func (uc *unicodeCICollator) MaxLenOneByte() int {
-	return 2
+// MaxBytesOneCharacter implements Collator interface.
+func (uc *unicodeCICollator) MaxBytesOneCharacter() int {
+	return 4
+}
+
+// ByteNumAfterConverted implements Collator interface.
+func (uc *unicodeCICollator) ByteNumAfterConverted(byteNum int) int {
+	return byteNum * 8
 }

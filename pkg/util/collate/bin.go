@@ -45,9 +45,14 @@ func (*binCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
 }
 
-// MaxLenOneByte implement Collator interface.
-func (*binCollator) MaxLenOneByte() int {
+// MaxBytesOneCharacter implements Collator interface.
+func (*binCollator) MaxBytesOneCharacter() int {
 	return 1
+}
+
+// ByteNumAfterConverted implements Collator interface.
+func (*binCollator) ByteNumAfterConverted(byteNum int) int {
+	return byteNum
 }
 
 // Pattern implements Collator interface.
@@ -90,9 +95,14 @@ func (*binPaddingCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
 }
 
-// MaxLenOneByte implement Collator interface.
-func (*binPaddingCollator) MaxLenOneByte() int {
-	return 1
+// MaxBytesOneCharacter implements Collator interface.
+func (*binPaddingCollator) MaxBytesOneCharacter() int {
+	return 4
+}
+
+// ByteNumAfterConverted implements Collator interface.
+func (*binPaddingCollator) ByteNumAfterConverted(byteNum int) int {
+	return byteNum
 }
 
 // Pattern implements Collator interface.

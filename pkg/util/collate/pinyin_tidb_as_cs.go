@@ -38,8 +38,13 @@ func (*zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(_ string) []byte {
 	panic("implement me")
 }
 
-// MaxLenOneByte implement Collator interface.
-func (*zhPinyinTiDBASCSCollator) MaxLenOneByte() int {
+// MaxBytesOneCharacter implements Collator interface.
+func (*zhPinyinTiDBASCSCollator) MaxBytesOneCharacter() int {
+	panic("implement me")
+}
+
+// ByteNumAfterConverted implements Collator interface.
+func (*zhPinyinTiDBASCSCollator) ByteNumAfterConverted(byteNum int) int {
 	panic("implement me")
 }
 

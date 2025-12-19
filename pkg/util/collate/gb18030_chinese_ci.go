@@ -84,9 +84,14 @@ func (*gb18030ChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return buf
 }
 
-// MaxLenOneByte implement Collator interface.
-func (*gb18030ChineseCICollator) MaxLenOneByte() int {
+// MaxBytesOneCharacter implements Collator interface.
+func (*gb18030ChineseCICollator) MaxBytesOneCharacter() int {
 	return 4
+}
+
+// ByteNumAfterConverted implements Collator interface.
+func (*gb18030ChineseCICollator) ByteNumAfterConverted(byteNum int) int {
+	return byteNum * 2
 }
 
 // Pattern implements Collator interface.

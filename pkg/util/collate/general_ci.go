@@ -60,9 +60,14 @@ func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return buf
 }
 
-// MaxLenOneByte implement Collator interface.
-func (*generalCICollator) MaxLenOneByte() int {
-	return 2
+// MaxBytesOneCharacter implements Collator interface.
+func (*generalCICollator) MaxBytesOneCharacter() int {
+	return 4
+}
+
+// ByteNumAfterConverted implements Collator interface.
+func (*generalCICollator) ByteNumAfterConverted(byteNum int) int {
+	return ((byteNum + 3) / 4) * 2 // Copied from mysql
 }
 
 // Pattern implements Collator interface.

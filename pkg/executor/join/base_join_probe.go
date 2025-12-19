@@ -150,7 +150,6 @@ type baseJoinProbe struct {
 
 	probeCollision uint64
 
-	hashValueCounts    []int
 	serializedKeysLens []int
 	continuousMem      []byte
 }
@@ -334,10 +333,6 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		j.matchedRowsHashValue = make([]uint64, logicalRowCount)
 	}
 
-	for i := range j.hashValueCounts {
-		j.hashValueCounts[i] = 0
-	}
-
 	for i := range int(j.ctx.partitionNumber) {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
@@ -353,9 +348,11 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 	}
 
 	if cap(j.serializedKeys) >= logicalRowCount {
+		clear(j.serializedKeys[logicalRowCount:])
 		j.serializedKeys = j.serializedKeys[:logicalRowCount]
 		for i := range logicalRowCount {
-			j.serializedKeys[i] = j.serializedKeys[i][:0]
+			clear(j.serializedKeys[i][0:])
+			j.serializedKeys[i] = nil
 		}
 	} else {
 		j.serializedKeys = make([][]byte, logicalRowCount)
@@ -370,7 +367,6 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		j.matchedRowsHashValue[idx] = newHashVal
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		if !j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
-			j.hashValueCounts[partIndex]++
 			keyLen := serializedKeysCol.GetRawLength(idx)
 			j.serializedKeysLens[idx] = keyLen
 			totalMemUsage += keyLen
@@ -790,7 +786,6 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType plannerbase.JoinType
 		rightAsBuildSide:      rightAsBuildSide,
 		hash:                  fnv.New64(),
 		rehashBuf:             make([]byte, serialization.Uint64Len),
-		hashValueCounts:       make([]int, ctx.partitionNumber),
 	}
 
 	for i := range keyIndex {
