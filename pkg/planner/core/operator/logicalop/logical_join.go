@@ -1106,13 +1106,10 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
-
-		_, lhsIsCol := newCond.GetArgs()[0].(*expression.Column)
-		_, rhsIsCol := newCond.GetArgs()[1].(*expression.Column)
-
+		_, _, ok := expression.IsColOpCol(newCond)
 		// If the columns used in the new filter are not all expression.Column,
 		// we can not use it as join's equal condition.
-		if !(lhsIsCol && rhsIsCol) {
+		if !ok {
 			p.OtherConditions = append(p.OtherConditions, newCond)
 			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
