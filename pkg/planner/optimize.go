@@ -65,27 +65,36 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, nil
 	}
 
-	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
-	if !ok {
+	// Helper function to append plan cache skip warning
+	appendSkipWarning := func(reason string) {
 		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason))
 		}
-		return nil, nil, false, nil
 	}
 
+	// Try to parameterize first to enable early lookup of existing PlanCacheStmt.
 	paramSQL, paramsVals, err := core.GetParamSQLFromAST(stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
+
 	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667{}) != nil { // update the AST in the middle of the process
 		ctx.Value(core.PlanCacheKeyTestIssue43667{}).(func(stmt ast.StmtNode))(stmt)
 	}
+
+	// Fast path: Check if PlanCacheStmt already exists.
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
 	paramExprs := core.Params2Expressions(paramsVals)
 
 	if val == nil {
-		// Create a new AST upon this parameterized SQL instead of using the original AST.
-		// Keep the original AST unchanged to avoid any side effect.
+		// Slow path: First execution, perform full cacheability check.
+		ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
+		if !ok {
+			appendSkipWarning(reason)
+			return nil, nil, false, nil
+		}
+
+		// SQL is cacheable, create PlanCacheStmt for first time.
 		paramStmt, err := core.ParseParameterizedSQL(sctx, paramSQL)
 		if err != nil {
 			// This can happen rarely, cannot parse the parameterized(restored) SQL successfully, skip the plan cache in this case.
@@ -103,7 +112,12 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		sctx.GetSessionVars().AddNonPreparedPlanCacheStmt(paramSQL, cachedStmt)
 		val = cachedStmt
 	}
+
+	// For non-prepared statements, if a PlanCacheStmt exists in the cache, it must be cacheable.
+	// This is different from prepared statements: prepared statements always create a PlanCacheStmt
+	// (even if uncacheable), but non-prepared statements only create one when the SQL is cacheable.
 	cachedStmt := val.(*core.PlanCacheStmt)
+	intest.Assert(cachedStmt.StmtCacheable, "non-prepared stmt in cache must be cacheable")
 
 	cachedPlan, names, err := core.GetPlanFromPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
 	if err != nil {
