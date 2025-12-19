@@ -165,11 +165,6 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
-	// The plan cache do not support subquery now. So we skip this function when
-	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
-		return nil, path.TableFilters
-	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
@@ -191,6 +186,9 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			if !colEqConstant && !colEqCorCol {
 				continue
 			}
+			// The plan cache do not support subquery now. So we skip the plan cache when there are correlated subqueries.
+			// Future judgement should be aligned with the function `isPhysicalPlanCacheable`.
+			ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
 			matched = true
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
