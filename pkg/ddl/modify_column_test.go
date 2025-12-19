@@ -1540,7 +1540,11 @@ func TestStatsForPartitioned(t *testing.T) {
 			PARTITION p0 VALUES LESS THAN (32),
 			PARTITION p1 VALUES LESS THAN (64),
 			PARTITION p2 VALUES LESS THAN (96),
+			PARTITION p3 VALUES LESS THAN (128)
 		)
+	`)
+
+	for i := range 128 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
 	}
 
