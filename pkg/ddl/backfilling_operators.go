@@ -570,7 +570,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal)
+			w.collector.Accepted(atomic.LoadInt64(&execDetails.UnpackedBytesReceivedKVTotal))
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
