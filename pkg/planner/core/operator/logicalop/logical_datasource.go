@@ -241,8 +241,9 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 	var latestIndexes map[int64]*model.IndexInfo
 	var changed bool
 	var err error
+	_, isolationReadEnginesHasTiKV := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
 	check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.IsForUpdateRead
-	check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
+	check = check && ds.SCtx().GetSessionVars().ConnectionID > 0 && isolationReadEnginesHasTiKV
 	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
 	if check {
 		latestIndexes, changed, err = domainmisc.GetLatestIndexInfo(ds.SCtx(), ds.Table.Meta().ID, 0)
