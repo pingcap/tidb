@@ -702,3 +702,115 @@ func TestDecimalErrOverflow(t *testing.T) {
 		require.EqualError(t, err, tc.errStr)
 	}
 }
+
+// TestArithmeticOverflowErrorMessageWithColumnName tests that overflow error messages
+// display the actual column name instead of "Column#N".
+// This is a regression test for https://github.com/pingcap/tidb/issues/17993
+func TestArithmeticOverflowErrorMessageWithColumnName(t *testing.T) {
+	// Test case 1: Simple column multiplication (col * constant)
+	t.Run("SimpleColumn", func(t *testing.T) {
+		ctx := createContext(t)
+
+		// Create a column with OrigName set (simulating a real table column)
+		col := &Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       1,
+			UniqueID: 1,
+			Index:    0,
+			OrigName: "test.t.col1",
+		}
+
+		// Create a constant for -1
+		constant := &Constant{
+			Value:   types.NewIntDatum(-1),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+
+		// Build the multiply function with column * constant
+		// When column value is MinInt64 and multiplied by -1, it overflows
+		bf, err := funcs[ast.Mul].getFunction(ctx, []Expression{col, constant})
+		require.NoError(t, err)
+		require.NotNil(t, bf)
+
+		// Create a mock chunk with MinInt64 that will cause overflow when multiplied by -1
+		chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+		chk.AppendInt64(0, math.MinInt64)
+		row := chk.GetRow(0)
+
+		// Execute the function - should cause overflow
+		_, _, err = bf.evalInt(ctx, row)
+		require.Error(t, err)
+
+		// The error message should contain the actual column name "test.t.col1"
+		// instead of "Column#1"
+		errMsg := err.Error()
+		require.Contains(t, errMsg, "test.t.col1", "Error message should contain the actual column name")
+		require.NotContains(t, errMsg, "Column#", "Error message should not contain 'Column#'")
+	})
+
+	// Test case 2: Derived column - (col1 + col2) * constant
+	// This tests the case: (t5.col7 + t5.col2) * ABS(-9223372036854775807)
+	t.Run("DerivedColumn", func(t *testing.T) {
+		ctx := createContext(t)
+
+		// Create two columns with OrigName set (simulating real table columns)
+		col1 := &Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       1,
+			UniqueID: 1,
+			Index:    0,
+			OrigName: "t5.col7",
+		}
+		col2 := &Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       2,
+			UniqueID: 2,
+			Index:    1,
+			OrigName: "t5.col2",
+		}
+
+		// Build the addition function (col1 + col2) - this creates a derived column
+		addFunc, err := funcs[ast.Plus].getFunction(ctx, []Expression{col1, col2})
+		require.NoError(t, err)
+		require.NotNil(t, addFunc)
+
+		// Wrap the addition function as a ScalarFunction
+		addExpr := &ScalarFunction{
+			FuncName: ast.NewCIStr(ast.Plus),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Function: addFunc,
+		}
+
+		// Create a constant for a large value that will cause overflow when multiplied
+		constant := &Constant{
+			Value:   types.NewIntDatum(math.MaxInt64),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+
+		// Build the multiply function: (col1 + col2) * constant
+		mulFunc, err := funcs[ast.Mul].getFunction(ctx, []Expression{addExpr, constant})
+		require.NoError(t, err)
+		require.NotNil(t, mulFunc)
+
+		// Create a mock chunk with values that will cause overflow
+		// col1 = 2, col2 = 1, so (col1 + col2) = 3, and 3 * MaxInt64 overflows
+		chk := chunk.NewChunkWithCapacity([]*types.FieldType{
+			types.NewFieldType(mysql.TypeLonglong),
+			types.NewFieldType(mysql.TypeLonglong),
+		}, 1)
+		chk.AppendInt64(0, 2)
+		chk.AppendInt64(1, 1)
+		row := chk.GetRow(0)
+
+		// Execute the function - should cause overflow
+		_, _, err = mulFunc.evalInt(ctx, row)
+		require.Error(t, err)
+
+		// The error message should contain the actual column names "t5.col7" and "t5.col2"
+		// instead of "Column#1" and "Column#2"
+		errMsg := err.Error()
+		require.Contains(t, errMsg, "t5.col7", "Error message should contain the actual column name t5.col7")
+		require.Contains(t, errMsg, "t5.col2", "Error message should contain the actual column name t5.col2")
+		require.NotContains(t, errMsg, "Column#", "Error message should not contain 'Column#'")
+	})
+}
