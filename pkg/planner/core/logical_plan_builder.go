@@ -3759,13 +3759,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				b.outerCTEs[len(b.outerCTEs)-1].forceInlineByHintOrVar = true
 			} else if !b.buildingRecursivePartForCTE {
 				// If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
-				b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
+				sessVars.StmtCtx.SetHintWarning(
 					"Hint merge() is inapplicable. " +
 						"Please check whether the hint is used in the right place, " +
 						"you should use this hint inside the CTE.")
 			}
 		} else if !b.buildingCTE && !b.isCTE {
-			b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
+			sessVars.StmtCtx.SetHintWarning(
 				"Hint merge() is inapplicable. " +
 					"Please check whether the hint is used in the right place, " +
 					"you should use this hint inside the CTE.")
@@ -3813,7 +3813,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	// `checkOnlyFullGroupBy` should be executed before rewrite gbyExprs, because the field type of the fields
 	// may change. For example, the length of a string field may change in `adjustRetFtForCastString`
-	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
+	if sessVars.SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !sessVars.OptimizerEnableNewOnlyFullGroupByCheck {
 		err = b.checkOnlyFullGroupBy(p, sel)
 		if err != nil {
 			return nil, err
@@ -3895,11 +3895,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if isExplicitSetTablesNames {
 				// If `LockTableIDs` map is empty, it will lock all records from all tables.
 				// Besides, it will only lock the metioned in `of` part.
-				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
+				sessVars.StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
-			dbName := getLowerDB(tName.Schema, b.ctx.GetSessionVars())
+			dbName := getLowerDB(tName.Schema, sessVars)
 			var authErr error
-			if user := b.ctx.GetSessionVars().User; user != nil {
+			if user := sessVars.User; user != nil {
 				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv, dbName, tNameW.Name.L, "", authErr)
@@ -4009,8 +4009,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// 1. The select is top level query, order should be honored
 		// 2. The query has LIMIT clause
 		// 3. The control flag requires keeping ORDER BY explicitly
-		if len(b.qbOffset) == 1 || sel.Limit != nil || !b.ctx.GetSessionVars().RemoveOrderbyInSubquery {
-			if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
+		if len(b.qbOffset) == 1 || sel.Limit != nil || !sessVars.RemoveOrderbyInSubquery {
+			if sessVars.SQLMode.HasOnlyFullGroupBy() {
 				p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
 			} else {
 				p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
@@ -4034,7 +4034,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		proj.SetChildren(p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
-			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+			col.UniqueID = sessVars.AllocPlanColumnID()
 		}
 		proj.SetOutputNames(p.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
