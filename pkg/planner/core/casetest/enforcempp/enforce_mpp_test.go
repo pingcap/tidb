@@ -484,24 +484,15 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 
 // Test null-aware semi join push down for MPP mode
 func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		// test table
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("drop table if exists s")
 		testKit.MustExec("create table t(a int, b int, c int)")
 		testKit.MustExec("create table s(a int, b int, c int)")
-		testKit.MustExec("alter table t set tiflash replica 1")
-		testKit.MustExec("alter table s set tiflash replica 1")
-
-		tb := external.GetTableByName(t, testKit, "test", "t")
-		err := domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
-
-		tb = external.GetTableByName(t, testKit, "test", "s")
-		err = domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
-
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
+		testkit.SetTiFlashReplica(t, dom, "test", "s")
 		var input []string
 		var output []struct {
 			SQL  string
@@ -632,4 +623,35 @@ func TestRollupMPP(t *testing.T) {
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	}, mockstore.WithMockTiFlash(2))
+}
+
+func TestEnforceMPPNewest(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table t1(a int primary key, b int);`)
+		tk.MustExec(`create table t2(a int primary key, b int);`)
+		testkit.SetTiFlashReplica(t, dom, "test", "t1")
+		testkit.SetTiFlashReplica(t, dom, "test", "t2")
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		enforceMPPSuiteData := GetEnforceMPPSuiteData()
+		enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			res := tk.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
 }

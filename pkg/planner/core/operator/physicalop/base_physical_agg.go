@@ -936,7 +936,8 @@ func ExhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property
 	la := lp.(*logicalop.LogicalAggregation)
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)
-	if len(hashAggs) > 0 && preferHash {
+	if len(hashAggs) > 0 && (preferHash || la.SCtx().GetSessionVars().IsMPPEnforced()) {
+		// stream agg is not supported in the tiflash
 		return hashAggs, true, nil
 	}
 	streamAggs := getStreamAggs(la, prop)
@@ -953,6 +954,10 @@ func ExhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property
 
 // TODO: support more operators and distinct later
 func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
+	sessionVars := la.SCtx().GetSessionVars()
+	if sessionVars.GetSessionVars().InRestrictedSQL && !sessionVars.GetSessionVars().InternalSQLScanUserTable {
+		return false
+	}
 	hasUnsupportedDistinct := false
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
@@ -975,5 +980,29 @@ func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 		}
 		return false
 	}
-	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
+	// if it has a lock or UnionScan, this Agg cannot be pushed down to MPP
+	if checkAggCanPushMPP(la) {
+		return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
+	}
+	return false
+}
+
+func checkAggCanPushMPP(s base.LogicalPlan) bool {
+	switch l := s.(type) {
+	case *logicalop.LogicalLock:
+		if l.Lock != nil && l.Lock.LockType != ast.SelectLockNone {
+			return false
+		}
+	case *logicalop.DataSource:
+		return !l.IsForUpdateRead
+	case *logicalop.LogicalUnionScan:
+		return false
+	default:
+		for _, child := range l.Children() {
+			if !checkAggCanPushMPP(child) {
+				return false
+			}
+		}
+	}
+	return true
 }

@@ -16,11 +16,14 @@ package core
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -68,6 +71,11 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 	// block the mpp task spreading (only supporting MPP table scan), causing
 	// mpp plan fail the cost comparison with tikv index plan.
 	if ds.PreferStoreType&h.PreferTiFlash != 0 {
+		return
+	}
+	if lp.SCtx().GetSessionVars().IsMPPEnforced() && slices.ContainsFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.StoreType == kv.TiFlash
+	}) {
 		return
 	}
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()

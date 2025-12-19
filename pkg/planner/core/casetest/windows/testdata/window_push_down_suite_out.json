@@ -133,9 +133,9 @@
       {
         "SQL": "explain select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;",
         "Plan": [
-          "TableReader_78 8000.00 root  MppVersion: 3, data:ExchangeSender_77",
-          "└─ExchangeSender_77 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_76 8000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
+          "TableReader_61 8000.00 root  MppVersion: 3, data:ExchangeSender_60",
+          "└─ExchangeSender_60 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_59 8000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "    └─ExchangeReceiver_26 8000.00 mpp[tiflash]  ",
           "      └─ExchangeSender_25 8000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─Projection_21 8000.00 mpp[tiflash]  test.employee.deptid",
