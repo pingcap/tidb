@@ -72,6 +72,16 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		}
 	}
 
+	// Early check: if DML caching is disabled, reject DML statements before parameterization.
+	// This check must be done before ParameterizeAST to ensure correct behavior.
+	selStmt, isSelect := stmt.(*ast.SelectStmt)
+	if !sctx.GetSessionVars().EnableNonPreparedPlanCacheForDML &&
+		(!isSelect || selStmt.LockInfo != nil) {
+		// DML caching is disabled and this is not a regular SELECT statement
+		appendSkipWarning("not a SELECT statement")
+		return nil, nil, false, nil
+	}
+
 	// Try to parameterize first to enable early lookup of existing PlanCacheStmt.
 	paramSQL, paramsVals, err := core.GetParamSQLFromAST(stmt)
 	if err != nil {
