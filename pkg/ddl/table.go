@@ -130,6 +130,10 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			}
 		}
 
+		if err := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, nil); err != nil {
+			logutil.DDLLogger().Error("failed to delete affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
+		}
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
@@ -582,6 +586,22 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		scatterScope = val
 	}
 	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
+
+	// Create new affinity groups first (critical operation - must succeed)
+	if tblInfo.Affinity != nil {
+		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	// Delete old affinity groups (best-effort cleanup - ignore errors)
+	// TRUNCATE TABLE: always try to delete old table's affinity groups
+	if oldTblInfo.Affinity != nil {
+		if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
+			logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+		}
+	}
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -1707,5 +1727,50 @@ func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	}
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
+	return ver, nil
+}
+
+func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetAlterTableAffinityArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	oldTblInfo := tblInfo.Clone()
+
+	if err = validateTableAffinity(tblInfo, args.Affinity); err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	tblInfo.Affinity = args.Affinity
+
+	// Create new affinity groups first (critical operation - must succeed)
+	if tblInfo.Affinity != nil {
+		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	// Delete old affinity groups (best-effort cleanup - ignore errors)
+	// ALTER TABLE AFFINITY: only delete when old table had affinity configuration
+	// This ensures 'ALTER TABLE AFFINITY = 'none'' correctly cleans up stale affinity groups
+	if oldTblInfo.Affinity != nil {
+		if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
+			logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+		}
+	}
+
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }

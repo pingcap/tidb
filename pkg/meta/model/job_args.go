@@ -1777,3 +1777,21 @@ func (a *RefreshMetaArgs) decodeV1(job *Job) error {
 func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
 	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
 }
+
+// AlterTableAffinityArgs is the argument for AlterTableAffinity
+type AlterTableAffinityArgs struct {
+	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
+}
+
+func (a *AlterTableAffinityArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *AlterTableAffinityArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetAlterTableAffinityArgs get the alter table affinity argument.
+func GetAlterTableAffinityArgs(job *Job) (*AlterTableAffinityArgs, error) {
+	return getOrDecodeArgs[*AlterTableAffinityArgs](&AlterTableAffinityArgs{}, job)
+}

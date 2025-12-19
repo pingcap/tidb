@@ -292,6 +292,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowImportJobs(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
+	case ast.ShowAffinity:
+		return e.fetchShowAffinity(ctx)
 	}
 	return nil
 }
@@ -1447,6 +1449,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		if err != nil {
 			return err
 		}
+	}
+
+	if tableInfo.Affinity != nil {
+		fmt.Fprintf(buf, " /*T![%s] AFFINITY='%s' */", tidb.FeatureIDAffinity, tableInfo.Affinity.Level)
 	}
 
 	// add partition info here.
