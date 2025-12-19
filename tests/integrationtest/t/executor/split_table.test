@@ -141,3 +141,168 @@ CREATE TABLE t (`id` varchar(10) NOT NULL, primary key (`id`) CLUSTERED);
 split table t index `primary` between (0) and (1000) regions 2;
 set tidb_enable_clustered_index=default;
 
+# Test non clustered table
+set tidb_scatter_region='global';
+drop table if exists t;
+create table t (
+  id bigint primary key nonclustered,
+  user_id bigint,
+  status varchar(10),
+  index idx_user_id (user_id)
+);
+insert into t values (0,0,'');
+alter table t split primary key between (0) and (1000000) regions 4;
+show create table t;
+alter table t split index idx_user_id between (1000) and (100000) regions 3;
+show create table t;
+
+drop table if exists t;
+create table t (
+  id bigint primary key nonclustered,
+  user_id bigint,
+  status varchar(10),
+  index idx_user_id (user_id)
+)
+split primary key between (-10000) and (1000000) regions 4
+split index idx_user_id between (-1000) and (100000) regions 3;
+insert into t values (0,0,'');
+select *, _tidb_rowid from t;
+show create table t;
+
+## Test clustered table
+set tidb_enable_clustered_index=ON;
+drop table if exists t;
+create table t (
+  id bigint,
+  user_id bigint,
+  status varchar(10),
+  primary key (id) clustered,
+  index idx_user_id (user_id)
+);
+
+## Cannot use SPLIT PRIMARY KEY on clustered PK
+-- error 8267
+alter table t split primary key between (0) and (1000000) regions 4;
+alter table t split index idx_user_id between (1000) and (100000) regions 3;
+show create table t;
+
+## Test common handle (composite clustered PK)
+drop table if exists t;
+create table t (
+  a int,
+  b int,
+  c varchar(100),
+  primary key (a, b) clustered,
+  index idx_c (c)
+);
+-- error 8267
+alter table t split primary key between (0, 0) and (100000, 100000) regions 4;
+alter table t split index idx_c between ('a') and ('z') regions 3;
+show create table t;
+
+drop table if exists t1;
+-- error 8267
+create table t1 (
+  a int,
+  b varchar(100),
+  c int,
+  primary key (a, b) clustered,
+  index idx_c (c)
+)
+split primary key between (0, 'a') and (100000, 'z') regions 4
+split index idx_c between (0) and (10000) regions 3;
+
+## Test common handle with 3 columns - Cannot use SPLIT PRIMARY KEY
+drop table if exists t;
+create table t (
+  a int,
+  b varchar(50),
+  c int,
+  d varchar(100),
+  primary key (a, b, c) clustered,
+  index idx_d (d)
+);
+-- error 8267
+alter table t split primary key between (0, 'a', 0) and (100000, 'z', 100000) regions 5;
+alter table t split index idx_d between ('a') and ('z') regions 3;
+show create table t;
+
+set tidb_enable_clustered_index=OFF;
+drop table if exists t;
+create table t (id bigint primary key, val bigint);
+alter table t split index `PRIMARY` between (0) and (1000000) regions 4;
+
+##  cannot specify SPLIT BETWEEN for clustered table
+set tidb_enable_clustered_index=ON;
+drop table if exists t;
+-- error 8267
+create table t (
+  id bigint,
+  name varchar(100),
+  primary key (id) clustered
+)
+split primary key between (0) and (1000000) regions 4
+split between (0) and (1000000) regions 4;
+
+## SPLIT PRIMARY KEY on table without primary key
+set tidb_enable_clustered_index=OFF;
+drop table if exists t;
+create table t (id bigint, val bigint);
+-- error 1280
+alter table t split primary key between (0) and (1000000) regions 4;
+
+## SPLIT INDEX on non-existent index
+drop table if exists t;
+create table t (id bigint primary key, val bigint);
+-- error 1280
+alter table t split index idx_nonexist between (0) and (1000000) regions 4;
+
+## Test partitioned tables
+drop table if exists t;
+create table t (
+  id bigint primary key,
+  user_id bigint,
+  status varchar(10),
+  index idx_user_id (user_id),
+  index idx_status (status)
+)
+partition by range (id) (
+  partition p0 values less than (100000),
+  partition p1 values less than (200000),
+  partition pmax values less than (maxvalue)
+)
+split primary key between (0) and (1000000) regions 4
+split index idx_user_id between (1000) and (100000) regions 3
+split index idx_status between ('a') and ('z') regions 2;
+show create table t;
+
+drop table if exists t;
+create table t (
+  id bigint primary key,
+  val bigint,
+  index idx_val (val)
+) partition by range (id) (
+  partition p0 values less than (1000),
+  partition p1 values less than (2000)
+);
+alter table t split primary key between (0) and (10000) regions 5;
+show create table t;
+alter table t split index idx_val between (0) and (10000) regions 5;
+show create table t;
+
+drop table if exists t;
+create table t (
+  id bigint primary key,
+  user_id bigint,
+  status varchar(10)
+);
+alter table t add index idx_user_id (user_id);
+alter table t split index idx_user_id between (0) and (10000) regions 5;
+-- error 8267
+alter table t split index idx_user_id between (0) and (10000) regions 0;
+show create table t;
+alter table t add index idx_status (status);
+show warnings;
+
+set tidb_enable_clustered_index=default;
+set tidb_scatter_region='';
