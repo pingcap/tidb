@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	stderrors "errors"
-	"fmt"
 	"slices"
 	"time"
 
@@ -817,18 +816,18 @@ workLoop:
 				//ks, vs := collector.FMSketch.KV()
 				//logutil.BgLogger().Info("analyze get fms", zap.Uint64s("keys", ks), zap.Bools("values", vs))
 				var bounds []int64
-				iter := chunk.NewIterator4Chunk(hist.Bounds)
-				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-					remain, d, err := codec.DecodeOne(row.GetBytes(0))
-					if err != nil {
-						panic(err)
-					}
-					if remain != nil {
-						panic("should be nil")
-					}
-					bounds = append(bounds, d.GetInt64())
-				}
-				fmt.Println(bounds)
+				//iter := chunk.NewIterator4Chunk(hist.Bounds)
+				//for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+				//	remain, d, err := codec.DecodeOne(row.GetBytes(0))
+				//	if err != nil {
+				//		panic(err)
+				//	}
+				//	if remain != nil {
+				//		panic("should be nil")
+				//	}
+				//	bounds = append(bounds, d.GetInt64())
+				//}
+				//fmt.Println(bounds)
 
 				logutil.BgLogger().Info("analyze build index sample collector",
 					zap.Int64("ndv", collector.FMSketch.NDV()),
