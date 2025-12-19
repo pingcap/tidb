@@ -14,12 +14,12 @@ set @@session.tidb_hashagg_final_concurrency = 1;
 set @@session.tidb_window_concurrency = 1;
 explain format = 'plan_tree' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	task	access object	operator info
-HashJoin	root		semi join, left side:Projection, equal:[eq(Column#13, Column#11)]
-├─StreamAgg(Build)	root		funcs:sum(Column#16)->Column#11
+HashJoin	root		semi join, left side:Projection, equal:[eq(Column, Column)]
+├─StreamAgg(Build)	root		funcs:sum(Column)->Column
 │ └─TableReader	root		data:StreamAgg
-│   └─StreamAgg	cop[tikv]		funcs:sum(explain_easy.t3.a)->Column#16
+│   └─StreamAgg	cop[tikv]		funcs:sum(explain_easy.t3.a)->Column
 │     └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─Projection(Probe)	root		explain_easy.t3.a, explain_easy.t3.b, explain_easy.t3.c, explain_easy.t3.d, cast(explain_easy.t3.a, decimal(20,0) BINARY)->Column#13
+└─Projection(Probe)	root		explain_easy.t3.a, explain_easy.t3.b, explain_easy.t3.c, explain_easy.t3.d, cast(explain_easy.t3.a, decimal(20,0) BINARY)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1;
@@ -63,11 +63,11 @@ Delete	root		N/A
   └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	task	access object	operator info
-Projection	root		Column#7
+Projection	root		Column
 └─HashJoin	root		inner join, equal:[eq(explain_easy.t1.c1, explain_easy.t2.c2)]
-  ├─HashAgg(Build)	root		group by:explain_easy.t2.c2, funcs:count(Column#10)->Column#8, funcs:firstrow(explain_easy.t2.c2)->explain_easy.t2.c2
+  ├─HashAgg(Build)	root		group by:explain_easy.t2.c2, funcs:count(Column)->Column, funcs:firstrow(explain_easy.t2.c2)->explain_easy.t2.c2
   │ └─TableReader	root		data:HashAgg
-  │   └─HashAgg	cop[tikv]		group by:explain_easy.t2.c2, funcs:count(explain_easy.t2.c2)->Column#10
+  │   └─HashAgg	cop[tikv]		group by:explain_easy.t2.c2, funcs:count(explain_easy.t2.c2)->Column
   │     └─Selection	cop[tikv]		not(isnull(explain_easy.t2.c2))
   │       └─TableFullScan	cop[tikv]	table:b	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
@@ -90,8 +90,8 @@ Selection	root		gt(explain_easy.t1.c2, 1)
 └─Point_Get	root	table:t1	handle:1
 explain format = 'plan_tree' select sum(t1.c1 in (select c1 from t2)) from t1;
 id	task	access object	operator info
-StreamAgg	root		funcs:sum(Column#13)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
+StreamAgg	root		funcs:sum(Column)->Column
+└─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
   └─HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t1.c1, explain_easy.t2.c1)
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -108,9 +108,9 @@ HashJoin	root		inner join, equal:[eq(explain_easy.t1.c1, explain_easy.t2.c2)]
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	task	access object	operator info
-Projection	root		ifnull(Column#10, 0)->Column#10
+Projection	root		ifnull(Column, 0)->Column
 └─MergeJoin	root		left outer join, left side:TableReader, left key:explain_easy.t1.c1, right key:explain_easy.t1.c1
-  ├─Projection(Build)	root		1->Column#10, explain_easy.t1.c1
+  ├─Projection(Build)	root		1->Column, explain_easy.t1.c1
   │ └─TableReader	root		data:TableFullScan
   │   └─TableFullScan	cop[tikv]	table:s	keep order:true, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
@@ -126,7 +126,7 @@ id	task	access object	operator info
 MemTableScan	root	table:COLUMNS	column_name:["c1"], table_name:["t1"], table_schema:["test"]
 explain format = 'plan_tree' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	task	access object	operator info
-Projection	root		eq(explain_easy.t1.c2, explain_easy.t2.c2)->Column#11
+Projection	root		eq(explain_easy.t1.c2, explain_easy.t2.c2)->Column
 └─Apply	root		CARTESIAN left outer join, left side:TableReader
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -169,13 +169,13 @@ TableReader	root		data:TableFullScan
 explain format = 'plan_tree' select c1 from t2 union select c1 from t2 union all select c1 from t2;
 id	task	access object	operator info
 Union	root		
-├─HashAgg	root		group by:Column#10, funcs:firstrow(Column#12)->Column#10
+├─HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
 │ └─Union	root		
-│   ├─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column#12, funcs:firstrow(explain_easy.t2.c1)->Column#10
+│   ├─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column, funcs:firstrow(explain_easy.t2.c1)->Column
 │   │ └─IndexReader	root		index:StreamAgg
 │   │   └─StreamAgg	cop[tikv]		group by:explain_easy.t2.c1, 
 │   │     └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
-│   └─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column#12, funcs:firstrow(explain_easy.t2.c1)->Column#10
+│   └─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column, funcs:firstrow(explain_easy.t2.c1)->Column
 │     └─IndexReader	root		index:StreamAgg
 │       └─StreamAgg	cop[tikv]		group by:explain_easy.t2.c1, 
 │         └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
@@ -183,17 +183,17 @@ Union	root
   └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain format = 'plan_tree' select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	task	access object	operator info
-HashAgg	root		group by:Column#10, funcs:firstrow(Column#11)->Column#10
+HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
 └─Union	root		
-  ├─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column#11, funcs:firstrow(explain_easy.t2.c1)->Column#10
+  ├─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column, funcs:firstrow(explain_easy.t2.c1)->Column
   │ └─IndexReader	root		index:StreamAgg
   │   └─StreamAgg	cop[tikv]		group by:explain_easy.t2.c1, 
   │     └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
-  ├─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column#11, funcs:firstrow(explain_easy.t2.c1)->Column#10
+  ├─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column, funcs:firstrow(explain_easy.t2.c1)->Column
   │ └─IndexReader	root		index:StreamAgg
   │   └─StreamAgg	cop[tikv]		group by:explain_easy.t2.c1, 
   │     └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
-  └─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column#11, funcs:firstrow(explain_easy.t2.c1)->Column#10
+  └─StreamAgg	root		group by:explain_easy.t2.c1, funcs:firstrow(explain_easy.t2.c1)->Column, funcs:firstrow(explain_easy.t2.c1)->Column
     └─IndexReader	root		index:StreamAgg
       └─StreamAgg	cop[tikv]		group by:explain_easy.t2.c1, 
         └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
@@ -205,38 +205,38 @@ explain_easy	t4	1	idx	2	b	NULL		NULL	1	YES	NO	0	NULL
 explain_easy	t4	1	expr_idx	1	NULL	NULL		`a` + `b` + 1	2	YES	NO	0	NULL
 explain format = 'plan_tree' select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(1)->Column#5
-└─StreamAgg	root		funcs:count(Column#9)->Column#7
+StreamAgg	root		funcs:count(1)->Column
+└─StreamAgg	root		funcs:count(Column)->Column
   └─TableReader	root		data:StreamAgg
-    └─StreamAgg	cop[tikv]		funcs:count(1)->Column#9
+    └─StreamAgg	cop[tikv]		funcs:count(1)->Column
       └─Selection	cop[tikv]		eq(explain_easy.t1.c3, 100)
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select 1 from (select count(c2), count(c3) from t1) k;
 id	task	access object	operator info
-Projection	root		1->Column#6
-└─StreamAgg	root		funcs:count(Column#14)->Column#9
+Projection	root		1->Column
+└─StreamAgg	root		funcs:count(Column)->Column
   └─TableReader	root		data:StreamAgg
-    └─StreamAgg	cop[tikv]		funcs:count(1)->Column#14
+    └─StreamAgg	cop[tikv]		funcs:count(1)->Column
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(1) from (select max(c2), count(c3) as m from t1) k;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(1)->Column#6
-└─StreamAgg	root		funcs:count(Column#13)->Column#8
+StreamAgg	root		funcs:count(1)->Column
+└─StreamAgg	root		funcs:count(Column)->Column
   └─TableReader	root		data:StreamAgg
-    └─StreamAgg	cop[tikv]		funcs:count(1)->Column#13
+    └─StreamAgg	cop[tikv]		funcs:count(1)->Column
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(1) from (select count(c2) from t1 group by c3) k;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(1)->Column#5
-└─HashAgg	root		group by:explain_easy.t1.c3, funcs:count(Column#9)->Column#7
+StreamAgg	root		funcs:count(1)->Column
+└─HashAgg	root		group by:explain_easy.t1.c3, funcs:count(Column)->Column
   └─TableReader	root		data:HashAgg
-    └─HashAgg	cop[tikv]		group by:explain_easy.t1.c3, funcs:count(1)->Column#9
+    └─HashAgg	cop[tikv]		group by:explain_easy.t1.c3, funcs:count(1)->Column
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'plan_tree' select sum(t1.c1 in (select c1 from t2)) from t1;
 id	task	access object	operator info
-StreamAgg	root		funcs:sum(Column#13)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
+StreamAgg	root		funcs:sum(Column)->Column
+└─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
   └─HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t1.c1, explain_easy.t2.c1)
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -251,8 +251,8 @@ HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(6 in (select c2 from t2)) from t1;
 id	task	access object	operator info
-StreamAgg	root		funcs:sum(Column#13)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
+StreamAgg	root		funcs:sum(Column)->Column
+└─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
   └─HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(6, explain_easy.t2.c2)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -319,11 +319,11 @@ drop table if exists t;
 create table t(a int primary key, b int, c int, index idx(b));
 explain format = 'plan_tree' select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
 id	task	access object	operator info
-Projection	root		Column#17
-└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column#16)
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:count(1)->Column#16
+  └─StreamAgg(Probe)	root		funcs:count(1)->Column
     └─MergeJoin	root		inner join, left key:explain_easy.t.a, right key:explain_easy.t.a
       ├─TableReader(Build)	root		data:TableRangeScan
       │ └─TableRangeScan	cop[tikv]	table:t1	range: decided by [eq(explain_easy.t.a, explain_easy.t.a)], keep order:true, stats:pseudo
@@ -331,11 +331,11 @@ Projection	root		Column#17
         └─TableRangeScan	cop[tikv]	table:s	range: decided by [eq(explain_easy.t.a, explain_easy.t.a)], keep order:true, stats:pseudo
 explain format = 'plan_tree' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	task	access object	operator info
-Projection	root		Column#17
-└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column#16)
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:count(1)->Column#16
+  └─StreamAgg(Probe)	root		funcs:count(1)->Column
     └─IndexJoin	root		inner join, inner:TableReader, outer key:explain_easy.t.a, inner key:explain_easy.t.a, equal cond:eq(explain_easy.t.a, explain_easy.t.a)
       ├─IndexReader(Build)	root		index:IndexRangeScan
       │ └─IndexRangeScan	cop[tikv]	table:s, index:idx(b)	range: decided by [eq(explain_easy.t.b, explain_easy.t.a)], keep order:false, stats:pseudo
@@ -343,11 +343,11 @@ Projection	root		Column#17
         └─TableRangeScan	cop[tikv]	table:t1	range: decided by [explain_easy.t.a], keep order:false, stats:pseudo
 explain format = 'plan_tree' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	task	access object	operator info
-Projection	root		Column#17
-└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column#16)
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:count(1)->Column#16
+  └─StreamAgg(Probe)	root		funcs:count(1)->Column
     └─IndexJoin	root		inner join, inner:TableReader, outer key:explain_easy.t.c, inner key:explain_easy.t.a, equal cond:eq(explain_easy.t.c, explain_easy.t.a)
       ├─IndexLookUp(Build)	root		
       │ ├─IndexRangeScan(Build)	cop[tikv]	table:s, index:idx(b)	range: decided by [eq(explain_easy.t.b, explain_easy.t.a)], keep order:false, stats:pseudo
@@ -359,11 +359,11 @@ insert into t values(1, 1, 1), (2, 2 ,2), (3, 3, 3), (4, 3, 4),(5,3,5);
 analyze table t;
 explain format = 'plan_tree' select t.c in (select count(*) from t s, t t1 where s.b = t.a and s.b = 3 and s.a = t1.a) from t;
 id	task	access object	operator info
-Projection	root		Column#17
-└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column#16)
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	root		funcs:count(1)->Column#16
+  └─StreamAgg(Probe)	root		funcs:count(1)->Column
     └─MergeJoin	root		inner join, left key:explain_easy.t.a, right key:explain_easy.t.a
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		eq(explain_easy.t.a, 3)
@@ -373,46 +373,46 @@ Projection	root		Column#17
           └─IndexRangeScan	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:true
 explain format = 'plan_tree' select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	task	access object	operator info
-Projection	root		Column#17
-└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column#16)
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	root		funcs:count(Column#19)->Column#16
+  └─StreamAgg(Probe)	root		funcs:count(Column)->Column
     └─IndexReader	root		index:StreamAgg
-      └─StreamAgg	cop[tikv]		funcs:count(1)->Column#19
+      └─StreamAgg	cop[tikv]		funcs:count(1)->Column
         └─Selection	cop[tikv]		eq(3, explain_easy.t.a)
           └─IndexRangeScan	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:false
 explain format = 'plan_tree' select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 id	task	access object	operator info
-Projection	root		Column#17
-└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column#16)
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t.c, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	root		funcs:count(Column#19)->Column#16
+  └─StreamAgg(Probe)	root		funcs:count(Column)->Column
     └─IndexReader	root		index:StreamAgg
-      └─StreamAgg	cop[tikv]		funcs:count(1)->Column#19
+      └─StreamAgg	cop[tikv]		funcs:count(1)->Column
         └─Selection	cop[tikv]		eq(3, explain_easy.t.a)
           └─IndexRangeScan	cop[tikv]	table:t1, index:idx(b)	range:[3,3], keep order:false
 drop table if exists t;
 create table t(a int unsigned not null);
 explain format = 'plan_tree' select t.a = '123455' from t;
 id	task	access object	operator info
-Projection	root		eq(explain_easy.t.a, 123455)->Column#3
+Projection	root		eq(explain_easy.t.a, 123455)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select t.a > '123455' from t;
 id	task	access object	operator info
-Projection	root		gt(explain_easy.t.a, 123455)->Column#3
+Projection	root		gt(explain_easy.t.a, 123455)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select t.a != '123455' from t;
 id	task	access object	operator info
-Projection	root		ne(explain_easy.t.a, 123455)->Column#3
+Projection	root		ne(explain_easy.t.a, 123455)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select t.a = 12345678912345678998789678687678.111 from t;
 id	task	access object	operator info
-Projection	root		0->Column#3
+Projection	root		0->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
@@ -460,7 +460,7 @@ id	task	access object	operator info
 TableDual	root		rows:0
 explain format = 'plan_tree' select null or a > 1 from t;
 id	task	access object	operator info
-Projection	root		or(<nil>, gt(explain_easy.t.a, 1))->Column#2
+Projection	root		or(<nil>, gt(explain_easy.t.a, 1))->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t where a = 1 for update;
@@ -504,63 +504,63 @@ PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 explain format = 'plan_tree' SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_name, SUM(a.registration_num) registration_num FROM (SELECT stat_date, show_date, region_id, 0 registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202 UNION ALL SELECT stat_date, show_date, region_id, registration_num registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202) a LEFT JOIN test02 b ON a.region_id = b.id WHERE registration_num > 0 AND a.stat_date >= '20191202' AND a.stat_date <= '20191202' GROUP BY a.stat_date , a.show_date , COALESCE(b.region_name, '不详') ) JLS;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(1)->Column#22
-└─HashAgg	root		group by:Column#47, Column#48, Column#49, funcs:count(1)->Column#36
-  └─Projection	root		Column#14->Column#47, Column#15->Column#48, coalesce(explain_easy.test02.region_name, 不详)->Column#49
-    └─IndexJoin	root		left outer join, inner:TableReader, left side:HashAgg, outer key:Column#16, inner key:explain_easy.test02.id, equal cond:eq(Column#16, explain_easy.test02.id)
-      ├─HashAgg(Build)	root		group by:Column#14, Column#15, Column#16, funcs:firstrow(Column#33)->Column#14, funcs:firstrow(Column#34)->Column#15, funcs:firstrow(Column#35)->Column#16, funcs:count(1)->Column#37
+StreamAgg	root		funcs:count(1)->Column
+└─HashAgg	root		group by:Column, Column, Column, funcs:count(1)->Column
+  └─Projection	root		Column->Column, Column->Column, coalesce(explain_easy.test02.region_name, 不详)->Column
+    └─IndexJoin	root		left outer join, inner:TableReader, left side:HashAgg, outer key:Column, inner key:explain_easy.test02.id, equal cond:eq(Column, explain_easy.test02.id)
+      ├─HashAgg(Build)	root		group by:Column, Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:count(1)->Column
       │ └─Union	root		
-      │   ├─Projection	root		Column#33, Column#34, Column#35, Column#14, Column#15, Column#16
-      │   │ └─HashAgg	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column#33, funcs:firstrow(explain_easy.test01.show_date)->Column#34, funcs:firstrow(explain_easy.test01.region_id)->Column#35, funcs:firstrow(explain_easy.test01.stat_date)->Column#14, funcs:firstrow(explain_easy.test01.show_date)->Column#15, funcs:firstrow(explain_easy.test01.region_id)->Column#16, funcs:count(1)->Column#38
+      │   ├─Projection	root		Column, Column, Column, Column, Column, Column
+      │   │ └─HashAgg	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column, funcs:firstrow(explain_easy.test01.show_date)->Column, funcs:firstrow(explain_easy.test01.region_id)->Column, funcs:firstrow(explain_easy.test01.stat_date)->Column, funcs:firstrow(explain_easy.test01.show_date)->Column, funcs:firstrow(explain_easy.test01.region_id)->Column, funcs:count(1)->Column
       │   │   └─TableDual	root		rows:0
-      │   └─Projection	root		Column#33, Column#34, Column#35, Column#14, Column#15, Column#16
-      │     └─HashAgg	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column#33, funcs:firstrow(explain_easy.test01.show_date)->Column#34, funcs:firstrow(explain_easy.test01.region_id)->Column#35, funcs:firstrow(explain_easy.test01.stat_date)->Column#14, funcs:firstrow(explain_easy.test01.show_date)->Column#15, funcs:firstrow(explain_easy.test01.region_id)->Column#16, funcs:count(Column#46)->Column#39
+      │   └─Projection	root		Column, Column, Column, Column, Column, Column
+      │     └─HashAgg	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column, funcs:firstrow(explain_easy.test01.show_date)->Column, funcs:firstrow(explain_easy.test01.region_id)->Column, funcs:firstrow(explain_easy.test01.stat_date)->Column, funcs:firstrow(explain_easy.test01.show_date)->Column, funcs:firstrow(explain_easy.test01.region_id)->Column, funcs:count(Column)->Column
       │       └─TableReader	root		data:HashAgg
-      │         └─HashAgg	cop[tikv]		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:count(1)->Column#46
+      │         └─HashAgg	cop[tikv]		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:count(1)->Column
       │           └─Selection	cop[tikv]		eq(explain_easy.test01.period, 1), ge(explain_easy.test01.stat_date, 20191202), gt(cast(explain_easy.test01.registration_num, decimal(20,0) BINARY), 0), le(explain_easy.test01.stat_date, 20191202)
       │             └─TableFullScan	cop[tikv]	table:test01	keep order:false, stats:pseudo
       └─TableReader(Probe)	root		data:TableRangeScan
-        └─TableRangeScan	cop[tikv]	table:b	range: decided by [Column#16], keep order:false, stats:pseudo
+        └─TableRangeScan	cop[tikv]	table:b	range: decided by [Column], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
 explain format = 'plan_tree' select ifnull(a, 0) from t;
 id	task	access object	operator info
-Projection	root		ifnull(explain_easy.t.a, 0)->Column#5
+Projection	root		ifnull(explain_easy.t.a, 0)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(nb, 0) from t;
 id	task	access object	operator info
-Projection	root		cast(explain_easy.t.nb, bigint BINARY)->Column#5
+Projection	root		cast(explain_easy.t.nb, bigint BINARY)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(nb, 0), ifnull(nc, 0) from t;
 id	task	access object	operator info
-Projection	root		cast(explain_easy.t.nb, bigint BINARY)->Column#5, cast(explain_easy.t.nc, bigint BINARY)->Column#6
+Projection	root		cast(explain_easy.t.nb, bigint BINARY)->Column, cast(explain_easy.t.nc, bigint BINARY)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(a, 0), ifnull(nb, 0) from t;
 id	task	access object	operator info
-Projection	root		ifnull(explain_easy.t.a, 0)->Column#5, cast(explain_easy.t.nb, bigint BINARY)->Column#6
+Projection	root		ifnull(explain_easy.t.a, 0)->Column, cast(explain_easy.t.nb, bigint BINARY)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(nb, 0), ifnull(nb, 0) from t;
 id	task	access object	operator info
-Projection	root		cast(explain_easy.t.nb, bigint BINARY)->Column#5, cast(explain_easy.t.nb, bigint BINARY)->Column#6
+Projection	root		cast(explain_easy.t.nb, bigint BINARY)->Column, cast(explain_easy.t.nb, bigint BINARY)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select 1+ifnull(nb, 0) from t;
 id	task	access object	operator info
-Projection	root		plus(1, cast(explain_easy.t.nb, bigint BINARY))->Column#5
+Projection	root		plus(1, cast(explain_easy.t.nb, bigint BINARY))->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select 1+ifnull(a, 0) from t;
 id	task	access object	operator info
-Projection	root		plus(1, ifnull(explain_easy.t.a, 0))->Column#5
+Projection	root		plus(1, ifnull(explain_easy.t.a, 0))->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select 1+ifnull(nb, 0) from t where nb=1;
 id	task	access object	operator info
-Projection	root		plus(1, cast(explain_easy.t.nb, bigint BINARY))->Column#5
+Projection	root		plus(1, cast(explain_easy.t.nb, bigint BINARY))->Column
 └─TableReader	root		data:Selection
   └─Selection	cop[tikv]		eq(explain_easy.t.nb, 1)
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -593,16 +593,16 @@ HashJoin	root		inner join, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)]
     └─TableFullScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	task	access object	operator info
-Projection	root		Column#22
-└─Apply	root		left outer semi join, left side:Projection, equal:[eq(Column#23, Column#21)]
-  ├─Projection(Build)	root		explain_easy.t.a, cast(explain_easy.t.nc, bigint BINARY)->Column#23
+Projection	root		Column
+└─Apply	root		left outer semi join, left side:Projection, equal:[eq(Column, Column)]
+  ├─Projection(Build)	root		explain_easy.t.a, cast(explain_easy.t.nc, bigint BINARY)->Column
   │ └─TableReader	root		data:TableFullScan
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	root		funcs:count(Column#25)->Column#21
+  └─HashAgg(Probe)	root		funcs:count(Column)->Column
     └─HashJoin	root		inner join, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
-      ├─HashAgg(Build)	root		group by:explain_easy.t.a, funcs:count(Column#26)->Column#25, funcs:firstrow(explain_easy.t.a)->explain_easy.t.a
+      ├─HashAgg(Build)	root		group by:explain_easy.t.a, funcs:count(Column)->Column, funcs:firstrow(explain_easy.t.a)->explain_easy.t.a
       │ └─TableReader	root		data:HashAgg
-      │   └─HashAgg	cop[tikv]		group by:explain_easy.t.a, funcs:count(1)->Column#26
+      │   └─HashAgg	cop[tikv]		group by:explain_easy.t.a, funcs:count(1)->Column
       │     └─Selection	cop[tikv]		eq(explain_easy.t.a, explain_easy.t.a), not(isnull(explain_easy.t.a))
       │       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
       └─TableReader(Probe)	root		data:Selection
@@ -627,16 +627,16 @@ HashJoin	root		right outer join, left side:TableReader, equal:[eq(explain_easy.t
     └─TableFullScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(t.a, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	task	access object	operator info
-Projection	root		Column#22
-└─Apply	root		left outer semi join, left side:Projection, equal:[eq(Column#23, Column#21)]
-  ├─Projection(Build)	root		explain_easy.t.a, ifnull(explain_easy.t.a, 1)->Column#23
+Projection	root		Column
+└─Apply	root		left outer semi join, left side:Projection, equal:[eq(Column, Column)]
+  ├─Projection(Build)	root		explain_easy.t.a, ifnull(explain_easy.t.a, 1)->Column
   │ └─TableReader	root		data:TableFullScan
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	root		funcs:count(Column#25)->Column#21
+  └─HashAgg(Probe)	root		funcs:count(Column)->Column
     └─HashJoin	root		inner join, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
-      ├─HashAgg(Build)	root		group by:explain_easy.t.a, funcs:count(Column#26)->Column#25, funcs:firstrow(explain_easy.t.a)->explain_easy.t.a
+      ├─HashAgg(Build)	root		group by:explain_easy.t.a, funcs:count(Column)->Column, funcs:firstrow(explain_easy.t.a)->explain_easy.t.a
       │ └─TableReader	root		data:HashAgg
-      │   └─HashAgg	cop[tikv]		group by:explain_easy.t.a, funcs:count(1)->Column#26
+      │   └─HashAgg	cop[tikv]		group by:explain_easy.t.a, funcs:count(1)->Column
       │     └─Selection	cop[tikv]		eq(explain_easy.t.a, explain_easy.t.a), not(isnull(explain_easy.t.a))
       │       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
       └─TableReader(Probe)	root		data:Selection
@@ -672,7 +672,7 @@ Sort	root		explain_easy.t.a, explain_easy.t.b
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 ScalarSubQuery	root		Output: ScalarQueryCol#6
 └─MaxOneRow	root		
-  └─Projection	root		2->Column#5
+  └─Projection	root		2->Column
     └─TableDual	root		rows:1
 explain format = 'plan_tree' select * from (select * from t order by c) t order by a, b;
 id	task	access object	operator info
@@ -683,21 +683,21 @@ drop table if exists t;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 explain format = 'plan_tree' SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
 id	task	access object	operator info
-Sort	root		Column#3
-└─HashAgg	root		group by:Column#3, funcs:firstrow(Column#6)->Column#3
+Sort	root		Column
+└─HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
   └─Union	root		
-    ├─HashAgg	root		group by:1, funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
+    ├─HashAgg	root		group by:1, funcs:firstrow(0)->Column, funcs:firstrow(0)->Column
     │ └─TableDual	root		rows:1
-    └─HashAgg	root		group by:1, funcs:firstrow(1)->Column#6, funcs:firstrow(1)->Column#3
+    └─HashAgg	root		group by:1, funcs:firstrow(1)->Column, funcs:firstrow(1)->Column
       └─TableDual	root		rows:1
 explain format = 'plan_tree' SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a);
 id	task	access object	operator info
-HashAgg	root		group by:Column#3, funcs:firstrow(Column#6)->Column#3
+HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
 └─Union	root		
-  ├─HashAgg	root		group by:1, funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
+  ├─HashAgg	root		group by:1, funcs:firstrow(0)->Column, funcs:firstrow(0)->Column
   │ └─TableDual	root		rows:1
-  └─StreamAgg	root		group by:Column#2, funcs:firstrow(Column#2)->Column#6, funcs:firstrow(Column#2)->Column#3
-    └─Projection	root		1->Column#2
+  └─StreamAgg	root		group by:Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column
+    └─Projection	root		1->Column
       └─TableDual	root		rows:1
 create table t (i int key, j int, unique key (i, j));
 begin;
@@ -762,8 +762,8 @@ create table t(a int, b int);
 explain format = 'plan_tree' select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
 id	task	access object	operator info
 Projection	root		explain_easy.t.a, explain_easy.t.b
-└─Selection	root		gt(cast(explain_easy.t.a, decimal(10,0) BINARY), Column#5), lt(explain_easy.t.b, 10)
-  └─Window	root		avg(cast(explain_easy.t.b, decimal(10,0) BINARY))->Column#5 over(partition by explain_easy.t.a)
+└─Selection	root		gt(cast(explain_easy.t.a, decimal(10,0) BINARY), Column), lt(explain_easy.t.b, 10)
+  └─Window	root		avg(cast(explain_easy.t.b, decimal(10,0) BINARY))->Column over(partition by explain_easy.t.a)
     └─Sort	root		explain_easy.t.a
       └─TableReader	root		data:Selection
         └─Selection	cop[tikv]		gt(explain_easy.t.a, 10)
@@ -807,63 +807,63 @@ create table t(a int, b int);
 analyze table t;
 explain format = 'plan_tree' select (select count(n.a) from t) from t n;
 id	task	access object	operator info
-Projection	root		Column#11->Column#12
+Projection	root		Column->Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
-  ├─StreamAgg(Build)	root		funcs:count(explain_easy.t.a)->Column#7
+  ├─StreamAgg(Build)	root		funcs:count(explain_easy.t.a)->Column
   │ └─TableReader	root		data:TableFullScan
   │   └─TableFullScan	cop[tikv]	table:n	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
-    └─Projection	root		Column#7->Column#11
+    └─Projection	root		Column->Column
       └─TableReader	root		data:TableFullScan
         └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select (select sum((select count(a)))) from t;
 id	task	access object	operator info
-Projection	root		Column#7->Column#8
+Projection	root		Column->Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
-  ├─StreamAgg(Build)	root		funcs:count(explain_easy.t.a)->Column#5
+  ├─StreamAgg(Build)	root		funcs:count(explain_easy.t.a)->Column
   │ └─TableReader	root		data:TableFullScan
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	root		funcs:sum(Column#12)->Column#7
+  └─HashAgg(Probe)	root		funcs:sum(Column)->Column
     └─HashJoin	root		CARTESIAN left outer join, left side:TableDual
-      ├─HashAgg(Build)	root		group by:1, funcs:sum(Column#14)->Column#12
-      │ └─Projection	root		cast(Column#6, decimal(20,0) BINARY)->Column#14
+      ├─HashAgg(Build)	root		group by:1, funcs:sum(Column)->Column
+      │ └─Projection	root		cast(Column, decimal(20,0) BINARY)->Column
       │   └─MaxOneRow	root		
-      │     └─Projection	root		Column#5->Column#6
+      │     └─Projection	root		Column->Column
       │       └─TableDual	root		rows:1
       └─TableDual(Probe)	root		rows:1
 explain format = 'plan_tree' select count(a) from t group by b order by (select count(a));
 id	task	access object	operator info
-Projection	root		Column#5->Column#7
-└─Sort	root		Column#6
+Projection	root		Column->Column
+└─Sort	root		Column
   └─Apply	root		CARTESIAN left outer join, left side:HashAgg
-    ├─HashAgg(Build)	root		group by:explain_easy.t.b, funcs:count(explain_easy.t.a)->Column#5
+    ├─HashAgg(Build)	root		group by:explain_easy.t.b, funcs:count(explain_easy.t.a)->Column
     │ └─TableReader	root		data:TableFullScan
     │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─Projection(Probe)	root		Column#5->Column#6
+    └─Projection(Probe)	root		Column->Column
       └─TableDual	root		rows:1
 explain format = 'plan_tree' select (select sum(count(a))) from t;
 id	task	access object	operator info
-Projection	root		Column#5->Column#6
+Projection	root		Column->Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
-  ├─StreamAgg(Build)	root		funcs:count(explain_easy.t.a)->Column#4
+  ├─StreamAgg(Build)	root		funcs:count(explain_easy.t.a)->Column
   │ └─TableReader	root		data:TableFullScan
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:sum(Column#7)->Column#5
-    └─Projection	root		cast(Column#4, decimal(20,0) BINARY)->Column#7
+  └─StreamAgg(Probe)	root		funcs:sum(Column)->Column
+    └─Projection	root		cast(Column, decimal(20,0) BINARY)->Column
       └─TableDual	root		rows:1
 explain format = 'plan_tree' select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 id	task	access object	operator info
-Projection	root		Column#5->Column#9, Column#7->Column#10, Column#6->Column#11
-└─Sort	root		Column#8
+Projection	root		Column->Column, Column->Column, Column->Column
+└─Sort	root		Column
   └─Apply	root		CARTESIAN left outer join, left side:Apply
     ├─Apply(Build)	root		CARTESIAN left outer join, left side:HashAgg
-    │ ├─HashAgg(Build)	root		group by:Column#19, funcs:sum(Column#17)->Column#5, funcs:count(Column#18)->Column#6
-    │ │ └─Projection	root		cast(explain_easy.t.a, decimal(10,0) BINARY)->Column#17, explain_easy.t.a->Column#18, explain_easy.t.b->Column#19
+    │ ├─HashAgg(Build)	root		group by:Column, funcs:sum(Column)->Column, funcs:count(Column)->Column
+    │ │ └─Projection	root		cast(explain_easy.t.a, decimal(10,0) BINARY)->Column, explain_easy.t.a->Column, explain_easy.t.b->Column
     │ │   └─TableReader	root		data:TableFullScan
     │ │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-    │ └─Projection(Probe)	root		Column#5->Column#7
+    │ └─Projection(Probe)	root		Column->Column
     │   └─TableDual	root		rows:1
-    └─Projection(Probe)	root		Column#6->Column#8
+    └─Projection(Probe)	root		Column->Column
       └─TableDual	root		rows:1
 drop table if exists t;
 create table t(a tinyint, b smallint, c mediumint, d int, e bigint);
@@ -871,8 +871,8 @@ insert into mysql.opt_rule_blacklist VALUES("aggregation_push_down");
 admin reload opt_rule_blacklist;
 explain format = 'plan_tree' select sum(t1.a) from t t1 join t t2 on t1.a=t2.a;
 id	task	access object	operator info
-StreamAgg	root		funcs:sum(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.a, decimal(3,0) BINARY)->Column#14
+StreamAgg	root		funcs:sum(Column)->Column
+└─Projection	root		cast(explain_easy.t.a, decimal(3,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.a))
@@ -882,8 +882,8 @@ StreamAgg	root		funcs:sum(Column#14)->Column#13
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(t1.b) from t t1 join t t2 on t1.b=t2.b;
 id	task	access object	operator info
-StreamAgg	root		funcs:sum(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.b, decimal(5,0) BINARY)->Column#14
+StreamAgg	root		funcs:sum(Column)->Column
+└─Projection	root		cast(explain_easy.t.b, decimal(5,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.b))
@@ -893,8 +893,8 @@ StreamAgg	root		funcs:sum(Column#14)->Column#13
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(t1.c) from t t1 join t t2 on t1.c=t2.c;
 id	task	access object	operator info
-StreamAgg	root		funcs:sum(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.c, decimal(8,0) BINARY)->Column#14
+StreamAgg	root		funcs:sum(Column)->Column
+└─Projection	root		cast(explain_easy.t.c, decimal(8,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.c, explain_easy.t.c)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.c))
@@ -904,8 +904,8 @@ StreamAgg	root		funcs:sum(Column#14)->Column#13
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(t1.d) from t t1 join t t2 on t1.d=t2.d;
 id	task	access object	operator info
-StreamAgg	root		funcs:sum(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.d, decimal(10,0) BINARY)->Column#14
+StreamAgg	root		funcs:sum(Column)->Column
+└─Projection	root		cast(explain_easy.t.d, decimal(10,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.d, explain_easy.t.d)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.d))
@@ -915,8 +915,8 @@ StreamAgg	root		funcs:sum(Column#14)->Column#13
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(t1.e) from t t1 join t t2 on t1.e=t2.e;
 id	task	access object	operator info
-StreamAgg	root		funcs:sum(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.e, decimal(20,0) BINARY)->Column#14
+StreamAgg	root		funcs:sum(Column)->Column
+└─Projection	root		cast(explain_easy.t.e, decimal(20,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.e, explain_easy.t.e)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.e))
@@ -926,8 +926,8 @@ StreamAgg	root		funcs:sum(Column#14)->Column#13
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select avg(t1.a) from t t1 join t t2 on t1.a=t2.a;
 id	task	access object	operator info
-StreamAgg	root		funcs:avg(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.a, decimal(3,0) BINARY)->Column#14
+StreamAgg	root		funcs:avg(Column)->Column
+└─Projection	root		cast(explain_easy.t.a, decimal(3,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.a))
@@ -937,8 +937,8 @@ StreamAgg	root		funcs:avg(Column#14)->Column#13
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select avg(t1.b) from t t1 join t t2 on t1.b=t2.b;
 id	task	access object	operator info
-StreamAgg	root		funcs:avg(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.b, decimal(5,0) BINARY)->Column#14
+StreamAgg	root		funcs:avg(Column)->Column
+└─Projection	root		cast(explain_easy.t.b, decimal(5,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.b))
@@ -948,8 +948,8 @@ StreamAgg	root		funcs:avg(Column#14)->Column#13
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select avg(t1.c) from t t1 join t t2 on t1.c=t2.c;
 id	task	access object	operator info
-StreamAgg	root		funcs:avg(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.c, decimal(8,0) BINARY)->Column#14
+StreamAgg	root		funcs:avg(Column)->Column
+└─Projection	root		cast(explain_easy.t.c, decimal(8,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.c, explain_easy.t.c)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.c))
@@ -959,8 +959,8 @@ StreamAgg	root		funcs:avg(Column#14)->Column#13
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select avg(t1.d) from t t1 join t t2 on t1.d=t2.d;
 id	task	access object	operator info
-StreamAgg	root		funcs:avg(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.d, decimal(10,0) BINARY)->Column#14
+StreamAgg	root		funcs:avg(Column)->Column
+└─Projection	root		cast(explain_easy.t.d, decimal(10,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.d, explain_easy.t.d)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.d))
@@ -970,8 +970,8 @@ StreamAgg	root		funcs:avg(Column#14)->Column#13
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select avg(t1.e) from t t1 join t t2 on t1.e=t2.e;
 id	task	access object	operator info
-StreamAgg	root		funcs:avg(Column#14)->Column#13
-└─Projection	root		cast(explain_easy.t.e, decimal(20,0) BINARY)->Column#14
+StreamAgg	root		funcs:avg(Column)->Column
+└─Projection	root		cast(explain_easy.t.e, decimal(20,0) BINARY)->Column
   └─HashJoin	root		inner join, equal:[eq(explain_easy.t.e, explain_easy.t.e)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(explain_easy.t.e))
