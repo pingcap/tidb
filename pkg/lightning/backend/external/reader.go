@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"io"
@@ -334,6 +335,19 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 		statistics.DefaultHistogramBuckets,
 		statistics.DefaultTopNValue,
 		idxID, collector, tp, false, nil, false)
+
+	var bounds []int64
+	iter := chunk.NewIterator4Chunk(hist.Bounds)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		remain, d, err := codec.DecodeOne(row.GetBytes(0))
+		if err != nil {
+			panic(err)
+		}
+		if remain != nil {
+			panic("should be nil")
+		}
+		bounds = append(bounds, d.GetInt64())
+	}
 	logutil.BgLogger().Info("build hist, topn",
 		zap.Int("items-count", len(sampleItems)),
 		zap.Int64("fms-count", fullFms.NDV()),
@@ -343,6 +357,8 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 		zap.Int64("null-count", nullCnt),
 		zap.Int64("not-null-count", notNullCnt),
 		zap.Int64("total-size", totalSize),
+		zap.Int("bound-len", len(bounds)),
+		zap.Int64s("bound", bounds),
 	)
 
 	return nil
