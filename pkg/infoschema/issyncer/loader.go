@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
@@ -86,6 +85,7 @@ type Loader struct {
 	// loading system tables
 	crossKS bool
 	logger  *zap.Logger
+	filter  Filter
 
 	// below fields are set when running background routines
 	// Note: for cross keyspace loader, we don't set below fields as system tables
@@ -97,19 +97,17 @@ type Loader struct {
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
-	// loadDBFilter once set, `loader` will only load databases when this predict returns "true".
-	loadDBFilter func(dbName ast.CIStr) bool
 }
 
-func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, loadDBFilter func(dbName ast.CIStr) bool) *Loader {
+func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, filter Filter) *Loader {
 	mode := LoadModeAuto
 	return &Loader{
-		mode:         mode,
-		store:        store,
-		infoCache:    infoCache,
-		deferFn:      deferFn,
-		loadDBFilter: loadDBFilter,
-		logger:       logutil.BgLogger().With(zap.Stringer("mode", mode)),
+		mode:      mode,
+		store:     store,
+		infoCache: infoCache,
+		deferFn:   deferFn,
+		filter:    filter,
+		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
 	}
 }
 
@@ -293,22 +291,12 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 }
 
 func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
-	if l.loadDBFilter != nil {
-		// Always accept newly created schema as we cannot access its name in this context.
-		// Always accept `CREATE PLACEMENT POLICY`: its `schemaID` is ID of this poilcy but not zero.
-		if diff.Type == model.ActionCreateSchema || diff.Type == model.ActionCreatePlacementPolicy {
-			l.logger.Warn("Load DB filter was ignored.", zap.Int64("diff", diff.Version), zap.Stringer("type", diff.Type))
-			return false
-		}
-		// Always accept db unrelated DDLs.
-		if diff.SchemaID == 0 {
-			return false
-		}
-
-		is := l.infoCache.GetLatest()
-		schema, ok := is.SchemaByID(diff.SchemaID)
-		selected := ok && l.loadDBFilter(schema.Name)
-		return !selected
+	var latestIS infoschema.InfoSchema
+	if l.infoCache != nil {
+		latestIS = l.infoCache.GetLatest()
+	}
+	if l.filter != nil && l.filter.SkipLoadDiff(diff, latestIS) {
+		return true
 	}
 
 	if !l.crossKS {
@@ -435,11 +423,11 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
-	} else if l.loadDBFilter != nil {
+	} else if l.filter != nil {
 		// only load system databases
 		allSchemas = make([]*model.DBInfo, 0, 6)
 		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
-			if l.loadDBFilter(dbInfo.Name) {
+			if !l.filter.SkipLoadSchema(dbInfo) {
 				allSchemas = append(allSchemas, dbInfo)
 			}
 			return nil

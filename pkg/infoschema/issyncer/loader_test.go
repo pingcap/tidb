@@ -30,6 +30,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testNameFilter is a lightweight Filter implementation for tests, mimicking
+// BR behaviour without importing BR packages to avoid cycles.
+type testNameFilter struct {
+	allow func(ast.CIStr) bool
+}
+
+func newTestNameFilter(fn func(ast.CIStr) bool) Filter {
+	if fn == nil {
+		return nil
+	}
+	return &testNameFilter{allow: fn}
+}
+
+func (f *testNameFilter) SkipLoadDiff(diff *model.SchemaDiff, latestIS infoschema.InfoSchema) bool {
+	if f == nil || f.allow == nil {
+		return false
+	}
+	if diff.Type == model.ActionCreateSchema || diff.Type == model.ActionCreatePlacementPolicy {
+		return false
+	}
+	if diff.SchemaID == 0 {
+		return false
+	}
+	if latestIS == nil {
+		return true
+	}
+	schema, ok := latestIS.SchemaByID(diff.SchemaID)
+	selected := ok && f.allow(schema.Name)
+	return !selected
+}
+
+func (f *testNameFilter) SkipLoadSchema(dbInfo *model.DBInfo) bool {
+	if f == nil || f.allow == nil || dbInfo == nil {
+		return false
+	}
+	return !f.allow(dbInfo.Name)
+}
+
+func (f *testNameFilter) SkipMDLCheck(tableIDs map[int64]struct{}, latestIS infoschema.InfoSchema) bool {
+	if f == nil || f.allow == nil || latestIS == nil {
+		return false
+	}
+	for id := range tableIDs {
+		db, ok := latestIS.SchemaByID(id)
+		if !(ok && f.allow(db.Name)) {
+			return false
+		}
+	}
+	return true
+}
+
 func TestLoadFromTS(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -260,11 +311,11 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create loader for BR with a filter function that only loads system and BR-related databases
-	brFilter := func(dbName ast.CIStr) bool {
+	brFilter := newTestNameFilter(func(dbName ast.CIStr) bool {
 		return metadef.IsSystemDB(dbName.L) || metadef.IsBRRelatedDB(dbName.O)
-	}
+	})
 	loaderForBR := newLoader(store, infoschema.NewCache(nil, 1), nil, brFilter)
-	require.NotNil(t, loaderForBR.loadDBFilter)
+	require.NotNil(t, loaderForBR.filter)
 
 	// Load initial schema to populate the cache
 	_, _, _, _, err = loaderForBR.LoadWithTS(ver.Ver, false)
@@ -366,9 +417,9 @@ func TestLoadForBR(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test with BR filter (only load system and BR-related databases)
-	brFilter := func(dbName ast.CIStr) bool {
+	brFilter := newTestNameFilter(func(dbName ast.CIStr) bool {
 		return metadef.IsSystemDB(dbName.L) || metadef.IsBRRelatedDB(dbName.O)
-	}
+	})
 	loaderForBR := newLoader(store, infoschema.NewCache(nil, 1), nil, brFilter)
 	is, hitCache, oldSchemaVersion, changes, err := loaderForBR.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)

@@ -32,9 +32,9 @@ import (
 )
 
 func setTiDBGlueDBFilter(newFilter func(dbName ast.CIStr) bool) func() {
-	oldMode := tidbGlue.LoadDBFilter
-	tidbGlue.LoadDBFilter = newFilter
-	return func() { tidbGlue.LoadDBFilter = oldMode }
+	oldFilter := tidbGlue.InfoSchemaFilter
+	tidbGlue.InfoSchemaFilter = gluetidb.NewInfoSchemaFilter(newFilter)
+	return func() { tidbGlue.InfoSchemaFilter = oldFilter }
 }
 
 var (

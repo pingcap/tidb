@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -73,7 +74,7 @@ type Glue struct {
 	tikvGlue      gluetikv.Glue
 	startDomainMu *sync.Mutex
 
-	LoadDBFilter func(name ast.CIStr) bool
+	InfoSchemaFilter issyncer.Filter
 }
 
 func WrapSession(se sessionapi.Session) glue.Session {
@@ -85,10 +86,10 @@ type tidbSession struct {
 }
 
 func (g Glue) getDomainInner(store kv.Storage) (*domain.Domain, error) {
-	if g.LoadDBFilter == nil {
+	if g.InfoSchemaFilter == nil {
 		return session.GetDomain(store)
 	}
-	return session.GetOrCreateDomainWithFilter(store, g.LoadDBFilter)
+	return session.GetOrCreateDomainWithFilter(store, g.InfoSchemaFilter)
 }
 
 // GetDomain implements glue.Glue.

@@ -4,6 +4,7 @@ go_library(
     name = "issyncer",
     srcs = [
         "deferfn.go",
+        "filter.go",
         "loader.go",
         "mdl_check.go",
         "syncer.go",
@@ -24,7 +25,6 @@ go_library(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
-        "//pkg/parser/ast",
         "//pkg/session/sessmgr",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",

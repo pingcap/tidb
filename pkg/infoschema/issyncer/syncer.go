@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -92,10 +91,10 @@ func New(
 	schemaLease time.Duration,
 	sysSessionPool util.DestroyableSessionPool,
 	isValidator validatorapi.Validator,
-	loadDBFilter func(dbName ast.CIStr) bool,
+	filter Filter,
 ) *Syncer {
 	s := newSyncer(store, logutil.BgLogger(), schemaLease, sysSessionPool, isValidator)
-	s.loader = newLoader(store, infoCache, &s.deferFn, loadDBFilter)
+	s.loader = newLoader(store, infoCache, &s.deferFn, filter)
 	return s
 }
 
@@ -198,16 +197,8 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 }
 
 func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
-	if s.loader.loadDBFilter != nil {
-		is := s.InfoSchema()
-		for id := range tableIDs {
-			db, ok := is.SchemaByID(id)
-			isSysOrBRRel := ok && s.loader.loadDBFilter(db.Name)
-			if !isSysOrBRRel {
-				return false
-			}
-		}
-		return true
+	if s.loader.filter != nil {
+		return s.loader.filter.SkipMDLCheck(tableIDs, s.InfoSchema())
 	}
 
 	if !s.crossKS {

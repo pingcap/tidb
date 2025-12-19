@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -68,11 +69,11 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	return dm.getWithEtcdClient(store, nil, nil)
 }
 
-func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter func(dbName ast.CIStr) bool) (d *domain.Domain, err error) {
+func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
 	return dm.getWithEtcdClient(store, nil, filter)
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, loadDBFilter func(dbName ast.CIStr) bool) (d *domain.Domain, err error) {
+func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -106,7 +107,7 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 				return getCrossKSSessionFactory(store, targetKS, schemaValidator)
 			},
 			etcdClient,
-			loadDBFilter,
+			schemaFilter,
 		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker

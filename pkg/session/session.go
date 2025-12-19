@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -4289,9 +4290,9 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
-// GetOrCreateDomainWithFilter gets the associated domain for store. If domain not created, create a new one with loadDBFilter.
-func GetOrCreateDomainWithFilter(store kv.Storage, loadDBFilter func(dbName ast.CIStr) bool) (*domain.Domain, error) {
-	return domap.GetOrCreateWithFilter(store, loadDBFilter)
+// GetOrCreateDomainWithFilter gets the associated domain for store. If domain not created, create a new one with the given schema filter.
+func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.GetOrCreateWithFilter(store, filter)
 }
 
 // getStartMode gets the start mode according to the bootstrap version.
