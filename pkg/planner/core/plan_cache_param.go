@@ -47,7 +47,28 @@ var (
 	paramMakerPool = sync.Pool{New: func() any {
 		return ast.NewParamMarkerExpr(0)
 	}}
+	// optimizedParamCtxPool is used by GetParamSQLFromASTWithoutMutation
+	// to reuse Buffer and params slice, reducing memory allocations.
+	optimizedParamCtxPool = sync.Pool{New: func() any {
+		buf := new(bytes.Buffer)
+		buf.Grow(256) // Pre-allocate 256 bytes to cover most SQL queries
+		return &optimizedParamContext{
+			buf:    buf,
+			params: make([]any, 0, 8), // Pre-allocate for 8 params (covers most cases)
+		}
+	}}
 )
+
+// optimizedParamContext holds reusable objects for GetParamSQLFromASTWithoutMutation.
+type optimizedParamContext struct {
+	buf    *bytes.Buffer
+	params []any
+}
+
+func (ctx *optimizedParamContext) reset() {
+	ctx.buf.Reset()
+	ctx.params = ctx.params[:0] // Clear slice but keep capacity
+}
 
 // paramReplacer is an ast.Visitor that replaces all values with `?` and collects them.
 type paramReplacer struct {
@@ -93,6 +114,7 @@ func (pr *paramReplacer) Reset() {
 // GetParamSQLFromAST returns the parameterized SQL of this AST.
 // NOTICE: this function does not modify the original AST.
 // paramVals are copied from this AST.
+// TODO: update the related test cases and remove this function
 func GetParamSQLFromAST(stmt ast.StmtNode) (paramSQL string, paramVals []types.Datum, err error) {
 	var params []*driver.ValueExpr
 	paramSQL, params, err = ParameterizeAST(stmt)
@@ -106,6 +128,41 @@ func GetParamSQLFromAST(stmt ast.StmtNode) (paramSQL string, paramVals []types.D
 
 	err = RestoreASTWithParams(stmt, params)
 	return
+}
+
+// GetParamSQLFromASTWithoutMutation returns the parameterized SQL and param values
+// WITHOUT modifying the original AST. This is more efficient than GetParamSQLFromAST
+// as it performs a single AST traversal via Restore instead of 3 traversals
+// (replace values -> restore SQL -> restore values).
+//
+// The optimization works by setting ParamCollector on RestoreCtx, which causes
+// ValueExpr.Restore to write '?' and collect the value instead of writing the
+// literal value.
+func GetParamSQLFromASTWithoutMutation(stmt ast.StmtNode) (paramSQL string, paramVals []types.Datum, err error) {
+	ctx := optimizedParamCtxPool.Get().(*optimizedParamContext)
+	defer func() {
+		ctx.reset()
+		optimizedParamCtxPool.Put(ctx)
+	}()
+
+	restoreCtx := format.NewRestoreCtx(
+		format.RestoreForNonPrepPlanCache|format.RestoreStringWithoutCharset|
+			format.RestoreStringSingleQuotes|format.RestoreNameBackQuotes,
+		ctx.buf,
+	)
+	restoreCtx.ParamCollector = &ctx.params
+
+	if err := stmt.Restore(restoreCtx); err != nil {
+		return "", nil, err
+	}
+
+	paramSQL = ctx.buf.String()
+	paramVals = make([]types.Datum, len(ctx.params))
+	for i, p := range ctx.params {
+		ve := p.(*driver.ValueExpr)
+		ve.Datum.Copy(&paramVals[i])
+	}
+	return paramSQL, paramVals, nil
 }
 
 // ParameterizeAST parameterizes this StmtNode.

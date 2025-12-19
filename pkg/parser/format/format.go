@@ -370,6 +370,18 @@ type RestoreCtx struct {
 	In        RestoreWriter
 	DefaultDB string
 	CTERestorer
+
+	// ParamCollector is used to collect parameters during restore when
+	// RestoreForNonPrepPlanCache flag is set. If non-nil, ValueExpr.Restore
+	// will write '?' and append the ValueExpr to this slice instead of writing
+	// the literal value. This enables single-pass parameterization without
+	// modifying the AST.
+	ParamCollector *[]any
+
+	// SkipCollectingParams is used to temporarily disable param collection
+	// in certain contexts (e.g., SelectField, Limit, GroupByClause, OrderByClause)
+	// where values should not be parameterized.
+	SkipCollectingParams bool
 }
 
 // NewRestoreCtx returns a new `RestoreCtx`.
