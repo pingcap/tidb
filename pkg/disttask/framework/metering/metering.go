@@ -31,6 +31,7 @@ import (
 	meteringwriterapi "github.com/pingcap/metering_sdk/writer"
 	meteringwriter "github.com/pingcap/metering_sdk/writer/metering"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -395,7 +396,7 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 }
 
 // WriteMeterData writes the metering data.
-func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
+func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) (err error) {
 	failpoint.InjectCall("forceTSAtMinuteBoundary", &ts)
 	meteringData := &common.MeteringData{
 		SelfID:    uuid,
@@ -404,7 +405,15 @@ func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items
 		Data:      items,
 	}
 	flushCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-	defer cancel()
+	defer func() {
+		cancel()
+		if err != nil {
+			// task executor will delete counters relates to a task after the task
+			// is finished, so we use "-" as the task id label here to avoid this,
+			// as we also write meter data during cleanup.
+			dxfmetric.ExecuteEventCounter.WithLabelValues("-", dxfmetric.EventMeterWriteFailed).Add(1)
+		}
+	}()
 
 	return m.writer.Write(flushCtx, meteringData)
 }

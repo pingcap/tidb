@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//br/pkg/storage/recording",
         "//pkg/config/kerneltype",
+        "//pkg/disttask/framework/dxfmetric",
         "//pkg/disttask/framework/proto",
         "//pkg/util",
         "//pkg/util/logutil",
