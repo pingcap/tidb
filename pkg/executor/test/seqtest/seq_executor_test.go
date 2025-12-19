@@ -745,6 +745,8 @@ func TestUnparallelHashAggClose(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/unparallelHashAggError"))
 	}()
 	ctx := context.Background()
+	_, err := tk.Session().Execute(ctx, "set tidb_executor_concurrency=1;")
+	require.NoError(t, err)
 	rss, err := tk.Session().Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]
