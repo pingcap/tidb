@@ -158,8 +158,9 @@ func (a *AggregationPushDownSolver) collectGbyCols(agg *logicalop.LogicalAggrega
 	}
 	// extract equal conditions
 	for _, eqFunc := range join.EqualConditions {
-		leftGbyCols = a.addGbyCol(ctx, leftGbyCols, eqFunc.GetArgs()[0].(*expression.Column))
-		rightGbyCols = a.addGbyCol(ctx, rightGbyCols, eqFunc.GetArgs()[1].(*expression.Column))
+		l, r, _ := expression.IsColOpCol(eqFunc)
+		leftGbyCols = a.addGbyCol(ctx, leftGbyCols, l)
+		rightGbyCols = a.addGbyCol(ctx, rightGbyCols, r)
 	}
 	for _, leftCond := range join.LeftConditions {
 		cols := expression.ExtractColumns(leftCond)

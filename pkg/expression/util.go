@@ -2341,8 +2341,8 @@ func IsConstNull(expr Expression) bool {
 func IsColOpCol(sf *ScalarFunction) (_, _ *Column, _ bool) {
 	args := sf.GetArgs()
 	if len(args) == 2 {
-		col1, ok1 := args[0].(*Column)
 		col2, ok2 := args[1].(*Column)
+		col1, ok1 := args[0].(*Column)
 		return col1, col2, ok1 && ok2
 	}
 	return nil, nil, false

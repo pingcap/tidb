@@ -1438,9 +1438,8 @@ func (p *LogicalJoin) ExtractOnCondition(
 		}
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
-			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
-			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
-			if lOK && rOK {
+			arg0, arg1, ok := expression.IsColOpCol(binop)
+			if ok {
 				leftCol := leftSchema.RetrieveColumn(arg0)
 				rightCol := rightSchema.RetrieveColumn(arg1)
 				if leftCol == nil || rightCol == nil {
@@ -2105,9 +2104,8 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
 	}
-	arg0, lOK := binop.GetArgs()[0].(*expression.Column)
-	arg1, rOK := binop.GetArgs()[1].(*expression.Column)
-	if !lOK || !rOK {
+	arg0, arg1, ok := expression.IsColOpCol(binop)
+	if !ok {
 		return nil
 	}
 	childCol := schema.RetrieveColumn(arg0)
