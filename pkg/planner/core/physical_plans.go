@@ -630,15 +630,23 @@ func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
 }
 
 // tryPushDownLookUp tries to push down the index lookup to TiKV.
-func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
+func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext, tp util.IndexLookUpPushDownByType) {
 	intest.Assert(!p.IndexLookUpPushDown)
+	if tp == util.IndexLookUpPushDownNone {
+		// util.IndexLookUpPushDownNone indicates no index lookup push-down.
+		return
+	}
+
 	if p.keepOrder {
 		// Though most of the index-lookup push-down constraints should be checked in
 		// `checkIndexLookUpPushDownSupported` if possible,
 		// however, the keep order cannot be determined until the final plan is constructed.
 		// So we have to check the keep order here, and if it is required, we should not push down it and use
 		// the normal index-lookup instead.
-		ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
+		if tp == util.IndexLookUpPushDownByHint {
+			// only append warning when the push-down is forced by hint.
+			ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
+		}
 		return
 	}
 

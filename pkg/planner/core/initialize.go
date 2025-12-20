@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -250,13 +251,11 @@ func (p PhysicalUnionScan) Init(ctx base.PlanContext, stats *property.StatsInfo,
 }
 
 // Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPushDownIndexLookUp bool) *PhysicalIndexLookUpReader {
+func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, indexLookUpPushDownBy util.IndexLookUpPushDownByType) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
 	p.schema = p.tablePlan.Schema()
 	p.SetStats(p.tablePlan.StatsInfo())
-	if tryPushDownIndexLookUp {
-		p.tryPushDownLookUp(ctx)
-	}
+	p.tryPushDownLookUp(ctx, indexLookUpPushDownBy)
 	p.TablePlans = flattenListPushDownPlan(p.tablePlan)
 	p.IndexPlans, p.IndexPlansUnNatureOrders = flattenTreePushDownPlan(p.indexPlan)
 	setTableScanToTableRowIDScan(p.tablePlan)
