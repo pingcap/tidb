@@ -171,7 +171,7 @@ func TestKeepingJoinKeys(t *testing.T) {
 
 		// join keys are kept
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t1.a=1`).Check(testkit.Rows(
-			`Projection root  1->Column#9`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
@@ -180,7 +180,7 @@ func TestKeepingJoinKeys(t *testing.T) {
 			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
 			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t2.a=1`).Check(testkit.Rows(
-			`Projection root  1->Column#9`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
@@ -189,7 +189,7 @@ func TestKeepingJoinKeys(t *testing.T) {
 			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
 			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1, t2 where t1.a=1 and t1.a=t2.a`).Check(testkit.Rows(
-			`Projection root  1->Column#9`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
