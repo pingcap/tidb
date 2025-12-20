@@ -30,12 +30,12 @@ const (
 	FlagConstantPropagation
 	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
+	FlagOuterJoinToSemiJoin
 	FlagEliminateOuterJoin
 	FlagPartitionProcessor
 	FlagCollectPredicateColumnsPoint
 	FlagPushDownAgg
 	FlagDeriveTopNFromWindow
-	FlagOuterJoinToSemiJoin
 	FlagPredicateSimplification
 	FlagPushDownTopN
 	FlagSyncWaitStatsLoadPoint
