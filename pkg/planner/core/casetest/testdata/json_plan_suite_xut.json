@@ -105,7 +105,7 @@
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",
-            "executeInfo": "time:218.1µs, open:21.8µs, close:2.71µs, loops:1",
+            "executeInfo": "time:136.8µs, open:20µs, close:2.88µs, loops:1",
             "operatorInfo": "inner join, left key:test.t1.id, right key:test.t2.id",
             "memoryInfo": "760 Bytes",
             "diskInfo": "0 Bytes",
@@ -115,9 +115,9 @@
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:130.6µs, open:5.29µs, close:167ns, loops:1, cop_task: {num: 1, max: 106.6µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 333ns, max_distsql_concurrency: 1}, fetch_resp_duration: 121.3µs, rpc_info:{Cop:{num_rpc:1, total_time:93µs}}",
+                "executeInfo": "time:59.4µs, open:6.33µs, close:375ns, loops:1, cop_task: {num: 1, max: 22.3µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 500ns, max_distsql_concurrency: 1}, fetch_resp_duration: 49.4µs, rpc_info:{Cop:{num_rpc:1, total_time:16.2µs}}",
                 "operatorInfo": "index:IndexFullScan_27",
-                "memoryInfo": "182 Bytes",
+                "memoryInfo": "181 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
@@ -126,7 +126,7 @@
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t2, index:id(id)",
-                    "executeInfo": "tikv_task:{time:88µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:12.6µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"
@@ -138,9 +138,9 @@
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:76.1µs, open:9.13µs, close:958ns, loops:1, cop_task: {num: 1, max: 62.5µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 1.5µs, max_distsql_concurrency: 1}, fetch_resp_duration: 64.7µs, rpc_info:{Cop:{num_rpc:1, total_time:12.3µs}}",
+                "executeInfo": "time:67.7µs, open:8.63µs, close:791ns, loops:1, cop_task: {num: 1, max: 54.5µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 1.13µs, max_distsql_concurrency: 1}, fetch_resp_duration: 56.6µs, rpc_info:{Cop:{num_rpc:1, total_time:52.3µs}}",
                 "operatorInfo": "index:IndexFullScan_25",
-                "memoryInfo": "181 Bytes",
+                "memoryInfo": "182 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
@@ -149,7 +149,7 @@
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t1, index:id(id)",
-                    "executeInfo": "tikv_task:{time:10.1µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:49.7µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"
