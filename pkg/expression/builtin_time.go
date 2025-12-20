@@ -310,6 +310,10 @@ func (b *builtinDateSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, b
 	if expr.IsZero() && sqlMode(ctx).HasNoZeroDateMode() {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, expr.String()))
 	}
+	// for issue 59417, should return NULL when month or day is zero and sql_mode contains NO_ZERO_IN_DATE
+	if expr.Year() != 0 && expr.InvalidZero() && sqlMode(ctx).HasNoZeroInDateMode() {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, expr.String()))
+	}
 
 	expr.SetCoreTime(types.FromDate(expr.Year(), expr.Month(), expr.Day(), 0, 0, 0, 0))
 	expr.SetType(mysql.TypeDate)

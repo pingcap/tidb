@@ -3418,3 +3418,22 @@ SELECT UTC_TIMESTAMP(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'utc_timestamp'. Maximum is 6.
 SELECT UTC_TIMESTAMP(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
+set sql_mode = 'NO_ZERO_IN_DATE';
+SELECT DATE('2024-00-15');
+DATE('2024-00-15')
+NULL
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2024-00-15 00:00:00.000000'
+SELECT DATE('2024-12-0');
+DATE('2024-12-0')
+NULL
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2024-12-00 00:00:00.000000'
+SELECT DATE('2024-00-00');
+DATE('2024-00-00')
+NULL
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2024-00-00 00:00:00.000000'
