@@ -1149,6 +1149,8 @@ const (
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 
+	ErrInvalidAffinityOption = 8266
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249

@@ -2868,6 +2868,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 			EstimateRowSize: rowSize,
+			Version:         BackfillTaskMetaVersion1,
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -2908,24 +2909,12 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			select {
 			case <-done:
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
-				return nil
+				err := w.checkRunnableOrHandlePauseOrCanceled(stepCtx, taskKey)
+				return errors.Trace(err)
 			case <-checkFinishTk.C:
-				if err = w.isReorgRunnable(stepCtx, true); err != nil {
-					if dbterror.ErrPausedDDLJob.Equal(err) {
-						if err = handle.PauseTask(w.workCtx, taskKey); err != nil {
-							logutil.DDLLogger().Error("pause task error", zap.String("task_key", taskKey), zap.Error(err))
-							continue
-						}
-						failpoint.InjectCall("syncDDLTaskPause")
-					}
-					if !dbterror.ErrCancelledDDLJob.Equal(err) {
-						return errors.Trace(err)
-					}
-					if err = handle.CancelTask(w.workCtx, taskKey); err != nil {
-						logutil.DDLLogger().Error("cancel task error", zap.String("task_key", taskKey), zap.Error(err))
-						// continue to cancel task.
-						continue
-					}
+				err := w.checkRunnableOrHandlePauseOrCanceled(stepCtx, taskKey)
+				if err != nil {
+					return errors.Trace(err)
 				}
 			case <-updateRowCntTk.C:
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
@@ -2941,6 +2930,26 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 	err = g.Wait()
 	return err
+}
+
+func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, taskKey string) (err error) {
+	if err = w.isReorgRunnable(stepCtx, true); err != nil {
+		if dbterror.ErrPausedDDLJob.Equal(err) {
+			if err = handle.PauseTask(w.workCtx, taskKey); err != nil {
+				logutil.DDLLogger().Warn("pause task error", zap.String("task_key", taskKey), zap.Error(err))
+				return nil
+			}
+			failpoint.InjectCall("syncDDLTaskPause")
+		}
+		if !dbterror.ErrCancelledDDLJob.Equal(err) {
+			return errors.Trace(err)
+		}
+		if err = handle.CancelTask(w.workCtx, taskKey); err != nil {
+			logutil.DDLLogger().Warn("cancel task error", zap.String("task_key", taskKey), zap.Error(err))
+			return nil
+		}
+	}
+	return nil
 }
 
 // Note: we can achieve the same effect by calling ModifyTaskByID directly inside

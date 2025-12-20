@@ -3629,7 +3629,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	buildPattern := true
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation, ast.ShowAffinity:
 		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
@@ -5977,6 +5977,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes
+	case ast.ShowAffinity:
+		names = []string{"Db_name", "Table_name", "Partition_name", "Leader_store_id", "Voter_store_ids", "Status", "Region_count", "Affinity_region_count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong}
 	}
 	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }

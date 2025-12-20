@@ -365,3 +365,15 @@ func createAddIndexTask(t *testing.T,
 
 	return task, server
 }
+
+func TestBackfillTaskMetaVersion(t *testing.T) {
+	// Test the default version.
+	meta := &ddl.BackfillTaskMeta{}
+	require.Equal(t, ddl.BackfillTaskMetaVersion0, meta.Version)
+
+	// Test the new version.
+	meta = &ddl.BackfillTaskMeta{
+		Version: ddl.BackfillTaskMetaVersion1,
+	}
+	require.Equal(t, ddl.BackfillTaskMetaVersion1, meta.Version)
+}
