@@ -266,15 +266,15 @@ func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64,
 	sampleItems := make([]*statistics.SampleItem, 0, len(sampledKVs))
 	for _, kv := range sampledKVs {
 		// decode index key
-		tableID, idxID, idxVal, err := tablecodec.DecodeIndexKey(kv.Key)
+		_, _, idxVal, err := tablecodec.DecodeIndexKey(kv.Key)
 		if err != nil {
 			return err
 		}
-		logutil.BgLogger().Debug("sampled kv example",
-			zap.Int64("tableID", tableID),
-			zap.Int64("idxID", idxID),
-			zap.Strings("idxVal", idxVal),
-		)
+		//logutil.BgLogger().Debug("sampled kv example",
+		//	zap.Int64("tableID", tableID),
+		//	zap.Int64("idxID", idxID),
+		//	zap.Strings("idxVal", idxVal),
+		//)
 		i, err := strconv.ParseInt(idxVal[0], 10, 64)
 		if err != nil {
 			return err
