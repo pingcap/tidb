@@ -12,7 +12,7 @@ create table t2 (a int);
 create tablegroup tg1 tables t1, t2;
 show create tablegroup tg1;
 select * from information_schema.tablegroups where tablegroup='tg1';
-select * from information_schema.tablegroup_status where tablegroup='tg1';
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg1';
 
 # Test tablegroup with databases
 use tg_test2;
@@ -21,7 +21,7 @@ create table t4 (a int);
 create tablegroup tg2 tables t3, t4;
 show create tablegroup tg2;
 select * from information_schema.tablegroups where tablegroup='tg2';
-select * from information_schema.tablegroup_status where tablegroup='tg2';
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg2';
 
 # Test error cases - duplicate table in same tablegroup
 -- error 8284
@@ -62,7 +62,7 @@ alter tablegroup tg2 add tables t5, t5;
 alter tablegroup tg2 drop tables t3;
 show create tablegroup tg2;
 select * from information_schema.tablegroups where tablegroup='tg2';
-select * from information_schema.tablegroup_status where tablegroup='tg2';
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg2';
 
 # Test error cases - drop table that doesn't exist
 -- error 1146
@@ -76,20 +76,20 @@ alter tablegroup tg2 drop tables t4, t5, t6;
 create table t7 (a int primary key);
 insert into t7 values (1), (2), (3);
 create tablegroup tg6 tables t7;
-select * from information_schema.tablegroup_status where tablegroup='tg6';
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg6';
 truncate table t7;
 show create tablegroup tg6;
-select * from information_schema.tablegroup_status where tablegroup='tg6';
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg6';
 
 # Test drop table with tablegroup
 create table t8 (a int);
 create tablegroup tg7 tables t8;
 show create tablegroup tg7;
-select * from information_schema.tablegroup_status where tablegroup='tg7';
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg7';
 drop table t8;
 show create tablegroup tg7;
 select * from information_schema.tablegroups where tablegroup='tg7';
-select * from information_schema.tablegroup_status where tablegroup='tg7';
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg7';
 
 # Test drop database with tablegroup
 use tg_test3;
@@ -97,11 +97,11 @@ create table t9 (a int);
 create table t10 (a int);
 create tablegroup tg8 tables t9, t10;
 select * from information_schema.tablegroups where tablegroup='tg8';
-select * from information_schema.tablegroup_status where tablegroup='tg8';
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg8';
 drop database tg_test3;
 show create tablegroup tg8;
 select * from information_schema.tablegroups where tablegroup='tg8';
-select * from information_schema.tablegroup_status where tablegroup='tg8';
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg8';
 
 # Test partition tablegroup
 use tg_test1;
@@ -111,7 +111,7 @@ create table pt3 (a int primary key) partition by hash(a) partitions 3;
 create tablegroup tg9 tables pt1, pt2, pt3;
 show create tablegroup tg9;
 select * from information_schema.tablegroups where tablegroup='tg9' order by table_name, partition_name;
-select * from information_schema.tablegroup_status where tablegroup='tg9' order by affinity_group_id;
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg9' order by affinity_group_id;
 
 # Test error cases - partition count mismatch
 create table pt4 (a int primary key) partition by hash(a) partitions 2;
@@ -123,7 +123,7 @@ create tablegroup tg10 tables pt4, pt5_new;
 alter tablegroup tg9 drop tables pt2;
 show create tablegroup tg9;
 select * from information_schema.tablegroups where tablegroup='tg9' order by table_name, partition_name;
-select * from information_schema.tablegroup_status where tablegroup='tg9' order by affinity_group_id;
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg9' order by affinity_group_id;
 
 # Test add partition table with mismatching count
 create table pt6_new (a int primary key) partition by hash(a) partitions 5;
@@ -145,12 +145,12 @@ create tablegroup tg11 tables pt6, pt7;
 insert into pt6 values (1, 5), (2, 15), (3, 25);
 insert into pt7 values (4, 8), (5, 18), (6, 28);
 select * from information_schema.tablegroups where tablegroup='tg11' order by table_name, partition_name;
-select * from information_schema.tablegroup_status where tablegroup='tg11' order by affinity_group_id;
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg11' order by affinity_group_id;
 
 # Truncate single partition
 alter table pt6 truncate partition p1;
 select * from information_schema.tablegroups where tablegroup='tg11' order by table_name, partition_name;
-select * from information_schema.tablegroup_status where tablegroup='tg11' order by affinity_group_id;
+select AFFINITY_GROUP_ID, TABLEGROUP from information_schema.tablegroup_status where tablegroup='tg11' order by affinity_group_id;
 
 # Truncate multiple partitions
 alter table pt7 truncate partition p0, p2;
