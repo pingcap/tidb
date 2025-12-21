@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -3681,6 +3682,11 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXEnableIndexLookUpPushDown, Value: BoolToOnOff(DefTiDBXEnableIndexLookUpPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableIndexLookUpPushDown = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBXEnableSingleStoreTxn1PC, Value: BoolToOnOff(DefTiDBXEnableSingleStoreTxn1PC), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+		enabled := TiDBOptOn(val)
+		transaction.SingleStoreTxnCommitEnabled = enabled
 		return nil
 	}},
 }

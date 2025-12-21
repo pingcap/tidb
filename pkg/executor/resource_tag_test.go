@@ -78,6 +78,13 @@ func TestResourceGroupTag(t *testing.T) {
 			request := req.Commit()
 			startKey = request.Keys[0]
 			ctx = request.Context
+		case tikvrpc.CmdCommitTxn:
+			request := req.CommitTxn()
+			if request != nil && len(request.PrewriteReqs) > 0 && request.PrewriteReqs[0] != nil &&
+				len(request.PrewriteReqs[0].Mutations) > 0 && request.PrewriteReqs[0].Mutations[0] != nil {
+				startKey = request.PrewriteReqs[0].Mutations[0].Key
+			}
+			ctx = &req.Context
 		case tikvrpc.CmdCop:
 			request := req.Cop()
 			startKey = request.Ranges[0].Start

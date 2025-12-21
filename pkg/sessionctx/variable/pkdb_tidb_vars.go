@@ -26,6 +26,8 @@ const (
 	TiDBXEnableFastPath = "tidbx_fast_path"
 	// TiDBXEnableIndexLookUpPushDown indicates whether to enable index lookup push down optimization.
 	TiDBXEnableIndexLookUpPushDown = "tidbx_enable_index_lookup_push_down"
+	// TiDBXEnableSingleStoreTxn1PC indicates whether to enable single store transaction 1PC optimization.
+	TiDBXEnableSingleStoreTxn1PC = "tidbx_enable_single_store_txn_1pc"
 )
 
 // Default TiDB system variable values.
@@ -46,6 +48,7 @@ const (
 	DefTiDBXStoreBatchGetOpt           = false
 	DefTiDBXFastPath                   = false
 	DefTiDBXEnableIndexLookUpPushDown  = false
+	DefTiDBXEnableSingleStoreTxn1PC    = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.

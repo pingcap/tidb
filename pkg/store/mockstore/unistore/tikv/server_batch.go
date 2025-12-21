@@ -180,6 +180,12 @@ func (svr *Server) handleBatchRequest(ctx context.Context, req *tikvpb.BatchComm
 			return nil, err
 		}
 		return &tikvpb.BatchCommandsResponse_Response{Cmd: &tikvpb.BatchCommandsResponse_Response_Commit{Commit: res}}, nil
+	case *tikvpb.BatchCommandsRequest_Request_CommitTxn:
+		res, err := svr.KvCommitTxn(ctx, req.CommitTxn)
+		if err != nil {
+			return nil, err
+		}
+		return &tikvpb.BatchCommandsResponse_Response{Cmd: &tikvpb.BatchCommandsResponse_Response_CommitTxn{CommitTxn: res}}, nil
 	case *tikvpb.BatchCommandsRequest_Request_Cleanup:
 		res, err := svr.KvCleanup(ctx, req.Cleanup)
 		if err != nil {

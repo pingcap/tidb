@@ -67,6 +67,12 @@ func getReqStartKey(req *tikvrpc.Request) ([]byte, error) {
 	case tikvrpc.CmdCommit:
 		request := req.Commit()
 		return request.Keys[0], nil
+	case tikvrpc.CmdCommitTxn:
+		request := req.CommitTxn()
+		if request == nil || len(request.PrewriteReqs) == 0 || request.PrewriteReqs[0] == nil || len(request.PrewriteReqs[0].Mutations) == 0 {
+			return nil, nil
+		}
+		return request.PrewriteReqs[0].Mutations[0].Key, nil
 	case tikvrpc.CmdCleanup:
 		request := req.Cleanup()
 		return request.Key, nil

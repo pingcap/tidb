@@ -536,7 +536,7 @@ func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts
 
 			sortedHandles = append(sortedHandles, Handle{
 				IndexOrder: rowCnt,
-				Handle: handle,
+				Handle:     handle,
 			})
 			rowCnt++
 		}

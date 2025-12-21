@@ -81,7 +81,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	failpoint.Inject("rpcTiKVAllowedOnAlmostFull", func(val failpoint.Value) {
 		if val.(bool) {
-			if req.Type == tikvrpc.CmdPrewrite || req.Type == tikvrpc.CmdCommit {
+			if req.Type == tikvrpc.CmdPrewrite || req.Type == tikvrpc.CmdCommit || req.Type == tikvrpc.CmdCommitTxn {
 				if req.Context.DiskFullOpt != kvrpcpb.DiskFullOpt_AllowedOnAlmostFull {
 					failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{DiskFull: &errorpb.DiskFull{StoreId: []uint64{1}, Reason: "disk full"}}))
 				}
@@ -207,6 +207,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				failpoint.Return(nil, undeterminedErr)
 			}
 		})
+	case tikvrpc.CmdCommitTxn:
+		resp.Resp, err = c.usSvr.KvCommitTxn(ctx, req.CommitTxn())
 	case tikvrpc.CmdCleanup:
 		resp.Resp, err = c.usSvr.KvCleanup(ctx, req.Cleanup())
 	case tikvrpc.CmdCheckTxnStatus:

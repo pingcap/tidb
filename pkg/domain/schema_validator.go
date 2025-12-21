@@ -49,6 +49,8 @@ type SchemaValidator interface {
 	Update(leaseGrantTime uint64, oldSchemaVer, newSchemaVer int64, change *transaction.RelatedSchemaChange)
 	// Check is it valid for a transaction to use schemaVer and related tables, at timestamp txnTS.
 	Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64, needCheckSchema bool) (*transaction.RelatedSchemaChange, checkResult)
+	// CheckBeforeCommitTxnPushdown checks schema validity before using commit_txn pushdown.
+	CheckBeforeCommitTxnPushdown(schemaVer int64, relatedPhysicalTableIDs []int64, needCheckSchema bool) (int64, checkResult)
 	// Stop stops checking the valid of transaction.
 	Stop()
 	// Restart restarts the schema validator after it is stopped.
@@ -274,6 +276,34 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 		return nil, ResultUnknown
 	}
 	return nil, ResultSucc
+}
+
+// CheckBeforeCommitTxnPushdown checks schema validity before using commit_txn pushdown.
+func (s *schemaValidator) CheckBeforeCommitTxnPushdown(schemaVer int64, relatedPhysicalTableIDs []int64, needCheckSchema bool) (int64, checkResult) {
+	s.mux.RLock()
+	defer s.mux.RUnlock()
+	if !s.isStarted {
+		return 0, ResultUnknown
+	}
+
+	if schemaVer < s.restartSchemaVer {
+		return 0, ResultFail
+	}
+
+	// Schema changed, result decided by whether MDL is enabled and related tables change.
+	if schemaVer < s.latestSchemaVer {
+		if relatedPhysicalTableIDs == nil {
+			return 0, ResultFail
+		}
+
+		if needCheckSchema || !variable.EnableMDL.Load() {
+			return 0, ResultFail
+		}
+		return 0, ResultSucc
+	}
+
+	// Schema unchanged, return the latest schema expire time.
+	return s.latestSchemaExpire.UnixMilli(), ResultSucc
 }
 
 func (s *schemaValidator) enqueue(schemaVersion int64, change *transaction.RelatedSchemaChange) {

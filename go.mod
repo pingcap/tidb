@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.23.6
+go 1.24.3
 
 require (
 	cloud.google.com/go/kms v1.15.7
@@ -334,7 +334,8 @@ replace (
 )
 
 replace (
+	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20251217084855-cadfecf1aef6
 	github.com/pingcap/tipb => git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334
-	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20251218085110-8ba310e298d0
+	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20251219064713-3a66d7f848ac
 	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20251217153224-c982d611f7c8
 )

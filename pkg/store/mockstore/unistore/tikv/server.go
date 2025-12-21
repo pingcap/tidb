@@ -39,7 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pberror"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/util/lockwaiter"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 var _ tikvpb.TikvServer = new(Server)
@@ -434,6 +436,146 @@ func (svr *Server) KvCommit(ctx context.Context, req *kvrpcpb.CommitRequest) (*k
 	if err != nil {
 		resp.Error, resp.RegionError = convertToPBError(err)
 	}
+	return resp, nil
+}
+
+// KvCommitTxn implements the tikvpb.TikvServer interface.
+func (svr *Server) KvCommitTxn(ctx context.Context, req *kvrpcpb.CommitTxnRequest) (*kvrpcpb.CommitTxnResponse, error) {
+	startVersion := req.GetStartVersion()
+	prewriteReqs := req.GetPrewriteReqs()
+	if startVersion == 0 || len(prewriteReqs) == 0 {
+		resp := &kvrpcpb.CommitTxnResponse{}
+		resp.Error = &kvrpcpb.KeyError{Abort: "invalid request"}
+		return resp, nil
+	}
+
+	useAsyncCommit := prewriteReqs[0].GetUseAsyncCommit()
+	maxCommitTS := prewriteReqs[0].GetMaxCommitTs()
+	prewriteResps := make([]*kvrpcpb.PrewriteResponse, len(prewriteReqs))
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	if limit := len(prewriteReqs); limit > 0 {
+		if limit > 16 {
+			limit = 16
+		}
+		group.SetLimit(limit)
+	}
+
+	for i := range prewriteReqs {
+		idx := i
+		prewriteReq := prewriteReqs[idx]
+		group.Go(func() error {
+			prewriteResp, err := svr.KvPrewrite(groupCtx, prewriteReq)
+			if err != nil {
+				prewriteResp = &kvrpcpb.PrewriteResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}
+			}
+			prewriteResps[idx] = prewriteResp
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		resp := &kvrpcpb.CommitTxnResponse{}
+		resp.Error = &kvrpcpb.KeyError{Abort: "commit_txn prewrite failed: " + err.Error()}
+		return resp, nil
+	}
+
+	minCommitTS := uint64(0)
+	hasPrewriteErr := false
+	for _, prewriteResp := range prewriteResps {
+		if prewriteResp.GetRegionError() != nil || len(prewriteResp.GetErrors()) != 0 {
+			hasPrewriteErr = true
+		} else if ts := prewriteResp.GetMinCommitTs(); ts > minCommitTS {
+			minCommitTS = ts
+		}
+	}
+
+	resp := &kvrpcpb.CommitTxnResponse{
+		PrewriteResps: prewriteResps,
+	}
+	if hasPrewriteErr {
+		return resp, nil
+	}
+	resp.PrewriteSuccess = true
+
+	commitTS := minCommitTS
+	if !useAsyncCommit {
+		if svr.pdClient == nil {
+			resp.Error = &kvrpcpb.KeyError{Abort: "commit_txn requires PD client (pd_client is None in Store)"}
+			return resp, nil
+		}
+		physical, logical, err := svr.pdClient.GetTS(ctx)
+		if err != nil {
+			resp.Error = &kvrpcpb.KeyError{Retryable: "commit_txn get pd tso error: " + err.Error()}
+			return resp, nil
+		}
+		commitTS = oracle.ComposeTS(physical, logical)
+	}
+
+	if commitTS == 0 {
+		resp.Error = &kvrpcpb.KeyError{Retryable: "invalid commit_ts after prewrite"}
+		return resp, nil
+	}
+	if maxCommitTS > 0 && commitTS > maxCommitTS {
+		resp.Error = &kvrpcpb.KeyError{Retryable: "commit_ts too large"}
+		return resp, nil
+	}
+	if !useAsyncCommit && req.GetLatestSchemaExpireMs() > 0 && oracle.ExtractPhysical(commitTS) > int64(req.GetLatestSchemaExpireMs()) {
+		resp.Error = &kvrpcpb.KeyError{Retryable: "commit_txn schema may expired"}
+		return resp, nil
+	}
+	if req.GetMaxTxnTimeUseMs() > 0 &&
+		oracle.ExtractPhysical(commitTS) >= oracle.ExtractPhysical(startVersion)+int64(req.GetMaxTxnTimeUseMs()) {
+		resp.Error = &kvrpcpb.KeyError{Retryable: "txn takes too much time"}
+		return resp, nil
+	}
+
+	commitReqs := make([]*kvrpcpb.CommitRequest, 0, len(prewriteReqs))
+	for _, prewriteReq := range prewriteReqs {
+		keys := make([][]byte, 0, len(prewriteReq.GetMutations()))
+		for _, m := range prewriteReq.GetMutations() {
+			k := m.GetKey()
+			keys = append(keys, k)
+		}
+
+		commitReq := &kvrpcpb.CommitRequest{
+			Context:        prewriteReq.GetContext(),
+			StartVersion:   startVersion,
+			CommitVersion:  commitTS,
+			Keys:           keys,
+			UseAsyncCommit: useAsyncCommit,
+		}
+		commitReqs = append(commitReqs, commitReq)
+	}
+
+	if !useAsyncCommit {
+		primaryReq := commitReqs[0]
+		commitReqs = commitReqs[1:]
+		commitResp, err := svr.KvCommit(ctx, primaryReq)
+		if err != nil {
+			resp.Error = &kvrpcpb.KeyError{Retryable: "commit_txn commit primary region failed: " + err.Error()}
+			return resp, nil
+		}
+		resp.CommitResp = commitResp
+		if commitResp.GetRegionError() != nil || commitResp.GetError() != nil {
+			return resp, nil
+		}
+	}
+
+	go func() {
+		for _, req := range commitReqs {
+			_, err := svr.KvCommit(context.Background(), req)
+			if err != nil {
+				log.Warn("commit_txn commit secondary regions failed",
+					zap.Uint64("start_ts", startVersion),
+					zap.Uint64("commit_ts", commitTS),
+					zap.Bool("async_commit", useAsyncCommit),
+					zap.Error(err))
+			}
+		}
+	}()
+
+	resp.CommitTs = commitTS
 	return resp, nil
 }
 

@@ -78,3 +78,9 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 	metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 	return nil, ErrInfoSchemaExpired
 }
+
+// CheckBeforeCommitTxnPushdown checks the schema before pushdown commit_txn.
+func (s *SchemaChecker) CheckBeforeCommitTxnPushdown(startSchemaVer tikv.SchemaVer) (int64, bool) {
+	latestSchemaExpire, result := s.SchemaValidator.CheckBeforeCommitTxnPushdown(startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchema)
+	return latestSchemaExpire, result == ResultSucc
+}

@@ -796,3 +796,21 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 		tk.MustExec("commit")
 	}
 }
+
+func TestSingleStoreCommitTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int primary key, a int, b int, index(a));")
+	tk.MustQuery("split table t1 by (0), (10), (20), (30), (40), (50);").Check(testkit.Rows("6 1"))
+	tk.MustExec("set @@global.tidbx_enable_single_store_txn_1pc=1;")
+	defer func() {
+		tk.MustExec("set @@global.tidbx_enable_single_store_txn_1pc=0;")
+	}()
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	// todo: refine this test, and make sure it is commit by commit_txn api.
+	tk.MustExec("insert into t1 values (1,1,1), (11,11,11)")
+	tk.MustExec("insert into t1 values (2,1,1), (22,11,11)")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("1 1 1", "2 1 1", "11 11 11", "22 11 11"))
+}
