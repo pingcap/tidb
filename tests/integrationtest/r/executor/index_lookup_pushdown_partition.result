@@ -1,5 +1,5 @@
 drop table if exists tp1, tp2;
-create table tp1 (a int primary key, b int, c int, key b(b), unique key c(c) global) partition by hash(a) partitions 4;
+create table tp1 (a int primary key, b int, c int, key b(b), key c(c)) partition by hash(a) partitions 4;
 insert into tp1 values (1, 10, 10), (2, 9, 20), (3, 8, 30), (4, 7, 40), (5, 6, 50), (6, 5, 60);
 explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 and a > 1 limit 3;
 id	estRows	task	access object	operator info
@@ -31,10 +31,11 @@ a	b	c
 4	7	40
 explain select /*+ index_lookup_pushdown(tp1, c) */ * from tp1;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root	partition:all	data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, the global index in partition table is not supported
+IndexLookUp_6	10000.00	root	partition:all	
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+│ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:tp1, index:c(c)	keep order:false, stats:pseudo
+│ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+└─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
 create table tp2 (
 id1 varchar(32),
 id2 int,
