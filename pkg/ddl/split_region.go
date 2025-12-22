@@ -248,36 +248,44 @@ func hasSplitPolicies(tbInfo *model.TableInfo) bool {
 
 func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, store kv.SplittableStore,
 	tbInfo *model.TableInfo, physicalTableID int64) []uint64 {
-	var keys [][]byte
+	var regionIDs []uint64
 
 	sc := sctx.GetSessionVars().StmtCtx
 	svars := sctx.GetSessionVars() //nolint:forbidigo
 	scatter, tableID := getScatterConfig(svars.ScatterRegion, tbInfo.ID)
 
 	// apply table policy
-	for p := tbInfo.TableSplitPolicy; p != nil; p = nil {
-		policy := tbInfo.TableSplitPolicy
+	if policy := tbInfo.TableSplitPolicy; policy != nil {
 		lower, err := parseValuesToDatums(policy.Lower)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse lower bound for table policy",
 				zap.String("table", tbInfo.Name.O), zap.Error(err))
-			break
+			goto index
 		}
 		upper, err := parseValuesToDatums(policy.Upper)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse upper bound for table policy",
 				zap.String("table", tbInfo.Name.O), zap.Error(err))
-			break
+			goto index
 		}
 
 		handleCols := regionsplit.BuildHandleColsForSplit(tbInfo)
-		keys, err = regionsplit.GetSplitTableKeys(sc, tbInfo, handleCols, physicalTableID, lower, upper, int(policy.Regions), keys, dbterror.ErrInvalidSplitRegionRanges)
+		keys, err := regionsplit.GetSplitTableKeys(sc, tbInfo, handleCols, physicalTableID, lower, upper, int(policy.Regions), nil, dbterror.ErrInvalidSplitRegionRanges)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to generate split keys for table policy",
 				zap.String("table", tbInfo.Name.O), zap.Error(err))
+			goto index
 		}
+
+		ids, err := store.SplitRegions(ctx, keys, scatter, &tableID)
+		if err != nil {
+			logutil.DDLLogger().Warn("split regions failed", zap.Error(err))
+			goto index
+		}
+		regionIDs = ids
 	}
 
+index:
 	// 2. Apply index policies (including PRIMARY)
 	for _, idx := range tbInfo.Indices {
 		if tbInfo.GetPartitionInfo() != nil &&
@@ -286,6 +294,11 @@ func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, st
 		}
 
 		if idx.RegionSplitPolicy == nil {
+			continue
+		}
+
+		// skip clustered primary
+		if tbInfo.HasClusteredIndex() && idx.Primary {
 			continue
 		}
 
@@ -307,24 +320,22 @@ func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, st
 			continue
 		}
 
-		keys, err = regionsplit.GetSplitIndexKeys(sc, tbInfo, idx, physicalTableID, lower, upper, int(policy.Regions), keys, dbterror.ErrInvalidSplitRegionRanges)
+		keys, err := regionsplit.GetSplitIndexKeys(sc, tbInfo, idx, physicalTableID, lower, upper, int(policy.Regions), nil, dbterror.ErrInvalidSplitRegionRanges)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to generate split keys for index policy",
 				zap.String("table", tbInfo.Name.O),
 				zap.String("index", idx.Name.O),
 				zap.Error(err))
 		}
-	}
 
-	regionIDs := []uint64{}
-	if len(keys) > 0 {
 		ids, err := store.SplitRegions(ctx, keys, scatter, &tableID)
 		if err != nil {
 			logutil.DDLLogger().Warn("split regions failed", zap.Error(err))
-		} else {
-			regionIDs = ids
+			goto index
 		}
+		regionIDs = append(regionIDs, ids...)
 	}
+
 	return regionIDs
 }
 

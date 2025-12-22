@@ -142,14 +142,15 @@ split table t index `primary` between (0) and (1000) regions 2;
 set tidb_enable_clustered_index=default;
 
 # Test non clustered table
-set tidb_enable_clustered_index=OFF;
+set tidb_scatter_region='global';
 drop table if exists t;
 create table t (
-  id bigint primary key,
+  id bigint primary key nonclustered,
   user_id bigint,
   status varchar(10),
   index idx_user_id (user_id)
 );
+insert into t values (0,0,'');
 alter table t split primary key between (0) and (1000000) regions 4;
 show create table t;
 alter table t split index idx_user_id between (1000) and (100000) regions 3;
@@ -157,19 +158,21 @@ show create table t;
 
 drop table if exists t;
 create table t (
-  id bigint primary key,
+  id bigint primary key nonclustered,
   user_id bigint,
   status varchar(10),
   index idx_user_id (user_id)
 )
-split primary key between (0) and (1000000) regions 4
-split index idx_user_id between (1000) and (100000) regions 3;
+split primary key between (-10000) and (1000000) regions 4
+split index idx_user_id between (-1000) and (100000) regions 3;
+insert into t values (0,0,'');
+select *, _tidb_rowid from t;
 show create table t;
 
 ## Test clustered table
 set tidb_enable_clustered_index=ON;
-drop table if exists t1;
-create table t1 (
+drop table if exists t;
+create table t (
   id bigint,
   user_id bigint,
   status varchar(10),
@@ -179,9 +182,9 @@ create table t1 (
 
 ## Cannot use SPLIT PRIMARY KEY on clustered PK
 -- error 1105
-alter table t1 split primary key between (0) and (1000000) regions 4;
-alter table t1 split index idx_user_id between (1000) and (100000) regions 3;
-show create table t1;
+alter table t split primary key between (0) and (1000000) regions 4;
+alter table t split index idx_user_id between (1000) and (100000) regions 3;
+show create table t;
 
 ## Test common handle (composite clustered PK)
 drop table if exists t;
@@ -255,8 +258,8 @@ create table t (id bigint primary key, val bigint);
 alter table t split index idx_nonexist between (0) and (1000000) regions 4;
 
 ## Test partitioned tables
-drop table if exists t1;
-create table t1 (
+drop table if exists t;
+create table t (
   id bigint primary key,
   user_id bigint,
   status varchar(10),
@@ -271,10 +274,10 @@ partition by range (id) (
 split primary key between (0) and (1000000) regions 4
 split index idx_user_id between (1000) and (100000) regions 3
 split index idx_status between ('a') and ('z') regions 2;
-show create table t1;
+show create table t;
 
-drop table if exists t2;
-create table t2 (
+drop table if exists t;
+create table t (
   id bigint primary key,
   val bigint,
   index idx_val (val)
@@ -282,10 +285,10 @@ create table t2 (
   partition p0 values less than (1000),
   partition p1 values less than (2000)
 );
-alter table t2 split primary key between (0) and (10000) regions 5;
-show create table t2;
-alter table t2 split index idx_val between (0) and (10000) regions 5;
-show create table t2;
+alter table t split primary key between (0) and (10000) regions 5;
+show create table t;
+alter table t split index idx_val between (0) and (10000) regions 5;
+show create table t;
 
 drop table if exists t;
 create table t (
@@ -300,3 +303,4 @@ alter table t add index idx_status (status);
 show warnings;
 
 set tidb_enable_clustered_index=default;
+set tidb_scatter_region='';

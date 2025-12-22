@@ -147,7 +147,7 @@ func GetSplitIdxPhysicalStartAndOtherIdxKeys(tbInfo *model.TableInfo, indexInfo 
 // The splitRangeError parameter should be a terror.Error like exeerrors.ErrInvalidSplitRegionRanges.
 func GetSplitIndexKeys(sc *stmtctx.StatementContext, tbInfo *model.TableInfo, indexInfo *model.IndexInfo,
 	physicalID int64, lower, upper []types.Datum, num int, keys [][]byte, splitRangeError *terror.Error) ([][]byte, error) {
-	keys = GetSplitIdxPhysicalStartAndOtherIdxKeys(tbInfo, indexInfo, physicalID, keys)
+	newkeys := GetSplitIdxPhysicalStartAndOtherIdxKeys(tbInfo, indexInfo, physicalID, keys)
 
 	index, err := tables.NewIndex(physicalID, tbInfo, indexInfo)
 	if err != nil {
@@ -172,7 +172,7 @@ func GetSplitIndexKeys(sc *stmtctx.StatementContext, tbInfo *model.TableInfo, in
 			indexInfo.Name, lowerStr, upperStr)
 		return keys, splitRangeError.GenWithStackByArgs(errMsg)
 	}
-	return cutil.GetValuesList(lowerIdxKey, upperIdxKey, num, keys), nil
+	return cutil.GetValuesList(lowerIdxKey, upperIdxKey, num, newkeys), nil
 }
 
 func datumSliceToString(ds []types.Datum) string {
