@@ -557,8 +557,9 @@ func setMPPEnforced(ds *logicalop.DataSource) {
 		// `ds.PreferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
 		// We can't support read a table from two different storages, even partition table.
 		if ds.PreferStoreType != 0 {
-			fmt.Sprintf("Storage hints are conflict with tidb_enforce_mpp, you can only specify one storage type of table %s",
-				ds.Table.Meta().Name.L)
+			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
+				fmt.Sprintf("Storage hints are conflict with tidb_enforce_mpp, you can only specify one storage type of table %s",
+					ds.Table.Meta().Name.L))
 			ds.PreferStoreType = 0
 			return
 		}
