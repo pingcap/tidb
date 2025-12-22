@@ -2644,6 +2644,7 @@ func writeChunk(
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
 
+	totalRowCnt := getTotalRowCnt(tblInfo)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
@@ -2700,7 +2701,7 @@ func writeChunk(
 					subStats.TotalSize += int64(s)
 				}
 				// sample
-				if len(statsWriters) != 0 && sample() {
+				if len(statsWriters) != 0 && sample(totalRowCnt) {
 					// logutil.DDLLogger().Info("sample index kv", zap.Int64("indexID", index.Meta().ID), zap.Int64("handle", handleDataBuf[0].GetInt64()))
 					_, err := writeOneKV(ctx, statsWriters[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 					if err != nil {
@@ -2715,10 +2716,23 @@ func writeChunk(
 	return count, totalBytes, sampled, nil
 }
 
-func sample() bool {
+func sample(rowCnt int) bool {
 	//sample 110000 of 49000000 the total rows
 	//return true
-	return rand.Intn(49000000) < 110000
+	return rand.Intn(rowCnt) < 110000
+}
+
+func getTotalRowCnt(tbl *model.TableInfo) int {
+	s := strings.Split(tbl.Name.L, "rcnt")
+	if len(s) == 2 {
+		numStr := s[1]
+		num, err := strconv.ParseInt(numStr, 10, 64)
+		if err == nil {
+			return int(num)
+		}
+	}
+	logutil.DDLLogger().Warn("use default total row cnt")
+	return 49000000
 }
 
 func maxIndexColumnCount(indexes []table.Index) int {

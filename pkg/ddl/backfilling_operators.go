@@ -908,7 +908,9 @@ func (w *indexIngestWorker) Close() error {
 			return errors.Trace(err)
 		}
 		path := path.Join(w.subStatsS3Path, uuid.New().String(), "fms.json")
-		w.extStore.WriteFile(w.ctx, path, data)
+		if err := w.extStore.WriteFile(w.ctx, path, data); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for i, writer := range w.writers {
