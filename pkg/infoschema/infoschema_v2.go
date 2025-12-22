@@ -1134,12 +1134,10 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 		if ok && db != nil {
 			tables := make([]*model.TableInfo, 0)
 			allInCache := true
-			foundAny := false
 			is.IterateAllTableItemsByDB(db.ID, func(t TableItem) bool {
 				if t.DBName.L != schema.L {
 					return true
 				}
-				foundAny = true
 				tbl := is.tableFromCache(t.TableID)
 				if tbl == nil {
 					allInCache = false
@@ -1148,10 +1146,7 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 				tables = append(tables, tbl.Meta())
 				return true
 			})
-			// Only use fast path when we found at least one table in the btree index.
-			// If no tables found, fallback to TiKV to handle the case where tables
-			// haven't been loaded into the btree index yet.
-			if allInCache && foundAny {
+			if allInCache {
 				// Reverse to make the order consistent with fetching from storage.
 				slices.Reverse(tables)
 				return tables, nil
