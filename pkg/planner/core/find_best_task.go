@@ -1035,6 +1035,11 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		}
 		return property.PropMatched
 	}
+	// Though TiCI index can keep order, we haven't implemented the multi-way merging TiCI index scan result to
+	// satisfy the required order. So we just return PropNotMatched here.
+	if path.Index != nil && path.Index.IsTiCIIndex() {
+		return property.PropNotMatched
+	}
 	if path.IsIntHandlePath {
 		pkCol := ds.GetPKIsHandleCol()
 		if len(prop.SortItems) != 1 || pkCol == nil {
