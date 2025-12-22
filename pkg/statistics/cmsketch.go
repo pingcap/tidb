@@ -669,7 +669,7 @@ func (c *TopN) FindTopN(d []byte) int {
 
 	d, truncated := convertEncoding(d, getEncodingType(c.TopN[0].Encoded))
 	if truncated {
-		return 0
+		return -1
 	}
 
 	if len(c.TopN) == 1 {

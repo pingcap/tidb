@@ -783,7 +783,6 @@ workLoop:
 				}
 			} else {
 				var tmpDatum types.Datum
-				var err error
 				idx := e.indexes[task.slicePos-colLen]
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
@@ -803,16 +802,17 @@ workLoop:
 						if len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
 							continue indexSampleCollectLoop
 						}
-						if row.Columns[col.Offset], err = castFuncs[i](row.Columns[col.Offset]); err != nil {
+						casted, err := castFuncs[i](row.Columns[col.Offset])
+						if err != nil {
 							resultCh <- err
 							continue workLoop
 						}
 						if col.Length != types.UnspecifiedLength {
-							row.Columns[col.Offset].Copy(&tmpDatum)
+							casted.Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
 							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
 						} else {
-							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
+							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, casted)
 						}
 						err = errCtx.HandleError(err)
 						if err != nil {
