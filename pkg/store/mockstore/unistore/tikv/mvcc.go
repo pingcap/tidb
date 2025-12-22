@@ -1963,7 +1963,7 @@ type kvScanProcessor struct {
 	scanCnt    uint32
 }
 
-func (p *kvScanProcessor) Process(key, value []byte) (err error) {
+func (p *kvScanProcessor) Process(key, value []byte, _ uint64) (err error) {
 	if p.sampleStep > 0 {
 		p.scanCnt++
 		if (p.scanCnt-1)%p.sampleStep != 0 {
