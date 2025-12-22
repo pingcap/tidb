@@ -622,15 +622,14 @@ func getEncodingType(d []byte) byte {
 	case 4: // uintFlag
 		return types.KindUint64
 	default:
-		// We don't need such type, just set it to 0.
 		return 255
 	}
 }
 
-// convertEncoding converts the encoding of d to tp if needed.
-func convertEncoding(d []byte, tp byte) ([]byte, bool) {
+// convertEncoding converts the encoding of d to targetTp if needed.
+func convertEncoding(d []byte, targetTp byte) ([]byte, bool) {
 	gotType := getEncodingType(d)
-	if gotType == tp || (tp != types.KindInt64 && tp != types.KindUint64) {
+	if gotType == targetTp || (targetTp != types.KindInt64 && targetTp != types.KindUint64) {
 		return d, false
 	}
 
@@ -639,19 +638,11 @@ func convertEncoding(d []byte, tp byte) ([]byte, bool) {
 		return d, false
 	}
 
-	datum, err = types.ConvertBetweenSign(datum, tp == types.KindUint64)
+	datum, err = types.ConvertBetweenSign(datum, targetTp == types.KindUint64)
 	d, _ = codec.EncodeKey(nil, nil, datum)
 
 	// If error happens during conversion, it means truncation happens.
 	return d, err != nil
-}
-
-func (c *TopN) getEncodingType() byte {
-	if c == nil || len(c.TopN) == 0 {
-		// Actually we don't use it, just return a value that is not int/uint.
-		return 255
-	}
-	return getEncodingType(c.TopN[0].Encoded)
 }
 
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
@@ -675,16 +666,17 @@ func (c *TopN) FindTopN(d []byte) int {
 	if len(c.TopN) == 0 {
 		return -1
 	}
+
+	d, truncated := convertEncoding(d, getEncodingType(c.TopN[0].Encoded))
+	if truncated {
+		return 0
+	}
+
 	if len(c.TopN) == 1 {
 		if bytes.Equal(c.TopN[0].Encoded, d) {
 			return 0
 		}
 		return -1
-	}
-
-	d, truncated := convertEncoding(d, c.getEncodingType())
-	if truncated {
-		return 0
 	}
 
 	if bytes.Compare(c.TopN[len(c.TopN)-1].Encoded, d) < 0 {
@@ -702,17 +694,21 @@ func (c *TopN) FindTopN(d []byte) int {
 	return idx
 }
 
-// LowerBound searches on the sorted top-n items,
-// returns the smallest index i such that the value at element i is not less than `d`.
-func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
+// lowerBound searches on the sorted top-n items,
+// It returns the smallest index i such that the value at element i is not less than `d`.
+func (c *TopN) lowerBound(d []byte) (idx int) {
 	if c == nil {
-		return 0, false
+		return 0
 	}
-	d, _ = convertEncoding(d, c.getEncodingType())
-	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
+	if len(c.TopN) == 0 {
+		return 0
+	}
+
+	d, _ = convertEncoding(d, getEncodingType(c.TopN[0].Encoded))
+	idx, _ = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
-	return idx, match
+	return idx
 }
 
 // BetweenCount estimates the row count for interval [l, r).
@@ -721,8 +717,8 @@ func (c *TopN) BetweenCount(_ planctx.PlanContext, l, r []byte) (result uint64) 
 	if c == nil {
 		return 0
 	}
-	lIdx, _ := c.LowerBound(l)
-	rIdx, _ := c.LowerBound(r)
+	lIdx := c.lowerBound(l)
+	rIdx := c.lowerBound(r)
 	ret := uint64(0)
 	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count
