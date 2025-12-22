@@ -343,6 +343,9 @@ func (b *txnBackfillExecutor) close(force bool) {
 
 func expectedIngestWorkerCnt(concurrency, avgRowSize int, isDXF bool) (readerCnt, writerCnt int) {
 	workerCnt := concurrency
+	// Testing showed that in a multi-node dxf environment,
+	// reader ration does not significantly impact the performance of add indexes.
+	// We disable this ration in DXF for better memory management.
 	if isDXF {
 		return workerCnt, workerCnt
 	}
