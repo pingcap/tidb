@@ -44,7 +44,7 @@ func (*zhPinyinTiDBASCSCollator) MaxBytesOneCharacter() int {
 }
 
 // ByteNumAfterConverted implements Collator interface.
-func (*zhPinyinTiDBASCSCollator) ByteNumAfterConverted(byteNum int) int {
+func (*zhPinyinTiDBASCSCollator) ByteNumAfterConverted(int) int {
 	panic("implement me")
 }
 
