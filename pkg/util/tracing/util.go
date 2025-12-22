@@ -48,6 +48,8 @@ func (cr CallbackRecorder) RecordSpan(sp basictracer.RawSpan) {
 type TraceInfo struct {
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+	// TraceID is the trace id for every SQL statement
+	TraceID []byte `json:"trace_id"`
 	// ConnectionID is the id of the connection
 	ConnectionID uint64 `json:"connection_id"`
 }
@@ -107,7 +109,6 @@ type Sink interface {
 // FlightRecorder defines the flight recorder interface.
 type FlightRecorder interface {
 	Sink
-	MarkDump()
 }
 
 type sinkKeyType struct{}
@@ -127,12 +128,6 @@ func GetSink(ctx context.Context) any {
 // ExtractTraceID returns the trace identifier from ctx if present.
 // It delegates to client-go's TraceIDFromContext implementation.
 func ExtractTraceID(ctx context.Context) []byte {
-	return extractTraceID(ctx)
-}
-
-// extractTraceID returns the trace identifier from ctx if present.
-// It delegates to client-go's TraceIDFromContext implementation.
-func extractTraceID(ctx context.Context) []byte {
 	return clienttrace.TraceIDFromContext(ctx)
 }
 
@@ -237,6 +232,10 @@ const (
 	UnknownClient
 	// General is used by tracing API
 	General
+	// DDLJob traces DDL job events.
+	DDLJob
+	// DevDebug traces development/debugging events.
+	DevDebug
 	// TiKVRequest maps to client-go's FlagTiKVCategoryRequest.
 	// Controls request-level tracing in TiKV.
 	TiKVRequest
@@ -246,13 +245,16 @@ const (
 	// TiKVReadDetails maps to client-go's FlagTiKVCategoryReadDetails.
 	// Controls detailed read operation tracing in TiKV.
 	TiKVReadDetails
+	// RegionCache traces region cache events.
+	RegionCache
+
 	traceCategorySentinel
 )
 
 // AllCategories can be used to enable every known trace category.
 const AllCategories = traceCategorySentinel - 1
 
-const defaultEnabledCategories = AllCategories &^ (TiKVWriteDetails | TiKVReadDetails)
+const defaultEnabledCategories = 0
 
 func init() {
 	enabledCategories.Store(uint64(defaultEnabledCategories))
@@ -292,12 +294,18 @@ func getCategoryName(category TraceCategory) string {
 		return "unknown_client"
 	case General:
 		return "general"
+	case DDLJob:
+		return "ddl_job"
+	case DevDebug:
+		return "dev_debug"
 	case TiKVRequest:
 		return "tikv_request"
 	case TiKVWriteDetails:
 		return "tikv_write_details"
 	case TiKVReadDetails:
 		return "tikv_read_details"
+	case RegionCache:
+		return "region_cache"
 	default:
 		return "unknown(" + strconv.FormatUint(uint64(category), 10) + ")"
 	}
@@ -322,6 +330,10 @@ const (
 )
 
 // Event represents a traced event.
+// INVARIANT: Event.Fields must be treated as immutable once created, as the
+// underlying array may be shared across multiple goroutines (e.g., flight
+// recorder, log sink, context-specific sinks). Modifications to Fields must
+// allocate a new slice to avoid data races.
 type Event struct {
 	Timestamp time.Time
 	Name      string

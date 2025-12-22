@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -126,8 +127,16 @@ func (s *importIntoSuite) TestGetNextStep() {
 
 	task.Step = proto.StepInit
 	ext = &importScheduler{GlobalSort: true}
-	for _, nextStep := range []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
-		proto.ImportStepWriteAndIngest, proto.ImportStepPostProcess, proto.StepDone} {
+	var targetSteps []proto.Step
+	if kerneltype.IsClassic() {
+		targetSteps = []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
+			proto.ImportStepWriteAndIngest, proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution,
+			proto.ImportStepPostProcess, proto.StepDone}
+	} else {
+		targetSteps = []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
+			proto.ImportStepWriteAndIngest, proto.ImportStepPostProcess, proto.StepDone}
+	}
+	for _, nextStep := range targetSteps {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}

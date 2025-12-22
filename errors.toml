@@ -201,9 +201,14 @@ error = '''
 pd not fully scattered
 '''
 
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
-failed to wait region splitted
+failed to wait region split
 '''
 
 ["BR:PD:ErrPDUpdateFailed"]
@@ -1609,6 +1614,11 @@ Global Index is needed for index '%-.192s', since the unique index is not includ
 ["ddl:8265"]
 error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
+'''
+
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
 '''
 
 ["ddl:8270"]

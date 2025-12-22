@@ -65,7 +65,7 @@ func TestIsRestrictedPrivilege(t *testing.T) {
 	assert.True(IsRestrictedPrivilege("RESTRICTED_STATUS_VARIABLES_ADMIN"))
 	assert.False(IsRestrictedPrivilege("CONNECTION_ADMIN"))
 	assert.False(IsRestrictedPrivilege("BACKUP_ADMIN"))
-	assert.False(IsRestrictedPrivilege("aa"))
+	assert.False(IsRestrictedPrivilege("AA"))
 }
 
 func TestIsInvisibleStatusVar(t *testing.T) {

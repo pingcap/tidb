@@ -73,15 +73,18 @@ func handleTraceControlExtractor(ctx context.Context) trace.TraceControlFlags {
 	if sink == nil {
 		return flags
 	}
-
 	t, ok := sink.(*Trace)
 	if !ok {
 		return flags
 	}
 
+	fr := GetFlightRecorder()
+	if fr == nil {
+		return flags
+	}
 	// Read keep flag with RLock (thread-safe)
 	t.mu.RLock()
-	keep := t.keep
+	keep := fr.shouldKeep(t.bits)
 	t.mu.RUnlock()
 
 	// Set immediate log flag based on keep
@@ -100,6 +103,8 @@ func mapCategory(category trace.Category) TraceCategory {
 		return tracing.TxnLockResolve
 	case trace.CategoryKVRequest:
 		return tracing.KvRequest
+	case trace.CategoryRegionCache:
+		return tracing.RegionCache
 	default:
 		return tracing.UnknownClient
 	}

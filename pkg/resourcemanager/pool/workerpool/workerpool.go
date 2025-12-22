@@ -94,6 +94,13 @@ type tuneConfig struct {
 	wg *sync.WaitGroup
 }
 
+// Tuner is an interface that provides capacity for tuning
+// the worker pools. It's used to pass worker pool without import cycle
+// caused by generic type.
+type Tuner interface {
+	Tune(numWorkers int32, wait bool)
+}
+
 // WorkerPool is a pool of workers.
 type WorkerPool[T TaskMayPanic, R any] struct {
 	// wctx are the context used for the whole pipeline, and ctx and cancel are derived

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	"fmt"
 	"path"
 	"strconv"
 	"time"
@@ -28,10 +29,12 @@ import (
 	extstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/tidbvar"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -59,6 +62,11 @@ const (
 	// on nextgen, DXF works as a service and runs only on node with scope 'dxf_service',
 	// so all tasks must be submitted to that scope.
 	NextGenTargetScope = "dxf_service"
+
+	// TODO refactor and unify with lightning config, we copy them here to avoid
+	// import cycle.
+	defRegionSplitSize int64 = 96 * units.MiB
+	defRegionSplitKeys int64 = 960_000
 )
 
 // NotifyTaskChange is used to notify the scheduler manager that the task is changed,
@@ -275,6 +283,19 @@ func SetNodeResource(rc *proto.NodeResource) {
 	nodeResource.Store(rc)
 }
 
+// GetDefaultRegionSplitConfig gets the default region split size and keys.
+func GetDefaultRegionSplitConfig() (splitSize, splitKeys int64) {
+	if kerneltype.IsNextGen() {
+		const nextGenRegionSplitSize = units.GiB
+		// the keys:size ratio is 10 times larger than Classic, the reason seems
+		// that nextgen TiKV want to control region split through size only, so
+		// they set a very large keys limit.
+		const nextGenRegionSplitKeys = 102_400_000
+		return nextGenRegionSplitSize, nextGenRegionSplitKeys
+	}
+	return defRegionSplitSize, defRegionSplitKeys
+}
+
 // GetTargetScope get target scope for new tasks.
 // in classical kernel, the target scope the new task is the service scope of the
 // TiDB instance that user is currently connecting to.
@@ -351,27 +372,64 @@ func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.Tu
 
 // NewObjStoreWithRecording creates an object storage for global sort with
 // request recording.
-func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.Requests, extstorage.ExternalStorage, error) {
-	reqRec := &recording.Requests{}
-	ctx2 := recording.WithRequests(ctx, reqRec)
-	store, err := NewObjStore(ctx2, uri)
+func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.AccessStats, extstorage.ExternalStorage, error) {
+	rec := &recording.AccessStats{}
+	store, err := newObjStore(ctx, uri, &extstorage.ExternalStorageOptions{
+		AccessRecording: rec,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
-	return reqRec, store, nil
+	return rec, store, nil
 }
 
 // NewObjStore creates an object storage for global sort.
 func NewObjStore(ctx context.Context, uri string) (extstorage.ExternalStorage, error) {
+	return newObjStore(ctx, uri, nil)
+}
+
+func newObjStore(ctx context.Context, uri string, opts *extstorage.ExternalStorageOptions) (extstorage.ExternalStorage, error) {
 	storeBackend, err := extstorage.ParseBackend(uri, nil)
 	if err != nil {
 		return nil, err
 	}
-	store, err := extstorage.NewWithDefaultOpt(ctx, storeBackend)
+	store, err := extstorage.New(ctx, storeBackend, opts)
 	if err != nil {
 		return nil, err
 	}
 	return store, nil
+}
+
+// SendRowAndSizeMeterData sends the row count and size metering data.
+func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
+	dataKVSize, indexKVSize int64, logger *zap.Logger) (err error) {
+	inLogger := log.BeginTask(logger, "send size and row metering data")
+	// in case of network errors, write might success, but return error, and we
+	// will retry sending metering data in next cleanup, to avoid duplicated data,
+	// we always use the task's last update time as the metering time and let the
+	// SDK overwrite existing file.
+	ts := task.StateUpdateTime.Truncate(time.Minute).Unix()
+	item := metering.GetBaseMeterItem(task.ID, task.Keyspace, task.Type.String())
+	item[metering.RowCountField] = rows
+	// add-index tasks don't have data kv size.
+	if dataKVSize > 0 {
+		item[metering.DataKVBytesField] = dataKVSize
+	}
+	item[metering.IndexKVBytesField] = indexKVSize
+	// below 3 fields are for better analysis of the cost of the task.
+	item[metering.ConcurrencyField] = task.Concurrency
+	item[metering.MaxNodeCountField] = task.MaxNodeCount
+	item[metering.DurationSecondsField] = int64(task.StateUpdateTime.Sub(task.CreateTime).Seconds())
+	defer func() {
+		inLogger.End(zap.InfoLevel, err, zap.Any("data", item))
+	}()
+	// same as above reason, we use the task ID as the uuid, and we also need to
+	// send different file as the metering service itself to avoid overwrite.
+	if err = metering.WriteMeterData(ctx, ts, fmt.Sprintf("%s_%d", task.Type, task.ID), []map[string]any{item}); err != nil {
+		return errors.Trace(err)
+	}
+	failpoint.InjectCall("afterSendRowAndSizeMeterData", item)
+	return nil
 }
 
 func init() {

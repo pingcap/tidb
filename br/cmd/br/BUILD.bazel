@@ -56,6 +56,10 @@ go_library(
 
 go_binary(
     name = "br",
+    cgo = select({
+        "@io_bazel_rules_go//go/platform:darwin": True,
+        "//conditions:default": False,
+    }),  #keep
     embed = [":br_lib"],
     visibility = ["//visibility:public"],
 )

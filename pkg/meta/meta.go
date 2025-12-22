@@ -1179,8 +1179,10 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
+// foreign key info contain null and [] two situations
+var checkForeignKeyAttributesNil = `"fk_info":null`
+var checkForeignKeyAttributesZero = `"fk_info":[]`
 var checkAttributesInOrder = []string{
-	`"fk_info":null`,
 	`"partition":null`,
 	`"Lock":null`,
 	`"tiflash_replica":null`,
@@ -1194,8 +1196,19 @@ var checkAttributesInOrder = []string{
 // then it does not need to be loaded and this function will return false.
 // Otherwise, it will return true, indicating that the table info should be loaded.
 // Since attributes are checked in sequence, it's important to choose the order carefully.
-func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
+// isCheckForeignKeyAttrsInOrder check foreign key or not, since fk_info contains two null situations.
+func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filterAttrs ...string) bool {
 	idx := 0
+	if isCheckForeignKeyAttrsInOrder {
+		idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesNil))
+		if idx == -1 {
+			idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesZero))
+			if idx == -1 {
+				return true
+			}
+		}
+		json = json[idx:]
+	}
 	for _, substr := range filterAttrs {
 		idx = bytes.Index(json, hack.Slice(substr))
 		if idx == -1 {
@@ -1209,7 +1222,7 @@ func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
 // IsTableInfoMustLoad checks whether the table info needs to be loaded.
 // Exported for testing.
 func IsTableInfoMustLoad(json []byte) bool {
-	return isTableInfoMustLoad(json, checkAttributesInOrder...)
+	return isTableInfoMustLoad(json, true, checkAttributesInOrder...)
 }
 
 // NameExtractRegexp is exported for testing.
@@ -1254,7 +1267,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if isTableInfoMustLoad(value, checkAttributesInOrder...) {
+		if isTableInfoMustLoad(value, true, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1283,7 +1296,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 			return nil
 		}
 
-		if isTableInfoMustLoad(value, filterAttrs...) {
+		if isTableInfoMustLoad(value, false, filterAttrs...) {
 			tbInfo := &model.TableInfo{}
 			err := json.Unmarshal(value, tbInfo)
 			if err != nil {

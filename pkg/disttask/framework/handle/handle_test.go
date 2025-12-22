@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -171,4 +172,15 @@ func TestHandles(t *testing.T) {
 	vardef.CloudStorageURI.Store(uri)
 	mockURI := handle.GetCloudStorageURI(context.Background(), store)
 	require.Equal(t, mockURI, "s3://bucket/path/to/folder/1") // mock store always get cluster ID 1
+}
+
+func TestGetDefaultRegionSplitConfig(t *testing.T) {
+	size, keys := handle.GetDefaultRegionSplitConfig()
+	if kerneltype.IsNextGen() {
+		require.EqualValues(t, units.GiB, size)
+		require.EqualValues(t, 102_400_000, keys)
+		return
+	}
+	require.EqualValues(t, 96*units.MiB, size)
+	require.EqualValues(t, 960_000, keys)
 }
