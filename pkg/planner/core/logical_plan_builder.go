@@ -1744,12 +1744,12 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		if err != nil {
 			return nil, err
 		}
-		_, leftArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[0].(*expression.Column)
-		_, rightArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[1].(*expression.Column)
-		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !leftArgIsColumn || !rightArgIsColumn {
+		sf := eqCond.(*expression.ScalarFunction)
+		_, _, ok := expression.IsColOpCol(sf)
+		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !ok {
 			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
 		} else {
-			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+			joinPlan.EqualConditions = append(joinPlan.EqualConditions, sf)
 		}
 	}
 	return joinPlan, nil
@@ -4672,12 +4672,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init CommonHandleCols and CommonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
-		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
+		ds.CommonHandleCols, ds.CommonHandleLens = util.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.AllPossibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, path.Index)
+			path.FullIdxCols, path.FullIdxColLens = util.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, path.Index)
 
 			// check whether the path's index has a tidb_shard() prefix and the index column count
 			// more than 1. e.g. index(tidb_shard(a), a)
@@ -5265,7 +5265,7 @@ func pruneAndBuildColPositionInfoForDelete(
 			}
 		}
 		if skipPruning {
-			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
+			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -5296,12 +5296,13 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 
 // buildSingleTableColPosInfoForDelete builds columns mapping for delete without pruning any columns.
 // It's temp code path for partition table, foreign key and point get plan.
-func buildSingleTableColPosInfoForDelete(
-	tbl table.Table,
-	colPosInfo *physicalop.TblColPosInfo,
-) error {
+func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *physicalop.TblColPosInfo, prePrunedCount int) error {
 	tblLen := len(tbl.DeletableCols())
+	colPosInfo.Start -= prePrunedCount
 	colPosInfo.End = colPosInfo.Start + tblLen
+	for col := range colPosInfo.HandleCols.IterColumns() {
+		col.Index -= prePrunedCount
+	}
 	return nil
 }
 
