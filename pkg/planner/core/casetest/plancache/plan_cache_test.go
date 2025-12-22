@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
+	"github.com/stretchr/testify/require"
 )
 
 func BenchmarkNewPlanCacheKey(b *testing.B) {
@@ -34,17 +35,13 @@ func BenchmarkNewPlanCacheKey(b *testing.B) {
 
 	sctx := tk.Session().(sessionctx.Context)
 	stmtID, _, _, err := tk.Session().PrepareStmt("select * from t where a = ? and b = ? and c = ?")
-	if err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, err)
 	prepStmt, err := sctx.GetSessionVars().GetPreparedStmtByID(stmtID)
-	if err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, err)
 	stmt := prepStmt.(*plannercore.PlanCacheStmt)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _, _, _, _ = plannercore.NewPlanCacheKey(sctx, stmt)
 	}
 }
@@ -57,14 +54,10 @@ func BenchmarkNewPlanCacheKeyInTxn(b *testing.B) {
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 
 	stmtID, _, _, err := tk.Session().PrepareStmt("select * from t where a = ?")
-	if err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, err)
 	sctx := tk.Session().(sessionctx.Context)
 	prepStmt, err := sctx.GetSessionVars().GetPreparedStmtByID(stmtID)
-	if err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, err)
 	stmt := prepStmt.(*plannercore.PlanCacheStmt)
 
 	// Start a transaction and make the table dirty
@@ -72,7 +65,7 @@ func BenchmarkNewPlanCacheKeyInTxn(b *testing.B) {
 	tk.MustExec("insert into t values (3, 3)")
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _, _, _, _ = plannercore.NewPlanCacheKey(sctx, stmt)
 	}
 	b.StopTimer()
