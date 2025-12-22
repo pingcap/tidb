@@ -846,7 +846,8 @@ func TopnMetaCompare(i, j TopNMeta) int {
 	return bytes.Compare(i.Encoded, j.Encoded)
 }
 
-// GetMergedTopNFromSortedSlice returns merged topn
+// GetMergedTopNFromSortedSlice merges the TopNMeta from all partitions into one
+// TopN. The discarded TopNMeta will be used to build the global histogram.
 func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
 	tp := getEncodingType(sorted[0].Encoded)
 	for i := range sorted {

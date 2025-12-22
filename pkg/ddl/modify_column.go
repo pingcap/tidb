@@ -1469,13 +1469,13 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 	}
 	pi := tblInfo.GetPartitionInfo()
 	if len(pi.Columns) == 0 {
-		// For non column partitioning, only check integer here. With strict SQL
-		// mode, truncation won't happen, so it's safe to decrease the length.
-		// Otherwise, it may cause the partitioning expression value falling into
-		// a different partition.
+		// For table not partitioned by column, need to check integer type. Since
+		// truncation may happen under non-strict SQL mode, it's unsafe to decrease
+		// the length of integer type because it may cause the partitioning
+		// expression value to fall into a different partition.
 		if !sqlMode.HasStrictMode() && newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
 			return dbterror.ErrUnsupportedModifyColumn.GenWithStack(
-				"Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+				"Unsupported modify column, decreasing length of int may result in change of partition under non-strict SQL mode")
 		}
 	}
 	// Basically only allow changes of the length/decimals for the column
