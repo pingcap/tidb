@@ -778,7 +778,7 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 		return true
 	}
 
-	// Imcompatible collations need row reorg too. This is to make statistics work.
+	// Incompatible collations need row reorg too. This is to make statistics work.
 	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
 		return true
 	}
