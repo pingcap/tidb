@@ -1760,12 +1760,24 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			}
 		}
 	}()
-
+	hasTikv, hasTiflash := false, false
+	for _, candidate := range candidates {
+		if hasTikv && hasTiflash {
+			break
+		}
+		switch candidate.path.StoreType {
+		case kv.TiFlash:
+			hasTiflash = true
+		case kv.TiKV:
+			hasTikv = true
+		}
+	}
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			// prefer tiflash, while current table path is tikv, skip it.
-			if (ds.PreferStoreType&h.PreferTiFlash != 0 || super.SCtx().GetSessionVars().IsMPPEnforced()) && path.StoreType == kv.TiKV {
+			if (ds.PreferStoreType&h.PreferTiFlash != 0 ||
+				hasTikv && hasTiflash && super.SCtx().GetSessionVars().IsMPPEnforced()) && path.StoreType == kv.TiKV {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
