@@ -2735,6 +2735,9 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	if prop.IsFlashProp() {
 		return joins, true, nil
 	}
+	if len(joins) > 0 && super.SCtx().GetSessionVars().IsMPPEnforced() {
+		return joins, true, nil
+	}
 
 	if !p.IsNAAJ() {
 		// naaj refuse merge join and index join.

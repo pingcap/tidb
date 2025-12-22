@@ -936,7 +936,8 @@ func ExhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property
 	la := lp.(*logicalop.LogicalAggregation)
 	preferHash, preferStream := la.ResetHintIfConflicted()
 	hashAggs := getHashAggs(la, prop)
-	if len(hashAggs) > 0 && preferHash {
+	if len(hashAggs) > 0 && (preferHash || la.SCtx().GetSessionVars().IsMPPEnforced()) {
+		// stream agg is not supported in the tiflash
 		return hashAggs, true, nil
 	}
 	streamAggs := getStreamAggs(la, prop)
