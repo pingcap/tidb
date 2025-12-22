@@ -833,8 +833,8 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 	tk2.MustExec("set innodb_lock_wait_timeout = 2")
 	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 2"))
 	// to check whether it will set to innodb_lock_wait_timeout to max value
-	tk2.MustExec("set innodb_lock_wait_timeout = 3602")
-	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3600"))
+	tk2.MustExec("set innodb_lock_wait_timeout = 1073741825")
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1073741824"))
 	tk2.MustExec("set innodb_lock_wait_timeout = 2")
 
 	tk3 := testkit.NewTestKit(t, store)
