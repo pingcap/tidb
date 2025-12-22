@@ -821,14 +821,11 @@ workLoop:
 				var bounds []int64
 				iter := chunk.NewIterator4Chunk(hist.Bounds)
 				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-					remain, d, err := codec.DecodeOne(row.GetBytes(0))
+					_, d, err := codec.DecodeOne(row.GetBytes(0))
 					if err != nil {
 						logutil.BgLogger().Error("analyze build index sample collector decode bound failed", zap.Error(err))
 						bounds = []int64{}
 						break
-					}
-					if remain != nil {
-						logutil.BgLogger().Info("analyze build index sample collector decode bound has remain data", zap.ByteString("remain", remain))
 					}
 					bounds = append(bounds, d.GetInt64())
 				}
