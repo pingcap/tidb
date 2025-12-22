@@ -970,7 +970,11 @@ func TestNextGenMetering(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		items := *rowAndSizeMeterItems.Load()
-		return items != nil && items["row_count"].(int64) == 3 && items["index_kv_bytes"].(int64) == 153
+		return items != nil && items["row_count"].(int64) == 3 &&
+			items["index_kv_bytes"].(int64) == 153 &&
+			items[metering.ConcurrencyField].(int) == task.Concurrency &&
+			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
+			items[metering.DurationSecondsField].(int64) > 0
 	}, 30*time.Second, 100*time.Millisecond)
 }
 

@@ -1251,3 +1251,15 @@ func (c gcStatesClient) GetGCState(ctx context.Context) (pdgc.GCState, error) {
 
 	return res, nil
 }
+
+func (c gcStatesClient) SetGlobalGCBarrier(ctx context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GlobalGCBarrierInfo, error) {
+	panic("unimplemented")
+}
+
+func (c gcStatesClient) DeleteGlobalGCBarrier(ctx context.Context, barrierID string) (*pdgc.GlobalGCBarrierInfo, error) {
+	panic("unimplemented")
+}
+
+func (c gcStatesClient) GetAllKeyspacesGCStates(ctx context.Context) (pdgc.ClusterGCStates, error) {
+	panic("unimplemented")
+}

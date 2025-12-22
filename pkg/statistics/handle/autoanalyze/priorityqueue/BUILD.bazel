@@ -62,7 +62,6 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
-        "//pkg/ddl/notifier",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/meta/model",
@@ -70,6 +69,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",

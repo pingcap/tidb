@@ -309,14 +309,14 @@ func (em *engineManager) closeEngine(
 			externalCfg.EndKey,
 			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			em.WorkerConcurrency,
+			int(em.WorkerConcurrency.Load()),
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
 			externalCfg.MemCapacity,
 			externalCfg.OnDup,
-			"",
+			externalCfg.FilePrefix,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -395,6 +395,14 @@ func (em *engineManager) getExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	return v.ImportedStatistics()
 }
 
+func (em *engineManager) getExternalEngineConflictInfo(engineUUID uuid.UUID) engineapi.ConflictInfo {
+	v, ok := em.externalEngine[engineUUID]
+	if !ok {
+		return engineapi.ConflictInfo{}
+	}
+	return v.ConflictInfo()
+}
+
 // resetEngine reset the engine and reclaim the space.
 func (em *engineManager) resetEngine(
 	ctx context.Context,
@@ -406,7 +414,8 @@ func (em *engineManager) resetEngine(
 	if localEngine == nil {
 		if engineI, ok := em.externalEngine[engineUUID]; ok {
 			extEngine := engineI.(*external.Engine)
-			return extEngine.Reset()
+			extEngine.Reset()
+			return nil
 		}
 
 		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))

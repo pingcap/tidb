@@ -153,7 +153,7 @@ func TestMergeTempIndexBasic(t *testing.T) {
 		tkBuilder := ddl.NewTaskKeyBuilder()
 		taskKey := tkBuilder.Build(jobID)
 
-		require.True(t, runInsert)
+		require.True(t, runInsert, "%s: never ran incrOp: %s", tc.name, tc.incrOp[0])
 		query := fmt.Sprintf(`select id from all_global_tasks where task_key like '%s' order by id`, fmt.Sprintf("%%%s%%", taskKey))
 		t.Log(query)
 		taskIDRows := tk.MustQuery(query).Rows()
