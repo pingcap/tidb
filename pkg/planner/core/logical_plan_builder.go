@@ -549,28 +549,6 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	}
 }
 
-func setMPPEnforced(ds *logicalop.DataSource) {
-	tableMeta := ds.Table.Meta()
-	if ds.SCtx().GetSessionVars().IsMPPEnforced() &&
-		tableMeta.TiFlashReplica != nil && tableMeta.TiFlashReplica.Available &&
-		ds.Table.Meta().TiFlashReplica.Count > 0 {
-		// `ds.PreferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
-		// We can't support read a table from two different storages, even partition table.
-		if ds.PreferStoreType != 0 {
-			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
-				fmt.Sprintf("Storage hints are conflict with tidb_enforce_mpp, you can only specify one storage type of table %s",
-					ds.Table.Meta().Name.L))
-			ds.PreferStoreType = 0
-			return
-		}
-		for _, path := range ds.AllPossibleAccessPaths {
-			if path.StoreType == kv.TiFlash {
-				ds.PreferStoreType |= h.PreferTiFlash
-				break
-			}
-		}
-	}
-}
 func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.LogicalPlan, error) {
 	// We will construct a "Join" node for some statements like "INSERT",
 	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
@@ -4673,7 +4651,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// we only mark it for the AllPossibleAccessPaths(since the element inside is shared by PossibleAccessPaths),
 	// and the following ds alternative will clone/inherit this mark from DS copying.
 	setPreferredStoreType(ds, b.TableHints())
-	setMPPEnforced(ds)
 	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
 

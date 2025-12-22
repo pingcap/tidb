@@ -1765,7 +1765,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			// prefer tiflash, while current table path is tikv, skip it.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+			if (ds.PreferStoreType&h.PreferTiFlash != 0 || super.SCtx().GetSessionVars().IsMPPEnforced()) && path.StoreType == kv.TiKV {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
