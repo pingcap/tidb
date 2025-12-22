@@ -308,16 +308,16 @@ func TestSplitLargeFile(t *testing.T) {
 		offsets       [][]int64
 	}{
 		{1, [][]int64{{6, 12}, {12, 18}, {18, 24}, {24, 30}}},
-		{6, [][]int64{{6, 18}, {18, 30}}},
-		{8, [][]int64{{6, 18}, {18, 30}}},
+		{6, [][]int64{{6, 18}, {18, 24}, {24, 30}}},
+		{8, [][]int64{{6, 18}, {18, 24}, {24, 30}}},
 		{12, [][]int64{{6, 24}, {24, 30}}},
 		{13, [][]int64{{6, 24}, {24, 30}}},
-		{18, [][]int64{{6, 30}}},
-		{19, [][]int64{{6, 30}}},
+		{18, [][]int64{{6, 24}, {24, 30}}},
+		{19, [][]int64{{6, 24}, {24, 30}}},
 	} {
 		divideConfig.MaxChunkSize = int64(tc.maxRegionSize)
 
-		regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+		regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo, false)
 		assert.NoError(t, err)
 		assert.Len(t, regions, len(tc.offsets))
 		for i := range tc.offsets {
@@ -372,9 +372,9 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 	divideConfig := NewDataDivideConfig(cfg, 2, ioWorker, store, meta)
 	columns := []string{"a", "b"}
 
-	offsets := [][]int64{{4, 13}, {13, 21}}
+	offsets := [][]int64{{4, 13}, {13, 14}, {14, 21}}
 
-	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo, true)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -423,7 +423,7 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 
 	offsets := [][]int64{{0, 23}, {23, 38}, {38, 47}}
 
-	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo, true)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -478,7 +478,7 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 
 	offsets := [][]int64{{14, 24}}
 
-	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo, true)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -531,10 +531,10 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	// in fact this is the wrong result, just to show the bug. pos mismatch with
 	// offsets. and we might read more rows than expected because we use == rather
 	// than >= to stop reading.
-	offsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
+	offsets := [][]int64{{0, 3}, {3, 5}, {5, 8}, {8, 9}, {9, 11}, {11, 12}}
 	pos := []int64{2, 5, 8, 11}
 
-	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo, true)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -559,10 +559,10 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	cfg.Mydumper.CSV.LinesTerminatedBy = "\r\n"
 	divideConfig = NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
 	// pos is contained in expectedOffsets
-	expectedOffsets := [][]int64{{0, 6}, {6, 12}}
+	expectedOffsets := [][]int64{{0, 6}, {6, 9}, {9, 12}}
 	pos = []int64{3, 6, 9, 12}
 
-	regions, _, err = SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	regions, _, err = SplitLargeCSV(context.Background(), divideConfig, fileInfo, true)
 	require.NoError(t, err)
 	require.Len(t, regions, len(expectedOffsets))
 	for i := range expectedOffsets {

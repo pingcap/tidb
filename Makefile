@@ -529,10 +529,6 @@ br_compatibility_test_prepare:
 br_compatibility_test:
 	@cd br && tests/run_compatible.sh run
 
-.PHONY: mock_s3iface
-mock_s3iface: mockgen
-	tools/bin/mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
-
 # mock interface for lightning and IMPORT INTO
 .PHONY: mock_import
 mock_import: mockgen
@@ -653,13 +649,13 @@ bazel_ci_simple_prepare:
 
 .PHONY: bazel_prepare
 bazel_prepare: ## Update and generate BUILD.bazel files. Please run this before commit.
-	bazel run //:gazelle
-	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
-	bazel run \
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
+	bazel $(BAZEL_GLOBAL_CONFIG) run \
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel run  //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
 
@@ -842,7 +838,7 @@ bazel_ddltest: failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_lint
 bazel_lint: bazel_prepare
-	bazel build //... --//build:with_nogo_flag=$(NOGO_FLAG)
+	bazel build $(BAZEL_CMD_CONFIG) //... --//build:with_nogo_flag=$(NOGO_FLAG)
 
 .PHONY: docker
 docker: ## Build TiDB Docker image
@@ -855,7 +851,7 @@ docker-test:
 .PHONY: bazel_mirror
 bazel_mirror:
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) --norun_validations //cmd/mirror:mirror -- --mirror> $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
 
@@ -865,7 +861,7 @@ bazel_sync:
 
 .PHONY: bazel_mirror_upload
 bazel_mirror_upload:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror -- --mirror --upload
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) --norun_validations //cmd/mirror -- --mirror --upload
 
 .PHONY: bazel_check_abi
 bazel_check_abi:

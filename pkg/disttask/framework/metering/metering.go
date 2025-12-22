@@ -16,6 +16,7 @@ package metering
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,7 +31,9 @@ import (
 	meteringwriterapi "github.com/pingcap/metering_sdk/writer"
 	meteringwriter "github.com/pingcap/metering_sdk/writer/metering"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -39,6 +42,10 @@ const (
 	// The timeout can not be too long because the pod grace termination period is fixed.
 	writeTimeout = 10 * time.Second
 	category     = "dxf"
+	// maxRetryCount defines the maximum retry count for writing metering data.
+	// if the write still fails after maxRetryCount, those data will be dropped.
+	maxRetryCount = 10
+	retryInterval = 5 * time.Second
 )
 
 var (
@@ -93,17 +100,60 @@ type wrappedRecorder struct {
 	unregistered bool
 }
 
+type writeFailData struct {
+	ts       int64
+	retryCnt int
+	items    []map[string]any
+}
+
+type retryData struct {
+	mu sync.Mutex
+	// TS -> write failed data
+	data map[int64]*writeFailData
+}
+
+func (d *retryData) addFailedData(ts int64, items []map[string]any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.data == nil {
+		d.data = make(map[int64]*writeFailData)
+	}
+	d.data[ts] = &writeFailData{ts: ts, items: items}
+}
+
+func (d *retryData) getDataClone() map[int64]*writeFailData {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return maps.Clone(d.data)
+}
+
+func (d *retryData) remove(needRemove []*writeFailData) {
+	if len(needRemove) == 0 {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, wd := range needRemove {
+		delete(d.data, wd.ts)
+	}
+}
+
 // Meter is responsible for recording and reporting metering data.
 type Meter struct {
-	sync.Mutex
+	mu        sync.Mutex
 	recorders map[int64]*wrappedRecorder
 	// taskID -> last flushed data
 	// when flushing, we scrape the latest data from recorders and calculate the
 	// delta and write to the metering storage.
+	// we will store the latest data here regardless of whether the flush is
+	// successful or not,
 	lastFlushedData map[int64]*Data
-	uuid            string
-	writer          meteringwriterapi.MeteringWriter
-	logger          *zap.Logger
+	// pendingRetryData is the data that failed to write and need to retry.
+	pendingRetryData retryData
+	uuid             string
+	writer           meteringwriterapi.MeteringWriter
+	logger           *zap.Logger
+	wg               util.WaitGroupWrapper
 }
 
 // NewMeter creates a new Meter instance.
@@ -139,8 +189,8 @@ func newMeterWithWriter(logger *zap.Logger, writer meteringwriterapi.MeteringWri
 }
 
 func (m *Meter) getOrRegisterRecorder(r *Recorder) *Recorder {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if old, ok := m.recorders[r.taskID]; ok {
 		// each task might have different steps, it's possible for below sequence
 		//  - step 1 get recorder
@@ -157,8 +207,8 @@ func (m *Meter) getOrRegisterRecorder(r *Recorder) *Recorder {
 
 // UnregisterRecorder unregisters a recorder.
 func (m *Meter) unregisterRecorder(taskID int64) {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	// we still need to flush for the unregistered recorder once more, so we only
 	// mark it here, and delete when it's flushed.
 	if r, ok := m.recorders[taskID]; ok {
@@ -168,8 +218,8 @@ func (m *Meter) unregisterRecorder(taskID int64) {
 
 func (m *Meter) cleanupUnregisteredRecorders() []*Recorder {
 	removed := make([]*Recorder, 0, 1)
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for taskID, r := range m.recorders {
 		if !r.unregistered {
 			continue
@@ -194,7 +244,7 @@ func (m *Meter) cleanupUnregisteredRecorders() []*Recorder {
 	return removed
 }
 
-func (m *Meter) onSuccessFlush(flushedData map[int64]*Data) {
+func (m *Meter) afterFlush(flushedData map[int64]*Data) {
 	m.lastFlushedData = flushedData
 	removedRecorders := m.cleanupUnregisteredRecorders()
 	for _, r := range removedRecorders {
@@ -206,8 +256,8 @@ func (m *Meter) onSuccessFlush(flushedData map[int64]*Data) {
 }
 
 func (m *Meter) scrapeCurrData() map[int64]*Data {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	data := make(map[int64]*Data, len(m.recorders))
 	for taskID, r := range m.recorders {
 		data[taskID] = r.currData()
@@ -231,6 +281,71 @@ func (m *Meter) calculateDataItems(currData map[int64]*Data) []map[string]any {
 
 // StartFlushLoop creates a flush loop.
 func (m *Meter) StartFlushLoop(ctx context.Context) {
+	m.wg.RunWithLog(func() {
+		m.flushLoop(ctx)
+	})
+	m.wg.RunWithLog(func() {
+		m.retryLoop(ctx)
+	})
+	m.wg.Wait()
+}
+
+func (m *Meter) retryLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(retryInterval):
+		}
+
+		m.retryWrite(ctx)
+	}
+}
+
+func (m *Meter) retryWrite(ctx context.Context) {
+	data := m.pendingRetryData.getDataClone()
+	if len(data) == 0 {
+		return
+	}
+
+	var (
+		firstErr   error
+		needRemove = make([]*writeFailData, 0, len(data))
+	)
+	for ts, wd := range data {
+		err := m.WriteMeterData(ctx, ts, m.uuid, wd.items)
+		if err == nil {
+			m.logger.Info("succeed to write metering data after retry",
+				zap.Int64("timestamp", ts), zap.Int("retry-count", wd.retryCnt),
+				zap.Any("data", wd.items))
+			needRemove = append(needRemove, wd)
+			continue
+		}
+
+		if ctx.Err() != nil {
+			break
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+
+		wd.retryCnt++
+		if wd.retryCnt >= maxRetryCount {
+			m.logger.Warn("dropping metering data after max retry count reached",
+				zap.Int64("timestamp", ts), zap.Int("retry-count", wd.retryCnt),
+				zap.Any("data", wd.items), zap.Error(err))
+			needRemove = append(needRemove, wd)
+		}
+	}
+
+	if firstErr != nil {
+		m.logger.Warn("failed to retry writing some metering data", zap.Error(firstErr))
+	}
+
+	m.pendingRetryData.remove(needRemove)
+}
+
+func (m *Meter) flushLoop(ctx context.Context) {
 	// Control the writing timestamp accurately enough so that the previous round won't be overwritten by the next round.
 	curTime := time.Now()
 	nextTime := curTime.Truncate(FlushInterval).Add(FlushInterval)
@@ -259,7 +374,7 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 	if len(items) == 0 {
 		logger.Info("no metering data to flush", zap.Int("recorder-count", len(currData)),
 			zap.Duration("duration", time.Since(startTime)))
-		m.onSuccessFlush(currData)
+		m.afterFlush(currData)
 		return
 	}
 
@@ -268,16 +383,20 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 		logger.Warn("failed to write metering data", zap.Error(err),
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
+		// metering expect incremental data. due to the case described in NewMeter,
+		// we can only retry the data with given TS, and cannot accumulate with
+		// new data and send with new TS as this will cause data duplication.
+		m.pendingRetryData.addFailedData(ts, items)
 	} else {
 		logger.Info("succeed to write metering data",
 			zap.Duration("duration", time.Since(startTime)),
 			zap.Any("data", items))
-		m.onSuccessFlush(currData)
 	}
+	m.afterFlush(currData)
 }
 
 // WriteMeterData writes the metering data.
-func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) error {
+func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) (err error) {
 	failpoint.InjectCall("forceTSAtMinuteBoundary", &ts)
 	meteringData := &common.MeteringData{
 		SelfID:    uuid,
@@ -286,7 +405,15 @@ func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items
 		Data:      items,
 	}
 	flushCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-	defer cancel()
+	defer func() {
+		cancel()
+		if err != nil {
+			// task executor will delete counters relates to a task after the task
+			// is finished, so we use "-" as the task id label here to avoid this,
+			// as we also write meter data during cleanup.
+			dxfmetric.ExecuteEventCounter.WithLabelValues("-", dxfmetric.EventMeterWriteFailed).Add(1)
+		}
+	}()
 
 	return m.writer.Write(flushCtx, meteringData)
 }
