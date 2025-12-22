@@ -120,7 +120,7 @@ func TestParameterize(t *testing.T) {
 	}
 }
 
-func TestGetParamSQLFromASTConcurrently(t *testing.T) {
+func TestGetParamSQLFromASTWithoutMutationConcurrently(t *testing.T) {
 	n := 50
 	sqls := make([]string, 0, n)
 	for i := range n {
@@ -138,7 +138,7 @@ func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			for range 100 {
-				_, vals, err := GetParamSQLFromAST(stmts[id])
+				_, vals, err := GetParamSQLFromASTWithoutMutation(stmts[id])
 				require.Nil(t, err)
 				require.Equal(t, len(vals), 3)
 				require.Equal(t, vals[0].GetValue(), int64(id*3+0))
@@ -186,7 +186,7 @@ func BenchmarkGetParamSQL(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		GetParamSQLFromAST(stmt)
+		GetParamSQLFromASTWithoutMutation(stmt)
 	}
 }
 

@@ -114,7 +114,7 @@ func (pr *paramReplacer) Reset() {
 // GetParamSQLFromAST returns the parameterized SQL of this AST.
 // NOTICE: this function does not modify the original AST.
 // paramVals are copied from this AST.
-// TODO: update the related test cases and remove this function
+// keep this only for testing.
 func GetParamSQLFromAST(stmt ast.StmtNode) (paramSQL string, paramVals []types.Datum, err error) {
 	var params []*driver.ValueExpr
 	paramSQL, params, err = ParameterizeAST(stmt)
@@ -131,8 +131,7 @@ func GetParamSQLFromAST(stmt ast.StmtNode) (paramSQL string, paramVals []types.D
 }
 
 // GetParamSQLFromASTWithoutMutation returns the parameterized SQL and param values
-// WITHOUT modifying the original AST. This is more efficient than GetParamSQLFromAST
-// as it performs a single AST traversal via Restore instead of 3 traversals
+// without modifying the original AST. It performs a single AST traversal via Restore
 // (replace values -> restore SQL -> restore values).
 //
 // The optimization works by setting ParamCollector on RestoreCtx, which causes
