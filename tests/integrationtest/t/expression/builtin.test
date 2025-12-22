@@ -1649,3 +1649,23 @@ SELECT UTC_TIMESTAMP(-1);
 SELECT UTC_TIMESTAMP(2147483647);
 -- error 1064
 SELECT UTC_TIMESTAMP(2147483648);
+
+# Issue 59424
+SELECT DATE_FORMAT('2023-10-30', '');
+show warnings;
+SELECT DATE_FORMAT('2023-10-32', '');
+show warnings;
+SELECT DATE_FORMAT('0000-10-30', '');
+show warnings;
+SELECT DATE_FORMAT('2023-00-30', '');
+show warnings;
+SELECT DATE_FORMAT('2023-10-00', '');
+show warnings;
+SELECT DATE_FORMAT('0000-00-30', '');
+show warnings;
+SELECT DATE_FORMAT('0000-10-00', '');
+show warnings;
+SELECT DATE_FORMAT('2023-00-00', '');
+show warnings;
+SELECT DATE_FORMAT('0000-00-00', '');
+show warnings;

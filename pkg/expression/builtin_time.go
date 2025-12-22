@@ -865,6 +865,11 @@ func (b *builtinDateFormatSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	if formatMask == "0" {
 		return "0", false, nil
 	}
+	// MySQL compatibility, #59424
+	// If format mask is empty then return NULL without warnings
+	if formatMask == "" {
+		return "", true, nil
+	}
 
 	if t.InvalidZero() {
 		// MySQL compatibility, #11203
