@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -215,6 +216,56 @@ type TableInfo struct {
 	DBID int64 `json:"-"`
 
 	Mode TableMode `json:"mode,omitempty"`
+}
+
+var colStateOrder = map[SchemaState]int{
+	StateNone:                 0,
+	StateDeleteOnly:           1,
+	StateDeleteReorganization: 2,
+	StateWriteOnly:            3,
+	StateWriteReorganization:  4,
+	StatePublic:               5,
+}
+
+// CheckTableInfo checks the validity of TableInfo in test. It checks:
+// 1. The columns are ordered by states.
+// 2. The dependency columns of changing columns are correct.
+// 3. There are no duplicate index names.
+func CheckTableInfo(tblInfo *TableInfo) {
+	if !intest.InTest {
+		return
+	}
+
+	// Check columns' order by state.
+	minState := StatePublic
+	for _, col := range tblInfo.Columns {
+		if colStateOrder[col.State] < colStateOrder[minState] {
+			minState = col.State
+		} else if colStateOrder[col.State] > colStateOrder[minState] {
+			intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
+		}
+		if col.ChangeStateInfo != nil {
+			offset := col.ChangeStateInfo.DependencyColumnOffset
+			intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
+			depCol := tblInfo.Columns[offset]
+			switch {
+			case col.IsChanging():
+				name := col.GetChangingOriginName()
+				intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
+			case depCol.IsRemoving():
+				name := depCol.GetRemovingOriginName()
+				intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
+			}
+		}
+	}
+
+	// Check index names' uniqueness.
+	allNames := make(map[string]struct{})
+	for _, idx := range tblInfo.Indices {
+		_, exists := allNames[idx.Name.O]
+		intest.Assert(!exists, "duplicate index name %s", idx.Name.O)
+		allNames[idx.Name.O] = struct{}{}
+	}
 }
 
 // Hash64 implement HashEquals interface.

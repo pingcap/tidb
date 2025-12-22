@@ -230,8 +230,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-	// Check index prefix length for the first time
+	// Check the modify types again. Even if the check passed during job
+	// submission, the type may be changed by other DDL jobs. So we need to
+	// check it again here.
 	if job.SchemaState == model.StateNone {
+		// Check index prefix length.
 		columns := getReplacedColumns(tblInfo, oldCol, args.Column)
 		allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		for _, idx := range allIdxs {
@@ -240,25 +243,26 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 				return ver, errors.Trace(err)
 			}
 		}
-	}
 
-	// For first time running this job, or the job from older version,
-	// we need to fill the ModifyColumnType.
-	if args.ModifyColumnType == model.ModifyTypeNone ||
-		args.ModifyColumnType == mysql.TypeNull {
-		// Check the modify types again, as the type may be changed by other no-reorg modify-column jobs.
-		// For example, there are two DDLs submitted in parallel:
-		//      CREATE TABLE t (c VARCHAR(255) charset utf8);
-		// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(255) charset utf8mb4;
-		// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(100) charset utf8;
-		// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
-		// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
-		// we must check the type again here as utf8mb4->utf8 is an invalid change.
-		if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+		// Check modify type.
+		if err = checkModifyTypes(
+			oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 
+		// Check partition column
+		if err = doubleCheckPartitionColumn(
+			w, jobCtx, dbInfo, tblInfo, oldCol, args.Column, job.SQLMode); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+	}
+
+	// For jobs being executed for the first time, or jobs submitted from older
+	// TiDB, we need to fill the ModifyColumnType.
+	if args.ModifyColumnType == model.ModifyTypeNone ||
+		args.ModifyColumnType == mysql.TypeNull {
 		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode)
 		logutil.DDLLogger().Info("get type for modify column",
 			zap.String("query", job.Query),
@@ -291,11 +295,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	// Do some checks for all modify column types.
 	err = checkAndApplyAutoRandomBits(jobCtx, dbInfo, tblInfo, oldCol, args.Column, args.NewShardBits)
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -335,15 +334,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in primary key")
 	}
 
-	if job.SchemaState == model.StateNone {
-		err = postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column, job.SQLMode)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
-		}
-	}
-
-	defer checkTableInfo(tblInfo)
+	defer model.CheckTableInfo(tblInfo)
 
 	if args.ModifyColumnType == model.ModifyTypeIndexReorg {
 		if err := initializeChangingIndexes(args, tblInfo, oldCol); err != nil {
@@ -1404,63 +1395,61 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 	return nil
 }
 
-func preCheckPartitionModifiableColumn(sctx sessionctx.Context, t table.Table, col, newCol *table.Column) error {
-	// Check that the column change does not affect the partitioning column
-	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if t.Meta().Partition != nil {
-		pt, ok := t.(table.PartitionedTable)
-		if !ok {
-			// Should never happen!
-			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
-		}
-		for _, name := range pt.GetPartitionColumnNames() {
-			if strings.EqualFold(name.L, col.Name.L) {
-				return checkPartitionColumnModifiable(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo, sctx.GetSessionVars().SQLMode)
-			}
+func checkPartitionColumn(
+	sctx sessionctx.Context, t table.Table,
+	col, newCol *model.ColumnInfo,
+	sqlMode mysql.SQLMode,
+) error {
+	if t.Meta().Partition == nil {
+		return nil
+	}
+
+	pt, ok := t.(table.PartitionedTable)
+	if !ok {
+		// Should never happen!
+		intest.Assert(ok, "should get PartitionedTable")
+		return errors.New("get PartitionedTable failed")
+	}
+
+	for _, name := range pt.GetPartitionColumnNames() {
+		if strings.EqualFold(name.L, col.Name.L) {
+			return checkPartitionColumnModifiable(
+				sctx, t.Meta(), col, newCol, sqlMode)
 		}
 	}
+
 	return nil
 }
 
-func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo, sqlMode mysql.SQLMode) error {
-	// Check that the column change does not affect the partitioning column
-	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if tblInfo.Partition != nil {
-		sctx, err := w.sessPool.Get()
-		if err != nil {
-			return err
-		}
-		defer w.sessPool.Put(sctx)
-		if len(tblInfo.Partition.Columns) > 0 {
-			for _, pc := range tblInfo.Partition.Columns {
-				if strings.EqualFold(pc.L, col.Name.L) {
-					err := checkPartitionColumnModifiable(sctx, tblInfo, col, newCol, sqlMode)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-			return nil
-		}
-		partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		var partCol *model.ColumnInfo
-		for _, pc := range partCols {
-			if strings.EqualFold(pc.Name.L, col.Name.L) {
-				partCol = pc
-				break
-			}
-		}
-		if partCol != nil {
-			return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol, sqlMode)
-		}
+// doubleCheckPartitionColumn checks the column type change again during execution.
+func doubleCheckPartitionColumn(
+	w *worker, jobCtx *jobContext,
+	dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	col, newCol *model.ColumnInfo,
+	sqlMode mysql.SQLMode,
+) error {
+	tbl, err := getTable(jobCtx.getAutoIDRequirement(), dbInfo.ID, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	return nil
+
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer w.sessPool.Put(sctx)
+	return checkPartitionColumn(sctx, tbl, col, newCol, sqlMode)
 }
 
-func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo, sqlMode mysql.SQLMode) error {
+// checkPartitionColumnModifiable checks that the column type change doesn't
+// affect the partitioning column. It must keep the same type, like:
+// int [unsigned], [var]char, date[time]
+func checkPartitionColumnModifiable(
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	col, newCol *model.ColumnInfo,
+	sqlMode mysql.SQLMode,
+) error {
 	if col.Name.L != newCol.Name.L {
 		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 	}
@@ -1485,7 +1474,8 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 		newCol.FieldType.GetFlag() != col.FieldType.GetFlag() ||
 		newCol.FieldType.GetCollate() != col.FieldType.GetCollate() ||
 		newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
-		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(
+			"can't change the partitioning column, since it would require reorganize all partitions")
 	}
 	// Generate a new PartitionInfo and validate it together with the new column definition
 	// Checks if all partition definition values are compatible.
@@ -1526,52 +1516,6 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 	}
 	return nil
-}
-
-var colStateOrd = map[model.SchemaState]int{
-	model.StateNone:                 0,
-	model.StateDeleteOnly:           1,
-	model.StateDeleteReorganization: 2,
-	model.StateWriteOnly:            3,
-	model.StateWriteReorganization:  4,
-	model.StatePublic:               5,
-}
-
-func checkTableInfo(tblInfo *model.TableInfo) {
-	if !intest.InTest {
-		return
-	}
-
-	// Check columns' order by state.
-	minState := model.StatePublic
-	for _, col := range tblInfo.Columns {
-		if colStateOrd[col.State] < colStateOrd[minState] {
-			minState = col.State
-		} else if colStateOrd[col.State] > colStateOrd[minState] {
-			intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
-		}
-		if col.ChangeStateInfo != nil {
-			offset := col.ChangeStateInfo.DependencyColumnOffset
-			intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
-			depCol := tblInfo.Columns[offset]
-			switch {
-			case col.IsChanging():
-				name := col.GetChangingOriginName()
-				intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
-			case depCol.IsRemoving():
-				name := depCol.GetRemovingOriginName()
-				intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
-			}
-		}
-	}
-
-	// Check index names' uniqueness.
-	allNames := make(map[string]struct{})
-	for _, idx := range tblInfo.Indices {
-		_, exists := allNames[idx.Name.O]
-		intest.Assert(!exists, "duplicate index name %s", idx.Name.O)
-		allNames[idx.Name.O] = struct{}{}
-	}
 }
 
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
@@ -1686,7 +1630,7 @@ func GetModifiableColumnJob(
 		}
 	}
 
-	err = preCheckPartitionModifiableColumn(sctx, t, col, newCol)
+	err = checkPartitionColumn(sctx, t, col.ColumnInfo, newCol.ColumnInfo, sctx.GetSessionVars().SQLMode)
 	if err != nil {
 		return nil, err
 	}
@@ -1996,9 +1940,14 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.I
 	return nil
 }
 
-// checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
-// or change by reorg. It returns error if the two types are incompatible and correlated change are not
-// supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
+// checkModifyTypes verifies whether a column type can be modified from 'from' to
+// 'to', either directly or through reorg. It returns an error if the two types
+// are incompatible and correlated change are not supported. Additionally, if
+// the source column has a primary key constraint, an error will be returned
+// regardless of type compatibility.
+// Note: although we can modify column types with incompatible collations through
+// reorg when there are indexes on it, we still forbid such modifications right
+// now.
 func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool) error {
 	fromFt := &from.FieldType
 	toFt := &to.FieldType
