@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -58,7 +59,24 @@ func buildPushDownIndexLookUpPlan(
 		// - If common handle, we don't need to set the indexHandleOffsets to build the common handle key
 		// which can be read from the index value directly.
 		// - If int handle, it is the last column in the index schema.
-		indexHandleOffsets = []uint32{uint32(indexPlan.Schema().Len()) - 1}
+		//   - If the last column is ExtraHandleID, or a non-negative column ID, handle is the last column.
+		//   - Otherwise, we need to find the last column whose ID is not ExtraHandleID and is negative.
+		//     For example, partition table's IndexScan needs to append ExtraPhysTblID
+		//     to the last if it is under `UnionScanExec`
+		offset := indexPlan.Schema().Len() - 1
+		for offset >= 0 {
+			col := indexPlan.Schema().Columns[offset]
+			if col.ID >= 0 || col.ID == model.ExtraHandleID {
+				break
+			}
+			offset--
+			intest.Assert(offset >= 0, "cannot find handle column in index schema")
+		}
+
+		if offset < 0 {
+			return nil, errors.New("cannot find handle column in index schema")
+		}
+		indexHandleOffsets = []uint32{uint32(offset)}
 	}
 
 	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)
