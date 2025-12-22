@@ -1781,9 +1781,9 @@
         "Plan": [
           "TableReader 7992.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, left side:ExchangeReceiver, equal:[eq(test.tt.b1, test.t.c3)], stream_count: 8",
-          "    ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  stream_count: 8",
-          "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c3, collate: binary], stream_count: 8",
+          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, left side:ExchangeReceiver, equal:[eq(test.tt.b1, test.t.c3)]",
+          "    ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c3, collate: binary]",
           "    │   └─Projection 8000.00 mpp[tiflash]  test.t.c3",
           "    │     └─Selection 8000.00 mpp[tiflash]  lt(test.t.c1, test.t.c2)",
           "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -1799,10 +1799,10 @@
           "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#3",
-          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:sum(Column#6)->Column#3, stream_count: 8",
-          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  stream_count: 8",
-          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.b1, collate: binary], stream_count: 8",
-          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:count(1)->Column#6",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:sum(Column#7)->Column#3",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.b1, collate: binary]",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:count(1)->Column#7",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:tt keep order:false, stats:pseudo"
         ]
       }
