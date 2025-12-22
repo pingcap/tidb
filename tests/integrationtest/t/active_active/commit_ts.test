@@ -1,5 +1,5 @@
 drop table if exists t;
-create table t (id int primary key, v int);
+create table t (id int primary key, v int, index i_v(v));
 insert into t values (1, 1), (2, 2), (3, 3);
 insert into t values (4, 4);
 
@@ -59,11 +59,19 @@ select _tidb_commit_ts, id from t where id in (1, 2, 3);
 # --replace_regex /^[1-9][0-9]+/TSO/
 # select _tidb_commit_ts, id from t where id in (1, 2, 3);
 
---echo # TODO
---echo # coprocessor is not supported yet
-# explain format = 'brief' select _tidb_commit_ts, id from t;
-# select _tidb_commit_ts, id from t;
-# select _tidb_commit_ts, id from t where id < 5;
+--echo # coprocessor request should also return _tidb_commit_ts
+explain format = 'brief' select _tidb_commit_ts, id from t;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id < 5;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, id from t where id < 5 order by id desc;
+
+# index lookup should be used, index scan does not support _tidb_commit_ts
+explain format = 'brief' select _tidb_commit_ts, v from t use index (i_v) where v = 2;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, v from t use index (i_v) where v = 2;
 
 drop table if exists t;
 create table t (a bigint primary key, b int, c int) softdelete = 'on' active_active = 'on';

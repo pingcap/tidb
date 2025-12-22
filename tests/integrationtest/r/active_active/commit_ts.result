@@ -1,5 +1,5 @@
 drop table if exists t;
-create table t (id int primary key, v int);
+create table t (id int primary key, v int, index i_v(v));
 insert into t values (1, 1), (2, 2), (3, 3);
 insert into t values (4, 4);
 explain format = 'brief' select _tidb_commit_ts, id from t where id = 1;
@@ -62,8 +62,39 @@ _tidb_commit_ts	id
 TSO	1
 TSO	2
 TSO	3
-# TODO
-# coprocessor is not supported yet
+# coprocessor request should also return _tidb_commit_ts
+explain format = 'brief' select _tidb_commit_ts, id from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.id
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select _tidb_commit_ts, id from t;
+_tidb_commit_ts	id
+TSO	1
+TSO	2
+TSO	3
+TSO	4
+select _tidb_commit_ts, id from t where id < 5;
+_tidb_commit_ts	id
+TSO	1
+TSO	2
+TSO	3
+TSO	4
+select _tidb_commit_ts, id from t where id < 5 order by id desc;
+_tidb_commit_ts	id
+TSO	4
+TSO	3
+TSO	2
+TSO	1
+explain format = 'brief' select _tidb_commit_ts, v from t use index (i_v) where v = 2;
+id	estRows	task	access object	operator info
+Projection	10.00	root		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.v
+└─IndexLookUp	10.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_v(v)	range:[2,2], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select _tidb_commit_ts, v from t use index (i_v) where v = 2;
+_tidb_commit_ts	v
+TSO	2
 drop table if exists t;
 create table t (a bigint primary key, b int, c int) softdelete = 'on' active_active = 'on';
 alter table t drop column _tidb_commit_ts;
