@@ -21,12 +21,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1365,6 +1365,30 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 	}
 }
 
+// ensureStatsLoaded makes sure all stats of table t are loaded.
+func ensureStatsLoaded(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+	h := dom.StatsHandle()
+
+	tk.MustExec("explain select * from t where b > 100")
+	tk.MustExec("explain select * from t where a < 100")
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+
+	tblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
+	statsTbl := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+
+	// Some new columns or indexes may not be analyzed.
+	for _, col := range tblInfo.Columns {
+		if coll := statsTbl.GetCol(col.ID); coll != nil {
+			require.True(t, coll.IsFullLoad())
+		}
+	}
+	for _, idx := range tblInfo.Indices {
+		if idxStat := statsTbl.GetIdx(idx.ID); idxStat != nil {
+			require.True(t, idxStat.IsFullLoad())
+		}
+	}
+}
+
 func TestStatsAfterModifyColumn(t *testing.T) {
 	type query struct {
 		pred string
@@ -1465,28 +1489,6 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 		h.SetLease(0)
 	})
 
-	// Before checking the plans, we need to ensure the stats are loaded.
-	ensureStatsLoaded := func(tk *testkit.TestKit) {
-		tk.MustExec("explain select * from t where b > 100")
-		tk.MustExec("explain select * from t where a < 100")
-		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-
-		tblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
-		statsTbl := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-
-		// Some new columns or indexes may not be analyzed.
-		for _, col := range tblInfo.Columns {
-			if coll := statsTbl.GetCol(col.ID); coll != nil {
-				require.True(t, coll.IsFullLoad())
-			}
-		}
-		for _, idx := range tblInfo.Indices {
-			if idxStat := statsTbl.GetIdx(idx.ID); idxStat != nil {
-				require.True(t, idxStat.IsFullLoad())
-			}
-		}
-	}
-
 	for _, tc := range tcs {
 		t.Run(tc.caseName, func(t *testing.T) {
 			h.Clear()
@@ -1494,17 +1496,18 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 			tk.MustExec(tc.createTableSQL)
 			tk.MustExec(fmt.Sprintf("set @@tidb_stats_update_during_ddl = %t", tc.embeddedAnalyze))
 
+			values := make([]string, 0, 160)
 			for i := range 128 {
-				tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+				values = append(values, fmt.Sprintf("(%d, '%d')", i, i))
 			}
-			// Insert some hotspot values.
 			for range 32 {
-				tk.MustExec("insert into t values (100, 100), (200, 200)")
+				values = append(values, "(100, '100'), (200, '200')")
 			}
+			tk.MustExec(fmt.Sprintf("insert into t values %s", strings.Join(values, ",")))
 
-			tk.MustExec("analyze table t columns a, b")
+			tk.MustExec("analyze table t columns a, b with 4 topn")
 
-			ensureStatsLoaded(tk)
+			ensureStatsLoaded(t, tk, dom)
 			oldRs := make([]string, 0, len(tc.checkItems))
 			for _, item := range tc.checkItems {
 				for _, q := range checkItemsMap[item] {
@@ -1515,7 +1518,7 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 
 			tk.MustExec(tc.modifySQL)
 
-			ensureStatsLoaded(tk)
+			ensureStatsLoaded(t, tk, dom)
 			count := 0
 			for _, item := range tc.checkItems {
 				for _, q := range checkItemsMap[item] {
@@ -1528,46 +1531,52 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 	}
 }
 
-func TestStatsForPartitioned(t *testing.T) {
-
-	store := testkit.CreateMockStore(t)
+func TestStatsForPartitionedTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-
+	tk.MustExec("use test")
 	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
 	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("set global tidb_enable_async_merge_global_stats = 0")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 
-	tk.MustExec("use test")
+	h := dom.StatsHandle()
+	h.SetLease(time.Millisecond)
+	t.Cleanup(func() {
+		h.SetLease(0)
+	})
+
+	// Don't add index on b since we always perfer index stats, but here we want
+	// to examine column stats.
 	tk.MustExec(`
-		create table t (a bigint, b bigint, index i2(b))
+		create table t (a bigint, b bigint)
 		PARTITION BY RANGE (a) (
-			PARTITION p0 VALUES LESS THAN (32),
-			PARTITION p1 VALUES LESS THAN (64),
-			PARTITION p2 VALUES LESS THAN (96),
-			PARTITION p3 VALUES LESS THAN (128)
+			PARTITION p0 VALUES LESS THAN (16),
+			PARTITION p1 VALUES LESS THAN (32),
+			PARTITION p2 VALUES LESS THAN (48),
+			PARTITION p3 VALUES LESS THAN (64)
 		)
 	`)
 
-	for i := range 128 {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+	values := make([]string, 0, 96)
+	for i := range 64 {
+		values = append(values, fmt.Sprintf("(%d, '%d')", i, i))
 	}
+	for range 32 {
+		values = append(values, "(8, 8), (24, 24), (40, 40), (60, 60)")
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s", strings.Join(values, ",")))
+	tk.MustExec("analyze table t columns a, b with 4 topn")
+	ensureStatsLoaded(t, tk, dom)
 
-	// Do analyze and modify column
-	tk.MustExec("analyze table t columns a, b")
+	// Analyze only one partition to trigger merge stats after MODIFY COLUMN.
 	tk.MustExec("alter table t modify column b int unsigned")
-	tk.MustExec("explain analyze select * from t where a < 32")
-	tk.MustExec("explain analyze select * from t where a != 40")
-	tk.MustExec("explain analyze select * from t where a > 55")
+	tk.MustExec("analyze table t partition p0")
+	ensureStatsLoaded(t, tk, dom)
 
-	var singleAnalyze atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeHandleGlobalStats", func() {
-		// Do analyze for single partition again, the stats should be collected
-		// with new type. So now this table contains both stats with old type
-		// and new type.
-		if singleAnalyze.CompareAndSwap(false, true) {
-			tk.MustExec("analyze table t partition p0")
-		}
-	})
-
-	tk.MustExec("analyze table t")
+	// Check stats correctness after MODIFY COLUMN on partitioned table.
+	for _, v := range []int{8, 24, 40, 60} {
+		rs := tk.MustQuery(fmt.Sprintf("explain select b from t use index() where b = %d", v)).Rows()
+		require.Equal(t, "33.00", rs[0][1].(string))
+	}
 }
