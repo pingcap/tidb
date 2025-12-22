@@ -44,7 +44,7 @@ done
 # link source files to source dir
 ls $RAW_PATH | xargs -I{} ln -s $RAW_PATH/{} $DBPATH/{}
 
-for BACKEND in tidb local; do
+for BACKEND in tidb local import-into; do
   if [ "$BACKEND" = 'local' ]; then
     check_cluster_version 4 0 0 'local backend' || continue
   fi

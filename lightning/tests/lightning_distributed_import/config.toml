@@ -10,3 +10,6 @@ checksum = "required"
 
 [mydumper.csv]
 header = false
+
+[lightning]
+check-requirements = false

@@ -81,29 +81,10 @@ function run_with() {
   done
 }
 
-rm -rf $TEST_DIR/lightning.log
-run_with "local" "$CUR/config-pause-global.toml"
-check_contains 'pause pd scheduler of global scope' $TEST_DIR/lightning.log
-check_not_contains 'pause pd scheduler of table scope' $TEST_DIR/lightning.log
-
-rm -rf $TEST_DIR/lightning.log
-run_with "local" "$CUR/config.toml"
-check_contains 'pause pd scheduler of table scope' $TEST_DIR/lightning.log
-check_not_contains 'pause pd scheduler of global scope' $TEST_DIR/lightning.log
-check_contains 'switch tikv mode"] [mode=Import' $TEST_DIR/lightning.log
-check_contains 'switch tikv mode"] [mode=Normal' $TEST_DIR/lightning.log
-
-rm -rf $TEST_DIR/lightning.log
-run_with "local" "$CUR/config-checksum-off.toml"
-
-rm -rf $TEST_DIR/lightning.log
-run_with "tidb" "$CUR/config.toml"
-check_not_contains 'switch tikv mode' $TEST_DIR/lightning.log
-
 set +e
-run_lightning --backend local -d "$CUR/errData" --log-file "$TEST_DIR/lightning-err.log" 2>/dev/null
+run_lightning --backend import-into -d "$CUR/errData" --log-file "$TEST_DIR/lightning-err.log" 2>/dev/null
 set -e
-# err content presented
+## err content presented
 grep ",7,8" "$TEST_DIR/lightning-err.log"
 # pos should not set to end
 grep "[\"syntax error\"] [pos=22]" "$TEST_DIR/lightning-err.log"

@@ -44,5 +44,5 @@ set -x
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/shortWaitNTimeout=100*return(1)" 
 
-run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config.toml"
+run_lightning --backend import-into -d "$TEST_DIR/data" --config "$CUR/config.toml"
 check_lightning_log_contains 'Experiencing a wait timeout while writing to tikv'

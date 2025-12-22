@@ -20,7 +20,7 @@ set -eux
 
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-for BACKEND in tidb local; do
+for BACKEND in tidb local import-into; do
   run_sql 'DROP DATABASE IF EXISTS routes_a0;'
   run_sql 'DROP DATABASE IF EXISTS routes_a1;'
   run_sql 'DROP DATABASE IF EXISTS routes_b;'

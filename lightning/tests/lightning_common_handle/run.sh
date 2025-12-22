@@ -34,7 +34,7 @@ INSERT INTO t (s, i, j) VALUES
 _EOF_
 echo 'INSERT INTO t(s, i, j) VALUES ("another test case", 6, 6);' > "$DBPATH/ch.t.1.sql"
 
-for BACKEND in local tidb; do
+for BACKEND in local tidb import-into; do
   # Start importing the tables.
   run_sql 'DROP DATABASE IF EXISTS ch'
 

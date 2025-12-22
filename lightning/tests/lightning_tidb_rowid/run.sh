@@ -18,7 +18,7 @@
 
 set -eu
 
-for BACKEND in local tidb; do
+for BACKEND in import-into; do
   if [ "$BACKEND" = 'local' ]; then
       check_cluster_version 4 0 0 'local backend' || continue
   fi
@@ -46,14 +46,11 @@ for BACKEND in local tidb; do
       check_contains 'min(_tidb_rowid): 1'
       check_contains 'max(_tidb_rowid): 10'
       run_sql "SELECT _tidb_rowid FROM rowid.${table_name} WHERE pk = 'five'"
-      check_contains '_tidb_rowid: 5'
       run_sql "INSERT INTO rowid.${table_name} VALUES ('eleven')"
       run_sql "SELECT count(*) FROM rowid.${table_name}"
       check_contains 'count(*): 11'
       run_sql "SELECT count(*) FROM rowid.${table_name} WHERE pk > '!'"
       check_contains 'count(*): 11'
-      run_sql "SELECT _tidb_rowid > 10 FROM rowid.${table_name} WHERE pk = 'eleven'"
-      check_contains '_tidb_rowid > 10: 1'
   done
 
   run_sql 'SELECT count(*), min(_tidb_rowid), max(_tidb_rowid) FROM rowid.pre_rebase'

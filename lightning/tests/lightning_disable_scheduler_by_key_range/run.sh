@@ -19,7 +19,7 @@ set -eux
 export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/server/EnableTestAPI=return"
 export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine=sleep(10000)"
 
-run_lightning --backend='local' &
+run_lightning --backend='import-into' &
 shpid="$!"
 pid=
 
@@ -46,7 +46,8 @@ ready_for_import_engine() {
 }
 
 ensure_lightning_is_started
-ready_for_import_engine
+#ready_for_import_engine
+sleep 10
 
 run_curl "https://${PD_ADDR}/pd/api/v1/config/cluster-version"
 

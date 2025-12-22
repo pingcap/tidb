@@ -23,7 +23,7 @@ run_sql 'CREATE DATABASE IF NOT EXISTS fk;'
 # Create existing tables that import data will reference.
 run_sql 'CREATE TABLE fk.t2 (a BIGINT PRIMARY KEY);'
 
-for BACKEND in tidb local; do
+for BACKEND in tidb local import-into; do
   run_sql 'DROP TABLE IF EXISTS fk.t, fk.parent, fk.child;'
 
   run_lightning --backend $BACKEND --config "${mydir}/$BACKEND-config.toml"

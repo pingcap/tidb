@@ -34,7 +34,7 @@ run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 stderr_file="/tmp/${TEST_NAME}.stderr"
 
 set +e
-if run_lightning --backend local --config "${mydir}/err_config.toml" 2> "${stderr_file}"; then
+if run_lightning --backend import-into --config "${mydir}/err_config.toml" 2> "${stderr_file}"; then
     echo "The lightning import doesn't fail as expected" >&2
     exit 1
 fi
@@ -60,7 +60,7 @@ run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v4'
 run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 
-run_lightning --backend local --config "${mydir}/normal_config.toml"
+run_lightning --backend import-into --config "${mydir}/normal_config.toml"
 
 run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v4'
 check_contains "COUNT(*): ${duplicated_row_count}"

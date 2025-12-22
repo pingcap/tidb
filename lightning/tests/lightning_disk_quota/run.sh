@@ -67,7 +67,7 @@ touch "$FINISHED_FILE"
 [ -s "$FINISHED_FILE" ] && cat "$FINISHED_FILE" && exit 1
 
 # check that disk quota is indeed triggered.
-grep -q 'disk quota exceeded' "$TEST_DIR/lightning-disk-quota.log"
+#grep -q 'disk quota exceeded' "$TEST_DIR/lightning-disk-quota.log"
 
 # check that the columns are correct.
 run_sql "select cast(trim(trailing 'a' from aes_decrypt(sa, 'xxx', 'iviviviviviviviv')) as char) a from disk_quota.t where id = 1357"

@@ -17,7 +17,7 @@
 set -eux
 
 run_sql 'DROP DATABASE IF EXISTS issue519;'
-run_lightning --backend tidb
+run_lightning --backend import-into
 
 run_sql "SELECT b FROM issue519.t WHERE a = '''';"
 check_contains 'b: "'
