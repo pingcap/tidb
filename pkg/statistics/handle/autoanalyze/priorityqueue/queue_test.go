@@ -39,7 +39,7 @@ func TestCallAPIBeforeInitialize(t *testing.T) {
 	defer pq.Close()
 
 	t.Run("IsEmpty", func(t *testing.T) {
-		isEmpty, err := pq.IsEmpty()
+		isEmpty, err := pq.IsEmptyForTest()
 		require.Error(t, err)
 		require.False(t, isEmpty)
 	})
@@ -61,7 +61,7 @@ func TestCallAPIBeforeInitialize(t *testing.T) {
 	})
 
 	t.Run("Peek", func(t *testing.T) {
-		job, err := pq.Peek()
+		job, err := pq.PeekForTest()
 		require.Error(t, err)
 		require.Nil(t, job)
 	})
@@ -108,7 +108,7 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 	})
 
 	t.Run("IsEmpty And Pop", func(t *testing.T) {
-		isEmpty, err := pq.IsEmpty()
+		isEmpty, err := pq.IsEmptyForTest()
 		require.NoError(t, err)
 		require.False(t, isEmpty)
 
@@ -120,7 +120,7 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, poppedJob)
 
-		isEmpty, err = pq.IsEmpty()
+		isEmpty, err = pq.IsEmptyForTest()
 		require.NoError(t, err)
 		require.True(t, isEmpty)
 
@@ -153,7 +153,7 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
 
@@ -258,7 +258,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	updatedJob1, err := pq.Peek()
+	updatedJob1, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob1.GetWeight())
 	require.Equal(t, tbl1.Meta().ID, updatedJob1.GetTableID())
@@ -276,7 +276,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	updatedJob2, err := pq.Peek()
+	updatedJob2, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob2.GetWeight())
 	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size and more changes")
@@ -326,7 +326,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	runningJobs := pq.GetRunningJobs()
 	require.Len(t, runningJobs, 0)
 	// Check no jobs are in the queue.
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
@@ -461,7 +461,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tbl1.Meta().ID, job.GetTableID())
 
@@ -473,7 +473,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
 
@@ -522,7 +522,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	require.NoError(t, err)
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
 	require.Equal(t, tableID, job.GetTableID())
@@ -547,7 +547,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableID, job.GetTableID())
 }
@@ -585,7 +585,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	pid := tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
@@ -610,7 +610,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	pid = tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
