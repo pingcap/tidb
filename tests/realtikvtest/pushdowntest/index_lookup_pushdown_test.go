@@ -397,5 +397,20 @@ func TestRealTiKVPartitionIndexLookUpPushDown(t *testing.T) {
 			v.primaryRows = []int{1}
 		}
 		v.RunSelectWithCheck("1", 0, -1)
+
+		// test with uncommitted data
+		func() {
+			defer tk.MustExec("rollback")
+			tk.MustExec("begin")
+			tk.MustExec(fmt.Sprintf("insert into %s values ('b2', 22, 2, 202),  ('d3', 123, 4, 203)", tableName))
+			result := v.RunSelectWithCheck("1 order by d", 0, 5)
+			require.Equal(t, [][]any{
+				{"a", "10", "1", "100"},
+				{"b", "20", "2", "200"},
+				{"b2", "22", "2", "202"},
+				{"d3", "123", "4", "203"},
+				{"c", "110", "3", "300"},
+			}, result.Rows)
+		}()
 	}
 }
