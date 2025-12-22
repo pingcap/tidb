@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/bits"
 	"math/rand"
+	"slices"
 	"time"
 	"unsafe"
 
@@ -250,37 +251,19 @@ func (c *Column) Reserve(nullBitmapExpectedCap int64, dataExpectedCap int64, off
 	currentNullBitmapLen := int64(len(c.nullBitmap))
 	nullBitmapExpectedCap += currentNullBitmapLen
 	if int64(cap(c.nullBitmap)) < nullBitmapExpectedCap {
-		if currentNullBitmapLen > 0 {
-			tmp := make([]byte, currentNullBitmapLen, nullBitmapExpectedCap)
-			copy(tmp[:currentNullBitmapLen], c.nullBitmap[:currentNullBitmapLen])
-			c.nullBitmap = tmp
-		} else {
-			c.nullBitmap = make([]byte, 0, nullBitmapExpectedCap)
-		}
+		c.nullBitmap = slices.Grow(c.nullBitmap, int(nullBitmapExpectedCap)-cap(c.nullBitmap))
 	}
 
 	currentDataLen := int64(len(c.data))
 	dataExpectedCap += currentDataLen
 	if int64(cap(c.data)) < dataExpectedCap {
-		if currentDataLen > 0 {
-			tmp := make([]byte, currentDataLen, dataExpectedCap)
-			copy(tmp[:currentDataLen], c.data[:currentDataLen])
-			c.data = tmp
-		} else {
-			c.data = make([]byte, 0, dataExpectedCap)
-		}
+		c.data = slices.Grow(c.data, int(dataExpectedCap)-cap(c.data))
 	}
 
 	currentOffsetLen := int64(len(c.offsets))
 	offsetExpectedCap += currentOffsetLen
 	if int64(cap(c.offsets)) < offsetExpectedCap {
-		if currentOffsetLen > 0 {
-			tmp := make([]int64, currentOffsetLen, offsetExpectedCap)
-			copy(tmp[:currentOffsetLen], c.offsets[:currentOffsetLen])
-			c.offsets = tmp
-		} else {
-			c.offsets = make([]int64, 0, offsetExpectedCap)
-		}
+		c.offsets = slices.Grow(c.offsets, int(offsetExpectedCap)-cap(c.offsets))
 	}
 }
 
