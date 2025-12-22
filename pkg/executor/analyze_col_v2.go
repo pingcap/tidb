@@ -356,7 +356,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	// Start workers to build stats.
 	for range samplingStatsConcurrency {
 		e.samplingBuilderWg.Run(func() {
-			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
+			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh, needExtStats)
 		})
 	}
 	// Generate tasks for building stats.
@@ -411,13 +411,15 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		}
 	}
 	defer func() {
-		totalSampleCollectorSize := int64(0)
-		for _, sampleCollector := range sampleCollectors {
-			if sampleCollector != nil {
-				totalSampleCollectorSize += sampleCollector.MemSize
+		if needExtStats {
+			totalSampleCollectorSize := int64(0)
+			for _, sampleCollector := range sampleCollectors {
+				if sampleCollector != nil {
+					totalSampleCollectorSize += sampleCollector.MemSize
+				}
 			}
+			e.memTracker.Release(totalSampleCollectorSize)
 		}
-		e.memTracker.Release(totalSampleCollectorSize)
 	}()
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -669,7 +671,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
-func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}, needExtraStats bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -803,8 +805,10 @@ workLoop:
 					MemSize:   collectorMemSize,
 				}
 			}
-			if task.isColumn {
+			if task.isColumn && needExtraStats {
 				collectors[task.slicePos] = collector
+			} else {
+				e.memTracker.Release(collector.MemSize)
 			}
 			releaseCollectorMemory := func() {
 				if !task.isColumn {
