@@ -10,5 +10,6 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/util/benchdaily",
+        "@com_github_stretchr_testify//require",
     ],
 )
