@@ -408,12 +408,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	buf.WriteString(SlowLogOptimizeLogicalOpt + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.LogicalOpt.Seconds(), 'f', -1, 64) + " ")
 	buf.WriteString(SlowLogOptimizePhysicalOpt + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.PhysicalOpt.Seconds(), 'f', -1, 64) + " ")
 	buf.WriteString(SlowLogOptimizeBindingMatch + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.BindingMatch.Seconds(), 'f', -1, 64) + " ")
-	if s.DurationOptimizer.StatsSyncWait > 0 {
-		buf.WriteString(SlowLogOptimizeStatsSyncWait + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.StatsSyncWait.Seconds(), 'f', -1, 64) + " ")
-	}
-	if s.DurationOptimizer.TiFlashInfoFetch > 0 {
-		buf.WriteString(SlowLogOptimizeTiFlashInfoFetch + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.TiFlashInfoFetch.Seconds(), 'f', -1, 64) + " ")
-	}
+	buf.WriteString(SlowLogOptimizeStatsSyncWait + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.StatsSyncWait.Seconds(), 'f', -1, 64) + " ")
+	buf.WriteString(SlowLogOptimizeTiFlashInfoFetch + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.TiFlashInfoFetch.Seconds(), 'f', -1, 64) + " ")
 	buf.WriteString(SlowLogOptimizeStatsDerive + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.StatsDerive.Seconds(), 'f', -1, 64))
 	buf.WriteString("\n")
 
