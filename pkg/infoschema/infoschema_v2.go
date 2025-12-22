@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -853,7 +852,7 @@ func (is *infoschemaV2) searchTableItemByID(tableID int64) (*tableItem, bool) {
 
 // TableByID implements the InfoSchema interface.
 // As opposed to TableByName, TableByID will not refill cache when schema cache
-// miss and the available schema cache size is not enough, unless the caller changes
+// miss and whether the available schema cache size is enough or not, unless the caller changes
 // the behavior by passing a context use WithRefillOption.
 func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
@@ -959,27 +958,37 @@ func (is *infoschemaV2) iterateAllTableItemsInternal(first *tableItem, visit fun
 
 // TableIsCached checks whether the table is cached.
 func (is *infoschemaV2) TableIsCached(id int64) (ok bool) {
+	return is.tableFromCache(id) != nil
+}
+
+// tableFromCache returns the table from cache if it exists, otherwise returns nil.
+// It does not trigger a reload from storage.
+func (is *infoschemaV2) tableFromCache(id int64) table.Table {
 	if !tableIDIsValid(id) {
-		return false
+		return nil
 	}
 
 	itm, ok := is.searchTableItemByID(id)
 	if !ok {
-		return false
+		return nil
 	}
 
 	if autoid.IsMemSchemaID(id) {
 		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
 			schTbls := raw.(*schemaTables)
-			_, ok = schTbls.tables[itm.tableName.L]
-			return ok
+			if tbl, ok := schTbls.tables[itm.tableName.L]; ok {
+				return tbl
+			}
 		}
-		return false
+		return nil
 	}
 
 	key := tableCacheKey{itm.tableID, itm.schemaVersion}
 	tbl, found := is.tableCache.Get(key)
-	return found && tbl != nil
+	if found && tbl != nil {
+		return tbl
+	}
+	return nil
 }
 
 // IsSpecialDB tells whether the database is a special database.
@@ -1119,37 +1128,29 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 	is.keepAlive()
 
 	// Fast path: all tables are in cache. Optimize for the few tables' scenario.
+	// We check cache and collect tables in a single pass to avoid redundant lookups.
 	if is.tableCache.Under70PercentUsage() {
-		allInCache := true
 		db, ok := is.SchemaByName(schema)
-		if !ok || db == nil {
-			intest.Assert(false)
-			return nil, nil
-		}
-		is.IterateAllTableItemsByDB(db.ID, func(t TableItem) bool {
-			if t.DBName.L != schema.L {
-				return true
-			}
-			if !is.TableIsCached(t.TableID) {
-				allInCache = false
-				return false
-			}
-			return true
-		})
-		if allInCache {
+		if ok && db != nil {
 			tables := make([]*model.TableInfo, 0)
-			is.IterateAllTableItems(func(t TableItem) bool {
+			allInCache := true
+			is.IterateAllTableItemsByDB(db.ID, func(t TableItem) bool {
 				if t.DBName.L != schema.L {
 					return true
 				}
-				tbl, ok := is.TableByID(ctx, t.TableID)
-				intest.Assert(ok, "invalid table id", t.DBName.L)
+				tbl := is.tableFromCache(t.TableID)
+				if tbl == nil {
+					allInCache = false
+					return false
+				}
 				tables = append(tables, tbl.Meta())
 				return true
 			})
-			// Reverse to make the order consistent with fetching from storage.
-			slices.Reverse(tables)
-			return tables, nil
+			if allInCache {
+				// Reverse to make the order consistent with fetching from storage.
+				slices.Reverse(tables)
+				return tables, nil
+			}
 		}
 	}
 

@@ -651,6 +651,10 @@ func TestWithRefillOption(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	oldSchemaCacheSize := vardef.SchemaCacheSize.Load()
+	t.Cleanup(func() {
+		vardef.SchemaCacheSize.Store(oldSchemaCacheSize)
+	})
 	vardef.SchemaCacheSize.Store(100)
 
 	tk.MustExec("create table t1 (id int)")
