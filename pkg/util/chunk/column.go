@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
@@ -158,7 +159,8 @@ func (c *Column) typeSize() int {
 	return VarElemLen
 }
 
-func (c *Column) isFixed() bool {
+// IsFixed returns true when the length of element in column is fixed
+func (c *Column) IsFixed() bool {
 	return c.elemBuf != nil
 }
 
@@ -199,7 +201,7 @@ func (c *Column) reset() {
 	if len(c.offsets) > 0 {
 		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
 		c.offsets = c.offsets[:1]
-	} else if !c.isFixed() {
+	} else if !c.IsFixed() {
 		c.offsets = append(c.offsets, 0)
 	}
 	c.data = c.data[:0]
@@ -267,12 +269,8 @@ func (c *Column) Reserve(nullBitmapExpectedCap int64, dataExpectedCap int64, off
 	}
 }
 
-// CalculateLenDeltaForAppendCellNTimes calculate the memory usage for `AppendCellNTimes` function
-func (c *Column) CalculateLenDeltaForAppendCellNTimes(src *Column, pos, times int) (nullBitMapLenDelta int64, dataLenDelta int64, offsetLenDelta int64) {
-	nullBitMapLenDelta = 0
-	dataLenDelta = 0
-	offsetLenDelta = 0
-
+func (c *Column) calculateLenDeltaForAppendCellNTimesForNullBitMap(times int) int64 {
+	nullBitMapLenDelta := int64(0)
 	if times == 1 {
 		if c.length>>3 >= len(c.nullBitmap) {
 			nullBitMapLenDelta++
@@ -280,15 +278,21 @@ func (c *Column) CalculateLenDeltaForAppendCellNTimes(src *Column, pos, times in
 	} else {
 		nullBitMapLenDelta += int64(((c.length + times + 7) >> 3) - len(c.nullBitmap))
 	}
+	return nullBitMapLenDelta
+}
 
-	if c.isFixed() {
-		elemLen := len(src.elemBuf)
-		dataLenDelta += int64(elemLen * times)
-	} else {
-		start, end := src.offsets[pos], src.offsets[pos+1]
-		dataLenDelta += (end - start) * int64(times)
-		offsetLenDelta += int64(times)
-	}
+// CalculateLenDeltaForAppendCellNTimesForFixedElem calculate the memory usage for `AppendCellNTimes` function
+func (c *Column) CalculateLenDeltaForAppendCellNTimesForFixedElem(src *Column, times int) (nullBitMapLenDelta int64, dataLenDelta int64) {
+	nullBitMapLenDelta = c.calculateLenDeltaForAppendCellNTimesForNullBitMap(times)
+	dataLenDelta = int64(len(src.elemBuf) * times)
+	return
+}
+
+// CalculateLenDeltaForAppendCellNTimesForVarElem calculate the memory usage for `AppendCellNTimes` function
+func (c *Column) CalculateLenDeltaForAppendCellNTimesForVarElem(src *Column, pos, times int) (nullBitMapLenDelta int64, dataLenDelta int64, offsetLenDelta int64) {
+	nullBitMapLenDelta = c.calculateLenDeltaForAppendCellNTimesForNullBitMap(times)
+	dataLenDelta = (src.offsets[pos+1] - src.offsets[pos]) * int64(times)
+	offsetLenDelta = int64(times)
 	return
 }
 
@@ -300,14 +304,35 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 	} else {
 		c.appendMultiSameNullBitmap(notNull, times)
 	}
-	if c.isFixed() {
+	if c.IsFixed() {
 		elemLen := len(src.elemBuf)
 		offset := pos * elemLen
+		if intest.InTest {
+			appendedByteNum := elemLen * times
+			availableMem := cap(c.data) - len(c.data)
+			if availableMem < appendedByteNum {
+				panic("Can't pre-alloc enough memory")
+			}
+		}
+
 		for range times {
 			c.data = append(c.data, src.data[offset:offset+elemLen]...)
 		}
 	} else {
 		start, end := src.offsets[pos], src.offsets[pos+1]
+
+		if intest.InTest {
+			appendedByteNum := int(end-start)*times
+			availableMem := cap(c.data) - len(c.data)
+			if availableMem < appendedByteNum {
+				panic("Can't pre-alloc enough memory")
+			}
+
+			if cap(c.offsets)-len(c.offsets) < times {
+				panic("Can't pre-alloc enough memory")
+			}
+		}
+		
 		for range times {
 			c.data = append(c.data, src.data[start:end]...)
 			c.offsets = append(c.offsets, int64(len(c.data)))
@@ -344,7 +369,7 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 // AppendNNulls append n nulls to the column
 func (c *Column) AppendNNulls(n int) {
 	c.appendMultiSameNullBitmap(false, n)
-	if c.isFixed() {
+	if c.IsFixed() {
 		for range n {
 			c.data = append(c.data, c.elemBuf...)
 		}
@@ -360,7 +385,7 @@ func (c *Column) AppendNNulls(n int) {
 // AppendNull appends a null value into this Column.
 func (c *Column) AppendNull() {
 	c.appendNullBitmap(false)
-	if c.isFixed() {
+	if c.IsFixed() {
 		c.data = append(c.data, c.elemBuf...)
 	} else {
 		c.offsets = append(c.offsets, c.offsets[c.length])
@@ -773,7 +798,7 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 // GetRaw returns the underlying raw bytes in the specific row.
 func (c *Column) GetRaw(rowID int) []byte {
 	var data []byte
-	if c.isFixed() {
+	if c.IsFixed() {
 		elemLen := len(c.elemBuf)
 		data = c.data[rowID*elemLen : rowID*elemLen+elemLen]
 	} else {
@@ -784,7 +809,7 @@ func (c *Column) GetRaw(rowID int) []byte {
 
 // GetRawLength returns the length of the raw
 func (c *Column) GetRawLength(rowID int) int {
-	if c.isFixed() {
+	if c.IsFixed() {
 		return len(c.elemBuf)
 	}
 	return int(c.offsets[rowID+1] - c.offsets[rowID])
@@ -803,7 +828,7 @@ func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
 		return
 	}
-	if c.isFixed() {
+	if c.IsFixed() {
 		elemLen := len(c.elemBuf)
 		for dst, src := range sel {
 			idx := dst >> 3
@@ -874,7 +899,7 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		dst.reset()
 	}
 
-	if c.isFixed() {
+	if c.IsFixed() {
 		elemLen := len(c.elemBuf)
 		dst.elemBuf = make([]byte, elemLen)
 		for _, i := range sel {
@@ -904,7 +929,7 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 // The caller should ensure that all these columns have the same
 // length, and data stored in the result column is fixed-length type.
 func (c *Column) MergeNulls(cols ...*Column) {
-	if !c.isFixed() {
+	if !c.IsFixed() {
 		panic("result column should be fixed-length type")
 	}
 	for _, col := range cols {
@@ -934,7 +959,7 @@ func (c *Column) ContainsVeryLargeElement() bool {
 	if c.length == 0 {
 		return false
 	}
-	if c.isFixed() {
+	if c.IsFixed() {
 		return false
 	}
 	if c.offsets[c.length] <= math.MaxUint32 {
