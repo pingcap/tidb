@@ -414,8 +414,9 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		leftCols := make([]*expression.Column, 0, len(p.EqualConditions))
 		rightCols := make([]*expression.Column, 0, len(p.EqualConditions))
 		for _, expr := range p.EqualConditions {
-			leftCols = append(leftCols, expr.GetArgs()[0].(*expression.Column))
-			rightCols = append(rightCols, expr.GetArgs()[1].(*expression.Column))
+			l, r := expression.ExtractColumnsFromColOpCol(expr)
+			leftCols = append(leftCols, l)
+			rightCols = append(rightCols, r)
 		}
 		checkColumnsMatchPKOrUK := func(cols []*expression.Column, pkOrUK []expression.KeyInfo) bool {
 			if len(pkOrUK) == 0 {
@@ -996,8 +997,9 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(equivFromApply [][]intset.FastIntSet
 // means whether there is a `NullEQ` of a join key.
 func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
 	for _, expr := range p.EqualConditions {
-		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
-		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		l, r := expression.ExtractColumnsFromColOpCol(expr)
+		leftKeys = append(leftKeys, l)
+		rightKeys = append(rightKeys, r)
 		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
 		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
 	}
@@ -1007,8 +1009,9 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 // GetNAJoinKeys extracts join keys(columns) from NAEqualCondition.
 func (p *LogicalJoin) GetNAJoinKeys() (leftKeys, rightKeys []*expression.Column) {
 	for _, expr := range p.NAEQConditions {
-		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
-		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		l, r := expression.ExtractColumnsFromColOpCol(expr)
+		leftKeys = append(leftKeys, l)
+		rightKeys = append(rightKeys, r)
 	}
 	return
 }
@@ -1019,8 +1022,9 @@ func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*proper
 	for _, expr := range p.EqualConditions {
 		_, coll := expr.CharsetAndCollation()
 		collateID := property.GetCollateIDByNameForPartition(coll)
-		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateID: collateID})
-		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateID: collateID})
+		l, r := expression.ExtractColumnsFromColOpCol(expr)
+		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: l, CollateID: collateID})
+		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: r, CollateID: collateID})
 	}
 	return
 }
