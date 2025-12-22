@@ -1456,6 +1456,10 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 
 		if _, ok := w.ddlCtx.getAnalyzeStartTime(job.ID); !ok {
 			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
+			logutil.DDLLogger().Info("start to analyze table after create index",
+				zap.Int64("jobID", job.ID),
+				zap.String("db", dbName),
+				zap.String("table", tblName))
 		}
 
 		doneCh = make(chan error)
