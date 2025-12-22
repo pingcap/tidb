@@ -61,8 +61,8 @@ func buildPushDownIndexLookUpPlan(
 		// - If int handle, it is the last column in the index schema.
 		//   - If the last column is ExtraHandleID, or a non-negative column ID, handle is the last column.
 		//   - Otherwise, we need to find the last column whose ID is not ExtraHandleID and is negative.
-		//     For example, partition table's IndexScan needs to append ExtraPhysTblID
-		//     to the last if it is under `UnionScanExec`
+		//     For example, when a partition table needs to append ExtraPhysTblID
+		//     to the end for the upper UnionScanExec.
 		offset := indexPlan.Schema().Len() - 1
 		for offset >= 0 {
 			col := indexPlan.Schema().Columns[offset]
