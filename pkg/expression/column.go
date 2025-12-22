@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -449,16 +450,31 @@ func (col *Column) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, res
 const columnPrefix = "Column#"
 
 // StringWithCtx implements Expression interface.
-func (col *Column) StringWithCtx(_ ParamValues, redact string) string {
-	return col.string(redact)
+func (col *Column) StringWithCtx(ctx ParamValues, redact string) string {
+	// Check if we're in plan_tree format and need to remove column numbers
+	removeColumnNumbers := false
+	if evalCtx, ok := ctx.(EvalContext); ok {
+		if sessionCtx, ok := evalCtx.(*sessionexpr.EvalContext); ok {
+			format := sessionCtx.Sctx().GetSessionVars().StmtCtx.ExplainFormat
+			if strings.ToLower(format) == types.ExplainFormatPlanTree {
+				removeColumnNumbers = true
+			}
+		}
+	}
+	return col.string(redact, removeColumnNumbers)
+}
+
+// StringWithCtxForExplain implements Expression interface with option to remove column numbers for plan_tree format.
+func (col *Column) StringWithCtxForExplain(_ ParamValues, redact string, removeColumnNumbers bool) string {
+	return col.string(redact, removeColumnNumbers)
 }
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	return col.string(errors.RedactLogDisable)
+	return col.string(errors.RedactLogDisable, false)
 }
 
-func (col *Column) string(redact string) string {
+func (col *Column) string(redact string, removeColumnNumbers bool) string {
 	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column without virtual expression indicates it's a stored type.
 		// a virtual column should be able to be stringified without context.
@@ -468,7 +484,12 @@ func (col *Column) string(redact string) string {
 		return col.OrigName
 	}
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	if removeColumnNumbers {
+		// For plan_tree format, return "Column" instead of "Column#<number>"
+		builder.WriteString("Column")
+	} else {
+		fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	}
 	return builder.String()
 }
 

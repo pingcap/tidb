@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -1081,15 +1080,6 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explai
 	return jsonRow
 }
 
-// removeColumnNumbers removes the number suffix from Column#<number> references,
-// replacing them with just "Column" (e.g., "Column#14" -> "Column").
-// This preserves all other information in the operator info string.
-func removeColumnNumbers(operatorInfo string) string {
-	// Replace Column#<number> with Column, where <number> is one or more digits
-	re := regexp.MustCompile(`Column#\d+`)
-	return re.ReplaceAllString(operatorInfo, "Column")
-}
-
 func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
@@ -1124,11 +1114,7 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 		operatorInfo = p.ExplainInfo()
 	}
 
-	// For plan_tree format, remove only the column number suffix (e.g., Column#14 -> Column)
-	// but keep everything else like "stats:pseudo" intact
-	if format == types.ExplainFormatPlanTree {
-		operatorInfo = removeColumnNumbers(operatorInfo)
-	}
+	// Column numbers are now removed in column.ExplainInfo() when format is plan_tree
 	return estRows, estCost, costFormula, accessObject, operatorInfo
 }
 

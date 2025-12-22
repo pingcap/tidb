@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
@@ -111,7 +112,17 @@ func (col *Column) ColumnExplainInfo(ctx ParamValues, normalized bool) string {
 	if normalized {
 		return col.ColumnExplainInfoNormalized()
 	}
-	return col.StringWithCtx(ctx, errors.RedactLogDisable)
+	// Check if we're in plan_tree format and need to remove column numbers
+	removeColumnNumbers := false
+	if evalCtx, ok := ctx.(EvalContext); ok {
+		if sessionCtx, ok := evalCtx.(*sessionexpr.EvalContext); ok {
+			format := sessionCtx.Sctx().GetSessionVars().StmtCtx.ExplainFormat
+			if strings.ToLower(format) == types.ExplainFormatPlanTree {
+				removeColumnNumbers = true
+			}
+		}
+	}
+	return col.StringWithCtxForExplain(ctx, errors.RedactLogDisable, removeColumnNumbers)
 }
 
 // ColumnExplainInfoNormalized returns the normalized explained info for column.
