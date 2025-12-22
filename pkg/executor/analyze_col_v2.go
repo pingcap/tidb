@@ -370,6 +370,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			slicePos:         i,
 		}
 		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[i])
+		logutil.BgLogger().Info("build sampling stats for column", zap.Int("column offset", i), zap.Int64("column ID", col.ID))
 	}
 
 	indexPushedDownResult := <-idxNDVPushDownCh
@@ -394,6 +395,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			slicePos:         colLen + i,
 		}
 		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[colLen+i])
+		logutil.BgLogger().Info("build sampling stats for index", zap.Int("index offset", i), zap.Int64("index ID", idx.ID))
 	}
 	close(buildTaskChan)
 
