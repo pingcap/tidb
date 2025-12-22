@@ -505,7 +505,6 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	} else {
 		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
 	}
-
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiKV {

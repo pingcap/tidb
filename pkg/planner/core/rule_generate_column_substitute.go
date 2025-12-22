@@ -73,9 +73,9 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 	if ds.PreferStoreType&h.PreferTiFlash != 0 || lp.SCtx().GetSessionVars().IsMPPEnforced() {
 		return
 	}
-	if slices.ContainsFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+	if lp.SCtx().GetSessionVars().IsMPPEnforced() && slices.ContainsFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
 		return path.StoreType == kv.TiFlash
-	}) && lp.SCtx().GetSessionVars().IsMPPEnforced() {
+	}) {
 		return
 	}
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
