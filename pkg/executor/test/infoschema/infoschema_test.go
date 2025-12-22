@@ -1258,3 +1258,22 @@ func TestStatisticShowPublicIndexes(t *testing.T) {
 	})
 	tk.MustExec("alter table t add index idx(b);")
 }
+
+// TestSameTableNameInDifferentSchemas tests that when two different schemas have
+// tables with the same name, information_schema.tables can correctly list both tables.
+func TestSameTableNameInDifferentSchemas(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
+	tk.MustExec("create table db1.t(a int)")
+	tk.MustExec("create table db2.t(a int)")
+
+	// Both tables should be visible
+	tk.MustQuery("select table_name, table_schema from information_schema.tables where table_name = 't' order by table_schema").
+		Check(testkit.Rows("t db1", "t db2"))
+
+	tk.MustExec("drop database db1")
+	tk.MustExec("drop database db2")
+}

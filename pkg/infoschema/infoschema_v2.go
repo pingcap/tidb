@@ -939,7 +939,7 @@ func (is *infoschemaV2) IterateAllTableItemsByDB(dbID int64, visit func(TableIte
 
 func (is *infoschemaV2) iterateAllTableItemsInternal(first *tableItem, visit func(TableItem) bool) {
 	var pivot *tableItem
-	is.byID.Load().DescendLessOrEqual(first, func(item *tableItem) bool {
+	is.byName.Load().DescendLessOrEqual(first, func(item *tableItem) bool {
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
