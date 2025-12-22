@@ -160,9 +160,9 @@
       {
         "SQL": "explain select *, row_number() over () FROM employee -- 1. pure window functions",
         "Plan": [
-          "TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-          "└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_21 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
+          "TableReader_27 10000.00 root  MppVersion: 3, data:ExchangeSender_26",
+          "└─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_25 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
           "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -172,9 +172,9 @@
       {
         "SQL": "explain select *, rank() over () FROM employee",
         "Plan": [
-          "TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-          "└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_21 10000.00 mpp[tiflash]  rank()->Column#6 over()",
+          "TableReader_27 10000.00 root  MppVersion: 3, data:ExchangeSender_26",
+          "└─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_25 10000.00 mpp[tiflash]  rank()->Column#6 over()",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
           "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -184,9 +184,9 @@
       {
         "SQL": "explain select *, dense_rank() over () FROM employee",
         "Plan": [
-          "TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-          "└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_21 10000.00 mpp[tiflash]  dense_rank()->Column#6 over()",
+          "TableReader_27 10000.00 root  MppVersion: 3, data:ExchangeSender_26",
+          "└─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_25 10000.00 mpp[tiflash]  dense_rank()->Column#6 over()",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
           "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -196,9 +196,9 @@
       {
         "SQL": "explain select *, lead(empid) over () FROM employee",
         "Plan": [
-          "TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-          "└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_21 10000.00 mpp[tiflash]  lead(test.employee.empid)->Column#6 over()",
+          "TableReader_27 10000.00 root  MppVersion: 3, data:ExchangeSender_26",
+          "└─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_25 10000.00 mpp[tiflash]  lead(test.employee.empid)->Column#6 over()",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
           "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -208,9 +208,9 @@
       {
         "SQL": "explain select *, lag(empid) over () FROM employee",
         "Plan": [
-          "TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-          "└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_21 10000.00 mpp[tiflash]  lag(test.employee.empid)->Column#6 over()",
+          "TableReader_27 10000.00 root  MppVersion: 3, data:ExchangeSender_26",
+          "└─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_25 10000.00 mpp[tiflash]  lag(test.employee.empid)->Column#6 over()",
           "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
           "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
@@ -220,9 +220,9 @@
       {
         "SQL": "explain select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame",
         "Plan": [
-          "TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-          "└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_21 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.empid order by test.employee.salary rows between current row and current row), stream_count: 8",
+          "TableReader_25 10000.00 root  MppVersion: 3, data:ExchangeSender_24",
+          "└─ExchangeSender_24 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_23 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.empid order by test.employee.salary rows between current row and current row), stream_count: 8",
           "    └─Sort_13 10000.00 mpp[tiflash]  test.employee.empid, test.employee.salary, stream_count: 8",
           "      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 8",
           "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.empid, collate: binary], stream_count: 8",
