@@ -27,8 +27,8 @@ type SDK interface {
 	Close() error
 }
 
-// ImportSDK implements SDK interface
-type ImportSDK struct {
+// importSDK implements SDK interface
+type importSDK struct {
 	FileScanner
 	JobManager
 	SQLGenerator
@@ -49,7 +49,7 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 	jobManager := NewJobManager(db)
 	sqlGenerator := NewSQLGenerator()
 
-	return &ImportSDK{
+	return &importSDK{
 		FileScanner:  scanner,
 		JobManager:   jobManager,
 		SQLGenerator: sqlGenerator,
@@ -57,6 +57,6 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 }
 
 // Close releases resources used by the SDK
-func (sdk *ImportSDK) Close() error {
+func (sdk *importSDK) Close() error {
 	return sdk.FileScanner.Close()
 }

@@ -50,11 +50,11 @@ type fileScanner struct {
 func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDKConfig) (FileScanner, error) {
 	u, err := storage.ParseBackend(sourcePath, nil)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to parse storage backend URL (source=%s). Please verify the URL format and credentials", sourcePath)
+		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s, err=%v", sourcePath, err)
 	}
 	store, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to create external storage (source=%s). Check network/connectivity and permissions", sourcePath)
+		return nil, errors.Annotatef(ErrCreateExternalStorage, "source=%s, err=%v", sourcePath, err)
 	}
 
 	ldrCfg := mydump.LoaderConfig{
@@ -74,10 +74,11 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 		loaderOptions = append(loaderOptions, mydump.WithScanFileConcurrency(cfg.concurrency))
 	}
 
+	// TODO: we can skip some time-consuming operation in constructFileInfo (like get real size of compressed file).
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
 		if loader == nil || !errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
-			return nil, errors.Annotatef(err, "failed to create MyDump loader (source=%s, charset=%s, filter=%v). Please check dump layout and router rules", sourcePath, cfg.charset, cfg.filter)
+			return nil, errors.Annotatef(ErrCreateLoader, "source=%s, charset=%s, err=%v", sourcePath, cfg.charset, err)
 		}
 	}
 
@@ -94,7 +95,7 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 func (s *fileScanner) CreateSchemasAndTables(ctx context.Context) error {
 	dbMetas := s.loader.GetDatabases()
 	if len(dbMetas) == 0 {
-		return errors.Annotatef(ErrNoDatabasesFound, "source=%s. Ensure the path contains valid dump files (*.sql, *.csv, *.parquet, etc.) and filter rules are correct", s.sourcePath)
+		return errors.Annotatef(ErrNoDatabasesFound, "source=%s", s.sourcePath)
 	}
 
 	// Create all schemas and tables
@@ -108,7 +109,7 @@ func (s *fileScanner) CreateSchemasAndTables(ctx context.Context) error {
 
 	err := importer.Run(ctx, dbMetas)
 	if err != nil {
-		return errors.Annotatef(err, "creating schemas and tables failed (source=%s, db_count=%d, concurrency=%d)", s.sourcePath, len(dbMetas), s.config.concurrency)
+		return errors.Annotatef(ErrCreateSchema, "source=%s, db_count=%d, err=%v", s.sourcePath, len(dbMetas), err)
 	}
 
 	return nil
@@ -142,7 +143,7 @@ func (s *fileScanner) CreateSchemaAndTableByName(ctx context.Context, schema, ta
 				Tables:     []*mydump.MDTableMeta{tblMeta},
 			}})
 			if err != nil {
-				return errors.Annotatef(err, "creating schema and table failed (source=%s, concurrency=%d, schema=%s, table=%s)", s.sourcePath, s.config.concurrency, schema, table)
+				return errors.Annotatef(ErrCreateSchema, "source=%s, schema=%s, table=%s, err=%v", s.sourcePath, schema, table, err)
 			}
 
 			return nil
@@ -217,7 +218,7 @@ func (s *fileScanner) buildTableMeta(
 
 	wildcard, err := generateWildcardPath(tblMeta.DataFiles, allDataFiles)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to build wildcard for table=%s.%s", dbMeta.Name, tblMeta.Name)
+		return nil, errors.Trace(err)
 	}
 	uri := s.store.URI()
 	// import into only support absolute path

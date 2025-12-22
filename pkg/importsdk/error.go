@@ -35,4 +35,12 @@ var (
 	ErrInvalidOptions = errors.New("invalid options")
 	// ErrMultipleFieldsDefinedNullBy indicates that multiple FIELDS_DEFINED_NULL_BY values are defined, which is not supported.
 	ErrMultipleFieldsDefinedNullBy = errors.New("IMPORT INTO only supports one FIELDS_DEFINED_NULL_BY value")
+	// ErrParseStorageURL indicates that the storage backend URL is invalid.
+	ErrParseStorageURL = errors.New("failed to parse storage backend URL")
+	// ErrCreateExternalStorage indicates that the external storage cannot be created.
+	ErrCreateExternalStorage = errors.New("failed to create external storage")
+	// ErrCreateLoader indicates that the MyDump loader cannot be created.
+	ErrCreateLoader = errors.New("failed to create MyDump loader")
+	// ErrCreateSchema indicates that creating schemas and tables failed.
+	ErrCreateSchema = errors.New("failed to create schemas and tables")
 )

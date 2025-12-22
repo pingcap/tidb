@@ -20,10 +20,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 )
 
 func (s *mockGCSSuite) TestImportSDK() {
@@ -125,10 +124,7 @@ func (s *mockGCSSuite) TestImportSDK() {
 
 	// 11. Test JobManager.CancelJob with failpoint
 	s.tk.MustExec("TRUNCATE TABLE t")
-	require.NoError(s.T(), failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted", "pause"))
-	defer func() {
-		require.NoError(s.T(), failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted"))
-	}()
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted", "pause")
 
 	jobID2, err := sdk.SubmitJob(ctx, sql)
 	s.NoError(err)
@@ -138,7 +134,7 @@ func (s *mockGCSSuite) TestImportSDK() {
 	s.NoError(err)
 
 	// Unpause
-	require.NoError(s.T(), failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted"))
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted")
 
 	// Verify status is cancelled
 	s.Eventually(func() bool {
