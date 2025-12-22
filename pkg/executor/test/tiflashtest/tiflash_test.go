@@ -120,7 +120,7 @@ func TestReadPartitionTable(t *testing.T) {
 }
 
 func TestAggPushDownApplyAll(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -128,17 +128,32 @@ func TestAggPushDownApplyAll(t *testing.T) {
 	tk.MustExec("drop table if exists bar")
 	tk.MustExec("create table foo(a int, b int)")
 	tk.MustExec("create table bar(a double not null, b decimal(65,0) not null)")
-	tk.MustExec("alter table foo set tiflash replica 1")
-	tk.MustExec("alter table bar set tiflash replica 1")
+	testkit.SetTiFlashReplica(t, dom, "test", "foo")
+	testkit.SetTiFlashReplica(t, dom, "test", "bar")
 	tk.MustExec("insert into foo values(0, NULL)")
 	tk.MustExec("insert into bar values(0, 0)")
 
 	tk.MustExec("set @@session.tidb_allow_mpp=1")
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
-	// unistore does not support later materialization
-	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
-	tk.MustQuery("select * from foo where a=all(select a from bar where bar.b=foo.b)").Check(testkit.Rows("0 <nil>"))
+	tk.MustQuery("explain format='plan_tree' select * from foo where a=all(select a from bar where bar.b=foo.b)").Check(testkit.Rows(
+		`Projection root  test.foo.a, test.foo.b`,
+		`└─Apply root  CARTESIAN inner join, other cond:or(and(le(Column#8, 1), and(eq(cast(test.foo.a, double BINARY), Column#7), if(ne(Column#9, 0), NULL, 1))), or(eq(Column#10, 0), if(isnull(test.foo.a), NULL, 0)))`,
+		`  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender`,
+		`  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough`,
+		`  │   └─TableFullScan mpp[tiflash] table:foo keep order:false, stats:pseudo`,
+		`  └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender`,
+		`    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough`,
+		`      └─Projection mpp[tiflash]  Column#7, Column#8, Column#9, Column#10`,
+		`        └─HashAgg mpp[tiflash]  funcs:max(Column#16)->Column#7, funcs:sum(Column#17)->Column#8, funcs:sum(Column#18)->Column#9, funcs:sum(Column#19)->Column#10`,
+		`          └─ExchangeReceiver mpp[tiflash]  `,
+		`            └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST`,
+		`              └─HashAgg mpp[tiflash]  funcs:max(Column#13)->Column#16, funcs:count(distinct test.bar.a)->Column#17, funcs:sum(Column#14)->Column#18, funcs:sum(Column#15)->Column#19`,
+		`                └─ExchangeReceiver mpp[tiflash]  `,
+		`                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.bar.a, collate: binary]`,
+		`                    └─HashAgg mpp[tiflash]  group by:test.bar.a, funcs:max(test.bar.a)->Column#13, funcs:sum(0)->Column#14, funcs:count(1)->Column#15`,
+		`                      └─Selection mpp[tiflash]  eq(test.bar.b, cast(test.foo.b, decimal(10,0) BINARY))`,
+		`                        └─TableFullScan mpp[tiflash] table:bar keep order:false, stats:pseudo`))
 }
 
 func TestReadUnsigedPK(t *testing.T) {
