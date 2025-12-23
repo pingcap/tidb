@@ -255,7 +255,8 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 		for j, s := range collectors[i].Samples {
 			s.Ordinal = j
-			s.Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
+			tmpSValue, err := tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
+			s.Value = &tmpSValue
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
