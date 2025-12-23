@@ -368,6 +368,12 @@
         ],
         "Warn": [
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'."
         ]
       },
@@ -381,6 +387,12 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'."
         ]
