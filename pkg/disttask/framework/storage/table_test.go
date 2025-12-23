@@ -66,7 +66,7 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, proto.TaskType("test"), task.Type)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, proto.NormalPriority, task.Priority)
-	require.Equal(t, 4, task.Concurrency)
+	require.Equal(t, 4, task.RequiredSlots)
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, "aaa", task.TargetScope)
 	require.Equal(t, 12, task.MaxNodeCount)
@@ -1227,7 +1227,7 @@ func checkBasicTaskEq(t *testing.T, expectedTask, task *proto.TaskBase) {
 	require.Equal(t, expectedTask.State, task.State)
 	require.Equal(t, expectedTask.Step, task.Step)
 	require.Equal(t, expectedTask.Priority, task.Priority)
-	require.Equal(t, expectedTask.Concurrency, task.Concurrency)
+	require.Equal(t, expectedTask.RequiredSlots, task.RequiredSlots)
 	require.Equal(t, expectedTask.CreateTime, task.CreateTime)
 }
 

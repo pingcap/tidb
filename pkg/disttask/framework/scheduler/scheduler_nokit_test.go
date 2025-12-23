@@ -198,10 +198,10 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 	// scheduler not allocated slots, task from paused to resuming. Should exit the scheduler.
 	task := proto.Task{
 		TaskBase: proto.TaskBase{
-			ID:          int64(1),
-			Concurrency: 1,
-			Type:        proto.TaskTypeExample,
-			State:       proto.TaskStatePaused,
+			ID:            int64(1),
+			RequiredSlots: 1,
+			Type:          proto.TaskTypeExample,
+			State:         proto.TaskStatePaused,
 		},
 	}
 	cloneTask := task
@@ -503,7 +503,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		taskBefore.ModifyParam = proto.ModifyParam{
 			PrevState: proto.TaskStateRunning,
 			Modifications: []proto.Modification{
-				{Type: proto.ModifyConcurrency, To: 123},
+				{Type: proto.ModifyRequiredSlots, To: 123},
 			},
 		}
 		scheduler.task.Store(&taskBefore)
@@ -521,7 +521,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		taskBefore.ModifyParam = proto.ModifyParam{
 			PrevState: proto.TaskStateRunning,
 			Modifications: []proto.Modification{
-				{Type: proto.ModifyConcurrency, To: 123},
+				{Type: proto.ModifyRequiredSlots, To: 123},
 			},
 		}
 		scheduler.task.Store(&taskBefore)
@@ -530,7 +530,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, recreateScheduler)
 		expectedTask := runningTask
-		expectedTask.Concurrency = 123
+		expectedTask.RequiredSlots = 123
 		require.Equal(t, expectedTask, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())
 	})
@@ -559,7 +559,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		taskBefore.ModifyParam = proto.ModifyParam{
 			PrevState: proto.TaskStateRunning,
 			Modifications: []proto.Modification{
-				{Type: proto.ModifyConcurrency, To: 123},
+				{Type: proto.ModifyRequiredSlots, To: 123},
 				{Type: proto.ModifyMaxWriteSpeed, To: 11111},
 			},
 		}
@@ -570,7 +570,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, recreateScheduler)
 		expectedTask := runningTask
-		expectedTask.Concurrency = 123
+		expectedTask.RequiredSlots = 123
 		expectedTask.Meta = []byte("max-11111")
 		require.Equal(t, expectedTask, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())

@@ -417,7 +417,7 @@ func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
 	}
 	item[metering.IndexKVBytesField] = indexKVSize
 	// below 3 fields are for better analysis of the cost of the task.
-	item[metering.ConcurrencyField] = task.Concurrency
+	item[metering.RequiredSlotsField] = task.RequiredSlots
 	item[metering.MaxNodeCountField] = task.MaxNodeCount
 	item[metering.DurationSecondsField] = int64(task.StateUpdateTime.Sub(task.CreateTime).Seconds())
 	defer func() {

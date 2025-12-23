@@ -64,8 +64,8 @@ func TestCalculateRequiredNodes(t *testing.T) {
 			tasks := make([]*proto.TaskBase, 0, len(c.params))
 			for _, params := range c.params {
 				task := &proto.TaskBase{
-					Concurrency:  params[0],
-					MaxNodeCount: params[1],
+					RequiredSlots: params[0],
+					MaxNodeCount:  params[1],
 				}
 				tasks = append(tasks, task)
 			}

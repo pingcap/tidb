@@ -64,7 +64,7 @@ func (sm *slotManager) alloc(task *proto.TaskBase) bool {
 	for index, slotInfo := range sm.executorTasks {
 		sm.taskID2Index[slotInfo.ID] = index
 	}
-	sm.available.Add(int32(-task.Concurrency))
+	sm.available.Add(int32(-task.RequiredSlots))
 	return true
 }
 
@@ -76,7 +76,7 @@ func (sm *slotManager) free(taskID int64) {
 	if !ok {
 		return
 	}
-	sm.available.Add(int32(sm.executorTasks[index].Concurrency))
+	sm.available.Add(int32(sm.executorTasks[index].RequiredSlots))
 	sm.executorTasks = slices.Delete(sm.executorTasks, index, index+1)
 
 	delete(sm.taskID2Index, taskID)
@@ -96,7 +96,7 @@ func (sm *slotManager) canAlloc(task *proto.TaskBase) (canAlloc bool, tasksNeedF
 // - canAlloc: whether the instance can run the task.
 // - tasksNeedFree: the tasks that need to be preempted before running this task.
 func (sm *slotManager) canAlloc0(task *proto.TaskBase) (canAlloc bool, tasksNeedFree []*proto.TaskBase) {
-	if int(sm.available.Load()) >= task.Concurrency {
+	if int(sm.available.Load()) >= task.RequiredSlots {
 		return true, nil
 	}
 
@@ -106,8 +106,8 @@ func (sm *slotManager) canAlloc0(task *proto.TaskBase) (canAlloc bool, tasksNeed
 			break
 		}
 		tasksNeedFree = append(tasksNeedFree, slotInfo)
-		usedSlots += slotInfo.Concurrency
-		if int(sm.available.Load())+usedSlots >= task.Concurrency {
+		usedSlots += slotInfo.RequiredSlots
+		if int(sm.available.Load())+usedSlots >= task.RequiredSlots {
 			return true, tasksNeedFree
 		}
 	}
@@ -127,7 +127,7 @@ func (sm *slotManager) exchange(newTask *proto.TaskBase) bool {
 	}
 
 	old := sm.executorTasks[idx]
-	delta := newTask.Concurrency - old.Concurrency
+	delta := newTask.RequiredSlots - old.RequiredSlots
 	if delta > 0 && sm.availableSlots() < delta {
 		return false
 	}

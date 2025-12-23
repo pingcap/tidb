@@ -135,12 +135,12 @@ func (sm *SlotManager) canReserve(task *proto.TaskBase) (execID string, ok bool)
 		}
 		reservedForHigherRank += s.stripes
 	}
-	if task.Concurrency+reservedForHigherRank <= capacity {
+	if task.RequiredSlots+reservedForHigherRank <= capacity {
 		return "", true
 	}
 
 	for id, count := range usedSlots {
-		if count+sm.reservedSlots[id]+task.Concurrency <= capacity {
+		if count+sm.reservedSlots[id]+task.RequiredSlots <= capacity {
 			return id, true
 		}
 	}
@@ -158,7 +158,7 @@ func (sm *SlotManager) reserve(task *proto.TaskBase, execID string) {
 
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.reservedStripes = append(sm.reservedStripes, taskStripes{&taskClone, taskClone.Concurrency})
+	sm.reservedStripes = append(sm.reservedStripes, taskStripes{&taskClone, taskClone.RequiredSlots})
 	slices.SortFunc(sm.reservedStripes, func(a, b taskStripes) int {
 		return a.task.Compare(b.task)
 	})
@@ -167,7 +167,7 @@ func (sm *SlotManager) reserve(task *proto.TaskBase, execID string) {
 	}
 
 	if execID != "" {
-		sm.reservedSlots[execID] += taskClone.Concurrency
+		sm.reservedSlots[execID] += taskClone.RequiredSlots
 	}
 }
 
@@ -190,7 +190,7 @@ func (sm *SlotManager) unReserve(task *proto.TaskBase, execID string) {
 	}
 
 	if execID != "" {
-		sm.reservedSlots[execID] -= task.Concurrency
+		sm.reservedSlots[execID] -= task.RequiredSlots
 		if sm.reservedSlots[execID] == 0 {
 			delete(sm.reservedSlots, execID)
 		}

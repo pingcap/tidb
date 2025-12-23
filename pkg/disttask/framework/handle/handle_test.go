@@ -70,7 +70,7 @@ func TestHandle(t *testing.T) {
 	// no scheduler registered.
 	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.Equal(t, proto.StepInit, task.Step)
-	require.Equal(t, 2, task.Concurrency)
+	require.Equal(t, 2, task.RequiredSlots)
 	require.Equal(t, proto.EmptyMeta, task.Meta)
 
 	require.NoError(t, handle.CancelTask(ctx, "1"))
