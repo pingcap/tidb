@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -114,29 +113,19 @@ func TestShowCommentsFromJob(t *testing.T) {
 
 	job.Type = model.ActionModifyColumn
 	job.Version = model.JobVersion2
-	job.ReorgMeta = nil
-	args := &model.ModifyColumnArgs{
-		ModifyColumnType: model.ModifyTypeNoReorgWithCheck,
-	}
-	job.RawArgs, _ = json.Marshal(args)
-	res = showCommentsFromJob(job)
-	require.Equal(t, "validating", res)
-
-	args.ModifyColumnType = model.ModifyTypePrecheck
-	job.RawArgs, _ = json.Marshal(args)
-	job.ClearDecodedArgs()
-	res = showCommentsFromJob(job)
-	require.Equal(t, "validating", res)
-
-	args.ModifyColumnType = model.ModifyTypeReorg
-	job.RawArgs, _ = json.Marshal(args)
-	job.ClearDecodedArgs()
-	res = showCommentsFromJob(job)
-	require.Equal(t, "need reorg", res)
-
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp: model.ReorgTypeTxn,
+		IsValidating: true,
 	}
+	res = showCommentsFromJob(job)
+	require.Equal(t, "validating", res)
+
+	job.ReorgMeta.IsValidating = true
+	res = showCommentsFromJob(job)
+	require.Equal(t, "validating", res)
+
+	job.ReorgMeta.IsValidating = false
+	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+	job.NeedReorg = true
 	res = showCommentsFromJob(job)
 	require.Equal(t, "need reorg", res)
 
@@ -146,10 +135,6 @@ func TestShowCommentsFromJob(t *testing.T) {
 		SubJobs: []*model.SubJob{
 			{
 				Type: model.ActionModifyColumn,
-				RawArgs: func() []byte {
-					b, _ := json.Marshal(&model.ModifyColumnArgs{ModifyColumnType: model.ModifyTypeNoReorgWithCheck})
-					return b
-				}(),
 			},
 			{
 				Type:      model.ActionAddIndex,
@@ -158,7 +143,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 		},
 	}
 	res = showCommentsFromJob(job)
-	require.Equal(t, "validating, need reorg", res)
+	require.Equal(t, "need reorg", res)
 }
 
 func TestShowCommentsFromSubJob(t *testing.T) {
@@ -169,38 +154,28 @@ func TestShowCommentsFromSubJob(t *testing.T) {
 		Type: model.ActionAddPrimaryKey,
 	}
 	subJob.ReorgTp = model.ReorgTypeNone
-	res := showCommentsFromSubjob(subJob, model.JobVersion1, false, false)
+	res := showCommentsFromSubjob(subJob, false, false)
 	require.Equal(t, "need reorg", res)
 
 	subJob.ReorgTp = model.ReorgTypeIngest
-	res = showCommentsFromSubjob(subJob, model.JobVersion1, false, false)
+	res = showCommentsFromSubjob(subJob, false, false)
 	require.Equal(t, "need reorg, ingest", res)
 
-	res = showCommentsFromSubjob(subJob, model.JobVersion1, true, false)
+	res = showCommentsFromSubjob(subJob, true, false)
 	require.Equal(t, "need reorg, ingest, DXF", res)
 
-	res = showCommentsFromSubjob(subJob, model.JobVersion1, true, true)
+	res = showCommentsFromSubjob(subJob, true, true)
 	require.Equal(t, "need reorg, ingest, DXF, cloud", res)
 
-	res = showCommentsFromSubjob(subJob, model.JobVersion1, false, true)
+	res = showCommentsFromSubjob(subJob, false, true)
 	require.Equal(t, "need reorg, ingest", res)
 
 	subJob.Type = model.ActionModifyColumn
 	subJob.ReorgTp = model.ReorgTypeNone
-	args := &model.ModifyColumnArgs{
-		ModifyColumnType: model.ModifyTypeNoReorgWithCheck,
-	}
-	subJob.RawArgs, _ = json.Marshal(args)
-	res = showCommentsFromSubjob(subJob, model.JobVersion2, false, false)
-	require.Equal(t, "validating", res)
+	res = showCommentsFromSubjob(subJob, false, false)
+	require.Equal(t, "", res)
 
-	args.ModifyColumnType = model.ModifyTypePrecheck
-	subJob.RawArgs, _ = json.Marshal(args)
-	res = showCommentsFromSubjob(subJob, model.JobVersion2, false, false)
-	require.Equal(t, "validating", res)
-
-	args.ModifyColumnType = model.ModifyTypeReorg
-	subJob.RawArgs, _ = json.Marshal(args)
-	res = showCommentsFromSubjob(subJob, model.JobVersion2, false, false)
+	subJob.NeedReorg = true
+	res = showCommentsFromSubjob(subJob, false, false)
 	require.Equal(t, "need reorg", res)
 }
