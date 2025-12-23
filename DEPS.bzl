@@ -5178,13 +5178,13 @@ def go_deps():
         name = "com_github_ldez_exptostd",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ldez/exptostd",
-        sha256 = "3c18b8ab3c2b8487153bd21d8b541f065750414bd4d681c3ed65fd2dc1785dae",
-        strip_prefix = "github.com/ldez/exptostd@v0.4.4",
+        sha256 = "f5f8d529610e799731b07e0639c8340262d088286cbd882025acba571265139a",
+        strip_prefix = "github.com/ldez/exptostd@v0.4.5",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.4.zip",
-            "http://ats.apps.svc/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.5.zip",
+            "http://ats.apps.svc/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.5.zip",
         ],
     )
     go_repository(

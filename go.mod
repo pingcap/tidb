@@ -84,7 +84,7 @@ require (
 	github.com/kisielk/errcheck v1.9.0
 	github.com/klauspost/compress v1.18.0
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
-	github.com/ldez/exptostd v0.4.4
+	github.com/ldez/exptostd v0.4.5
 	github.com/lestrrat-go/jwx/v2 v2.0.21
 	github.com/mgechev/revive v1.13.0
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7

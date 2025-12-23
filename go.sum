@@ -615,6 +615,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/ldez/exptostd v0.4.4 h1:58AtQjnLcT/tI5W/1KU7xE/O7zW9RAWB6c/ScQAnfus=
 github.com/ldez/exptostd v0.4.4/go.mod h1:QfdzPw6oHjFVdNV7ILoPu5sw3OZ3OG1JS0I5JN3J4Js=
+github.com/ldez/exptostd v0.4.5 h1:kv2ZGUVI6VwRfp/+bcQ6Nbx0ghFWcGIKInkG/oFn1aQ=
+github.com/ldez/exptostd v0.4.5/go.mod h1:QRjHRMXJrCTIm9WxVNH6VW7oN7KrGSht69bIRwvdFsM=
 github.com/ldez/grignotin v0.10.0 h1:NQPeh1E/Eza4F0exCeC1WkpnLvgUcQDT8MQ1vOLML0E=
 github.com/ldez/grignotin v0.10.0/go.mod h1:oR4iCKUP9fwoeO6vCQeD7M5SMxCT6xdVas4vg0h1LaI=
 github.com/lestrrat-go/blackmagic v1.0.2 h1:Cg2gVSc9h7sz9NOByczrbUvLopQmXrfFx//N+AkAr5k=
