@@ -300,32 +300,12 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 }
 
 func showCommentsFromJob(job *model.Job) string {
-	needReorg, labels := getReorgAndVerifyLabels(job.Type, job.ReorgMeta)
-
-	// For MultiSchemaChange, we need to summarize labels from subjobs as well.
-	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			subNeedReorg, subLabels := getReorgAndVerifyLabels(sub.Type, &model.DDLReorgMeta{ReorgTp: sub.ReorgTp})
-			if subNeedReorg {
-				needReorg = true
-			}
-			for _, sl := range subLabels {
-				found := false
-				for _, l := range labels {
-					if l == sl {
-						found = true
-						break
-					}
-				}
-				if !found {
-					labels = append(labels, sl)
-				}
-			}
-		}
-	}
-
-	if needReorg {
+	var labels []string
+	if job.MayNeedReorg() {
 		labels = append(labels, "need reorg")
+	}
+	if job.ReorgMeta != nil && job.ReorgMeta.IsValidating {
+		labels = append(labels, "validating")
 	}
 	m := job.ReorgMeta
 	if m == nil {
@@ -362,7 +342,7 @@ func showCommentsFromJob(job *model.Job) string {
 			labels = append(labels, model.ReorgTypeTxnMerge.String())
 		}
 	}
-	if needReorg {
+	if job.MayNeedReorg() {
 		concurrency := m.GetConcurrency()
 		batchSize := m.GetBatchSize()
 		maxWriteSpeed := m.GetMaxWriteSpeed()
@@ -386,10 +366,14 @@ func showCommentsFromJob(job *model.Job) string {
 }
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
-	needReorg, labels := getReorgAndVerifyLabels(sub.Type, &model.DDLReorgMeta{ReorgTp: sub.ReorgTp})
-	if needReorg {
+	var labels []string
+	proxy := model.Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
+	if proxy.MayNeedReorg() {
 		labels = append(labels, "need reorg")
 	}
+	// Note: We don't have IsValidating in SubJob yet, but MultiSchemaChange 
+	// currently doesn't trigger 'validating' path for subjobs in the same way.
+	// For now, we focus on the main Job and standard reorgs.
 
 	if kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
@@ -407,28 +391,6 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 		labels = append(labels, "cloud")
 	}
 	return strings.Join(labels, ", ")
-}
-
-func getReorgAndVerifyLabels(jobType model.ActionType, reorgMeta *model.DDLReorgMeta) (bool, []string) {
-	var labels []string
-	var needReorg bool
-	if jobType == model.ActionModifyColumn {
-		if reorgMeta != nil && reorgMeta.ReorgTp != model.ReorgTypeNone {
-			needReorg = true
-		} else {
-			// For 'validating', we check if ReorgMeta is present.
-			// In Lossy DDL / Varchar-to-Char, even if ReorgTp is None,
-			// ReorgMeta might be initialized to carry configuration.
-			// TODO: Find a more reliable indicator in ReorgMeta if possible.
-			if reorgMeta != nil {
-				labels = append(labels, "validating")
-			}
-		}
-	} else if jobType != model.ActionMultiSchemaChange {
-		proxy := model.Job{Type: jobType}
-		needReorg = proxy.MayNeedReorg()
-	}
-	return needReorg, labels
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {

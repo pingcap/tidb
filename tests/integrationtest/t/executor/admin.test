@@ -259,3 +259,21 @@ admin show ddl jobs 1 where table_name='t_label' and job_type='add index';
 # Test validating label
 alter table t_label modify column b varchar(50);
 admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
+
+# 5. Metadata-only change (No labels)
+# Increasing varchar length should trigger ModifyTypeNoReorg
+alter table t_label modify column b varchar(200);
+admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
+
+# TestAdminShowDDLJobsLabels
+drop table if exists t_label;
+create table t_label (a int, b varchar(100));
+insert into t_label values (1, 'test_label_data');
+alter table t_label add index idx_a(a);
+admin show ddl jobs 1 where table_name='t_label' and job_type='add index';
+# Test validating label
+alter table t_label modify column b varchar(50);
+admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
+# Test metadata-only label (no need reorg, no validating)
+alter table t_label modify column b varchar(200);
+admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
