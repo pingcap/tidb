@@ -16,7 +16,6 @@ package importclient_test
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -79,18 +78,12 @@ func (s *mockImportServer) MultiIngest(_ context.Context, req *import_sstpb.Mult
 
 func TestImportClient(t *testing.T) {
 	ctx := context.Background()
-	var port int
 	var lis net.Listener
 	var err error
-	for port = 0; port < 1000; port += 1 {
-		addr := fmt.Sprintf(":%d", 51111+port)
-		lis, err = net.Listen("tcp", addr)
-		if err == nil {
-			break
-		}
-		t.Log(err)
-	}
-
+	addr := ":0"
+	lis, err = net.Listen("tcp", addr)
+	t.Log(err)
+	addr = lis.Addr().String()
 	s := grpc.NewServer()
 	import_sstpb.RegisterImportSSTServer(s, &mockImportServer{ErrCount: 3})
 
@@ -102,7 +95,7 @@ func TestImportClient(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	client := importclient.NewImportClient(&storeClient{addr: fmt.Sprintf(":%d", 51111+port)}, nil, keepalive.ClientParameters{})
+	client := importclient.NewImportClient(&storeClient{addr: addr}, nil, keepalive.ClientParameters{})
 
 	{
 		resp, err := client.ClearFiles(ctx, 1, &import_sstpb.ClearRequest{Prefix: "test"})
