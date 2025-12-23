@@ -265,7 +265,7 @@ func buildHist(
 	// In extreme cases, it could be that this value only appears once, and that one row happens to be sampled.
 	// Therefore, if the sample count of this value is only once, we use a more conservative ndvFactor.
 	// However, if the calculated ndvFactor is larger than the sampleFactor, we still use the sampleFactor.
-	hg.AppendBucket(samples[firstSampleIdx].Value, samples[firstSampleIdx].Value, int64(sampleFactor), int64(ndvFactor))
+	hg.AppendBucket(&samples[firstSampleIdx].Value, &samples[firstSampleIdx].Value, int64(sampleFactor), int64(ndvFactor))
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
 	defer func() {
@@ -295,7 +295,7 @@ func buildHist(
 			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 		}
-		cmp, err := upper.Compare(sc.TypeCtx(), samples[i].Value, collate.GetBinaryCollator())
+		cmp, err := upper.Compare(sc.TypeCtx(), &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -320,13 +320,13 @@ func buildHist(
 			}
 		} else if totalCount-float64(lastCount) <= valuesPerBucket {
 			// The bucket still has room to store a new item, update the bucket.
-			hg.updateLastBucket(samples[i].Value, int64(totalCount), int64(ndvFactor), false)
+			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
 			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
-			hg.AppendBucket(samples[i].Value, samples[i].Value, int64(totalCount), int64(ndvFactor))
+			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
 		}
 	}
 	return corrXYSum, nil
@@ -434,7 +434,7 @@ func BuildHistAndTopN(
 		return cmp.Compare(a.Count, b.Count) // min-heap: smaller counts at root
 	})
 
-	cur, err := getComparedBytes(*samples[0].Value)
+	cur, err := getComparedBytes(samples[0].Value)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -454,7 +454,7 @@ func BuildHistAndTopN(
 		if numTopN == 0 {
 			continue
 		}
-		sampleBytes, err := getComparedBytes(*samples[i].Value)
+		sampleBytes, err := getComparedBytes(samples[i].Value)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
