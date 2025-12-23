@@ -270,15 +270,7 @@ func (c *Column) Reserve(moreBytesNumNullBitmapNeed int64, moreBytesNumDataNeed 
 }
 
 func (c *Column) calculateLenDeltaForAppendCellNTimesForNullBitMap(times int) int64 {
-	nullBitMapLenDelta := int64(0)
-	if times == 1 {
-		if c.length>>3 >= len(c.nullBitmap) {
-			nullBitMapLenDelta++
-		}
-	} else {
-		nullBitMapLenDelta += int64(((c.length + times + 7) >> 3) - len(c.nullBitmap))
-	}
-	return nullBitMapLenDelta
+	return max(0, int64(((c.length+times+7)>>3)-len(c.nullBitmap)))
 }
 
 // CalculateLenDeltaForAppendCellNTimesForFixedElem calculate the memory usage for `AppendCellNTimes` function
@@ -289,10 +281,9 @@ func (c *Column) CalculateLenDeltaForAppendCellNTimesForFixedElem(src *Column, t
 }
 
 // CalculateLenDeltaForAppendCellNTimesForVarElem calculate the memory usage for `AppendCellNTimes` function
-func (c *Column) CalculateLenDeltaForAppendCellNTimesForVarElem(src *Column, pos, times int) (nullBitMapLenDelta int64, dataLenDelta int64, offsetLenDelta int64) {
+func (c *Column) CalculateLenDeltaForAppendCellNTimesForVarElem(src *Column, pos, times int) (nullBitMapLenDelta int64, dataLenDelta int64) {
 	nullBitMapLenDelta = c.calculateLenDeltaForAppendCellNTimesForNullBitMap(times)
 	dataLenDelta = (src.offsets[pos+1] - src.offsets[pos]) * int64(times)
-	offsetLenDelta = int64(times)
 	return
 }
 
