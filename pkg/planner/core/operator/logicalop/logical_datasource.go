@@ -714,7 +714,7 @@ func (ds *DataSource) CanUseTiflash() bool {
 	if ds.IsForUpdateRead || ds.TableInfo.TiFlashReplica == nil {
 		return false
 	}
-	if !ds.TableInfo.TiFlashReplica.Available || ds.TableInfo.TiFlashReplica.Count > 0 {
+	if !ds.TableInfo.TiFlashReplica.Available || ds.TableInfo.TiFlashReplica.Count == 0 {
 		return false
 	}
 	sessionVars := ds.SCtx().GetSessionVars()
@@ -722,7 +722,7 @@ func (ds *DataSource) CanUseTiflash() bool {
 	if !hasTiFlashEngine {
 		return false
 	}
-	if ds.SCtx().GetSessionVars().IsMPPEnforced() && len(ds.PushedDownConds) > 0 {
+	if len(ds.AllConds) == 0 {
 		return true
 	}
 	pushed, _ := expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), ds.AllConds, kv.TiFlash)

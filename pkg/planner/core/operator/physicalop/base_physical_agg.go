@@ -996,15 +996,22 @@ func checkAggCanPushMPP(s base.LogicalPlan) bool {
 		if l.Lock != nil && l.Lock.LockType != ast.SelectLockNone {
 			return false
 		}
+	case *logicalop.LogicalSelection:
+		pushed, _ := expression.PushDownExprs(util.GetPushDownCtx(l.SCtx()), l.Conditions, kv.TiFlash)
+		if len(pushed) == 0 {
+			// if this selection's Expr cannot be pushed into tiflash, it has to be in the root/tikv node.
+			return false
+		}
 	case *logicalop.DataSource:
 		return l.CanUseTiflash()
 	case *logicalop.LogicalUnionScan, *logicalop.LogicalPartitionUnionAll:
 		return false
 	default:
-		for _, child := range l.Children() {
-			if !checkAggCanPushMPP(child) {
-				return false
-			}
+
+	}
+	for _, child := range s.Children() {
+		if !checkAggCanPushMPP(child) {
+			return false
 		}
 	}
 	return true
