@@ -869,7 +869,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			}
 
 			concurrency := reorgInfo.ReorgMeta.GetConcurrency()
-			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgInfo.ReorgMeta.IsDistReorg)
+			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgInfo.ReorgMeta.UseCloudStorage)
 			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
 				reader.TuneWorkerPoolSize(int32(targetReaderCnt), false)

@@ -339,12 +339,12 @@ func (b *txnBackfillExecutor) close(force bool) {
 	close(b.resultCh)
 }
 
-func expectedIngestWorkerCnt(concurrency, avgRowSize int, isDXF bool) (readerCnt, writerCnt int) {
+func expectedIngestWorkerCnt(concurrency, avgRowSize int, useGlobalSort bool) (readerCnt, writerCnt int) {
 	workerCnt := concurrency
-	// Testing showed that in a multi-node dxf environment,
+	// Testing showed that in a global sort environment,
 	// reader ration does not significantly impact the performance of add indexes.
-	// We disable this ration in DXF for better memory management.
-	if isDXF {
+	// We disable this ration in global sort for better memory management.
+	if useGlobalSort {
 		return workerCnt, workerCnt
 	}
 	if avgRowSize == 0 {
