@@ -12,7 +12,6 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package test_driver
 
