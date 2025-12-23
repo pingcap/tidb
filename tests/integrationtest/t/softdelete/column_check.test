@@ -1,0 +1,68 @@
+# Test that _tidb_softdelete_time column cannot be referenced when tidb_translate_softdelete_sql is enabled
+
+create table t (id int primary key, name varchar(50)) softdelete retention 7 day;
+insert into t values (1, 'a'), (2, 'b'), (3, 'c');
+
+# First, verify the column can be accessed when tidb_translate_softdelete_sql is false
+set tidb_translate_softdelete_sql = false;
+select id, _tidb_softdelete_time from t order by id;
+update t set _tidb_softdelete_time = now() where id = 1;
+select id from t where _tidb_softdelete_time is null order by id;
+
+# Now enable tidb_translate_softdelete_sql and verify the column cannot be accessed
+set tidb_translate_softdelete_sql = true;
+
+# SELECT with _tidb_softdelete_time should fail
+-- error 1815
+select id, _tidb_softdelete_time from t;
+
+-- error 1815
+select * from t where _tidb_softdelete_time is null;
+
+-- error 1815
+select id from t order by _tidb_softdelete_time;
+
+# UPDATE with _tidb_softdelete_time should fail
+-- error 1815
+update t set _tidb_softdelete_time = now() where id = 2;
+
+-- error 1815
+update t set name = 'updated' where _tidb_softdelete_time is null;
+
+# DELETE with _tidb_softdelete_time should fail
+-- error 1815
+delete from t where _tidb_softdelete_time is not null;
+
+# INSERT with _tidb_softdelete_time in ON DUPLICATE KEY UPDATE should fail
+-- error 1815
+insert into t values (1, 'new') on duplicate key update _tidb_softdelete_time = null;
+
+# INSERT specifying _tidb_softdelete_time should fail
+-- error 1815
+insert into t (id, name, _tidb_softdelete_time) values (1, 'new', null);
+
+# Verify normal operations still work
+select id, name from t order by id;
+insert into t values (4, 'd');
+update t set name = 'updated' where id = 4;
+delete from t where id = 4;
+select id, name from t order by id;
+
+# Clean up
+set tidb_translate_softdelete_sql = false;
+drop table t;
+
+# Test with nonclustered primary key
+create table t2 (id int primary key nonclustered, val int) softdelete retention 7 day;
+insert into t2 values (1, 10), (2, 20);
+
+set tidb_translate_softdelete_sql = true;
+
+-- error 1815
+select _tidb_softdelete_time from t2;
+
+-- error 1815
+update t2 set val = 100 where _tidb_softdelete_time is null;
+
+set tidb_translate_softdelete_sql = false;
+drop table t2;

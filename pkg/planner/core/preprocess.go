@@ -449,6 +449,16 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Constraint:
 		// Used in ALTER TABLE or CREATE TABLE
 		p.checkConstraintGrammar(node)
+	case *ast.ColumnName:
+		// When tidb_translate_softdelete_sql is enabled, users should not reference the _tidb_softdelete_time
+		// hidden column directly in SELECT/INSERT/UPDATE/DELETE statements.
+		if p.sctx.GetSessionVars().SoftDeleteRewrite &&
+			node.Name.L == model.ExtraSoftDeleteTimeName.L &&
+			(p.stmtTp == TypeSelect || p.stmtTp == TypeInsert || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) {
+			p.err = plannererrors.ErrInternal.GenWithStack(
+				"column '%s' cannot be referenced when tidb_translate_softdelete_sql is enabled",
+				model.ExtraSoftDeleteTimeName.O)
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
