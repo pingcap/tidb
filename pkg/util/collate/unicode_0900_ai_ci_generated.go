@@ -150,10 +150,5 @@ func (uc *unicode0900AICICollator) Pattern() WildcardPattern {
 
 // MaxBytesOneCharacter implements Collator interface.
 func (uc *unicode0900AICICollator) MaxBytesOneCharacter() int {
-	return 4
-}
-
-// ByteNumAfterConverted implements Collator interface.
-func (uc *unicode0900AICICollator) ByteNumAfterConverted(byteNum int) int {
-	return byteNum * 8
+	return 16
 }

@@ -72,15 +72,6 @@ type Collator interface {
 	Clone() Collator
 	// MaxBytesOneCharacter returns the max byte number a character will need
 	MaxBytesOneCharacter() int
-	// MaxBytesOneCharacter returns byte number after the string is converted with collation.
-	// Input parameter means the byte number of converted string. For convenience, we pass
-	// byte_num*MaxBytesOneCharacter() instead of character_num*MaxBytesOneCharacter().
-	// For example:
-	//   string: "啊啊啊"
-	//   charset: utf8mb4_general_ci
-	//   byte number of string is 9. 9*MaxBytesOneCharacter() will be passed as parameter
-	//   not 3*MaxBytesOneCharacter()
-	ByteNumAfterConverted(int) int
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.

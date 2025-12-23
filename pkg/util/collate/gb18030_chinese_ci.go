@@ -89,11 +89,6 @@ func (*gb18030ChineseCICollator) MaxBytesOneCharacter() int {
 	return 4
 }
 
-// ByteNumAfterConverted implements Collator interface.
-func (*gb18030ChineseCICollator) ByteNumAfterConverted(byteNum int) int {
-	return byteNum * 2
-}
-
 // Pattern implements Collator interface.
 func (*gb18030ChineseCICollator) Pattern() WildcardPattern {
 	return &gb18030ChineseCIPattern{}

@@ -112,11 +112,6 @@ func (*gb18030BinCollator) MaxBytesOneCharacter() int {
 	return 4
 }
 
-// ByteNumAfterConverted implements Collator interface.
-func (*gb18030BinCollator) ByteNumAfterConverted(byteNum int) int {
-	return byteNum
-}
-
 // Pattern implements Collator interface.
 func (*gb18030BinCollator) Pattern() WildcardPattern {
 	return &gb18030BinPattern{}

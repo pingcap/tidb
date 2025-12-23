@@ -43,11 +43,6 @@ func (*zhPinyinTiDBASCSCollator) MaxBytesOneCharacter() int {
 	panic("implement me")
 }
 
-// ByteNumAfterConverted implements Collator interface.
-func (*zhPinyinTiDBASCSCollator) ByteNumAfterConverted(int) int {
-	panic("implement me")
-}
-
 // Pattern is not implemented.
 func (*zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
 	panic("implement me")

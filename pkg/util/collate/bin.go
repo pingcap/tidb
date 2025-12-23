@@ -50,11 +50,6 @@ func (*binCollator) MaxBytesOneCharacter() int {
 	return 1
 }
 
-// ByteNumAfterConverted implements Collator interface.
-func (*binCollator) ByteNumAfterConverted(byteNum int) int {
-	return byteNum
-}
-
 // Pattern implements Collator interface.
 func (*binCollator) Pattern() WildcardPattern {
 	return &binPattern{}
@@ -98,11 +93,6 @@ func (*binPaddingCollator) KeyWithoutTrimRightSpace(str string) []byte {
 // MaxBytesOneCharacter implements Collator interface.
 func (*binPaddingCollator) MaxBytesOneCharacter() int {
 	return 4
-}
-
-// ByteNumAfterConverted implements Collator interface.
-func (*binPaddingCollator) ByteNumAfterConverted(byteNum int) int {
-	return byteNum
 }
 
 // Pattern implements Collator interface.
