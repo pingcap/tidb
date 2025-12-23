@@ -718,10 +718,7 @@ func (ds *DataSource) canUseTiflash4Logical() bool {
 	}
 	sessionVars := ds.SCtx().GetSessionVars()
 	_, hasTiFlashEngine := sessionVars.IsolationReadEngines[kv.TiFlash]
-	if !hasTiFlashEngine {
-		return false
-	}
-	return true
+	return hasTiFlashEngine
 }
 
 // CanUseTiflash4Physical is to whether this datasource can run in the tiflash. It is for physical optimization
