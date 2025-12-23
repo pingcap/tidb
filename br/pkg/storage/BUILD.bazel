@@ -40,6 +40,7 @@ go_library(
         "@com_github_aliyun_alibaba_cloud_sdk_go//sdk/auth/credentials",
         "@com_github_aliyun_alibaba_cloud_sdk_go//sdk/auth/credentials/providers",
         "@com_github_aws_aws_sdk_go_v2//aws",
+        "@com_github_aws_aws_sdk_go_v2//aws/ratelimit",
         "@com_github_aws_aws_sdk_go_v2//aws/retry",
         "@com_github_aws_aws_sdk_go_v2_config//:config",
         "@com_github_aws_aws_sdk_go_v2_credentials//:credentials",
