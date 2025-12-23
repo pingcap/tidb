@@ -36,7 +36,7 @@ create table tp2 (
     id2 int,
     a int,
     b int,
-    primary key (id1, id2),
+    primary key (id1, id2) CLUSTERED,
     index a(a)
 )
 PARTITION BY RANGE COLUMNS (id1) (
