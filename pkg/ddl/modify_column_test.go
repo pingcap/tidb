@@ -546,8 +546,6 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 }
 
 func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -597,7 +595,7 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 			<-conflictCh
 		})
 	})
-	tk.MustExec("alter table t modify column val0 varchar(8) not null;")
+	tk.MustExec("alter table t modify column val0 varchar(8) collate binary not null;")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
 		"2 2 2 b",

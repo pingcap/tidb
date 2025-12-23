@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -79,10 +80,10 @@ func isCharChange(from, to *model.ColumnInfo) bool {
 //
 // We need to ensure it's compatible with job submitted from older version of TiDB.
 func getModifyColumnType(
+	job *model.Job,
 	args *model.ModifyColumnArgs,
 	tblInfo *model.TableInfo,
-	oldCol *model.ColumnInfo,
-	sqlMode mysql.SQLMode) byte {
+	oldCol *model.ColumnInfo) byte {
 	newCol := args.Column
 	if noReorgDataStrict(tblInfo, oldCol, args.Column) {
 		// It's not NULL->NOTNULL change
@@ -90,6 +91,12 @@ func getModifyColumnType(
 			return model.ModifyTypeNoReorg
 		}
 		return model.ModifyTypeNoReorgWithCheck
+	}
+
+	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
+		if variable.TidbOptInt(val, vardef.DefTiDBAnalyzeVersion) != 2 {
+			return model.ModifyTypeReorg
+		}
 	}
 
 	// For backward compatibility
@@ -102,13 +109,7 @@ func getModifyColumnType(
 		return model.ModifyTypeReorg
 	}
 
-	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			failpoint.Return(model.ModifyTypeReorg)
-		}
-	})
-
-	if !sqlMode.HasStrictMode() {
+	if !job.SQLMode.HasStrictMode() {
 		return model.ModifyTypeReorg
 	}
 
@@ -263,7 +264,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	// TiDB, we need to fill the ModifyColumnType.
 	if args.ModifyColumnType == model.ModifyTypeNone ||
 		args.ModifyColumnType == mysql.TypeNull {
-		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode)
+		args.ModifyColumnType = getModifyColumnType(job, args, tblInfo, oldCol)
 		logutil.DDLLogger().Info("get type for modify column",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
@@ -583,7 +584,7 @@ func (w *worker) precheckForVarcharToChar(
 	// If existing data is in range, we continue running without row reorg.
 	// The flag is retained, so string with trailing spaces still can't be inserted.
 	if err == nil {
-		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode)
+		args.ModifyColumnType = getModifyColumnType(job, args, tblInfo, oldCol)
 		logutil.DDLLogger().Info("precheck done, change modify type",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
@@ -774,6 +775,7 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 	}
 
 	// Other changes except char changes need row reorg.
+	// TODO(joechenrh): check more types, like varbinary.
 	if !isCharChange(oldCol, changingCol) {
 		return true
 	}
@@ -1450,6 +1452,7 @@ func checkPartitionColumnModifiable(
 	col, newCol *model.ColumnInfo,
 	sqlMode mysql.SQLMode,
 ) error {
+	// Same behavior as MySQL, see issue #40135 for more detail.
 	if col.Name.L != newCol.Name.L {
 		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 	}
