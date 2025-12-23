@@ -71,7 +71,6 @@ func (w *worker) reorgAndAnalyzeForMultiSchemaChange(
 					zap.Int64("job", job.ID), zap.Int8("state", job.ReorgMeta.AnalyzeState))
 			}
 
-			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 			return false, ver, err
 		case model.ReorgStageModifyColumnRecreateIndex:
 			dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
@@ -92,6 +91,14 @@ func (w *worker) reorgAndAnalyzeForMultiSchemaChange(
 			}
 			done, ver, err := doReorgWorkForCreateIndex(w, jobCtx, job, tbl, buildIndexes)
 			if done {
+				rowCount := job.GetRowCount()
+				job.SetRowCount(0)
+				for _, sub := range job.MultiSchemaInfo.SubJobs {
+					switch sub.Type {
+					case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
+						sub.RowCount = rowCount
+					}
+				}
 				checkAndUpdateNeedAnalyze(job, tblInfo)
 			}
 			return false, ver, err

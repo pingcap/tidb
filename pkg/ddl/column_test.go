@@ -946,5 +946,5 @@ func TestModifyColumnWithIndex(t *testing.T) {
 	tk.MustExec("alter table t modify column b int UNSIGNED")
 	require.Equal(t, 6, cnt)
 	tk.MustExec("alter table t modify column a varchar(2), modify column b int")
-	require.Equal(t, 18, cnt)
+	require.Equal(t, 15, cnt)
 }
