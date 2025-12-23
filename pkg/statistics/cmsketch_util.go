@@ -72,3 +72,43 @@ func topNMetaToDatum(val TopNMeta,
 	}
 	return dat, err
 }
+
+// getEncodedType returns the type of the encoded data.
+// It only distinguishes between int and uint since type->flag is not injective
+func getEncodedType(d []byte) byte {
+	if len(d) == 0 {
+		return 255
+	}
+
+	switch d[0] {
+	case 3: // intFlag
+		return types.KindInt64
+	case 4: // uintFlag
+		return types.KindUint64
+	default:
+		return 255
+	}
+}
+
+func needConversion(sourceTp, targetTp byte) bool {
+	return sourceTp == types.KindInt64 && targetTp == types.KindUint64 ||
+		sourceTp == types.KindUint64 && targetTp == types.KindInt64
+}
+
+// convertEncodedValue converts the value to targetTp if needed.
+func convertEncodedValue(d []byte, targetTp byte) ([]byte, bool) {
+	if !needConversion(getEncodedType(d), targetTp) {
+		return d, false
+	}
+
+	_, datum, err := codec.DecodeOne(d)
+	if err != nil {
+		return d, false
+	}
+
+	datum, err = types.ConvertBetweenSign(datum, targetTp == types.KindUint64)
+	d, _ = codec.EncodeKey(nil, nil, datum)
+
+	// If error happens during conversion, it means truncation happens.
+	return d, err != nil
+}

@@ -715,24 +715,24 @@ func TestGetModifyColumnType(t *testing.T) {
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
-			tp:         model.ModifyTypeReorg,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
 			index:      true,
-			tp:         model.ModifyTypeReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
-			tp:         model.ModifyTypeReorg,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
 			index:      true,
-			tp:         model.ModifyTypeReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		// string
 		{
@@ -1169,7 +1169,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		// 2. signed -> unsigned
 		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := range unsignedTp {
-			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], model.ModifyTypeReorg, oldColIdx, newColIdx)
+			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], model.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
 		}
 	}
 	for oldColIdx := range unsignedTp {
@@ -1181,7 +1181,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		// 4. unsigned -> signed
 		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint; int unsigned -> int, mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
-			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], model.ModifyTypeReorg)
+			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], model.ModifyTypeNoReorgWithCheck)
 		}
 	}
 }

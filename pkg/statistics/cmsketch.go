@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -615,36 +614,6 @@ type TopNMeta struct {
 	Count   uint64
 }
 
-func getEncodingType(d []byte) byte {
-	switch d[0] {
-	case 3: // intFlag
-		return types.KindInt64
-	case 4: // uintFlag
-		return types.KindUint64
-	default:
-		return 255
-	}
-}
-
-// convertEncoding converts the encoding of d to targetTp if needed.
-func convertEncoding(d []byte, targetTp byte) ([]byte, bool) {
-	gotType := getEncodingType(d)
-	if gotType == targetTp || (targetTp != types.KindInt64 && targetTp != types.KindUint64) {
-		return d, false
-	}
-
-	_, datum, err := codec.DecodeOne(d)
-	if err != nil {
-		return d, false
-	}
-
-	datum, err = types.ConvertBetweenSign(datum, targetTp == types.KindUint64)
-	d, _ = codec.EncodeKey(nil, nil, datum)
-
-	// If error happens during conversion, it means truncation happens.
-	return d, err != nil
-}
-
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (c *TopN) QueryTopN(_ planctx.PlanContext, d []byte) (result uint64, found bool) {
@@ -667,7 +636,7 @@ func (c *TopN) FindTopN(d []byte) int {
 		return -1
 	}
 
-	d, truncated := convertEncoding(d, getEncodingType(c.TopN[0].Encoded))
+	d, truncated := convertEncodedValue(d, getEncodedType(c.TopN[0].Encoded))
 	if truncated {
 		return -1
 	}
@@ -678,7 +647,6 @@ func (c *TopN) FindTopN(d []byte) int {
 		}
 		return -1
 	}
-
 	if bytes.Compare(c.TopN[len(c.TopN)-1].Encoded, d) < 0 {
 		return -1
 	}
@@ -704,7 +672,7 @@ func (c *TopN) lowerBound(d []byte) (idx int) {
 		return 0
 	}
 
-	d, _ = convertEncoding(d, getEncodingType(c.TopN[0].Encoded))
+	d, _ = convertEncodedValue(d, getEncodedType(c.TopN[0].Encoded))
 	idx, _ = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
@@ -845,9 +813,9 @@ func TopnMetaCompare(i, j TopNMeta) int {
 // GetMergedTopNFromSortedSlice merges the TopNMeta from all partitions into one
 // TopN. The discarded TopNMeta will be used to build the global histogram.
 func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	tp := getEncodingType(sorted[0].Encoded)
+	tp := getEncodedType(sorted[0].Encoded)
 	for i := range sorted {
-		sorted[i].Encoded, _ = convertEncoding(sorted[i].Encoded, tp)
+		sorted[i].Encoded, _ = convertEncodedValue(sorted[i].Encoded, tp)
 	}
 
 	SortTopnMeta(sorted)

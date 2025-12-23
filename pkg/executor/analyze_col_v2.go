@@ -671,20 +671,27 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 
 type castFunc func(d types.Datum) (types.Datum, error)
 
+var noopCastFunc = func(d types.Datum) (types.Datum, error) { return d, nil }
+
+// getCastFunc get the cast function for each column. It's used for lossy DDL
+// optimization where both old and new types are stored in one column info.
 func getCastFunc(colInfo *model.ColumnInfo) castFunc {
-	// For now, we only need to handle the integer type conversion between
-	// signed and unsigned. For string type changes with same collation,
-	// the encoding is same too.
-	if colInfo.ChangingFieldType != nil && types.IsTypeInteger(colInfo.ChangingFieldType.GetType()) {
+	if colInfo.ChangingFieldType == nil {
+		return noopCastFunc
+	}
+
+	// For now, we only need to handle the signed<->unsigned changes.
+	// For string changes with same collation, the encoding remains the same.
+	switch colInfo.ChangingFieldType.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		return func(d types.Datum) (types.Datum, error) {
 			return types.ConvertBetweenSign(d, mysql.HasUnsignedFlag(colInfo.ChangingFieldType.GetFlag()))
 		}
+	default:
+		return noopCastFunc
 	}
-	return func(d types.Datum) (types.Datum, error) { return d, nil }
 }
 
-// buildCastFuncs get the cast function for each task.
-// See model.IndexColumn and model.ColumnInfo for more details.
 func (e *AnalyzeColumnsExecV2) buildCastFuncs(task *samplingBuildTask) []castFunc {
 	if task.isColumn {
 		return []castFunc{getCastFunc(e.colsInfo[task.slicePos])}
