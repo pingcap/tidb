@@ -3171,7 +3171,7 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 	return 1 - s.GetStrMatchDefaultSelectivity()
 }
 
-// GetRelatedTableForMDL gets the related table for metadata lock.
+// GetRelatedTableForMDL gets the related table for metadata lock
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 	mu := &s.TxnCtx.tdmLock
 	mu.Lock()
