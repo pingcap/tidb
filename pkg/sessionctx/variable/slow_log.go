@@ -171,8 +171,6 @@ const (
 	SlowLogOptimizeStatsSyncWait = "Opt_stats_sync_wait"
 	// SlowLogOptimizeStatsDerive is the stats derive time.
 	SlowLogOptimizeStatsDerive = "Opt_stats_derive"
-	// SlowLogOptimizeTiFlashInfoFetch is the tiflash info fetch time.
-	SlowLogOptimizeTiFlashInfoFetch = "Opt_tiflash_info_fetch"
 
 	// SlowLogWaitTSTimeStr is the time of waiting TS.
 	SlowLogWaitTSTimeStr = "Wait_TS"
@@ -403,13 +401,12 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	buf.WriteString("\n")
 
 	// optimizer time
-	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(s.DurationOptimizer.Total.Seconds(), 'f', -1, 64))
 	buf.WriteString(SlowLogRowPrefixStr)
+	buf.WriteString(SlowLogOptimizeTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.Total.Seconds(), 'f', -1, 64) + " ")
 	buf.WriteString(SlowLogOptimizeLogicalOpt + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.LogicalOpt.Seconds(), 'f', -1, 64) + " ")
 	buf.WriteString(SlowLogOptimizePhysicalOpt + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.PhysicalOpt.Seconds(), 'f', -1, 64) + " ")
 	buf.WriteString(SlowLogOptimizeBindingMatch + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.BindingMatch.Seconds(), 'f', -1, 64) + " ")
 	buf.WriteString(SlowLogOptimizeStatsSyncWait + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.StatsSyncWait.Seconds(), 'f', -1, 64) + " ")
-	buf.WriteString(SlowLogOptimizeTiFlashInfoFetch + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.TiFlashInfoFetch.Seconds(), 'f', -1, 64) + " ")
 	buf.WriteString(SlowLogOptimizeStatsDerive + SlowLogSpaceMarkStr + strconv.FormatFloat(s.DurationOptimizer.StatsDerive.Seconds(), 'f', -1, 64))
 	buf.WriteString("\n")
 

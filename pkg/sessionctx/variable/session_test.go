@@ -235,8 +235,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
 # Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
-# Optimize_time: 0.00000001
-# Opt_logical: 0.00000001 Opt_physical: 0.00000001 Opt_binding_match: 0.00000001 Opt_stats_sync_wait: 0.00000001 Opt_tiflash_info_fetch: 0.00000001 Opt_stats_derive: 0.00000001
+# Optimize_time: 0.00000001 Opt_logical: 0.00000001 Opt_physical: 0.00000001 Opt_binding_match: 0.00000001 Opt_stats_sync_wait: 0.00000001 Opt_stats_derive: 0.00000001
 # Wait_TS: 0.000000003
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Process_keys: 20001 Total_keys: 10000
 # DB: test
