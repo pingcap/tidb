@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
@@ -981,19 +982,28 @@ func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 		return false
 	}
 	// if it has a lock or UnionScan, this Agg cannot be pushed down to MPP
-	if checkAggCanPushMPP(la) {
-		return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
+	if CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash) {
+		return checkAggCanPushMPP(la)
 	}
 	return false
 }
 
 func checkAggCanPushMPP(s base.LogicalPlan) bool {
+	if _, ok := s.SCtx().GetSessionVars().IsolationReadEngines[kv.TiFlash]; !ok {
+		return false
+	}
 	switch l := s.(type) {
 	case *logicalop.LogicalLock:
 		if l.Lock != nil && l.Lock.LockType != ast.SelectLockNone {
 			return false
 		}
 	case *logicalop.DataSource:
+		if l.TableInfo.TiFlashReplica == nil || !l.TableInfo.TiFlashReplica.Available || l.TableInfo.TiFlashReplica.Count == 0 || l.PreferStoreType&h.PreferTiKV != 0 {
+			return false
+		}
+		if len(l.PushedDownConds) != 0 {
+			return false
+		}
 		return !l.IsForUpdateRead
 	case *logicalop.LogicalUnionScan, *logicalop.LogicalPartitionUnionAll:
 		return false

@@ -166,6 +166,13 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 	if dual != nil {
 		return nil, dual, nil
 	}
+	if ds.TableInfo.TiFlashReplica != nil && ds.TableInfo.TiFlashReplica.Available && ds.TableInfo.TiFlashReplica.Count > 0 && ds.PreferStoreType&h.PreferTiKV != 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() {
+		ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.TiFlash)
+		if len(ds.PushedDownConds) == 0 {
+			ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
+		}
+		return predicates, ds, nil
+	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	return predicates, ds, nil
 }

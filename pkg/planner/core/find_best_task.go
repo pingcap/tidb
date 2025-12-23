@@ -1761,7 +1761,8 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 	}()
 	hasTikv, hasTiflash := false, false
-	if !ds.IsForUpdateRead && ds.TableInfo.TiFlashReplica != nil && ds.TableInfo.TiFlashReplica.Available && ds.TableInfo.TiFlashReplica.Count > 0 {
+	_, hasTiFlashEngine := ds.SCtx().GetSessionVars().IsolationReadEngines[kv.TiFlash]
+	if !ds.IsForUpdateRead && ds.TableInfo.TiFlashReplica != nil && ds.TableInfo.TiFlashReplica.Available && ds.TableInfo.TiFlashReplica.Count > 0 && hasTiFlashEngine && len(ds.PushedDownConds) != 0 {
 		hasTiflash = true
 		for _, candidate := range candidates {
 			if candidate.path.StoreType == kv.TiKV {
@@ -1774,8 +1775,8 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			// prefer tiflash, while current table path is tikv, skip it.
-			if (ds.PreferStoreType&h.PreferTiFlash != 0 ||
-				hasTikv && hasTiflash && super.SCtx().GetSessionVars().IsMPPEnforced()) && path.StoreType == kv.TiKV {
+			if ds.PreferStoreType&h.PreferTiFlash != 0 ||
+				(hasTikv && hasTiflash && super.SCtx().GetSessionVars().IsMPPEnforced() && ds.PreferStoreType&h.PreferTiKV != 0) && path.StoreType == kv.TiKV {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
