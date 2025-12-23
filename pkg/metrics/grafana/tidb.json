@@ -4429,7 +4429,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Connections per TLS cipher and instance",
+          "description": "Connections Per TLS Cipher And Instance",
           "editable": true,
           "error": false,
           "fieldConfig": {
@@ -4491,7 +4491,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Connections per TLS Cipher",
+          "title": "Connections Per TLS Cipher",
           "tooltip": {
             "msResolution": true,
             "shared": true,
