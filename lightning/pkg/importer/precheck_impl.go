@@ -1148,7 +1148,7 @@ func (ci *parquetImportCheckItem) Check(ctx context.Context) (*precheck.CheckRes
 		for _, tblMeta := range dbMeta.Tables {
 			var firstCheck atomic.Bool
 			checkFn := func(ctx context.Context, file mydump.SourceFileMeta) (mydump.ParquetCheckResult, error) {
-				checkMemoryConsumption := firstCheck.CompareAndSwap(true, false)
+				checkMemoryConsumption := firstCheck.CompareAndSwap(false, true)
 				return mydump.CheckParquetImport(ctx, store, file.Path, checkMemoryConsumption)
 			}
 
@@ -1170,12 +1170,12 @@ func (ci *parquetImportCheckItem) Check(ctx context.Context) (*precheck.CheckRes
 			for _, r := range checkRes {
 				if !r.SchemaValid {
 					theResult.Passed = false
-					theResult.Message = "parquet files contains unsupported data types"
+					theResult.Message = "parquet files contain unsupported data types"
 					return theResult, nil
 				}
 				if !r.MemoryValid {
 					theResult.Passed = false
-					theResult.Message = "parquet files is too large and may cause OOM, consider changing to CSV format"
+					theResult.Message = "parquet files are too large and may cause OOM, consider changing to CSV format"
 					return theResult, nil
 				}
 			}

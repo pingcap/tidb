@@ -16,6 +16,8 @@ package mydump
 
 import (
 	"context"
+	goerrors "errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -29,6 +31,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -338,7 +341,8 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 		pp.iterators[i] = createColumnIterator(
 			meta.Schema.Column(i).PhysicalType(), &pp.colTypes[i], loc, readBatchSize)
 		if pp.iterators[i] == nil {
-			return errors.Errorf("unsupported parquet type %s", meta.Schema.Column(i).PhysicalType().String())
+			return common.ErrParquetSchemaInvalid.FastGenByArgs(
+				fmt.Sprintf("%s has invalid physical type", meta.Schema.Column(i).Name()))
 		}
 	}
 
@@ -543,7 +547,7 @@ func NewParquetParser(
 	r storage.ReadSeekCloser,
 	path string,
 	meta ParquetFileMeta,
-) (*ParquetParser, error) {
+) (p *ParquetParser, err error) {
 	logger := log.Wrap(logutil.Logger(ctx))
 	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
@@ -555,6 +559,12 @@ func NewParquetParser(
 			skipBuf:        make([]byte, defaultBufSize),
 		}
 	}
+
+	defer func() {
+		if err != nil {
+			_ = wrapper.Close()
+		}
+	}()
 
 	allocator := meta.allocator
 	if allocator == nil {
@@ -576,7 +586,8 @@ func NewParquetParser(
 	for i := range colTypes {
 		desc := reader.MetaData().Schema.Column(i)
 		if desc.MaxDefinitionLevel() > 1 {
-			return nil, errors.Errorf("unsupported parquet schema: %s has nested schema", desc.Name())
+			return nil, common.ErrParquetSchemaInvalid.FastGenByArgs(
+				fmt.Sprintf("%s has nested schema", desc.Name()))
 		}
 
 		colNames = append(colNames, strings.ToLower(desc.Name()))
@@ -596,8 +607,8 @@ func NewParquetParser(
 		}
 
 		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
-			return nil, errors.Errorf("unsupported parquet schema: %s's logical type %s is not supported",
-				desc.Name(), colTypes[i].converted.String())
+			return nil, common.ErrParquetSchemaInvalid.FastGenByArgs(
+				fmt.Sprintf("%s is not supported", colTypes[i].converted.String()))
 		}
 	}
 
@@ -693,11 +704,7 @@ func CheckParquetImport(
 	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
 
 	if err != nil {
-		return ParquetCheckResult{false, false}, err
-	}
-
-	if err != nil {
-		if strings.Contains(err.Error(), "unsupported parquet schema") {
+		if goerrors.Is(err, common.ErrParquetSchemaInvalid) {
 			return ParquetCheckResult{false, true}, nil
 		}
 		return ParquetCheckResult{false, false}, err
@@ -746,8 +753,14 @@ func (a *simpleAllocator) Allocate(n int) []byte {
 	a.allocMap.Store(addressOf(b), n)
 
 	current := a.currentAllocation.Add(int64(n))
-	if current > a.peakAllocation.Load() {
-		a.peakAllocation.Store(current)
+	for {
+		oldPeak := a.peakAllocation.Load()
+		if current <= oldPeak {
+			break
+		}
+		if a.peakAllocation.CompareAndSwap(oldPeak, current) {
+			break
+		}
 	}
 	return b
 }
