@@ -1377,7 +1377,7 @@ func (local *Backend) ImportEngine(
 	intest.Assert(len(splitKeys) > 0)
 	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	forceSplitThreshold := 100
+	forceSplitThreshold := ForceTableSplitThreshold
 	failpoint.InjectCall("ForceTableSplitThreshold", &forceSplitThreshold)
 	// We only force table split range when the table is large enough (>= 100 regions).
 	// This is to avoid unnecessary RPC calls for small tables.
