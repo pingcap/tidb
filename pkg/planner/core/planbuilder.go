@@ -5821,13 +5821,13 @@ func getHintedStmtThroughPlanDigest(ctx base.PlanContext, planDigest string) (st
 				return err
 			}
 			if query == "" {
-				return errors.NewNoStackErrorf("can't find any plans for '%s'", planDigest)
+				return errors.NewNoStackErrorf("can't find any plans for '%s'", planDigest) // #nosec G201
 			}
 
 			p := parser.New()
 			originNode, err := p.ParseOneStmt(query, characterSet, collation)
 			if err != nil {
-				return errors.NewNoStackErrorf("failed to parse SQL for Plan Digest: %v", planDigest)
+				return errors.NewNoStackErrorf("failed to parse SQL for Plan Digest: %v", planDigest) // #nosec G201
 			}
 			hintedSQL := bindinfo.GenerateBindingSQL(originNode, planHint, schema)
 			stmt, err = p.ParseOneStmt(hintedSQL, characterSet, collation)
