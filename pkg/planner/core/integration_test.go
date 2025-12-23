@@ -913,6 +913,29 @@ func TestHypoIndexHint(t *testing.T) {
 	})
 }
 
+func TestIssue65166(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`CREATE TABLE t_outer (
+			id bigint(20) NOT NULL,
+			scode varchar(64) NOT NULL,
+			username varchar(60) NOT NULL,
+			real_name varchar(100) NOT NULL DEFAULT '',
+			KEY idx1 ((lower(real_name))),
+			UNIQUE KEY idx2 (username,scode))`)
+		tk.MustExec(`CREATE TABLE t (
+			id int(11) unsigned NOT NULL,
+			scode varchar(64) NOT NULL DEFAULT '',
+			plat_id varchar(64) NOT NULL)`)
+		tk.MustQuery(`EXPLAIN FORMAT='plan_tree' SELECT a.id FROM
+			t AS a LEFT JOIN t_outer b ON b.username = a.plat_id
+			AND b.scode = a.scode ORDER BY a.id`).Check(testkit.Rows(
+			`Sort root  test.t.id`, // the outer join is eliminated
+			`└─TableReader root  data:TableFullScan`,
+			`  └─TableFullScan cop[tikv] table:a keep order:false, stats:pseudo`))
+	})
+}
+
 func TestIssue29503(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		defer config.RestoreFunc()()

@@ -173,16 +173,9 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 		p.Children()[i] = pe.eliminate(child, replace, childFlag)
 	}
 
-	// replace logical plan schema
-	switch x := p.(type) {
-	case *logicalop.LogicalJoin:
-		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
-	case *logicalop.LogicalApply:
-		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
-	default:
-		for i, dst := range p.Schema().Columns {
-			p.Schema().Columns[i] = ruleutil.ResolveColumnAndReplace(dst, replace)
-		}
+	// Replace all columns in the schema with the replaced columns.
+	for i, dst := range p.Schema().Columns {
+		p.Schema().Columns[i] = ruleutil.ResolveColumnAndReplace(dst, replace)
 	}
 
 	// Filter replace map first to make sure the replaced columns
