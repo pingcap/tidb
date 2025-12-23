@@ -622,7 +622,7 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 			}
 		}
 
-		offsetTotalLenDelta := int64(totalTimes)
+		offsetTotalLenDelta := int64(0)
 
 		if dstCol.IsFixed() {
 			nullBitmapTotalLenDelta, dataMemTotalLenDelta = dstCol.CalculateLenDeltaForAppendCellNTimesForFixedElem(srcCol, totalTimes)
@@ -632,6 +632,7 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 				nullBitmapTotalLenDelta += nullBitmapLenDelta
 				dataMemTotalLenDelta += dataLenDelta
 			}
+			offsetTotalLenDelta = int64(totalTimes)
 		}
 
 		dstCol.Reserve(nullBitmapTotalLenDelta, dataMemTotalLenDelta, offsetTotalLenDelta)
