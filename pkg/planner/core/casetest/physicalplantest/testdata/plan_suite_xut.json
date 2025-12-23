@@ -1261,15 +1261,17 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "    └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "MergeJoin root  inner join, left key:test.t.a, right key:test.t.a",
+          "├─Sort(Build) root  test.t.a",
+          "│ └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "│   └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│     └─Selection mpp[tiflash]  not(isnull(test.t.a))",
+          "│       └─TableFullScan mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─Sort(Probe) root  test.t.a",
+          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─Selection mpp[tiflash]  not(isnull(test.t.a))",
+          "        └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
