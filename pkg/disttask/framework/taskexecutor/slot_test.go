@@ -24,7 +24,7 @@ import (
 func TestSlotManager(t *testing.T) {
 	sm := newSlotManager(10)
 
-	// rank(concurrency in parenthesis): task1(1), task2(10)
+	// rank(required slots in parenthesis): task1(1), task2(10)
 	task1 := &proto.TaskBase{ID: 1, Priority: 1, RequiredSlots: 1}
 	task2 := &proto.TaskBase{ID: 2, Priority: 2, RequiredSlots: 10}
 
@@ -148,7 +148,7 @@ func TestSlotManagerExchangeSlots(t *testing.T) {
 		require.Equal(t, 8, sm.availableSlots())
 	})
 
-	t.Run("exchange for less slots, and exchange twice with same concurrency", func(t *testing.T) {
+	t.Run("exchange for less slots, and exchange twice with same required slots", func(t *testing.T) {
 		sm := newSlotManager(16)
 		require.True(t, sm.alloc(task1))
 		require.Equal(t, 12, sm.availableSlots())

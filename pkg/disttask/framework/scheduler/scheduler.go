@@ -121,7 +121,7 @@ func (*BaseScheduler) Init() error {
 func (s *BaseScheduler) ScheduleTask() {
 	task := s.GetTask()
 	s.logger.Info("schedule task",
-		zap.Stringer("state", task.State), zap.Int("concurrency", task.RequiredSlots))
+		zap.Stringer("state", task.State), zap.Int("requiredSlots", task.RequiredSlots))
 	s.scheduleTask()
 }
 
@@ -520,7 +520,7 @@ func (s *BaseScheduler) scheduleSubTask(
 	s.logger.Info("schedule subtasks",
 		zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, subtaskStep)),
-		zap.Int("concurrency", task.RequiredSlots),
+		zap.Int("requiredSlots", task.RequiredSlots),
 		zap.Int("subtasks", len(metas)))
 
 	// the scheduled node of the subtask might not be optimal, as we run all
@@ -538,7 +538,7 @@ func (s *BaseScheduler) scheduleSubTask(
 		// our schedule target is to maximize the resource usage of all nodes while
 		// fulfilling the target of schedule tasks in the task order, we will try
 		// to pack the subtasks of different tasks onto as minimal number of nodes
-		// as possible, to allow later tasks of higher concurrency can be scheduled
+		// as possible, to allow later tasks of higher required slots can be scheduled
 		// and run, so we order nodes, see TaskManager.GetAllNodes and assign the
 		// subtask to the instance in a round-robin way.
 		// for example:

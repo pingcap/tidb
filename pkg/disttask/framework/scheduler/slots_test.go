@@ -98,7 +98,7 @@ func TestSlotManagerReserve(t *testing.T) {
 	task11.ID = 11
 	_, ok = sm.canReserve(&task11)
 	require.False(t, ok)
-	// lower concurrency
+	// lower required slots
 	task11.RequiredSlots = 12
 	_, ok = sm.canReserve(&task11)
 	require.True(t, ok)

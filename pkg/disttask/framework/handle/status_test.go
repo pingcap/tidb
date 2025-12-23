@@ -25,7 +25,7 @@ import (
 func TestCalculateRequiredNodes(t *testing.T) {
 	cases := []struct {
 		cpuCount int
-		// 0: concurrency, 1: max-node-count
+		// 0: requiredSlots, 1: max-node-count
 		params   [][]int
 		expected int
 	}{
@@ -37,7 +37,7 @@ func TestCalculateRequiredNodes(t *testing.T) {
 		{cpuCount: 8, params: [][]int{{3, 1}}, expected: 1},
 		{cpuCount: 8, params: [][]int{{8, 1}}, expected: 1},
 		{cpuCount: 8, params: [][]int{{8, 4}}, expected: 4},
-		// multiple tasks of concurrency < cpuCount
+		// multiple tasks of requiredSlots < cpuCount
 		{cpuCount: 8, params: [][]int{{1, 1}, {2, 1}, {2, 1}, {3, 1}}, expected: 1},
 		{cpuCount: 8, params: [][]int{{1, 3}, {2, 4}}, expected: 4},
 		{cpuCount: 8, params: [][]int{{1, 3}, {2, 4}, {6, 1}}, expected: 4},

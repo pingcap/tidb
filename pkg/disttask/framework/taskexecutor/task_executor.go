@@ -310,7 +310,7 @@ func (e *BaseTaskExecutor) Run() {
 				zap.String("oldStep", proto.Step2Str(oldTask.Type, oldTask.Step)),
 				zap.String("newStep", proto.Step2Str(newTask.Type, newTask.Step)))
 			// when task switch to next step, task meta might change too, but in
-			// this case step executor will be recreated with new concurrency and
+			// this case step executor will be recreated with new required slots and
 			// meta, so we only notify it when it's still running the same step.
 			if e.stepExec != nil && e.stepExec.GetStep() == newTask.Step {
 				e.logger.Info("notify step executor to update task meta")
@@ -573,8 +573,8 @@ func (e *BaseTaskExecutor) detectAndHandleParamModify(ctx context.Context) error
 		zap.Int("oldRequiredSlots", oldTask.RequiredSlots),
 		zap.Int("newRequiredSlots", latestTask.RequiredSlots))
 
-	// we don't report error here, as we might fail to modify task concurrency due
-	// to not enough slots, we still need try to apply meta modification.
+	// we don't report error here, as we might fail to modify task required slots
+	// due to not enough slots, we still need try to apply meta modification.
 	e.tryModifyTaskRequiredSlots(ctx, oldTask, latestTask)
 	if metaModified {
 		if err := e.stepExec.TaskMetaModified(ctx, latestTask.Meta); err != nil {

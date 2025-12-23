@@ -622,26 +622,26 @@ func TestTaskExecutorRun(t *testing.T) {
 		require.True(t, e.ctrl.Satisfied())
 	})
 
-	t.Run("task concurrency became smaller", func(t *testing.T) {
+	t.Run("task required slots became smaller", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
-		concurrencyIs4Task1 := *e.task1
-		concurrencyIs4Task1.RequiredSlots = 4
-		concurrencyIs2Task1 := *e.task1
-		concurrencyIs2Task1.RequiredSlots = 2
+		requiredSlotsIs4Task1 := *e.task1
+		requiredSlotsIs4Task1.RequiredSlots = 4
+		requiredSlotsIs2Task1 := *e.task1
+		requiredSlotsIs2Task1.RequiredSlots = 2
 		slotMgr := e.taskExecutor.slotMgr
 		slotMgr.alloc(&e.task1.TaskBase)
 		require.Equal(t, 6, slotMgr.availableSlots())
-		// without step executor, concurrency modified to 4
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&concurrencyIs4Task1, nil)
+		// without step executor, required slots modified to 4
+		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&requiredSlotsIs4Task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne, unfinishedNormalSubtaskStates...).DoAndReturn(
 			func(context.Context, string, int64, proto.Step, ...proto.SubtaskState) (*proto.Subtask, error) {
 				require.Equal(t, 12, slotMgr.availableSlots())
 				require.Equal(t, 4, e.taskExecutor.GetTaskBase().RequiredSlots)
 				return nil, nil
 			})
-		// with step executor, concurrency modified to 2
+		// with step executor, required slots modified to 2
 		e.mockForCheckBalanceSubtask()
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&concurrencyIs4Task1, nil)
+		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&requiredSlotsIs4Task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
 			unfinishedNormalSubtaskStates...).Return(e.pendingSubtask1, nil)
 		e.taskExecExt.EXPECT().GetStepExecutor(gomock.Any()).Return(e.stepExecutor, nil)
@@ -652,7 +652,7 @@ func TestTaskExecutorRun(t *testing.T) {
 			return nil
 		})
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&concurrencyIs2Task1, nil)
+		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&requiredSlotsIs2Task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne, unfinishedNormalSubtaskStates...).DoAndReturn(
 			func(context.Context, string, int64, proto.Step, ...proto.SubtaskState) (*proto.Subtask, error) {
 				require.Equal(t, 14, slotMgr.availableSlots())
@@ -666,26 +666,26 @@ func TestTaskExecutorRun(t *testing.T) {
 		require.True(t, e.ctrl.Satisfied())
 	})
 
-	t.Run("task concurrency become larger, but not enough slots for exchange", func(t *testing.T) {
+	t.Run("task required slots become larger, but not enough slots for exchange", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
-		concurrencyIs14Task1 := *e.task1
-		concurrencyIs14Task1.RequiredSlots = 14
+		requiredSlotsIs14Task1 := *e.task1
+		requiredSlotsIs14Task1.RequiredSlots = 14
 		slotMgr := e.taskExecutor.slotMgr
 		slotMgr.alloc(&e.task1.TaskBase)
 		// alloc for another task executor
 		slotMgr.alloc(&proto.TaskBase{ID: 2, RequiredSlots: 4})
 		require.Equal(t, 2, slotMgr.availableSlots())
-		// without step executor, concurrency modified to 4
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&concurrencyIs14Task1, nil)
+		// without step executor, required slots modified to 4
+		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&requiredSlotsIs14Task1, nil)
 		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 		require.Equal(t, 2, slotMgr.availableSlots())
 	})
 
-	t.Run("task concurrency become larger, exchange success", func(t *testing.T) {
+	t.Run("task required slots become larger, exchange success", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
-		concurrencyIs14Task1 := *e.task1
-		concurrencyIs14Task1.RequiredSlots = 14
+		requiredSlotsIs14Task1 := *e.task1
+		requiredSlotsIs14Task1.RequiredSlots = 14
 		slotMgr := e.taskExecutor.slotMgr
 		slotMgr.alloc(&e.task1.TaskBase)
 		require.Equal(t, 6, slotMgr.availableSlots())
@@ -701,7 +701,7 @@ func TestTaskExecutorRun(t *testing.T) {
 			return nil
 		})
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&concurrencyIs14Task1, nil)
+		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&requiredSlotsIs14Task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne, unfinishedNormalSubtaskStates...).DoAndReturn(
 			func(context.Context, string, int64, proto.Step, ...proto.SubtaskState) (*proto.Subtask, error) {
 				require.Equal(t, 2, slotMgr.availableSlots())
@@ -727,7 +727,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		require.True(t, e.ctrl.Satisfied())
 	})
 
-	t.Run("task meta/concurrency modified, with step executor, same step, notify failed, will recreate step executor", func(t *testing.T) {
+	t.Run("task meta/required slots modified, with step executor, same step, notify failed, will recreate step executor", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
 		e.mockForCheckBalanceSubtask()
 		slotMgr := e.taskExecutor.slotMgr
@@ -780,7 +780,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		require.True(t, e.ctrl.Satisfied())
 	})
 
-	t.Run("task meta/concurrency modified, with step executor, same step, notify success", func(t *testing.T) {
+	t.Run("task meta/required slots modified, with step executor, same step, notify success", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
 		e.mockForCheckBalanceSubtask()
 		slotMgr := e.taskExecutor.slotMgr
@@ -825,7 +825,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		require.True(t, e.ctrl.Satisfied())
 	})
 
-	t.Run("task meta/concurrency modified, with step executor, but also switch to next step", func(t *testing.T) {
+	t.Run("task meta/required slots modified, with step executor, but also switch to next step", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
 		e.mockForCheckBalanceSubtask()
 		slotMgr := e.taskExecutor.slotMgr
@@ -910,7 +910,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, oldTask, env.taskExecutor.task.Load())
 	})
 
-	t.Run("concurrency become smaller, but failed to reduce resource usage", func(t *testing.T) {
+	t.Run("required slots become smaller, but failed to reduce resource usage", func(t *testing.T) {
 		env := newTaskExecutorRunEnv0(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
@@ -926,7 +926,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
 	})
 
-	t.Run("concurrency become smaller, apply successfully", func(t *testing.T) {
+	t.Run("required slots become smaller, apply successfully", func(t *testing.T) {
 		env := newTaskExecutorRunEnv0(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
@@ -942,7 +942,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, 12, taskExecutor.slotMgr.availableSlots())
 	})
 
-	t.Run("concurrency become larger, but not enough slots for exchange", func(t *testing.T) {
+	t.Run("required slots become larger, but not enough slots for exchange", func(t *testing.T) {
 		env := newTaskExecutorRunEnv0(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
@@ -960,7 +960,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
 	})
 
-	t.Run("concurrency become larger, but failed to notify application", func(t *testing.T) {
+	t.Run("required slots become larger, but failed to notify application", func(t *testing.T) {
 		env := newTaskExecutorRunEnv0(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
@@ -979,7 +979,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
 	})
 
-	t.Run("concurrency become larger, apply successfully", func(t *testing.T) {
+	t.Run("required slots become larger, apply successfully", func(t *testing.T) {
 		env := newTaskExecutorRunEnv0(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
@@ -1024,7 +1024,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, &latestTask, taskExecutor.task.Load())
 	})
 
-	t.Run("both meta and concurrency modified, both failed to apply", func(t *testing.T) {
+	t.Run("both meta and required slots modified, both failed to apply", func(t *testing.T) {
 		env := newTaskExecutorRunEnv0(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
@@ -1045,7 +1045,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
 	})
 
-	t.Run("both meta and concurrency modified, apply concurrency success, but failed to apply meta", func(t *testing.T) {
+	t.Run("both meta and required slots modified, apply required slots success, but failed to apply meta", func(t *testing.T) {
 		env := newTaskExecutorRunEnv0(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
@@ -1069,7 +1069,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, 0, taskExecutor.slotMgr.availableSlots())
 	})
 
-	t.Run("both meta and concurrency modified, apply meta success, but failed to apply concurrency", func(t *testing.T) {
+	t.Run("both meta and required slots modified, apply meta success, but failed to apply required slots", func(t *testing.T) {
 		env := newTaskExecutorRunEnv0(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
@@ -1093,7 +1093,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
 	})
 
-	t.Run("both meta and concurrency modified, both apply success", func(t *testing.T) {
+	t.Run("both meta and required slots modified, both apply success", func(t *testing.T) {
 		env := newTaskExecutorRunEnv0(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor

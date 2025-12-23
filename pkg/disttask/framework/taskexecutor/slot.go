@@ -47,7 +47,7 @@ func newSlotManager(capacity int) *slotManager {
 	return sm
 }
 
-// subtasks inside a task will be run in serial, so they takes task.Concurrency slots.
+// subtasks inside a task will be run in serial, so they takes task.RequiredSlots slots.
 func (sm *slotManager) alloc(task *proto.TaskBase) bool {
 	sm.Lock()
 	defer sm.Unlock()

@@ -203,9 +203,9 @@ func (sm *SlotManager) getCapacity() int {
 
 // we schedule subtasks to the nodes with enough slots first, if no such nodes,
 // schedule to all nodes.
-func (sm *SlotManager) adjustEligibleNodes(eligibleNodes []string, concurrency int) []string {
+func (sm *SlotManager) adjustEligibleNodes(eligibleNodes []string, requiredSlot int) []string {
 	usedSlots := *sm.usedSlots.Load()
-	nodes := filterNodesWithEnoughSlots(usedSlots, sm.getCapacity(), eligibleNodes, concurrency)
+	nodes := filterNodesWithEnoughSlots(usedSlots, sm.getCapacity(), eligibleNodes, requiredSlot)
 	if len(nodes) == 0 {
 		nodes = eligibleNodes
 	}
@@ -225,10 +225,10 @@ func (sm *SlotManager) updateCapacity(cpuCount int) {
 	}
 }
 
-func filterNodesWithEnoughSlots(usedSlots map[string]int, capacity int, eligibleNodes []string, concurrency int) []string {
+func filterNodesWithEnoughSlots(usedSlots map[string]int, capacity int, eligibleNodes []string, requiredSlots int) []string {
 	nodesOfEnoughSlots := make(map[string]struct{}, len(usedSlots))
 	for node, slots := range usedSlots {
-		if slots+concurrency <= capacity {
+		if slots+requiredSlots <= capacity {
 			nodesOfEnoughSlots[node] = struct{}{}
 		}
 	}

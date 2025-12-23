@@ -515,7 +515,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("test on modifying concurrency, success", func(t *testing.T) {
+	t.Run("test on modifying required slots, success", func(t *testing.T) {
 		taskBefore := runningTask
 		taskBefore.State = proto.TaskStateModifying
 		taskBefore.ModifyParam = proto.ModifyParam{
@@ -553,7 +553,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("test on modifying concurrency and task meta, success", func(t *testing.T) {
+	t.Run("test on modifying required slots and task meta, success", func(t *testing.T) {
 		taskBefore := runningTask
 		taskBefore.State = proto.TaskStateModifying
 		taskBefore.ModifyParam = proto.ModifyParam{
