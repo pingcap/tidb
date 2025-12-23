@@ -995,7 +995,7 @@ func checkAggCanPushMPP(s base.LogicalPlan) bool {
 		}
 	case *logicalop.DataSource:
 		return !l.IsForUpdateRead
-	case *logicalop.LogicalUnionScan:
+	case *logicalop.LogicalUnionScan, *logicalop.LogicalPartitionUnionAll:
 		return false
 	default:
 		for _, child := range l.Children() {
