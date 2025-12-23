@@ -1006,8 +1006,6 @@ func checkAggCanPushMPP(s base.LogicalPlan) bool {
 		return l.CanUseTiflash()
 	case *logicalop.LogicalUnionScan, *logicalop.LogicalPartitionUnionAll:
 		return false
-	default:
-
 	}
 	for _, child := range s.Children() {
 		if !checkAggCanPushMPP(child) {
