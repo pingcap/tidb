@@ -668,10 +668,6 @@ func (c *TopN) lowerBound(d []byte) (idx int) {
 	if c == nil {
 		return 0
 	}
-	if len(c.TopN) == 0 {
-		return 0
-	}
-
 	d, _ = convertEncodedValue(d, getEncodedType(c.TopN[0].Encoded))
 	idx, _ = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
@@ -683,6 +679,9 @@ func (c *TopN) lowerBound(d []byte) (idx int) {
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (c *TopN) BetweenCount(_ planctx.PlanContext, l, r []byte) (result uint64) {
 	if c == nil {
+		return 0
+	}
+	if len(c.TopN) == 0 {
 		return 0
 	}
 	lIdx := c.lowerBound(l)
