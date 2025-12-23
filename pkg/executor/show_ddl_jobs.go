@@ -301,12 +301,12 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 }
 
 func showCommentsFromJob(job *model.Job) string {
-	needReorg, labels := getReorgAndVerifyLabels(job.Type, job.Version, job.RawArgs)
+	needReorg, labels := getReorgAndVerifyLabels(job.Type, job.Version, job.RawArgs, job.ReorgMeta)
 
 	// For MultiSchemaChange, we need to summarize labels from subjobs as well.
 	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			subNeedReorg, subLabels := getReorgAndVerifyLabels(sub.Type, job.Version, sub.RawArgs)
+			subNeedReorg, subLabels := getReorgAndVerifyLabels(sub.Type, job.Version, sub.RawArgs, nil)
 			if subNeedReorg {
 				needReorg = true
 			}
@@ -387,7 +387,7 @@ func showCommentsFromJob(job *model.Job) string {
 }
 
 func showCommentsFromSubjob(sub *model.SubJob, jobVer model.JobVersion, useDXF, useCloud bool) string {
-	needReorg, labels := getReorgAndVerifyLabels(sub.Type, jobVer, sub.RawArgs)
+	needReorg, labels := getReorgAndVerifyLabels(sub.Type, jobVer, sub.RawArgs, nil)
 	if needReorg {
 		labels = append(labels, "need reorg")
 	}
@@ -410,7 +410,7 @@ func showCommentsFromSubjob(sub *model.SubJob, jobVer model.JobVersion, useDXF, 
 	return strings.Join(labels, ", ")
 }
 
-func getReorgAndVerifyLabels(jobType model.ActionType, jobVer model.JobVersion, rawArgs json.RawMessage) (bool, []string) {
+func getReorgAndVerifyLabels(jobType model.ActionType, jobVer model.JobVersion, rawArgs json.RawMessage, reorgMeta *model.DDLReorgMeta) (bool, []string) {
 	var labels []string
 	var needReorg bool
 	if jobType == model.ActionModifyColumn {
@@ -426,6 +426,12 @@ func getReorgAndVerifyLabels(jobType model.ActionType, jobVer model.JobVersion, 
 			if args.ModifyColumnType == model.ModifyTypeNoReorgWithCheck ||
 				args.ModifyColumnType == model.ModifyTypePrecheck {
 				labels = append(labels, "validating")
+			}
+		} else {
+			// If args are lost (historical job), we can't tell if it's validating or reorg
+			// just by ActionModifyColumn. But if it has ReorgMeta, it must be one of them.
+			if reorgMeta != nil && reorgMeta.ReorgTp != model.ReorgTypeNone {
+				needReorg = true
 			}
 		}
 	} else if jobType != model.ActionMultiSchemaChange {
