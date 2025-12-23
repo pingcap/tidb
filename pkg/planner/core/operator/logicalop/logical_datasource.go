@@ -708,3 +708,23 @@ func (ds *DataSource) AppendTableCol(col *expression.Column) {
 	ds.TblCols = append(ds.TblCols, col)
 	ds.TblColsByID[col.ID] = col
 }
+
+// CanUseTiflash is to whether this datasource can run in the tiflash. It is for physical optimization
+func (ds *DataSource) CanUseTiflash() bool {
+	if ds.IsForUpdateRead || ds.TableInfo.TiFlashReplica == nil {
+		return false
+	}
+	if !ds.TableInfo.TiFlashReplica.Available || ds.TableInfo.TiFlashReplica.Count > 0 {
+		return false
+	}
+	sessionVars := ds.SCtx().GetSessionVars()
+	_, hasTiFlashEngine := sessionVars.IsolationReadEngines[kv.TiFlash]
+	if !hasTiFlashEngine {
+		return false
+	}
+	if ds.SCtx().GetSessionVars().IsMPPEnforced() && len(ds.PushedDownConds) > 0 {
+		return true
+	}
+	pushed, _ := expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), ds.AllConds, kv.TiFlash)
+	return len(pushed) > 0
+}

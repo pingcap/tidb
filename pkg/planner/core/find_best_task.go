@@ -1761,8 +1761,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 	}()
 	hasTikv, hasTiflash := false, false
-	_, hasTiFlashEngine := ds.SCtx().GetSessionVars().IsolationReadEngines[kv.TiFlash]
-	if !ds.IsForUpdateRead && ds.TableInfo.TiFlashReplica != nil && ds.TableInfo.TiFlashReplica.Available && ds.TableInfo.TiFlashReplica.Count > 0 && hasTiFlashEngine && len(ds.PushedDownConds) != 0 {
+	if ds.CanUseTiflash() {
 		hasTiflash = true
 		for _, candidate := range candidates {
 			if candidate.path.StoreType == kv.TiKV {

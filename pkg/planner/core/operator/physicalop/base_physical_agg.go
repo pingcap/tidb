@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
-	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
@@ -998,13 +997,7 @@ func checkAggCanPushMPP(s base.LogicalPlan) bool {
 			return false
 		}
 	case *logicalop.DataSource:
-		if l.TableInfo.TiFlashReplica == nil || !l.TableInfo.TiFlashReplica.Available || l.TableInfo.TiFlashReplica.Count == 0 || l.PreferStoreType&h.PreferTiKV != 0 {
-			return false
-		}
-		if len(l.PushedDownConds) != 0 {
-			return false
-		}
-		return !l.IsForUpdateRead
+		return l.CanUseTiflash()
 	case *logicalop.LogicalUnionScan, *logicalop.LogicalPartitionUnionAll:
 		return false
 	default:
