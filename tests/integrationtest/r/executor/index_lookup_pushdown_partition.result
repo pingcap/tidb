@@ -79,7 +79,7 @@ id1 varchar(32),
 id2 int,
 a int,
 b int,
-primary key (id1, id2),
+primary key (id1, id2) CLUSTERED,
 index a(a)
 )
 PARTITION BY RANGE COLUMNS (id1) (
@@ -100,7 +100,7 @@ insert into tp2 values
 explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 where a > 33 limit 5;
 id	estRows	task	access object	operator info
 IndexLookUp_13	5.00	root	partition:all	limit embedded(offset:0, count:5)
-├─LocalIndexLookUp_15(Build)	5.00	cop[tikv]		index handle offsets:[1]
+├─LocalIndexLookUp_15(Build)	5.00	cop[tikv]		index handle offsets:[]
 │ ├─Limit_12(Build)	5.00	cop[tikv]		offset:0, count:5
 │ │ └─IndexRangeScan_10	5.00	cop[tikv]	table:tp2, index:a(a)	range:(33,+inf], keep order:false, stats:pseudo
 │ └─TableRowIDScan_14(Probe)	5.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
@@ -115,7 +115,7 @@ e	5	55	50
 explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 partition (p1);
 id	estRows	task	access object	operator info
 IndexLookUp_6	10000.00	root	partition:p1	
-├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+├─LocalIndexLookUp_8(Build)	10000.00	cop[tikv]		index handle offsets:[]
 │ ├─IndexFullScan_4(Build)	10000.00	cop[tikv]	table:tp2, index:a(a)	keep order:false, stats:pseudo
 │ └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
 └─TableRowIDScan_5(Probe)	0.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo

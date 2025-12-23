@@ -232,7 +232,7 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 			"id2 bigint, " +
 			"a bigint, " +
 			"b bigint, " +
-			"primary key(" + primaryKey + "), " +
+			"primary key(" + primaryKey + ") CLUSTERED, " +
 			uniquePrefix + "index " + v.indexName + "(a)" +
 			") charset=" + charset + " collate=" + collation)
 		tk.MustExec("insert into " + v.tableName + " values " +
