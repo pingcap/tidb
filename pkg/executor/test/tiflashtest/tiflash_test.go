@@ -1068,7 +1068,7 @@ func TestIssue57149(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_BCJ")
 	tk.MustExec("use tiflash_partition_BCJ")
@@ -1090,10 +1090,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
-		tk.MustExec("alter table " + tbl + " set tiflash replica 1")
-		tb := external.GetTableByName(t, tk, "tiflash_partition_BCJ", tbl)
-		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
+		testkit.SetTiFlashReplica(t, dom, "tiflash_partition_BCJ", tbl)
 	}
 
 	vals := make([]string, 0, 100)
@@ -1109,8 +1106,6 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
-	// unistore does not support later materialization
-	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
@@ -1123,16 +1118,13 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 		l1, r1 := lr()
 		l2, r2 := lr()
 		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v and t2.b>=%v and t2.b<=%v", l1, r1, l2, r2)
-		var res [][]any
 		for _, mode := range []string{"static", "dynamic"} {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
 			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
-				q := fmt.Sprintf("select count(*) from %v t1 join %v t2 on t1.a=t2.a where %v", tbl, tbl, cond)
-				if res == nil {
-					res = tk.MustQuery(q).Sort().Rows()
-				} else {
-					tk.MustQuery(q).Check(res)
-				}
+				q := fmt.Sprintf("explain select count(*) from %v t1 join %v t2 on t1.a=t2.a where %v", tbl, tbl, cond)
+				query := tk.MustQuery(q)
+				query.CheckContain("tiflash")
+				query.CheckNotContain("tikv")
 			}
 		}
 	}
