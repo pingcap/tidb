@@ -124,6 +124,10 @@ var (
 
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
+
+	// ForceTableSplitThreshold is the threshold of regions to force split table range.
+	// It is exported for testing.
+	ForceTableSplitThreshold = 100
 )
 
 // importClientFactory is factory to create new import client for specific store.
@@ -890,21 +894,32 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 	}
 
 	addTableSplitRange := func() {
-		var firstErr error
-		successStores := make([]string, 0, len(clients))
-		failedStores := make([]string, 0, len(clients))
+		var (
+			firstErr      error
+			mu            sync.Mutex
+			successStores = make([]string, 0, len(clients))
+			failedStores  = make([]string, 0, len(clients))
+		)
+		var wg sync.WaitGroup
+		wg.Add(len(clients))
 		for i, c := range clients {
-			_, err := c.AddForcePartitionRange(subctx, addReq)
-			if err == nil {
-				successStores = append(successStores, storeAddrs[i])
+			go func(i int, c sst.ImportSSTClient) {
+				defer wg.Done()
 				failpoint.InjectCall("AddPartitionRangeForTable")
-			} else {
-				failedStores = append(failedStores, storeAddrs[i])
-				if firstErr == nil {
-					firstErr = err
+				_, err := c.AddForcePartitionRange(subctx, addReq)
+				mu.Lock()
+				defer mu.Unlock()
+				if err == nil {
+					successStores = append(successStores, storeAddrs[i])
+				} else {
+					failedStores = append(failedStores, storeAddrs[i])
+					if firstErr == nil {
+						firstErr = err
+					}
 				}
-			}
+			}(i, c)
 		}
+		wg.Wait()
 		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
 			zap.Strings("success stores", successStores),
 			zap.Strings("failed stores", failedStores),
@@ -931,21 +946,32 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 		cancel()
 		wg.Wait()
 
-		var firstErr error
-		successStores := make([]string, 0, len(clients))
-		failedStores := make([]string, 0, len(clients))
+		var (
+			firstErr      error
+			mu            sync.Mutex
+			successStores = make([]string, 0, len(clients))
+			failedStores  = make([]string, 0, len(clients))
+		)
+		var rpcWg sync.WaitGroup
+		rpcWg.Add(len(clients))
 		for i, c := range clients {
-			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
-			if err == nil {
-				successStores = append(successStores, storeAddrs[i])
+			go func(i int, c sst.ImportSSTClient) {
+				defer rpcWg.Done()
 				failpoint.InjectCall("RemovePartitionRangeRequest")
-			} else {
-				failedStores = append(failedStores, storeAddrs[i])
-				if firstErr == nil {
-					firstErr = err
+				_, err := c.RemoveForcePartitionRange(ctx, removeReq)
+				mu.Lock()
+				defer mu.Unlock()
+				if err == nil {
+					successStores = append(successStores, storeAddrs[i])
+				} else {
+					failedStores = append(failedStores, storeAddrs[i])
+					if firstErr == nil {
+						firstErr = err
+					}
 				}
-			}
+			}(i, c)
 		}
+		rpcWg.Wait()
 		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
 			zap.Strings("success stores", successStores),
 			zap.Strings("failed stores", failedStores),
@@ -1351,7 +1377,11 @@ func (local *Backend) ImportEngine(
 	intest.Assert(len(splitKeys) > 0)
 	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
+	forceSplitThreshold := 100
+	failpoint.InjectCall("ForceTableSplitThreshold", &forceSplitThreshold)
+	// We only force table split range when the table is large enough (>= 100 regions).
+	// This is to avoid unnecessary RPC calls for small tables.
+	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 && len(splitKeys)-1 >= forceSplitThreshold {
 		tidblogutil.Logger(ctx).Info("force table split range",
 			zap.String("startKey", redact.Key(startKey)),
 			zap.String("endKey", redact.Key(endKey)))
