@@ -646,7 +646,7 @@ func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
 	if val, ok := lockCtx.Values[string(key)]; ok {
 		if val.Exists {
 			if e.commitTSOffset >= 0 {
-				return kv.ValueEntry{}, errors.Errorf("TODO: _tidb_commit_ts should return NULL but not implemented yet")
+				return kv.ValueEntry{Value: val.Value, CommitTS: 0}, nil
 			}
 			return kv.ValueEntry{Value: val.Value}, nil
 		} else if val.AlreadyLocked {
@@ -691,7 +691,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 			val1, ok := e.Ctx().GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
 			if ok {
 				if e.commitTSOffset >= 0 {
-					return kv.ValueEntry{}, errors.Errorf("TODO: _tidb_commit_ts should return NULL but not implemented yet")
+					return kv.ValueEntry{Value: val1, CommitTS: 0}, nil
 				}
 				return kv.ValueEntry{Value: val1}, nil
 			}
