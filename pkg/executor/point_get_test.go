@@ -377,3 +377,59 @@ func TestWithTiDBSnapshot(t *testing.T) {
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
 }
+
+func TestSoftDeleteForUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists softdelete")
+	tk.MustExec(`create table softdelete (id int key, v int) active_active='on' softdelete retention 7 day`)
+	tk.MustExec(`insert into softdelete values (1, 1), (2, 2), (3, 3)`)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from softdelete where id = 2 for update").Check(testkit.Rows("2 2"))
+
+	var done bool
+	go func() {
+		// delete this line, should be blocked because of the for update lock
+		tk.MustExec("update softdelete set _tidb_softdelete_time = now() where id = 2")
+		done = true
+	}()
+
+	// check the goroutine logic is block
+	time.Sleep(100 * time.Millisecond)
+	require.False(t, done)
+	tk1.MustExec("commit")
+
+	// test again, this time, id = 2 is soft deleted, check for update lock's behavior
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from softdelete where id = 2 for update").Check(testkit.Rows())
+
+	done = false
+	go func() {
+		tk.MustExec("insert into softdelete values (2, 22)")
+		done = true
+	}()
+
+	// check the goroutine logic is block
+	time.Sleep(100 * time.Millisecond)
+	require.False(t, done)
+	tk1.MustExec("commit")
+
+	// the third test, record id = 5 does not exist, but for update should lock it
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from softdelete where id = 5 for update").Check(testkit.Rows())
+
+	done = false
+	go func() {
+		tk.MustExec("insert into softdelete values (5, 5)")
+		done = true
+	}()
+
+	// check the goroutine logic is block
+	time.Sleep(100 * time.Millisecond)
+	require.False(t, done)
+	tk1.MustExec("commit")
+}
