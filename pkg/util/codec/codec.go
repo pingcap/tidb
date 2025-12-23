@@ -1051,6 +1051,43 @@ func DecodeRange(b []byte, size int, idxColumnTypes []byte, loc *time.Location) 
 	return values, nil, nil
 }
 
+// GetEncodeType gets the encoded type from the first byte of the encoded key.
+func GetEncodeType(b []byte) (byte, error) {
+	if len(b) < 1 {
+		return 0, errors.New("invalid encoded key")
+	}
+
+	flag := b[0]
+	switch flag {
+	case intFlag:
+		return types.KindInt64, nil
+	case uintFlag:
+		return types.KindUint64, nil
+	case varintFlag:
+		return types.KindInt64, nil
+	case uvarintFlag:
+		return types.KindUint64, nil
+	case floatFlag:
+		return types.KindFloat64, nil
+	case bytesFlag:
+		return types.KindString, nil
+	case compactBytesFlag:
+		return types.KindString, nil
+	case decimalFlag:
+		return types.KindMysqlDecimal, nil
+	case durationFlag:
+		return types.KindMysqlDuration, nil
+	case jsonFlag:
+		return types.KindMysqlJSON, nil
+	case vectorFloat32Flag:
+		return types.KindVectorFloat32, nil
+	case NilFlag:
+		return types.KindNull, nil
+	default:
+		return 0, errors.Errorf("invalid encoded key flag %v", flag)
+	}
+}
+
 // DecodeOne decodes on datum from a byte slice generated with EncodeKey or EncodeValue.
 func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 	if len(b) < 1 {

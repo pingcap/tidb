@@ -636,7 +636,7 @@ func (c *TopN) FindTopN(d []byte) int {
 		return -1
 	}
 
-	d, truncated := convertEncodedValue(d, getEncodedType(c.TopN[0].Encoded))
+	d, truncated := convertEncodedValue(d, c.TopN[0].Encoded)
 	if truncated {
 		return -1
 	}
@@ -671,7 +671,7 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 	if len(c.TopN) == 0 {
 		return 0, false
 	}
-	d, _ = convertEncodedValue(d, getEncodedType(c.TopN[0].Encoded))
+	d, _ = convertEncodedValue(d, c.TopN[0].Encoded)
 	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
@@ -812,9 +812,11 @@ func TopnMetaCompare(i, j TopNMeta) int {
 // GetMergedTopNFromSortedSlice merges the TopNMeta from all partitions into one
 // TopN. The discarded TopNMeta will be used to build the global histogram.
 func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	tp := getEncodedType(sorted[0].Encoded)
-	for i := range sorted {
-		sorted[i].Encoded, _ = convertEncodedValue(sorted[i].Encoded, tp)
+	if len(sorted) > 0 {
+		tgt := sorted[0].Encoded
+		for i := range sorted {
+			sorted[i].Encoded, _ = convertEncodedValue(sorted[i].Encoded, tgt)
+		}
 	}
 
 	SortTopnMeta(sorted)

@@ -73,42 +73,31 @@ func topNMetaToDatum(val TopNMeta,
 	return dat, err
 }
 
-// getEncodedType returns the type of the encoded data.
-// It only distinguishes between int and uint since type->flag is not injective
-func getEncodedType(d []byte) byte {
-	if len(d) == 0 {
-		return 255
-	}
-
-	switch d[0] {
-	case 3: // intFlag
-		return types.KindInt64
-	case 4: // uintFlag
-		return types.KindUint64
-	default:
-		return 255
-	}
-}
-
-func needConversion(sourceTp, targetTp byte) bool {
-	return sourceTp == types.KindInt64 && targetTp == types.KindUint64 ||
-		sourceTp == types.KindUint64 && targetTp == types.KindInt64
-}
-
-// convertEncodedValue converts the value to targetTp if needed.
-func convertEncodedValue(d []byte, targetTp byte) ([]byte, bool) {
-	if !needConversion(getEncodedType(d), targetTp) {
-		return d, false
-	}
-
-	_, datum, err := codec.DecodeOne(d)
+// convertEncodedValue converts the value based on the target type.
+func convertEncodedValue(src, tgt []byte) ([]byte, bool) {
+	tgtTp, err := codec.GetEncodeType(tgt)
 	if err != nil {
-		return d, false
+		return src, false
 	}
 
-	datum, err = types.ConvertBetweenSign(datum, targetTp == types.KindUint64)
-	d, _ = codec.EncodeKey(nil, nil, datum)
+	srcTp, err := codec.GetEncodeType(src)
+	if err != nil {
+		return src, false
+	}
 
-	// If error happens during conversion, it means truncation happens.
-	return d, err != nil
+	if srcTp == types.KindInt64 && tgtTp == types.KindUint64 ||
+		srcTp == types.KindUint64 && tgtTp == types.KindInt64 {
+		_, datum, err := codec.DecodeOne(src)
+		if err != nil {
+			return src, false
+		}
+
+		datum, err = types.ConvertBetweenSign(datum, tgtTp == types.KindUint64)
+		src, _ = codec.EncodeKey(nil, nil, datum)
+
+		// If error happens during conversion, it means truncation happens.
+		return src, err != nil
+	}
+
+	return src, false
 }
