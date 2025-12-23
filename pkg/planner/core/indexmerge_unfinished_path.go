@@ -372,16 +372,18 @@ func buildIntoAccessPath(
 				}
 				var isIntersection bool
 				var err error
-				oneAlternative, isIntersection, ok, err = buildPartialPaths4MVIndex(
+				oneAlternative, isIntersection, ok, err = buildPartialPaths4MVIndexWithPath(
 					ds.SCtx(),
 					accessFilters,
 					idxCols,
-					unfinishedPath.path.Index,
+					unfinishedPath.path,
 					ds.TableStats.HistColl,
 				)
+
 				if err != nil || !ok || (isIntersection && len(oneAlternative) > 1) {
 					continue
 				}
+
 				needSelection = len(remainingFilters) > 0
 			} else {
 				// case 2: non-mv index

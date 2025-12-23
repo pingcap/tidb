@@ -168,6 +168,9 @@ type AccessPath struct {
 	//     so PartIdxCondNotAlwaysValid is true (the index path is not always valid).
 	// We add this field to make the plan cache usable for partial indexes in these limited cases.
 	PartIdxCondNotAlwaysValid bool
+
+	// Disables plan cache for plans using this Path.
+	NoncacheableReason string
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -207,6 +210,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 		PartIdxCondNotAlwaysValid:    path.PartIdxCondNotAlwaysValid,
+		NoncacheableReason:           path.NoncacheableReason,
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
