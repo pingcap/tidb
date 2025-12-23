@@ -662,17 +662,20 @@ func (c *TopN) FindTopN(d []byte) int {
 	return idx
 }
 
-// lowerBound searches on the sorted top-n items,
+// LowerBound searches on the sorted top-n items,
 // It returns the smallest index i such that the value at element i is not less than `d`.
-func (c *TopN) lowerBound(d []byte) (idx int) {
+func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 	if c == nil {
-		return 0
+		return 0, false
+	}
+	if len(c.TopN) == 0 {
+		return 0, false
 	}
 	d, _ = convertEncodedValue(d, getEncodedType(c.TopN[0].Encoded))
-	idx, _ = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
+	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
-	return idx
+	return idx, match
 }
 
 // BetweenCount estimates the row count for interval [l, r).
@@ -681,11 +684,8 @@ func (c *TopN) BetweenCount(_ planctx.PlanContext, l, r []byte) (result uint64) 
 	if c == nil {
 		return 0
 	}
-	if len(c.TopN) == 0 {
-		return 0
-	}
-	lIdx := c.lowerBound(l)
-	rIdx := c.lowerBound(r)
+	lIdx, _ := c.LowerBound(l)
+	rIdx, _ := c.LowerBound(r)
 	ret := uint64(0)
 	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count
