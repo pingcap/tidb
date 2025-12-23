@@ -1481,7 +1481,6 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 
 	h := dom.StatsHandle()
-	// set lease > 0 to trigger on-demand stats load.
 	h.SetLease(time.Millisecond)
 	t.Cleanup(func() {
 		h.SetLease(0)
@@ -1534,8 +1533,7 @@ func TestStatsForPartitionedTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
-	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set global tidb_enable_async_merge_global_stats = 0")
+	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 
 	h := dom.StatsHandle()
@@ -1544,8 +1542,6 @@ func TestStatsForPartitionedTable(t *testing.T) {
 		h.SetLease(0)
 	})
 
-	// Don't add index on b since we always perfer index stats, but here we want
-	// to examine column stats.
 	tk.MustExec(`
 		create table t (a bigint, b bigint)
 		PARTITION BY RANGE (a) (
