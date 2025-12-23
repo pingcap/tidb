@@ -412,11 +412,12 @@
       {
         "SQL": "EXPLAIN SELECT count(*) from t where a=1; -- 1. static partition prune",
         "Plan": [
-          "StreamAgg_14 1.00 root  funcs:count(1)->Column#4",
-          "└─TableReader_29 10.00 root  MppVersion: 3, data:ExchangeSender_28",
-          "  └─ExchangeSender_28 10.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection_27 10.00 mpp[tiflash]  eq(test.t.a, 1)",
-          "      └─TableFullScan_26 10000.00 mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
+          "HashAgg_12 1.00 root  funcs:count(Column#5)->Column#4",
+          "└─TableReader_14 1.00 root  MppVersion: 3, data:ExchangeSender_13",
+          "  └─ExchangeSender_13 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_9 1.00 mpp[tiflash]  funcs:count(1)->Column#5",
+          "      └─Selection_11 10.00 mpp[tiflash]  eq(test.t.a, 1)",
+          "        └─TableFullScan_10 10000.00 mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
