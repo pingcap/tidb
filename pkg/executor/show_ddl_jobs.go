@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -287,7 +286,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			}
 			req.AppendString(11, subJob.State.String())
 			if inShowStmt {
-				req.AppendString(12, showCommentsFromSubjob(subJob, job.Version, useDXF, isCloud))
+				req.AppendString(12, showCommentsFromSubjob(subJob, useDXF, isCloud))
 			} else {
 				req.AppendString(12, job.Query)
 			}
@@ -301,12 +300,12 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 }
 
 func showCommentsFromJob(job *model.Job) string {
-	needReorg, labels := getReorgAndVerifyLabels(job.Type, job.Version, job.RawArgs, job.ReorgMeta)
+	needReorg, labels := getReorgAndVerifyLabels(job.Type, job.ReorgMeta)
 
 	// For MultiSchemaChange, we need to summarize labels from subjobs as well.
 	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			subNeedReorg, subLabels := getReorgAndVerifyLabels(sub.Type, job.Version, sub.RawArgs, nil)
+			subNeedReorg, subLabels := getReorgAndVerifyLabels(sub.Type, &model.DDLReorgMeta{ReorgTp: sub.ReorgTp})
 			if subNeedReorg {
 				needReorg = true
 			}
@@ -386,8 +385,8 @@ func showCommentsFromJob(job *model.Job) string {
 	return strings.Join(labels, ", ")
 }
 
-func showCommentsFromSubjob(sub *model.SubJob, jobVer model.JobVersion, useDXF, useCloud bool) string {
-	needReorg, labels := getReorgAndVerifyLabels(sub.Type, jobVer, sub.RawArgs, nil)
+func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
+	needReorg, labels := getReorgAndVerifyLabels(sub.Type, &model.DDLReorgMeta{ReorgTp: sub.ReorgTp})
 	if needReorg {
 		labels = append(labels, "need reorg")
 	}
@@ -410,28 +409,19 @@ func showCommentsFromSubjob(sub *model.SubJob, jobVer model.JobVersion, useDXF, 
 	return strings.Join(labels, ", ")
 }
 
-func getReorgAndVerifyLabels(jobType model.ActionType, jobVer model.JobVersion, rawArgs json.RawMessage, reorgMeta *model.DDLReorgMeta) (bool, []string) {
+func getReorgAndVerifyLabels(jobType model.ActionType, reorgMeta *model.DDLReorgMeta) (bool, []string) {
 	var labels []string
 	var needReorg bool
 	if jobType == model.ActionModifyColumn {
-		proxy := &model.Job{
-			Type:    jobType,
-			Version: jobVer,
-			RawArgs: rawArgs,
-		}
-		if args, err := model.GetModifyColumnArgs(proxy); err == nil {
-			if args.ModifyColumnType == model.ModifyTypeReorg || args.ModifyColumnType == model.ModifyTypeIndexReorg {
-				needReorg = true
-			}
-			if args.ModifyColumnType == model.ModifyTypeNoReorgWithCheck ||
-				args.ModifyColumnType == model.ModifyTypePrecheck {
-				labels = append(labels, "validating")
-			}
+		if reorgMeta != nil && reorgMeta.ReorgTp != model.ReorgTypeNone {
+			needReorg = true
 		} else {
-			// If args are lost (historical job), we can't tell if it's validating or reorg
-			// just by ActionModifyColumn. But if it has ReorgMeta, it must be one of them.
-			if reorgMeta != nil && reorgMeta.ReorgTp != model.ReorgTypeNone {
-				needReorg = true
+			// For 'validating', we check if ReorgMeta is present.
+			// In Lossy DDL / Varchar-to-Char, even if ReorgTp is None,
+			// ReorgMeta might be initialized to carry configuration.
+			// TODO: Find a more reliable indicator in ReorgMeta if possible.
+			if reorgMeta != nil {
+				labels = append(labels, "validating")
 			}
 		}
 	} else if jobType != model.ActionMultiSchemaChange {
