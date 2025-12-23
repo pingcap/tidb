@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -286,7 +287,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			}
 			req.AppendString(11, subJob.State.String())
 			if inShowStmt {
-				req.AppendString(12, showCommentsFromSubjob(subJob, useDXF, isCloud))
+				req.AppendString(12, showCommentsFromSubjob(subJob, job.Version, useDXF, isCloud))
 			} else {
 				req.AppendString(12, job.Query)
 			}
@@ -300,11 +301,37 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 }
 
 func showCommentsFromJob(job *model.Job) string {
+	needReorg, labels := getReorgAndVerifyLabels(job.Type, job.Version, job.RawArgs)
+
+	// For MultiSchemaChange, we need to summarize labels from subjobs as well.
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			subNeedReorg, subLabels := getReorgAndVerifyLabels(sub.Type, job.Version, sub.RawArgs)
+			if subNeedReorg {
+				needReorg = true
+			}
+			for _, sl := range subLabels {
+				found := false
+				for _, l := range labels {
+					if l == sl {
+						found = true
+						break
+					}
+				}
+				if !found {
+					labels = append(labels, sl)
+				}
+			}
+		}
+	}
+
+	if needReorg {
+		labels = append(labels, "need reorg")
+	}
 	m := job.ReorgMeta
 	if m == nil {
-		return ""
+		return strings.Join(labels, ", ")
 	}
-	var labels []string
 	switch m.AnalyzeState {
 	case model.AnalyzeStateRunning:
 		labels = append(labels, "analyzing")
@@ -336,7 +363,7 @@ func showCommentsFromJob(job *model.Job) string {
 			labels = append(labels, model.ReorgTypeTxnMerge.String())
 		}
 	}
-	if job.MayNeedReorg() {
+	if needReorg {
 		concurrency := m.GetConcurrency()
 		batchSize := m.GetBatchSize()
 		maxWriteSpeed := m.GetMaxWriteSpeed()
@@ -359,14 +386,19 @@ func showCommentsFromJob(job *model.Job) string {
 	return strings.Join(labels, ", ")
 }
 
-func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
+func showCommentsFromSubjob(sub *model.SubJob, jobVer model.JobVersion, useDXF, useCloud bool) string {
+	needReorg, labels := getReorgAndVerifyLabels(sub.Type, jobVer, sub.RawArgs)
+	if needReorg {
+		labels = append(labels, "need reorg")
+	}
+
 	if kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
-		return ""
+		return strings.Join(labels, ", ")
 	}
-	var labels []string
+
 	if sub.ReorgTp == model.ReorgTypeNone {
-		return ""
+		return strings.Join(labels, ", ")
 	}
 	labels = append(labels, sub.ReorgTp.String())
 	if useDXF {
@@ -376,6 +408,31 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 		labels = append(labels, "cloud")
 	}
 	return strings.Join(labels, ", ")
+}
+
+func getReorgAndVerifyLabels(jobType model.ActionType, jobVer model.JobVersion, rawArgs json.RawMessage) (bool, []string) {
+	var labels []string
+	var needReorg bool
+	if jobType == model.ActionModifyColumn {
+		proxy := &model.Job{
+			Type:    jobType,
+			Version: jobVer,
+			RawArgs: rawArgs,
+		}
+		if args, err := model.GetModifyColumnArgs(proxy); err == nil {
+			if args.ModifyColumnType == model.ModifyTypeReorg || args.ModifyColumnType == model.ModifyTypeIndexReorg {
+				needReorg = true
+			}
+			if args.ModifyColumnType == model.ModifyTypeNoReorgWithCheck ||
+				args.ModifyColumnType == model.ModifyTypePrecheck {
+				labels = append(labels, "validating")
+			}
+		}
+	} else if jobType != model.ActionMultiSchemaChange {
+		proxy := model.Job{Type: jobType}
+		needReorg = proxy.MayNeedReorg()
+	}
+	return needReorg, labels
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {
