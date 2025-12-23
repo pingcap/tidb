@@ -22,22 +22,22 @@ import (
 
 func TestExpectedIngestWorkerCnt(t *testing.T) {
 	tests := []struct {
-		concurrency int
-		avgRowSize  int
-		isDXF       bool
-		expReader   int
-		expWriter   int
+		concurrency   int
+		avgRowSize    int
+		useGlobalSort bool
+		expReader     int
+		expWriter     int
 	}{
-		// DXF path
+		// Global sort path
 		{10, 100, true, 10, 10},
 		{20, 500, true, 20, 20},
 
-		// Non-DXF path, avgRowSize = 0
+		// Non-global sort path, avgRowSize = 0
 		{10, 0, false, 5, 7},
 		{40, 0, false, 16, 16},
 		{1, 0, false, 1, 2},
 
-		// Non-DXF path, various avgRowSize
+		// Non-global sort path, various avgRowSize
 		{10, 100, false, 5, 10},
 		{10, 300, false, 10, 10},
 		{10, 600, false, 20, 10},
@@ -46,8 +46,8 @@ func TestExpectedIngestWorkerCnt(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		reader, writer := expectedIngestWorkerCnt(tt.concurrency, tt.avgRowSize, tt.isDXF)
-		require.Equal(t, tt.expReader, reader, "concurrency: %d, avgRowSize: %d, isDXF: %v", tt.concurrency, tt.avgRowSize, tt.isDXF)
-		require.Equal(t, tt.expWriter, writer, "concurrency: %d, avgRowSize: %d, isDXF: %v", tt.concurrency, tt.avgRowSize, tt.isDXF)
+		reader, writer := expectedIngestWorkerCnt(tt.concurrency, tt.avgRowSize, tt.useGlobalSort)
+		require.Equal(t, tt.expReader, reader, "concurrency: %d, avgRowSize: %d, useGlobalSort: %v", tt.concurrency, tt.avgRowSize, tt.useGlobalSort)
+		require.Equal(t, tt.expWriter, writer, "concurrency: %d, avgRowSize: %d, useGlobalSort: %v", tt.concurrency, tt.avgRowSize, tt.useGlobalSort)
 	}
 }
