@@ -249,21 +249,21 @@ func (c *Column) appendNullBitmap(notNull bool) {
 }
 
 // Reserve allocates some memory for the column
-func (c *Column) Reserve(nullBitmapExpectedCap int64, dataExpectedCap int64, offsetExpectedCap int64) {
+func (c *Column) Reserve(moreBytesNumNullBitmapNeed int64, moreBytesNumDataNeed int64, moreBytesNumOffsetNeed int64) {
 	currentNullBitmapLen := int64(len(c.nullBitmap))
-	nullBitmapExpectedCap += currentNullBitmapLen
+	nullBitmapExpectedCap := currentNullBitmapLen + moreBytesNumNullBitmapNeed
 	if int64(cap(c.nullBitmap)) < nullBitmapExpectedCap {
 		c.nullBitmap = slices.Grow(c.nullBitmap, int(nullBitmapExpectedCap))
 	}
 
 	currentDataLen := int64(len(c.data))
-	dataExpectedCap += currentDataLen
+	dataExpectedCap := currentDataLen + moreBytesNumDataNeed
 	if int64(cap(c.data)) < dataExpectedCap {
 		c.data = slices.Grow(c.data, int(dataExpectedCap))
 	}
 
 	currentOffsetLen := int64(len(c.offsets))
-	offsetExpectedCap += currentOffsetLen
+	offsetExpectedCap := currentOffsetLen + moreBytesNumOffsetNeed
 	if int64(cap(c.offsets)) < offsetExpectedCap {
 		c.offsets = slices.Grow(c.offsets, int(offsetExpectedCap))
 	}
@@ -322,7 +322,7 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 		start, end := src.offsets[pos], src.offsets[pos+1]
 
 		if intest.InTest {
-			appendedByteNum := int(end-start)*times
+			appendedByteNum := int(end-start) * times
 			availableMem := cap(c.data) - len(c.data)
 			if availableMem < appendedByteNum {
 				panic("Can't pre-alloc enough memory")
@@ -332,7 +332,7 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 				panic("Can't pre-alloc enough memory")
 			}
 		}
-		
+
 		for range times {
 			c.data = append(c.data, src.data[start:end]...)
 			c.offsets = append(c.offsets, int64(len(c.data)))
