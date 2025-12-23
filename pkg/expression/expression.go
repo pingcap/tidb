@@ -216,6 +216,12 @@ type Expression interface {
 	// Clone copies an expression totally.
 	Clone() Expression
 
+	// Clone copies an expression totally, and clear indexResolved flag, it is only used for resolve index.
+	CloneAndClearIndexResolvedFlag() Expression
+
+	// ClearIndexResolvedFlag clear indexResolved flag, it is only used for resolve index.
+	ClearIndexResolvedFlag()
+
 	// Equal checks whether two expressions are equal.
 	Equal(ctx EvalContext, e Expression) bool
 
@@ -228,11 +234,14 @@ type Expression interface {
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
 
-	// ResolveIndices resolves indices by the given schema. It will copy the original expression and return the copied one.
-	ResolveIndices(schema *Schema) (Expression, error)
+	// ResolveIndices resolves indices by the given schema.
+	// It uses lazy copy, if the current Expression is not resolved, then it will resolve inplace,
+	// otherwise, it will copy the original expression and return the copied one.
+	// the second return value indicates whether the returned expression is a cloned one or not.
+	ResolveIndices(schema *Schema, allowLazyCopy bool) (Expression, bool, error)
 
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
-	resolveIndices(schema *Schema) error
+	resolveIndices(schema *Schema, allowLazyCopy bool) error
 
 	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virtual expression. It will copy the original expression and return the copied one.
 	ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool)
@@ -1143,7 +1152,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 			if e != nil {
 				columns[i].VirtualExpr = e.Clone()
 			}
-			columns[i].VirtualExpr, err = columns[i].VirtualExpr.ResolveIndices(mockSchema)
+			columns[i].VirtualExpr, _, err = columns[i].VirtualExpr.ResolveIndices(mockSchema, true)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

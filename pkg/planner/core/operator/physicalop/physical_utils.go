@@ -175,7 +175,7 @@ func GetDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 func ResolveIndicesForVirtualColumn(result []*expression.Column, schema *expression.Schema) error {
 	for _, col := range result {
 		if col.VirtualExpr != nil {
-			newExpr, err := col.VirtualExpr.ResolveIndices(schema)
+			newExpr, _, err := col.VirtualExpr.ResolveIndices(schema, true)
 			if err != nil {
 				return err
 			}

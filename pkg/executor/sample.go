@@ -269,7 +269,7 @@ func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, m
 			// indices of column(Column.Index) needs to be resolved against full column's schema.
 			if schemaCol.VirtualExpr != nil {
 				var err error
-				schemaCol.VirtualExpr, err = schemaCol.VirtualExpr.ResolveIndices(s.fullSchema)
+				schemaCol.VirtualExpr, _, err = schemaCol.VirtualExpr.ResolveIndices(s.fullSchema, true)
 				if err != nil {
 					return nil, nil, err
 				}

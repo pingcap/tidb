@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/atomic"
 )
 
 var _ base.HashEquals = &ScalarFunction{}
@@ -45,6 +46,7 @@ type ScalarFunction struct {
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
+	indexResolved     atomic.Bool
 }
 
 // SafeToShareAcrossSession returns if the function can be shared across different sessions.
@@ -349,9 +351,10 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
-		FuncName: sf.FuncName,
-		RetType:  sf.RetType,
-		Function: sf.Function.Clone(),
+		FuncName:      sf.FuncName,
+		RetType:       sf.RetType,
+		Function:      sf.Function.Clone(),
+		indexResolved: sf.indexResolved,
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
@@ -361,6 +364,21 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
 	return c
+}
+
+// CloneAndClearIndexResolvedFlag implements Expression interface.
+func (sf *ScalarFunction) CloneAndClearIndexResolvedFlag() Expression {
+	newSf := sf.Clone()
+	newSf.ClearIndexResolvedFlag()
+	return newSf
+}
+
+// ClearIndexResolvedFlag implements Expression interface.
+func (sf *ScalarFunction) ClearIndexResolvedFlag() {
+	sf.indexResolved.Store(false)
+	for _, arg := range sf.GetArgs() {
+		arg.ClearIndexResolvedFlag()
+	}
 }
 
 // GetType implements Expression interface.
@@ -779,17 +797,28 @@ func ReHashCode(sf *ScalarFunction) {
 }
 
 // ResolveIndices implements Expression interface.
-func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
-	newSf := sf.Clone()
-	err := newSf.resolveIndices(schema)
-	return newSf, err
+func (sf *ScalarFunction) ResolveIndices(schema *Schema, allowLazyCopy bool) (Expression, bool, error) {
+	if allowLazyCopy && sf.indexResolved.CompareAndSwap(false, true) {
+		// don't need to copy
+		sf.resolveIndices(schema, allowLazyCopy)
+		return sf, false, nil
+	}
+	// need to copy
+	newSf := sf.CloneAndClearIndexResolvedFlag()
+	err := newSf.resolveIndices(schema, allowLazyCopy)
+	newSf.(*ScalarFunction).indexResolved.Store(true)
+	return newSf, true, err
 }
 
-func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
-	for _, arg := range sf.GetArgs() {
-		err := arg.resolveIndices(schema)
+func (sf *ScalarFunction) resolveIndices(schema *Schema, allowLazyCopy bool) error {
+	for index, arg := range sf.GetArgs() {
+		newArg, cloned, err := arg.ResolveIndices(schema, allowLazyCopy)
 		if err != nil {
 			return err
+		}
+		if cloned {
+			// if cloned is false, then continue to use the original arg
+			sf.GetArgs()[index] = newArg
 		}
 	}
 	return nil

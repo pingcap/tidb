@@ -190,7 +190,7 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 		return err
 	}
 	for i, col := range p.OutputColumns {
-		newCol, err := col.ResolveIndices(p.IndexPlan.Schema())
+		newCol, _, err := col.ResolveIndices(p.IndexPlan.Schema(), true)
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
 			sctx := p.SCtx()

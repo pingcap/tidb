@@ -225,6 +225,13 @@ func (c *Constant) Clone() Expression {
 	return &con
 }
 
+func (c *Constant) CloneAndClearIndexResolvedFlag() Expression {
+	return c.Clone()
+}
+
+func (_ *Constant) ClearIndexResolvedFlag() {
+}
+
 // GetType implements Expression interface.
 func (c *Constant) GetType(ctx EvalContext) *types.FieldType {
 	if c.ParamMarker != nil {
@@ -619,11 +626,11 @@ func (c *Constant) getHashCode(canonical bool) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ *Schema) (Expression, error) {
-	return c, nil
+func (c *Constant) ResolveIndices(_ *Schema, _ bool) (Expression, bool, error) {
+	return c, false, nil
 }
 
-func (c *Constant) resolveIndices(_ *Schema) error {
+func (c *Constant) resolveIndices(_ *Schema, _ bool) error {
 	return nil
 }
 

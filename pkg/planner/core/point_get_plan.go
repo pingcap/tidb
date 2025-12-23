@@ -1286,7 +1286,8 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 			allAssignmentsAreConstant = isConst
 		}
 
-		newAssign.Expr, err = expr.ResolveIndices(plan.Schema())
+		// todo check if can enable lazycopy
+		newAssign.Expr, _, err = expr.ResolveIndices(plan.Schema(), false)
 		if err != nil {
 			return nil, true
 		}

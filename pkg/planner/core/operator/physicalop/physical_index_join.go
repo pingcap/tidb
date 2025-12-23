@@ -300,7 +300,7 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx *rangerctx.RangerContext,
 
 func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err error) {
 	for i := range cwc.opArg {
-		cwc.opArg[i], err = cwc.opArg[i].ResolveIndices(schema)
+		cwc.opArg[i], _, err = cwc.opArg[i].ResolveIndices(schema, true)
 		if err != nil {
 			return err
 		}
@@ -370,32 +370,32 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	lSchema := p.Children()[0].Schema()
 	rSchema := p.Children()[1].Schema()
 	for i := range p.InnerJoinKeys {
-		newOuterKey, err := p.OuterJoinKeys[i].ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema())
+		newOuterKey, _, err := p.OuterJoinKeys[i].ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema(), true)
 		if err != nil {
 			return err
 		}
 		p.OuterJoinKeys[i] = newOuterKey.(*expression.Column)
-		newInnerKey, err := p.InnerJoinKeys[i].ResolveIndices(p.Children()[p.InnerChildIdx].Schema())
+		newInnerKey, _, err := p.InnerJoinKeys[i].ResolveIndices(p.Children()[p.InnerChildIdx].Schema(), true)
 		if err != nil {
 			return err
 		}
 		p.InnerJoinKeys[i] = newInnerKey.(*expression.Column)
 	}
 	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
+		p.LeftConditions[i], _, err = expr.ResolveIndices(lSchema, true)
 		if err != nil {
 			return err
 		}
 	}
 	for i, expr := range p.RightConditions {
-		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
+		p.RightConditions[i], _, err = expr.ResolveIndices(rSchema, true)
 		if err != nil {
 			return err
 		}
 	}
 	mergedSchema := expression.MergeSchema(lSchema, rSchema)
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(mergedSchema)
+		p.OtherConditions[i], _, err = expr.ResolveIndices(mergedSchema, true)
 		if err != nil {
 			return err
 		}
@@ -406,7 +406,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 			return err
 		}
 		for i := range p.CompareFilters.AffectedColSchema.Columns {
-			resolvedCol, err1 := p.CompareFilters.AffectedColSchema.Columns[i].ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema())
+			resolvedCol, _, err1 := p.CompareFilters.AffectedColSchema.Columns[i].ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema(), true)
 			if err1 != nil {
 				return err1
 			}
@@ -414,11 +414,11 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 		}
 	}
 	for i := range p.OuterHashKeys {
-		outerKey, err := p.OuterHashKeys[i].ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema())
+		outerKey, _, err := p.OuterHashKeys[i].ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema(), true)
 		if err != nil {
 			return err
 		}
-		innerKey, err := p.InnerHashKeys[i].ResolveIndices(p.Children()[p.InnerChildIdx].Schema())
+		innerKey, _, err := p.InnerHashKeys[i].ResolveIndices(p.Children()[p.InnerChildIdx].Schema(), true)
 		if err != nil {
 			return err
 		}

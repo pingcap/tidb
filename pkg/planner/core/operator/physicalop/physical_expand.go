@@ -165,7 +165,7 @@ func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
 	for _, gs := range p.GroupingSets {
 		for _, groupingExprs := range gs {
 			for k, groupingExpr := range groupingExprs {
-				gExpr, err := groupingExpr.ResolveIndices(p.Children()[0].Schema())
+				gExpr, _, err := groupingExpr.ResolveIndices(p.Children()[0].Schema(), true)
 				if err != nil {
 					return err
 				}
@@ -177,7 +177,7 @@ func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
 	for i, oneLevel := range p.LevelExprs {
 		for j, expr := range oneLevel {
 			// expr in expand level-projections only contains column ref and literal constant projection.
-			p.LevelExprs[i][j], err = expr.ResolveIndices(p.Children()[0].Schema())
+			p.LevelExprs[i][j], _, err = expr.ResolveIndices(p.Children()[0].Schema(), true)
 			if err != nil {
 				return err
 			}
