@@ -899,12 +899,10 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 			mu            sync.Mutex
 			successStores = make([]string, 0, len(clients))
 			failedStores  = make([]string, 0, len(clients))
+			rpcWg         util.WaitGroupWrapper
 		)
-		var wg sync.WaitGroup
-		wg.Add(len(clients))
 		for i, c := range clients {
-			go func(i int, c sst.ImportSSTClient) {
-				defer wg.Done()
+			rpcWg.Run(func() {
 				failpoint.InjectCall("AddPartitionRangeForTable")
 				_, err := c.AddForcePartitionRange(subctx, addReq)
 				mu.Lock()
@@ -917,9 +915,9 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 						firstErr = err
 					}
 				}
-			}(i, c)
+			})
 		}
-		wg.Wait()
+		rpcWg.Wait()
 		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
 			zap.Strings("success stores", successStores),
 			zap.Strings("failed stores", failedStores),
@@ -951,12 +949,10 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 			mu            sync.Mutex
 			successStores = make([]string, 0, len(clients))
 			failedStores  = make([]string, 0, len(clients))
+			rpcWg         util.WaitGroupWrapper
 		)
-		var rpcWg sync.WaitGroup
-		rpcWg.Add(len(clients))
 		for i, c := range clients {
-			go func(i int, c sst.ImportSSTClient) {
-				defer rpcWg.Done()
+			rpcWg.Run(func() {
 				failpoint.InjectCall("RemovePartitionRangeRequest")
 				_, err := c.RemoveForcePartitionRange(ctx, removeReq)
 				mu.Lock()
@@ -969,7 +965,7 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 						firstErr = err
 					}
 				}
-			}(i, c)
+			})
 		}
 		rpcWg.Wait()
 		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
