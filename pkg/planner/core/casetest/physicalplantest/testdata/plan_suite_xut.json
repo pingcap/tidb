@@ -3533,11 +3533,12 @@
       {
         "SQL": "select count(*) from t where a=1",
         "Plan": [
-          "StreamAgg root  funcs:count(1)->Column#10",
+          "HashAgg root  funcs:count(Column#11)->Column#10",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection mpp[tiflash]  eq(test.t.a, 1)",
-          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#11",
+          "      └─Selection mpp[tiflash]  eq(test.t.a, 1)",
+          "        └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
