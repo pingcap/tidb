@@ -331,15 +331,15 @@ set @a = 1;
 execute stmt using @a, @a;
 id	estRows	task	access object	operator info
 HashAgg_9	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
-└─TableReader_19	1.00	root		data:Selection_18
-  └─Selection_18	1.00	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
-    └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_16	1.00	root		data:Selection_15
+  └─Selection_15	1.00	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where id = 1 and k = 1 group by id, k;
 id	estRows	task	access object	operator info
 HashAgg_9	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
-└─TableReader_19	1.00	root		data:Selection_18
-  └─Selection_18	1.00	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
-    └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_16	1.00	root		data:Selection_15
+  └─Selection_15	1.00	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';
 show warnings;
 Level	Code	Message
@@ -348,15 +348,15 @@ set @a = 1;
 execute stmt using @a, @a;
 id	estRows	task	access object	operator info
 HashAgg_9	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
-└─TableReader_19	1.00	root		data:Selection_18
-  └─Selection_18	1.00	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
-    └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_16	1.00	root		data:Selection_15
+  └─Selection_15	1.00	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where 1 = id and 1 = k group by id, k;
 id	estRows	task	access object	operator info
 HashAgg_9	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
-└─TableReader_19	1.00	root		data:Selection_18
-  └─Selection_18	1.00	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
-    └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_16	1.00	root		data:Selection_15
+  └─Selection_15	1.00	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 PREPARE stmt FROM 'VALUES ( ("foo"), ROW("bar") )';
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ("foo"), ROW("bar") )" 
 SHOW ERRORS;
