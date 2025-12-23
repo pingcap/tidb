@@ -81,10 +81,10 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 		ps := []*sessmgr.ProcessInfo{tkProcess}
 		testKit.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		testKit.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#7)->Column#5",
-			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#7",
-			"    └─IndexRangeScan_18 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+			"StreamAgg_18 1.00 root  funcs:count(Column#7)->Column#5",
+			"└─IndexReader_19 1.00 root  index:StreamAgg_10",
+			"  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#7",
+			"    └─IndexRangeScan_17 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 	})
 }
 
