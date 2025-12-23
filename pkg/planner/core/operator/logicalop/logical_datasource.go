@@ -166,7 +166,7 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 	if dual != nil {
 		return nil, dual, nil
 	}
-	if ds.TableInfo.TiFlashReplica != nil && ds.TableInfo.TiFlashReplica.Available && ds.TableInfo.TiFlashReplica.Count > 0 && ds.PreferStoreType&h.PreferTiKV != 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() {
+	if ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.canUseTiflash4Logical() {
 		ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.TiFlash)
 		if len(ds.PushedDownConds) == 0 {
 			ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
@@ -709,9 +709,8 @@ func (ds *DataSource) AppendTableCol(col *expression.Column) {
 	ds.TblColsByID[col.ID] = col
 }
 
-// CanUseTiflash is to whether this datasource can run in the tiflash. It is for physical optimization
-func (ds *DataSource) CanUseTiflash() bool {
-	if ds.IsForUpdateRead || ds.TableInfo.TiFlashReplica == nil {
+func (ds *DataSource) canUseTiflash4Logical() bool {
+	if ds.IsForUpdateRead || ds.TableInfo.TiFlashReplica == nil || ds.PreferStoreType&h.PreferTiKV != 0 {
 		return false
 	}
 	if !ds.TableInfo.TiFlashReplica.Available || ds.TableInfo.TiFlashReplica.Count == 0 {
@@ -722,9 +721,17 @@ func (ds *DataSource) CanUseTiflash() bool {
 	if !hasTiFlashEngine {
 		return false
 	}
-	if len(ds.AllConds) == 0 {
-		return true
+	return true
+}
+
+// CanUseTiflash4Physical is to whether this datasource can run in the tiflash. It is for physical optimization
+func (ds *DataSource) CanUseTiflash4Physical() bool {
+	if ds.canUseTiflash4Logical() {
+		if len(ds.AllConds) == 0 {
+			return true
+		}
+		pushed, _ := expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), ds.AllConds, kv.TiFlash)
+		return len(pushed) > 0
 	}
-	pushed, _ := expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), ds.AllConds, kv.TiFlash)
-	return len(pushed) > 0
+	return false
 }

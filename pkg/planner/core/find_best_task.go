@@ -1761,7 +1761,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 	}()
 	hasTikv, hasTiflash := false, false
-	if ds.CanUseTiflash() {
+	if ds.CanUseTiflash4Physical() {
 		hasTiflash = true
 		for _, candidate := range candidates {
 			if candidate.path.StoreType == kv.TiKV {

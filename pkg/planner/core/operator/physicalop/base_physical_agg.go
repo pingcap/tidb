@@ -1003,7 +1003,7 @@ func checkAggCanPushMPP(s base.LogicalPlan) bool {
 			return false
 		}
 	case *logicalop.DataSource:
-		return l.CanUseTiflash()
+		return l.CanUseTiflash4Physical()
 	case *logicalop.LogicalUnionScan, *logicalop.LogicalPartitionUnionAll:
 		return false
 	}
