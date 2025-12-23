@@ -42,9 +42,7 @@ go_test(
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/util",
         "//pkg/testkit",
-        "//pkg/types",
         "//pkg/util",
-        "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
     ],
 )

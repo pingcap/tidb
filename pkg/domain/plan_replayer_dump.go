@@ -397,10 +397,8 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	if task.DebugTrace != nil {
-		if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
-			return err
-		}
+	if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
+		return err
 	}
 
 	if len(errMsgs) > 0 {
@@ -753,8 +751,6 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 				return nil, err
 			}
 		}
-		debugTrace := ctx.GetSessionVars().StmtCtx.OptimizerDebugTrace
-		debugTraces = append(debugTraces, debugTrace)
 		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], emptyAsNil)
 		if err != nil {
 			return nil, err
@@ -917,6 +913,9 @@ func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 }
 
 func dumpDebugTrace(zw *zip.Writer, debugTraces []any) error {
+	if debugTraces == nil { // if no debug trace collected, we still create one empty file for compatibility
+		debugTraces = append(debugTraces, nil)
+	}
 	for i, trace := range debugTraces {
 		fw, err := zw.Create(fmt.Sprintf("debug_trace/debug_trace%d.json", i))
 		if err != nil {
@@ -931,6 +930,9 @@ func dumpDebugTrace(zw *zip.Writer, debugTraces []any) error {
 }
 
 func dumpOneDebugTrace(w io.Writer, debugTrace any) error {
+	if debugTrace == nil {
+		return nil
+	}
 	jsonEncoder := json.NewEncoder(w)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)

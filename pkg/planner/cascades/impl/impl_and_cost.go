@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
@@ -66,10 +65,6 @@ import (
 // ImplementMemoAndCost is the cascades physicalization and cost PORTAL, it's quite same as physicalOptimize().
 func ImplementMemoAndCost(rootGroup *memo.Group) (plan base.PhysicalPlan, cost float64, err error) {
 	sctx := rootGroup.GetLogicalExpressions().Front().Value.(base.LogicalPlan).SCtx()
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
 	// currently, we will derive each node's stats regardless of group logical prop's stats in memo.copyIn, so
 	// we don't have to prepare logical op's stats each as what we do in the previous way.
 

@@ -3596,9 +3596,9 @@ Projection	root		planner__core__integration.t1.a
           └─TableFullScan	cop[tikv]	table:two	keep order:false, stats:pseudo
 explain format='plan_tree' select rank() over (partition by table_name) from information_schema.tables;
 id	task	access object	operator info
-Projection	root		Column#28->Column#29
+Projection	root		Column#29->Column#30
 └─Shuffle	root		execution info: concurrency:5, data sources:[MemTableScan]
-  └─Window	root		rank()->Column#28 over(partition by Column#3)
+  └─Window	root		rank()->Column#29 over(partition by Column#3)
     └─Sort	root		Column#3
       └─ShuffleReceiver	root		
         └─MemTableScan	root	table:TABLES	

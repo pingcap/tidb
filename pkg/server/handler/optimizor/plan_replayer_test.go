@@ -131,7 +131,8 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 		filesInReplayer = append(filesInReplayer, f.Name)
 		// except for {global,session}_bindings.sql and table_tiflash_replica.txt, the file should not be empty
 		if !strings.Contains(f.Name, "table_tiflash_replica.txt") &&
-			!strings.Contains(f.Name, "bindings.sql") {
+			!strings.Contains(f.Name, "bindings.sql") &&
+			!strings.Contains(f.Name, "trace") {
 			require.NotZero(t, f.UncompressedSize64, f.Name)
 		}
 	}
@@ -373,7 +374,7 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec("drop table planReplayer.c")
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
-
+	tk.MustExec("admin reload bindings")
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
 	rows := tk.MustQuery("select @@last_plan_from_binding")
@@ -838,6 +839,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	ts2 := oracle.GoTimeToTS(time2)
 	stats1, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
 	require.NoError(t, err)
+	stats1.Sort()
 
 	// 1-2. second insert and second analyze, trigger second dump history stats
 	tk.MustExec("insert into t value(4,4,4), (5,5,5), (6,6,6)")
@@ -851,6 +853,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	ts3 := oracle.GoTimeToTS(time3)
 	stats2, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
 	require.NoError(t, err)
+	stats2.Sort()
 
 	// 2. get the plan replayer and assert
 
@@ -874,6 +877,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	// the result is the same as stats2, and IsHistoricalStats is false.
 	require.Len(t, jsonTbls1, 1)
 	require.False(t, jsonTbls1[0].IsHistoricalStats)
+	jsonTbls1[0].Sort()
 	require.Equal(t, jsonTbls1[0], stats2)
 
 	// because we failed to get historical stats, there's an error message.
@@ -897,6 +901,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Len(t, jsonTbls2, 1)
 	require.True(t, jsonTbls2[0].IsHistoricalStats)
 	jsonTbls2[0].IsHistoricalStats = false
+	jsonTbls2[0].Sort()
 	require.Equal(t, jsonTbls2[0], stats1)
 
 	// succeeded to get historical stats, there should be no error message.
@@ -920,6 +925,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Len(t, jsonTbls3, 1)
 	require.True(t, jsonTbls3[0].IsHistoricalStats)
 	jsonTbls3[0].IsHistoricalStats = false
+	jsonTbls3[0].Sort()
 	require.Equal(t, jsonTbls3[0], stats2)
 
 	// succeeded to get historical stats, there should be no error message.

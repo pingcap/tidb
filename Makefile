@@ -51,17 +51,24 @@ precheck: fmt bazel_prepare
 
 .PHONY: check
 check: ## Run comprehensive code quality checks
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license bazel_check_abi
 
 .PHONY: fmt
 fmt: ## Format Go code using gofmt
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w -r 'interface{} -> any' $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
+# On macOS, CGO is required for gosigar package to generate export data properly
+ifeq ($(GOOS),darwin)
+CGO_ENABLED_FOR_LINT := 1
+else
+CGO_ENABLED_FOR_LINT := 0
+endif
+
 .PHONY: check-static
 check-static: ## Run static code analysis checks
 check-static: tools/bin/golangci-lint
-	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
+	GO111MODULE=on CGO_ENABLED=$(CGO_ENABLED_FOR_LINT) tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
 .PHONY: check-file-perm
 check-file-perm:
@@ -406,6 +413,7 @@ bench-daily:
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpcds -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpch -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
@@ -522,10 +530,6 @@ br_compatibility_test_prepare:
 br_compatibility_test:
 	@cd br && tests/run_compatible.sh run
 
-.PHONY: mock_s3iface
-mock_s3iface: mockgen
-	tools/bin/mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
-
 # mock interface for lightning and IMPORT INTO
 .PHONY: mock_import
 mock_import: mockgen
@@ -542,6 +546,7 @@ mock_import: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/planner LogicalPlan,PipelineSpec > pkg/disttask/framework/mock/plan_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/storage Manager > pkg/disttask/framework/mock/storage_manager_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ingestor/ingestcli Client,WriteClient > pkg/ingestor/ingestcli/mock/client_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/importsdk FileScanner,JobManager,SQLGenerator,SDK > pkg/importsdk/mock/sdk_mock.go
 
 .PHONY: gen_mock
 gen_mock: mockgen
@@ -646,13 +651,13 @@ bazel_ci_simple_prepare:
 
 .PHONY: bazel_prepare
 bazel_prepare: ## Update and generate BUILD.bazel files. Please run this before commit.
-	bazel run //:gazelle
-	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
-	bazel run \
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
+	bazel $(BAZEL_GLOBAL_CONFIG) run \
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel run  //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
 
@@ -694,7 +699,7 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 bazel_bin: ## Build importer/tidb binary files with Bazel build system
 	mkdir -p bin; \
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=false ;\
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --norun_validations ;\
  	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
  	cp -f ${IMPORTER_PATH} ./bin/ ;
 
@@ -835,7 +840,7 @@ bazel_ddltest: failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_lint
 bazel_lint: bazel_prepare
-	bazel build //... --//build:with_nogo_flag=$(NOGO_FLAG)
+	bazel build $(BAZEL_CMD_CONFIG) //... --//build:with_nogo_flag=$(NOGO_FLAG)
 
 .PHONY: docker
 docker: ## Build TiDB Docker image
@@ -848,7 +853,7 @@ docker-test:
 .PHONY: bazel_mirror
 bazel_mirror:
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) --norun_validations //cmd/mirror:mirror -- --mirror> $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
 
@@ -858,4 +863,9 @@ bazel_sync:
 
 .PHONY: bazel_mirror_upload
 bazel_mirror_upload:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror -- --mirror --upload
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) --norun_validations //cmd/mirror -- --mirror --upload
+
+.PHONY: bazel_check_abi
+bazel_check_abi:
+	@echo "check ABI compatibility"
+	./tools/check/bazel-check-abi.sh

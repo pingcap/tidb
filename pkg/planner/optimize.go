@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -59,7 +58,6 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	_, isExplain := stmt.(*ast.ExplainStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
 		!isStmtNode ||
-		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
 		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
@@ -211,11 +209,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	pctx := sctx.GetPlanCtx()
 	sessVars := sctx.GetSessionVars()
 
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(pctx)
-		defer debugtrace.LeaveContextCommon(pctx)
-	}
-
 	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
 		setVarHintChecker, hypoIndexChecker(ctx, is),
@@ -287,9 +280,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 		originHints := hint.CollectHint(stmtNode)
 		var warns []error
 		if binding != nil && binding.IsBindingEnabled() {
-			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-				core.DebugTraceTryBinding(pctx, binding.Hint)
-			}
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(),
 				setVarHintChecker, hypoIndexChecker(ctx, is),
@@ -342,9 +332,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 		return nil, nil, err
 	}
 
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
-		core.DebugTraceBestBinding(pctx, chosenBinding.Hint)
-	}
 	// No plan found from the bindings, or the bindings are ignored.
 	if bestPlan == nil {
 		sessVars.StmtCtx.StmtHints = originStmtHints
@@ -469,10 +456,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
 	})
 	sessVars := sctx.GetSessionVars()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
 
 	// build logical plan
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)

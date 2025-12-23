@@ -41,6 +41,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -368,6 +369,15 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.FoundInPlanCache = logItems.PlanFromCache
 	seVar.FoundInBinding = logItems.PlanFromBinding
 	seVar.RewritePhaseInfo = logItems.RewriteInfo
+
+	// mock MemArbitration value for MemTracker
+	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+	defer memory.CleanupGlobalMemArbitratorForTest()
+	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
+	memTracker := seVar.StmtCtx.MemTracker
+	require.True(t, memTracker.InitMemArbitrator(memory.GlobalMemArbitrator(), 0, nil, "", memory.ArbitrationPriorityMedium, false, 0))
+	memTracker.MemArbitrator.AwaitAlloc.TotalDur.Store(int64(logItems.MemArbitration * float64(time.Second.Nanoseconds())))
+
 	// get an ExecStmt
 	compiler := executor.Compiler{Ctx: tk.Session()}
 	execStmt, err := compiler.Compile(childCtx, stmt)
@@ -388,7 +398,7 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "MemArbitration", "DiskMax", "StorageKV"}
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
 			if res == f {

@@ -107,6 +107,12 @@ type DDLReorgMeta struct {
 	WriterCount int `json:"writer_count"`
 }
 
+// ShallowCopy creates a shallow copy of DDLReorgMeta.
+func (dm *DDLReorgMeta) ShallowCopy() *DDLReorgMeta {
+	newMeta := *dm
+	return &newMeta
+}
+
 // GetConcurrency gets the concurrency from DDLReorgMeta.
 func (dm *DDLReorgMeta) GetConcurrency() int {
 	concurrency := dm.Concurrency.Load()
