@@ -121,13 +121,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	if err != nil {
 		return nil, err
 	}
-	intest.Assert(
-		job.Type == model.ActionAddPrimaryKey ||
-			job.Type == model.ActionAddIndex ||
-			job.Type == model.ActionModifyColumn ||
-			job.Type == model.ActionMultiSchemaChange,
-	)
-	intest.Assert(job.ReorgMeta != nil)
+	checkJobTypeForReorg(job)
 
 	failpoint.Inject("beforeCreateLocalBackend", func() {
 		ResignOwnerForTest.Store(true)
@@ -198,6 +192,14 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 	return filepath.Join(sortPath, encodeBackendTag(jobID, checkDup)), nil
 }
 
+func checkJobTypeForReorg(job *model.Job) {
+	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
+		job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionModifyColumn ||
+		job.Type == model.ActionMultiSchemaChange)
+	intest.Assert(job.ReorgMeta != nil)
+}
+
 // CreateLocalBackend creates a local backend for adding index.
 func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, hasUnique, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
 	ctx = logutil.WithLogger(ctx, logutil.Logger(ctx))
@@ -205,11 +207,7 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 	if err != nil {
 		return nil, nil, err
 	}
-	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
-		job.Type == model.ActionAddIndex ||
-		job.Type == model.ActionModifyColumn ||
-		job.Type == model.ActionMultiSchemaChange)
-	intest.Assert(job.ReorgMeta != nil)
+	checkJobTypeForReorg(job)
 
 	resGroupName := job.ReorgMeta.ResourceGroupName
 	concurrency := job.ReorgMeta.GetConcurrency()

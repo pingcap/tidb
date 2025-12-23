@@ -57,6 +57,10 @@ func convertAddIdxJob2RollbackJob(
 		job.State = model.JobStateRollingback
 		return 0, err
 	}
+	if job.Type == model.ActionMultiSchemaChange {
+		job.State = model.JobStateCancelling
+		return 0, err
+	}
 
 	dropArgs := &model.ModifyIndexArgs{
 		PartitionIDs: getPartitionIDs(tblInfo),
