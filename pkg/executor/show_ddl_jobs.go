@@ -324,7 +324,7 @@ func showCommentsFromJob(job *model.Job) string {
 		job.Type == model.ActionAddPrimaryKey
 	if isAddingIndex && kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
-		return ""
+		return strings.Join(labels, ", ")
 	}
 	if isAddingIndex {
 		switch m.ReorgTp {
@@ -377,11 +377,6 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 
 	if kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
-		isAddingIndex := sub.Type == model.ActionAddIndex ||
-			sub.Type == model.ActionAddPrimaryKey
-		if isAddingIndex {
-			return ""
-		}
 		return strings.Join(labels, ", ")
 	}
 
