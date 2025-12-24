@@ -27,6 +27,19 @@ const (
 	objStoreWriteBytesField = "obj_store_write_bytes"
 	clusterReadBytesField   = "cluster_read_bytes"
 	clusterWriteBytesField  = "cluster_write_bytes"
+
+	// RowCountField represents the number of rows processed.
+	RowCountField = "row_count"
+	// DataKVBytesField represents the bytes of data KV ingested into the cluster.
+	DataKVBytesField = "data_kv_bytes"
+	// IndexKVBytesField represents the bytes of index KV ingested into the cluster.
+	IndexKVBytesField = "index_kv_bytes"
+	// ConcurrencyField represents the concurrency of the task.
+	ConcurrencyField = "concurrency"
+	// MaxNodeCountField represents the maximum number of nodes used during the task.
+	MaxNodeCountField = "max_node_count"
+	// DurationSecondsField represents the duration of the task in seconds.
+	DurationSecondsField = "duration_seconds"
 )
 
 // Data represents the metering data.

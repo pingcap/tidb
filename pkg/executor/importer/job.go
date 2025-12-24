@@ -132,6 +132,11 @@ func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
 }
 
+// IsSuccess returns whether the job is successful.
+func (j *JobInfo) IsSuccess() bool {
+	return j.Status == JobStatusFinished
+}
+
 // GetJob returns the job with the given id if the user has privilege.
 // hasSuperPriv: whether the user has super privilege.
 // If the user has super privilege, the user can show or operate all jobs,

@@ -209,7 +209,11 @@ func getQuotaShard(quota int64, maxQuotaShard int) int {
 }
 
 func nowUnixMilli() int64 {
-	return time.Now().UnixMilli()
+	return now().UnixMilli()
+}
+
+func nowUnixSec() int64 {
+	return now().Unix()
 }
 
 func now() time.Time {
