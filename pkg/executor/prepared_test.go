@@ -833,7 +833,7 @@ func TestIssue29101(t *testing.T) {
 		`  └─IndexLookUp_35(Probe) 1.25 root  `,
 		`    ├─IndexRangeScan_32(Build) 1.25 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
 		`    └─Selection_34(Probe) 1.25 cop[tikv]  lt(test.stock.s_quantity, 18)`,
-		`      └─TableRowIDScan_33 1.25 cop[tikv] table:stock keep order:false, stats:pseudo]`))
+		`      └─TableRowIDScan_33 1.25 cop[tikv] table:stock keep order:false, stats:pseudo`))
 	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 }
