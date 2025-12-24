@@ -299,10 +299,14 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	}
 }
 
+// showCommentsFromJob generates the comments for a DDL job, including reorg status,
+// analyze status and reorg parameters.
 func showCommentsFromJob(job *model.Job) string {
 	var labels []string
 	isAddingIndex := job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey
+	// For next-gen (V2 DDL), adding index is always done via distributed framework,
+	// so we don't need to show 'need reorg' to users.
 	if job.MayNeedReorg() && !(isAddingIndex && kerneltype.IsNextGen()) {
 		labels = append(labels, "need reorg")
 	}
@@ -323,7 +327,9 @@ func showCommentsFromJob(job *model.Job) string {
 	default:
 	}
 	if isAddingIndex && kerneltype.IsNextGen() {
-		// The parameters are determined automatically in next-gen.
+		// In next-gen, the parameters (concurrency, batch size, etc.) are determined
+		// automatically by the distributed framework, so we don't show them.
+		// However, we still show the status labels (like analyze status) collected above.
 		return strings.Join(labels, ", ")
 	}
 	if isAddingIndex {
@@ -365,11 +371,14 @@ func showCommentsFromJob(job *model.Job) string {
 	return strings.Join(labels, ", ")
 }
 
+// showCommentsFromSubjob generates the comments for a sub-job in a multi-schema change.
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	var labels []string
 	isAddingIndex := sub.Type == model.ActionAddIndex ||
 		sub.Type == model.ActionAddPrimaryKey
 	proxy := model.Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
+	// For next-gen (V2 DDL), adding index is always done via distributed framework,
+	// so we don't need to show 'need reorg' to users.
 	if proxy.MayNeedReorg() && !(isAddingIndex && kerneltype.IsNextGen()) {
 		labels = append(labels, "need reorg")
 	}
@@ -378,7 +387,8 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	// For now, we focus on the main Job and standard reorgs.
 
 	if kerneltype.IsNextGen() {
-		// The parameters are determined automatically in next-gen.
+		// In next-gen, the parameters are determined automatically, so we don't show them.
+		// We only show the status labels collected above.
 		return strings.Join(labels, ", ")
 	}
 
