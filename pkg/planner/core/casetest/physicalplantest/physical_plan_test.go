@@ -1342,7 +1342,7 @@ func TestCountStarForTiFlash(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		testKit.MustExec("use test")
-		testKit.MustExec("set tidb_cost_model_version=2")
+		testKit.MustExec("set tidb_cost_model_version=1")
 		testKit.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null, h bool )")
 		testKit.MustExec("create table t_pick_row_id (a char(20) not null)")
 
