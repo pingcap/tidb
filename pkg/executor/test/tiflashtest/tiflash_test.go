@@ -206,10 +206,10 @@ func TestJoinRace(t *testing.T) {
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustQuery("explain format='plan_tree' select count(*) from (select count(a) x from t group by b) t1 join (select count(a) x from t group by b) t2 on t1.x > t2.x").Check(testkit.Rows(
-		`HashAgg root  funcs:count(Column#12)->Column#9`,
+		`HashAgg root  funcs:count(Column#18)->Column#9`,
 		`└─TableReader root  MppVersion: 3, data:ExchangeSender`,
 		`  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough`,
-		`    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#12`,
+		`    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#18`,
 		`      └─Projection mpp[tiflash]  Column#4`,
 		`        └─HashJoin mpp[tiflash]  CARTESIAN inner join, other cond:gt(Column#4, Column#8)`,
 		`          ├─ExchangeReceiver(Build) mpp[tiflash]  `,
