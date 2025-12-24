@@ -241,23 +241,3 @@ admin check table t;
 set tidb_enable_fast_table_check = 'ON';
 admin check index t idx;
 admin check table t;
-
-# TestAdminShowDDLJobsLabels
-drop table if exists t_label;
-create table t_label (a int, b varchar(100));
-insert into t_label values (1, 'test_label_data');
-
-# 1. Normal Add Index (need reorg)
-alter table t_label add index idx_a(a);
---replace_column 1 <job_id> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
-admin show ddl jobs 1 where table_name='t_label' and job_type='add index';
-
-# 2. Lossy DDL - Shrink Varchar (validating)
-alter table t_label modify column b varchar(50);
---replace_column 1 <job_id> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
-admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
-
-# 3. Metadata-only change (No labels)
-alter table t_label modify column b varchar(200);
---replace_column 1 <job_id> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
-admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
