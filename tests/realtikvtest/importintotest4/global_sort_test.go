@@ -450,12 +450,15 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 
-	var addCnt, removeCnt int
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/ForceTableSplitThreshold", func(threshold *int) {
+		*threshold = 0
+	})
+	var addCnt, removeCnt atomic.Int32
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
-		addCnt += 1
+		addCnt.Add(1)
 	})
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
-		removeCnt += 1
+		removeCnt.Add(1)
 	})
 	dom, err := session.GetDomain(s.store)
 	require.NoError(s.T(), err)
@@ -466,24 +469,24 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s' with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	require.Greater(s.T(), addCnt, 0)
-	require.Equal(s.T(), removeCnt, addCnt)
+	require.Greater(s.T(), addCnt.Load(), int32(0))
+	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 
-	addCnt = 0
-	removeCnt = 0
+	addCnt.Store(0)
+	removeCnt.Store(0)
 	s.tk.MustExec("truncate t")
 	importSQL = fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'`, gcsEndpoint)
 	result = s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	require.Equal(s.T(), addCnt, 2*len(stores))
-	require.Equal(s.T(), removeCnt, addCnt)
+	require.Equal(s.T(), addCnt.Load(), int32(2*len(stores)))
+	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 
-	addCnt = 0
-	removeCnt = 0
+	addCnt.Store(0)
+	removeCnt.Store(0)
 	s.tk.MustExec("create table dst like t")
 	s.tk.MustExec(`import into dst FROM select * from t`)
-	require.Equal(s.T(), addCnt, 2*len(stores))
-	require.Equal(s.T(), removeCnt, addCnt)
+	require.Equal(s.T(), addCnt.Load(), int32(2*len(stores)))
+	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 }
 
 func TestNextGenMetering(t *testing.T) {
