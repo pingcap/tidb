@@ -472,7 +472,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				if canSkip(physicalRowIndex) {
 					continue
 				}
-				strLen := utf8.RuneCountInString(string(column.GetBytes(physicalRowIndex))) * collator.MaxBytesOneCharacter()
+				strLen := utf8.RuneCount(column.GetBytes(physicalRowIndex)) * collator.MaxBytesOneCharacter()
 				serializedKeyLens[j] += sizeByteNum + strLen
 			}
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
