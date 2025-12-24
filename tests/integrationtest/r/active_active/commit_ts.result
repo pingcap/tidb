@@ -55,7 +55,7 @@ rollback;
 begin;
 select _tidb_commit_ts, v from t where id = 2 for update;
 _tidb_commit_ts	v
-NULL	2
+TSO	2
 create temporary table tmp (id int primary key, v int);
 insert into tmp values (1, 1), (2, 2), (3, 3), (4, 4);
 select _tidb_commit_ts, id from t where id = 1;

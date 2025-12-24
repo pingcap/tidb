@@ -39,6 +39,7 @@ rollback;
 
 # select for update
 begin;
+--replace_regex /^[1-9][0-9]+/TSO/
 select _tidb_commit_ts, v from t where id = 2 for update;
 
 # on temporary table, cached table
