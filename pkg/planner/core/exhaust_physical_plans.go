@@ -2733,7 +2733,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	if prop.IsFlashProp() {
 		return joins, true, nil
 	}
-	if len(joins) > 0 && super.SCtx().GetSessionVars().IsMPPEnforced() && prop.CTEProducerStatus == property.AllCTECanMpp {
+	if len(joins) > 0 && super.SCtx().GetSessionVars().IsMPPEnforced() && prop.CTEProducerStatus != property.SomeCTEFailedMpp {
 		return joins, true, nil
 	}
 
