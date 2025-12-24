@@ -27,23 +27,6 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
-// hasConnectingEqualConditions checks if the equal conditions connect left schema to right schema
-func hasConnectingEqualConditions(eqConds []*expression.ScalarFunction, leftSchema, rightSchema *expression.Schema) bool {
-	for _, eqCond := range eqConds {
-		args := eqCond.GetArgs()
-		if len(args) == 2 {
-			lCol, lOk := args[0].(*expression.Column)
-			rCol, rOk := args[1].(*expression.Column)
-			if lOk && rOk &&
-				((leftSchema.Contains(lCol) && rightSchema.Contains(rCol)) ||
-					(leftSchema.Contains(rCol) && rightSchema.Contains(lCol))) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // extractJoinGroup extracts all the join nodes connected with continuous
 // Joins to construct a join group. This join group is further used to
 // construct a new join order based on a reorder algorithm.
