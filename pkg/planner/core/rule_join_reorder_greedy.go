@@ -20,7 +20,9 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -65,6 +67,19 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan) (base.
 	slices.SortStableFunc(s.curJoinGroup, func(i, j *jrNode) int {
 		return cmp.Compare(i.cumCost, j.cumCost)
 	})
+
+	// If there's an ORDER BY and a table has a matching index, prioritize it as the starting table.
+	// This enables index join to preserve ordering and avoid a separate sort operation.
+	// Only apply when tidb_opt_ordering_preserving_join_discount < 1.0 (feature enabled)
+	discount := s.ctx.GetSessionVars().OrderingPreservingJoinDiscount
+	if discount > 0 && discount < 1.0 {
+		if orderingIdx := s.findOrderingPreservingTableIndex(); orderingIdx > 0 {
+			// Move the ordering-preserving table to the front
+			orderingNode := s.curJoinGroup[orderingIdx]
+			s.curJoinGroup = slices.Delete(s.curJoinGroup, orderingIdx, orderingIdx+1)
+			s.curJoinGroup = slices.Insert(s.curJoinGroup, 0, orderingNode)
+		}
+	}
 
 	// joinNodeNum indicates the number of join nodes except leading join nodes in the current join group
 	joinNodeNum := len(s.curJoinGroup)
@@ -178,4 +193,200 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 	}
 	join, otherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType)
 	return join, otherConds, len(usedEdges) == 0
+}
+
+// findOrderingPreservingTableIndex finds the index of a table in the join group
+// that has an index matching the ORDER BY columns. Returns -1 if none found.
+func (s *joinReorderGreedySolver) findOrderingPreservingTableIndex() int {
+	if len(s.orderingProperties) == 0 {
+		return -1
+	}
+
+	for _, orderingCols := range s.orderingProperties {
+		if len(orderingCols) == 0 {
+			continue
+		}
+
+		// Build a set of ordering column UniqueIDs - this identifies the SPECIFIC table instance
+		// (important when the same table appears multiple times with different aliases)
+		orderingColUniqueIDs := make(map[int64]bool, len(orderingCols))
+		orderingColIDs := make(map[int64]bool, len(orderingCols))
+		for _, col := range orderingCols {
+			if col.UniqueID > 0 {
+				orderingColUniqueIDs[col.UniqueID] = true
+			}
+			if col.ID > 0 {
+				orderingColIDs[col.ID] = true
+			}
+		}
+		
+		if len(orderingColUniqueIDs) == 0 {
+			continue
+		}
+
+		// Check each table in the join group - find the one whose schema contains the ordering column
+		for i, node := range s.curJoinGroup {
+			// First check if this table's schema contains the ordering column (by UniqueID)
+			if !s.schemaContainsOrderingColumn(node.p, orderingColUniqueIDs) {
+				continue
+			}
+			// Then check if it has a matching index
+			if s.tableHasIndexMatchingOrdering(node.p, orderingColIDs) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// schemaContainsOrderingColumn checks if the plan's schema contains any of the ordering columns
+// by matching UniqueID (which is unique per plan instance)
+func (s *joinReorderGreedySolver) schemaContainsOrderingColumn(plan base.LogicalPlan, orderingColUniqueIDs map[int64]bool) bool {
+	schema := plan.Schema()
+	for _, col := range schema.Columns {
+		if orderingColUniqueIDs[col.UniqueID] {
+			return true
+		}
+	}
+	return false
+}
+
+
+// tableHasIndexMatchingOrdering checks if a plan contains a DataSource with an index
+// that can provide the ordering specified by orderingColIDs.
+// targetTableName is the expected table name from the ORDER BY column's OrigName.
+// It also considers that equality predicates on prefix columns allow ordering on subsequent columns.
+func (s *joinReorderGreedySolver) tableHasIndexMatchingOrdering(plan base.LogicalPlan, orderingColIDs map[int64]bool) bool {
+	ds := s.findDataSource(plan)
+	if ds == nil {
+		return false
+	}
+	
+
+	// Get equality predicate columns from the plan's conditions
+	eqColIDs := s.getEqualityPredicateColumnIDs(plan)
+
+	// Check TableInfo.Indices directly for available indexes
+	for _, idx := range ds.TableInfo.Indices {
+		if idx.State != model.StatePublic || idx.Invisible {
+			continue
+		}
+		
+		
+		// Check if index can provide ordering:
+		// Pattern: [equality predicate columns...] + [ORDER BY columns...]
+		// All prefix columns must have equality predicates, then ORDER BY column(s) follow
+		foundOrderingCol := false
+		allPrefixHaveEq := true
+		
+		for _, idxCol := range idx.Columns {
+			// Get the table column for this index column
+			if idxCol.Offset >= len(ds.TableInfo.Columns) {
+				break
+			}
+			tblCol := ds.TableInfo.Columns[idxCol.Offset]
+			colID := tblCol.ID
+			
+			
+			// Is this the ordering column?
+			if orderingColIDs[colID] {
+				if allPrefixHaveEq {
+					foundOrderingCol = true
+					break
+				} else {
+					break
+				}
+			}
+			
+			// Is this column covered by an equality predicate?
+			if !eqColIDs[colID] {
+				allPrefixHaveEq = false
+				break
+			}
+		}
+		
+		if foundOrderingCol {
+			return true
+		}
+	}
+	return false
+}
+
+// getEqualityPredicateColumnIDs extracts column IDs that have equality predicates
+// from the plan's pushed-down conditions
+func (s *joinReorderGreedySolver) getEqualityPredicateColumnIDs(plan base.LogicalPlan) map[int64]bool {
+	result := make(map[int64]bool)
+	
+	// Check if it's a Selection with conditions
+	if sel, ok := plan.(*logicalop.LogicalSelection); ok {
+		for _, cond := range sel.Conditions {
+			s.extractEqualityColumns(cond, result)
+		}
+		// Also check child
+		if len(sel.Children()) > 0 {
+			childResult := s.getEqualityPredicateColumnIDs(sel.Children()[0])
+			for k, v := range childResult {
+				result[k] = v
+			}
+		}
+	}
+	
+	// Check if it's a DataSource with pushed conditions
+	if ds, ok := plan.(*logicalop.DataSource); ok {
+		for _, cond := range ds.AllConds {
+			s.extractEqualityColumns(cond, result)
+		}
+	}
+	
+	return result
+}
+
+// extractEqualityColumns finds columns involved in equality predicates (col = const)
+func (s *joinReorderGreedySolver) extractEqualityColumns(expr expression.Expression, result map[int64]bool) {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return
+	}
+	
+	// Check for EQ function: col = value
+	if sf.FuncName.L == "eq" && len(sf.GetArgs()) == 2 {
+		// Check if one side is a column and other is a constant
+		for _, arg := range sf.GetArgs() {
+			if col, ok := arg.(*expression.Column); ok {
+				if col.ID > 0 {
+					result[col.ID] = true
+				}
+			}
+		}
+	}
+	
+	// Check for IN function: col IN (values)
+	if sf.FuncName.L == "in" && len(sf.GetArgs()) > 0 {
+		if col, ok := sf.GetArgs()[0].(*expression.Column); ok {
+			if col.ID > 0 {
+				result[col.ID] = true
+			}
+		}
+	}
+	
+	// Recursively check AND conditions
+	if sf.FuncName.L == "and" || sf.FuncName.L == "or" {
+		for _, arg := range sf.GetArgs() {
+			s.extractEqualityColumns(arg, result)
+		}
+	}
+}
+
+// findDataSource recursively finds a DataSource in a plan tree
+func (s *joinReorderGreedySolver) findDataSource(plan base.LogicalPlan) *logicalop.DataSource {
+	if ds, ok := plan.(*logicalop.DataSource); ok {
+		return ds
+	}
+	// Check children
+	for _, child := range plan.Children() {
+		if ds := s.findDataSource(child); ds != nil {
+			return ds
+		}
+	}
+	return nil
 }
