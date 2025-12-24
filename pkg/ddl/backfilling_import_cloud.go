@@ -18,6 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/zap"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -56,9 +59,11 @@ type cloudImportExecutor struct {
 	metric          *lightningmetric.Common
 	engine          atomic.Pointer[external.Engine]
 	summary         *execute.SubtaskSummary
+	sessPool        *sess.Pool
 }
 
 func newCloudImportExecutor(
+	sessPool *sess.Pool,
 	job *model.Job,
 	store kv.Storage,
 	indexes []*model.IndexInfo,
@@ -74,6 +79,7 @@ func newCloudImportExecutor(
 		cloudStoreURI:   cloudStoreURI,
 		taskConcurrency: taskConcurrency,
 		summary:         &execute.SubtaskSummary{},
+		sessPool:        sessPool,
 	}, nil
 }
 
@@ -113,6 +119,48 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
+	//var (
+	//	indexDataFile = make([]string, 0, len(sm.DataFiles))
+	//	indexStatFile = make([]string, 0, len(sm.StatFiles))
+	//	statsDataFile = make([]string, 0, len(sm.DataFiles))
+	//	statsStatFile = make([]string, 0, len(sm.StatFiles))
+	//)
+	//for i := range sm.DataFiles {
+	//	if strings.Contains(sm.DataFiles[i], disttaskutil.StatsSampled) {
+	//		statsDataFile = append(statsDataFile, sm.DataFiles[i])
+	//		statsStatFile = append(statsStatFile, sm.StatFiles[i])
+	//	} else {
+	//		indexDataFile = append(indexDataFile, sm.DataFiles[i])
+	//		indexStatFile = append(indexStatFile, sm.StatFiles[i])
+	//	}
+	//}
+	//logutil.BgLogger().Info("cloud import executor split index and stats files",
+	//	zap.Strings("indexDataFiles", indexDataFile),
+	//	zap.Strings("indexStatFiles", indexStatFile),
+	//	zap.Strings("statsDataFiles", statsDataFile),
+	//	zap.Strings("statsStatFiles", statsStatFile),
+	//)
+	//sm.DataFiles = indexDataFile
+	//sm.StatFiles = indexStatFile
+
+	wg := &util.WaitGroupWrapper{}
+	defer func() {
+		wg.Wait()
+	}()
+	wg.Run(func() {
+		sctx, err := e.sessPool.Get()
+		if err != nil {
+			logutil.Logger(ctx).Error("cloud import executor get session failed", zap.Error(err))
+			return
+		}
+		defer e.sessPool.Put(sctx)
+
+		err = external.HandleIndexStats(sctx, context.Background(), e.indexes[0].ID, e.cloudStoreURI)
+		if err != nil {
+			logutil.Logger(ctx).Error("cloud import executor read sampled stats kv failed", zap.Error(err))
+		}
+	})
+
 	localBackend := e.backendCtx.GetLocalBackend()
 	if localBackend == nil {
 		return errors.Errorf("local backend not found")

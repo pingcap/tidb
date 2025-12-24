@@ -15,8 +15,10 @@
 package statistics
 
 import (
+	"encoding/json"
 	"hash"
 	"sync"
+	"time"
 
 	"github.com/dolthub/swiss"
 	"github.com/pingcap/errors"
@@ -79,6 +81,35 @@ func NewFMSketch(maxSize int) *FMSketch {
 	result := fmSketchPool.Get().(*FMSketch)
 	result.maxSize = maxSize
 	return result
+}
+
+// InsertIndexVal inserts an index value into the FM sketch.
+func (s *FMSketch) InsertIndexVal(tz *time.Location, value types.Datum) error {
+	bytes, err := codec.EncodeKey(tz, nil, value)
+	//err = sc.HandleError(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	hashFunc := murmur3Pool.Get().(hash.Hash64)
+	hashFunc.Reset()
+	defer murmur3Pool.Put(hashFunc)
+	_, err = hashFunc.Write(bytes)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.insertHashValue(hashFunc.Sum64())
+	return nil
+}
+
+func (s *FMSketch) KV() ([]uint64, []bool) {
+	var keys []uint64
+	var values []bool
+	s.hashset.Iter(func(k uint64, v bool) (stop bool) {
+		keys = append(keys, k)
+		values = append(values, v)
+		return false
+	})
+	return keys, values
 }
 
 // Copy makes a copy for current FMSketch.
@@ -244,6 +275,27 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 	fm := FMSketchFromProto(p)
 	fm.maxSize = MaxSketchSize
 	return fm, nil
+}
+
+func (s *FMSketch) MarshalJSON() ([]byte, error) {
+	protoData, err := EncodeFMSketch(s)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(protoData)
+}
+
+func (s *FMSketch) UnmarshalJSON(data []byte) error {
+	var raw []byte
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	fm, err := DecodeFMSketch(raw)
+	if err != nil {
+		return err
+	}
+	*s = *fm
+	return nil
 }
 
 // MemoryUsage returns the total memory usage of a FMSketch.

@@ -18,8 +18,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	goerrors "errors"
+	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"io"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -47,6 +60,8 @@ func readAllData(
 		zap.Int("stat-file-count", len(statsFiles)),
 		zap.String("start-key", hex.EncodeToString(startKey)),
 		zap.String("end-key", hex.EncodeToString(endKey)),
+		zap.Strings("data-files", dataFiles),
+		zap.Strings("stat-files", statsFiles),
 	)
 	defer func() {
 		if err != nil {
@@ -193,6 +208,204 @@ func readOneFile(
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
 	return nil
+}
+
+func HandleIndexStats(sctx sessionctx.Context, ctx context.Context, idxID int64, cloudStoreURI string) error {
+	totalCnt := 0
+	ts := time.Now()
+	sampledKVs := make([]KVPair, 0)
+	var dataFiles []string
+	defer func() {
+		logutil.BgLogger().Info("read all sampled kv files completed",
+			zap.Int("total-kv-count", totalCnt),
+			zap.Int("data-file-count", len(dataFiles)),
+			zap.Int("sampledKVs", len(sampledKVs)),
+			zap.Duration("duration", time.Since(ts)))
+	}()
+	memLimiter := membuf.NewLimiter(5 * units.GB)
+	smallBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithPoolMemoryLimiter(memLimiter),
+		membuf.WithBlockSize(smallBlockSize))
+
+	largeBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithPoolMemoryLimiter(memLimiter),
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc))
+
+	_, storage, err := handle.NewObjStoreWithRecording(ctx, cloudStoreURI)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		storage.Close()
+	}()
+
+	// get sampled kv file path
+	files, err := GetAllFileNames(ctx, storage, disttaskutil.StatsSampled)
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("read sampled kv files", zap.Strings("files", files))
+
+	for _, file := range files {
+		if !strings.Contains(file, "stat") {
+			dataFiles = append(dataFiles, file)
+		}
+	}
+	for _, dataFile := range dataFiles {
+		cnt, kvs, err := readOneSampledFile(ctx, storage, dataFile, smallBlockBufPool.NewBuffer(), largeBlockBufPool.NewBuffer())
+		if err != nil {
+			return err
+		}
+		sampledKVs = append(sampledKVs, kvs...)
+		totalCnt += cnt
+	}
+
+	// decode and calculate stats from sampledKVs
+	sampleItems := make([]*statistics.SampleItem, 0, len(sampledKVs))
+	for _, kv := range sampledKVs {
+		// decode index key
+		_, _, idxVal, err := tablecodec.DecodeIndexKey(kv.Key)
+		if err != nil {
+			return err
+		}
+		//logutil.BgLogger().Debug("sampled kv example",
+		//	zap.Int64("tableID", tableID),
+		//	zap.Int64("idxID", idxID),
+		//	zap.Strings("idxVal", idxVal),
+		//)
+		i, err := strconv.ParseInt(idxVal[0], 10, 64)
+		if err != nil {
+			return err
+		}
+		d := types.NewIntDatum(i)
+		b := make([]byte, 0, 8)
+		b, err = codec.EncodeKey(time.UTC, b, d)
+		if err != nil {
+			return err
+		}
+		sampleItems = append(sampleItems, &statistics.SampleItem{
+			Value: types.NewBytesDatum(b),
+		})
+	}
+
+	// read fms from s3 and merge
+	var sub statistics.SubStats
+	files, err = GetAllFileNames(ctx, storage, "fms")
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("read fms file", zap.Strings("file", files))
+	fullFms := statistics.NewFMSketch(statistics.MaxSketchSize)
+	nullCnt := int64(0)
+	notNullCnt := int64(0)
+	totalSize := int64(0)
+	for _, file := range files {
+		data, err := storage.ReadFile(ctx, file)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		//fms, err := statistics.DecodeFMSketch(data)
+		err = json.Unmarshal(data, &sub)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fullFms.MergeFMSketch(sub.Fms)
+		nullCnt += sub.NullCnt
+		notNullCnt += sub.NotNullCnt
+		totalSize += sub.TotalSize
+	}
+	if fullFms.NDV() < 100 {
+		ks, vs := fullFms.KV()
+		logutil.BgLogger().Info("fms sketch example", zap.Uint64s("ks", ks), zap.Bools("vs", vs))
+	}
+
+	// build hist, topn
+	collector := &statistics.SampleCollector{
+		Samples:   sampleItems,
+		NullCount: nullCnt,
+		Count:     notNullCnt,
+		FMSketch:  fullFms,
+		TotalSize: totalSize,
+		MemSize:   int64(len(sampleItems)) * (8 + statistics.EmptySampleItemSize + 8),
+	}
+	tp := types.NewFieldType(mysql.TypeBlob)
+	hist, topn, err := statistics.BuildHistAndTopN(sctx,
+		statistics.DefaultHistogramBuckets,
+		statistics.DefaultTopNValue,
+		idxID, collector, tp, false, nil, false)
+
+	var bounds []int64
+	iter := chunk.NewIterator4Chunk(hist.Bounds)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		remain, d, err := codec.DecodeOne(row.GetBytes(0))
+		if err != nil {
+			return err
+		}
+		if remain != nil {
+			logutil.BgLogger().Error("invalid hist bound data", zap.ByteString("data", row.GetBytes(0)))
+		}
+		bounds = append(bounds, d.GetInt64())
+	}
+	logutil.BgLogger().Info("build hist, topn",
+		zap.Int("items-count", len(sampleItems)),
+		zap.Int64("fms-count", fullFms.NDV()),
+		zap.Any("hist", hist),
+		zap.Any("topn", topn),
+		zap.Int("topn", topn.Num()),
+		zap.Int64("null-count", nullCnt),
+		zap.Int64("not-null-count", notNullCnt),
+		zap.Int64("total-size", totalSize),
+		zap.Int("bound-len", len(bounds)),
+		zap.Int64s("bound", bounds),
+	)
+
+	return nil
+}
+
+func readOneSampledFile(ctx context.Context, storage storage.ExternalStorage, dataFile string,
+	smallBlockBuf *membuf.Buffer, largeBlockBuf *membuf.Buffer) (int, []KVPair, error) {
+	kvCnt := 0
+	startOffset := uint64(0)
+	concurrency := uint64(1)
+
+	rd, err := NewKVReader(ctx, dataFile, storage, startOffset, 64*1024)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() {
+		rd.Close()
+	}()
+	if concurrency > 1 {
+		rd.byteReader.enableConcurrentRead(
+			storage,
+			dataFile,
+			int(concurrency),
+			ConcurrentReaderBufferSizePerConc,
+			largeBlockBuf,
+		)
+		err = rd.byteReader.switchConcurrentMode(true)
+		if err != nil {
+			return 0, nil, err
+		}
+	}
+	kvs := make([]KVPair, 0, 1024)
+	size := 0
+
+	for {
+		k, v, err := rd.NextKV()
+		if err != nil {
+			if goerrors.Is(err, io.EOF) {
+				break
+			}
+			return 0, nil, errors.Trace(err)
+		}
+		kvs = append(kvs, KVPair{Key: smallBlockBuf.AddBytes(k), Value: smallBlockBuf.AddBytes(v)})
+		size += len(k) + len(v)
+		kvCnt++
+	}
+	return kvCnt, kvs, nil
 }
 
 // ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs

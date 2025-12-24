@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -369,6 +370,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			slicePos:         i,
 		}
 		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[i])
+		logutil.BgLogger().Info("build sampling stats for column", zap.Int("column offset", i), zap.Int64("column ID", col.ID))
 	}
 
 	indexPushedDownResult := <-idxNDVPushDownCh
@@ -393,6 +395,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			slicePos:         colLen + i,
 		}
 		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[colLen+i])
+		logutil.BgLogger().Info("build sampling stats for index", zap.Int("index offset", i), zap.Int64("index ID", idx.ID))
 	}
 	close(buildTaskChan)
 
@@ -812,6 +815,35 @@ workLoop:
 				}
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
+			if !task.isColumn {
+				//ks, vs := collector.FMSketch.KV()
+				//logutil.BgLogger().Info("analyze get fms", zap.Uint64s("keys", ks), zap.Bools("values", vs))
+				var bounds []int64
+				iter := chunk.NewIterator4Chunk(hist.Bounds)
+				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+					_, d, err := codec.DecodeOne(row.GetBytes(0))
+					if err != nil {
+						logutil.BgLogger().Error("analyze build index sample collector decode bound failed", zap.Error(err))
+						bounds = []int64{}
+						break
+					}
+					bounds = append(bounds, d.GetInt64())
+				}
+				fmt.Println(bounds)
+
+				logutil.BgLogger().Info("analyze build index sample collector",
+					zap.Int64("ndv", collector.FMSketch.NDV()),
+					zap.Int("sampleItemsLen", len(collector.Samples)),
+					zap.Int64("count", collector.Count),
+					zap.Int64("total-size", collector.TotalSize),
+					zap.Int64("null-count", collector.NullCount),
+					zap.Int64("hist-mem-usage", hist.MemoryUsage()),
+					zap.Any("hist", hist),
+					zap.Any("topn", topn),
+					zap.Int("bound-len", len(bounds)),
+					zap.Int64s("bound", bounds),
+				)
+			}
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()

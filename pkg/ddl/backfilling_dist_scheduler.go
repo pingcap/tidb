@@ -800,6 +800,9 @@ func forEachBackfillSubtaskMeta(
 	}
 	for _, subTaskMeta := range subTaskMetas {
 		subtask, err := decodeBackfillSubTaskMeta(ctx, extStore, subTaskMeta)
+		logutil.DDLLogger().Info("decode backfill subtask meta",
+			zap.Strings("data-file", subtask.DataFiles),
+			zap.Strings("stats-file", subtask.StatFiles))
 		if err != nil {
 			logutil.DDLLogger().Error("unmarshal error", zap.Error(err))
 			return errors.Trace(err)

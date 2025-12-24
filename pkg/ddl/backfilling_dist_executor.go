@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"encoding/json"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -30,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"go.uber.org/zap"
+	"strings"
 )
 
 // Version constants for BackfillTaskMeta.
@@ -102,7 +103,24 @@ func decodeBackfillSubTaskMeta(ctx context.Context, extStore storage.ExternalSto
 		if err := subtask.ReadJSONFromExternalStorage(ctx, extStore, &subtask); err != nil {
 			return nil, errors.Trace(err)
 		}
+		for _, g := range subtask.MetaGroups {
+			var multipleFiles []external.MultipleFilesStat
+			for _, f := range g.MultipleFilesStats {
+				include := true
+				for _, fileName := range f.Filenames {
+					if strings.Contains(fileName[0], disttaskutil.StatsSampled) {
+						include = false
+						break
+					}
+				}
+				if include {
+					multipleFiles = append(multipleFiles, f)
+				}
+			}
+			g.MultipleFilesStats = multipleFiles
+		}
 	}
+	logutil.DDLLogger().Info("decode backfill subtask meta from external storage", zap.Any("subtask", subtask))
 
 	// For compatibility with old version TiDB.
 	if len(subtask.RowStart) == 0 {
@@ -183,7 +201,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
+		return newCloudImportExecutor(sessPool, jobMeta, store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
 	case proto.BackfillStepMergeTempIndex:
 		return newMergeTempIndexExecutor(jobMeta, store, tbl)
 	default:

@@ -22,6 +22,9 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"math/rand"
 	"os"
 	"slices"
 	"strconv"
@@ -2602,6 +2605,7 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
+	statsWriters []ingest.Writer,
 	indexes []table.Index,
 	indexConditionCheckers []func(row chunk.Row) (bool, error),
 	copCtx copr.CopContext,
@@ -2610,16 +2614,19 @@ func writeChunk(
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
 	tblInfo *model.TableInfo,
-) (rowCnt int, bytes int, err error) {
+	subStats *statistics.SubStats,
+) (rowCnt int, bytes int, sampledCnt int, err error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
 	ectx := c.ExprCtx.GetEvalCtx()
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
 
 	maxIdxColCnt := maxIndexColumnCount(indexes)
 	idxDataBuf := make([]types.Datum, maxIdxColCnt)
 	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
 	var restoreDataBuf []types.Datum
 	count := 0
+	sampled := 0
 	totalBytes := 0
 
 	unlockFns := make([]func(), 0, len(writers))
@@ -2632,6 +2639,17 @@ func writeChunk(
 			unlock()
 		}
 	}()
+	unlockFnsForStats := make([]func(), 0, len(statsWriters))
+	for _, w := range statsWriters {
+		unlock := w.LockForWrite()
+		unlockFnsForStats = append(unlockFnsForStats, unlock)
+	}
+	defer func() {
+		for _, unlock := range unlockFnsForStats {
+			unlock()
+		}
+	}()
+
 	needRestoreForIndexes := make([]bool, len(indexes))
 	restore, pkNeedRestore := false, false
 	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
@@ -2646,6 +2664,7 @@ func writeChunk(
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
 
+	totalRowCnt := getTotalRowCnt(tblInfo)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
@@ -2656,7 +2675,7 @@ func writeChunk(
 		}
 		h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
 		if err != nil {
-			return 0, totalBytes, errors.Trace(err)
+			return 0, totalBytes, 0, errors.Trace(err)
 		}
 		for i, index := range indexes {
 			// If the `IndexRecordChunk.conditionPushed` is true and we have only 1 index, the `indexConditionCheckers`
@@ -2664,7 +2683,7 @@ func writeChunk(
 			if index.Meta().HasCondition() && indexConditionCheckers != nil {
 				ok, err := indexConditionCheckers[i](row)
 				if err != nil {
-					return 0, 0, errors.Trace(err)
+					return 0, 0, 0, errors.Trace(err)
 				}
 				if !ok {
 					continue
@@ -2682,13 +2701,58 @@ func writeChunk(
 			kvBytes, err := writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
-				return 0, totalBytes, errors.Trace(err)
+				return 0, totalBytes, 0, errors.Trace(err)
 			}
 			totalBytes += int(kvBytes)
+
+			//sample and write to s3
+			if subStats != nil {
+				// fms
+				subStats.Fms.InsertIndexVal(loc, idxData[0])
+				// cnt, size
+				if idxData[0].IsNull() {
+					subStats.NullCnt++
+				} else {
+					subStats.NotNullCnt++
+					s, err := codec.EstimateValueSize(typeCtx, idxData[0])
+					if err != nil {
+						return 0, totalBytes, 0, errors.Trace(err)
+					}
+					subStats.TotalSize += int64(s)
+				}
+				// sample
+				if len(statsWriters) != 0 && sample(totalRowCnt) {
+					// logutil.DDLLogger().Info("sample index kv", zap.Int64("indexID", index.Meta().ID), zap.Int64("handle", handleDataBuf[0].GetInt64()))
+					_, err := writeOneKV(ctx, statsWriters[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+					if err != nil {
+						return 0, totalBytes, 0, errors.Trace(err)
+					}
+					sampled++
+				}
+			}
 		}
 		count++
 	}
-	return count, totalBytes, nil
+	return count, totalBytes, sampled, nil
+}
+
+func sample(rowCnt int) bool {
+	//sample 110000 of 49000000 the total rows
+	//return true
+	return rand.Intn(rowCnt) < 110000
+}
+
+func getTotalRowCnt(tbl *model.TableInfo) int {
+	s := strings.Split(tbl.Name.L, "rcnt")
+	if len(s) == 2 {
+		numStr := s[1]
+		num, err := strconv.ParseInt(numStr, 10, 64)
+		if err == nil {
+			return int(num)
+		}
+	}
+	logutil.DDLLogger().Warn("use default total row cnt")
+	return 49000000
 }
 
 func maxIndexColumnCount(indexes []table.Index) int {

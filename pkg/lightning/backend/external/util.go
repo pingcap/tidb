@@ -192,6 +192,7 @@ func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartiti
 	failpoint.Inject("skipCleanUpFiles", func() {
 		failpoint.Return(nil)
 	})
+	//return nil
 	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
 	if err != nil {
 		return err

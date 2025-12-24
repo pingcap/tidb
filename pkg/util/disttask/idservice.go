@@ -23,6 +23,10 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 )
 
+const (
+	StatsSampled = "sampleKV"
+)
+
 // GenerateExecID used to generate IP:port as exec_id value
 // This function is used by distributed task execution to generate serverID string to
 // correlated one subtask to on TiDB node to be executed.

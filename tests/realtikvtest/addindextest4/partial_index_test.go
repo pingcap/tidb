@@ -237,3 +237,20 @@ func TestPartialIndexDDL(t *testing.T) {
 			dbterror.ErrUnsupportedAddPartialIndex)
 	})
 }
+
+func TestAddIndex1(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = ON;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int primary key, b bigint);")
+	tk.MustExec("insert into t1 values (1, 2), (2, 3), (3, 4), (4,5);")
+	//for i := 1; i < 5; i++ {
+	//	tk.MustExec("insert into t1 values (?, ?);", i, i+1)
+	//}
+	tk.MustExec("alter table t1 add index idx_b(b)")
+	tk.MustExec("analyze table t1")
+	//tk.MustExec("analyze table t1 index idx_b")
+	tk.MustExec("drop table t1")
+}
