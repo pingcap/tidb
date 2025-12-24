@@ -20,6 +20,7 @@ import (
 	"hash"
 	"io"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -471,7 +472,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				if canSkip(physicalRowIndex) {
 					continue
 				}
-				strLen := len(column.GetBytes(physicalRowIndex)) * collator.MaxBytesOneCharacter()
+				strLen := utf8.RuneCountInString(string(column.GetBytes(physicalRowIndex))) * collator.MaxBytesOneCharacter()
 				serializedKeyLens[j] += sizeByteNum + strLen
 			}
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
@@ -530,7 +531,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 						str = enum.Name
 					}
 
-					serializedKeyLens[j] += int(sizeByteNum) + len(str)*collator.MaxBytesOneCharacter()
+					serializedKeyLens[j] += int(sizeByteNum) + utf8.RuneCountInString(str)*collator.MaxBytesOneCharacter()
 				}
 			}
 		case mysql.TypeSet:
@@ -550,7 +551,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 					return serializedKeyLens, continuousMem, err
 				}
 
-				serializedKeyLens[j] += int(sizeByteNum) + len(s.Name)*collator.MaxBytesOneCharacter()
+				serializedKeyLens[j] += int(sizeByteNum) + utf8.RuneCountInString(s.Name)*collator.MaxBytesOneCharacter()
 			}
 		case mysql.TypeBit:
 			signFlagLen := 0
