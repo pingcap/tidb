@@ -907,7 +907,7 @@ func (is *infoschemaV2) TableItemByID(tableID int64) (TableItem, bool) {
 	if !ok {
 		return TableItem{}, false
 	}
-	return TableItem{DBName: itm.dbName, TableName: itm.tableName}, true
+	return TableItem{DBName: itm.dbName, TableName: itm.tableName, TableID: itm.tableID}, true
 }
 
 // TableItem is exported from tableItem.
@@ -926,25 +926,28 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 	if !ok {
 		return
 	}
-	is.iterateAllTableItemsInternal(maxv, visit)
+	is.iterateAllTableItemsInternal(maxv, visit, nil)
 }
 
 // IterateAllTableItemsByDB is used for special performance optimization.
 // If visit return false, stop the iterate process.
 // NOTE: the output order is reversed by (dbName, tableName).
-func (is *infoschemaV2) IterateAllTableItemsByDB(dbID int64, visit func(TableItem) bool) {
-	first := &tableItem{dbID: dbID, tableID: math.MaxInt64, schemaVersion: math.MaxInt64}
-	is.iterateAllTableItemsInternal(first, visit)
+func (is *infoschemaV2) IterateAllTableItemsByDB(dbName ast.CIStr, visit func(TableItem) bool) {
+	first := &tableItem{dbName: dbName, tableName: ast.NewCIStr(strings.Repeat(string([]byte{0xff}), 64)), schemaVersion: math.MaxInt64}
+	is.iterateAllTableItemsInternal(first, visit, &dbName)
 }
 
-func (is *infoschemaV2) iterateAllTableItemsInternal(first *tableItem, visit func(TableItem) bool) {
+func (is *infoschemaV2) iterateAllTableItemsInternal(first *tableItem, visit func(TableItem) bool, targetDB *ast.CIStr) {
 	var pivot *tableItem
 	is.byName.Load().DescendLessOrEqual(first, func(item *tableItem) bool {
+		if targetDB != nil && item.dbName.L != targetDB.L {
+			return false
+		}
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
 		}
-		if pivot != nil && pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+		if pivot != nil && pivot.dbName.L == item.dbName.L && pivot.tableName.L == item.tableName.L {
 			// skip MVCC version, this db.table has been visited already
 			return true
 		}
@@ -1134,10 +1137,7 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 		if ok && db != nil {
 			tables := make([]*model.TableInfo, 0)
 			allInCache := true
-			is.IterateAllTableItemsByDB(db.ID, func(t TableItem) bool {
-				if t.DBName.L != schema.L {
-					return true
-				}
+			is.IterateAllTableItemsByDB(db.Name, func(t TableItem) bool {
 				tbl := is.tableFromCache(t.TableID)
 				if tbl == nil {
 					allInCache = false
@@ -1147,8 +1147,10 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 				return true
 			})
 			if allInCache {
-				// Reverse to make the order consistent with fetching from storage.
-				slices.Reverse(tables)
+				// Sort by ID to keep the order consistent with fetching from storage.
+				sort.Slice(tables, func(i, j int) bool {
+					return tables[i].ID < tables[j].ID
+				})
 				return tables, nil
 			}
 		}
