@@ -73,7 +73,22 @@ type ExtraParams struct {
 	// ManualRecovery indicates whether the task can be recovered manually.
 	// if enabled, the task will enter 'awaiting-resolution' state when it failed,
 	// then the user can recover the task manually or fail it if it's not recoverable.
-	ManualRecovery bool `json:"manual_recovery"`
+	ManualRecovery bool `json:"manual_recovery,omitempty"`
+	// MaxConcurrency is the max concurrency of the task when running subtasks
+	// in MaxConcSteps steps.
+	// normally it's 0, means it's not set, and we will use the RequiredSlots as
+	// the concurrency, if set, we will use the min of RequiredSlots and MaxConcurrency
+	// as the execution concurrency of the task step defined in MaxConcSteps.
+	// this field is used to workaround OOM issue where TiDB might repeatedly
+	// restart, so it's not part of the normal schedule workflow, and the DXF
+	// framework won't detect changes in this field, when TiDB restarts the newest
+	// value will be used.
+	MaxConcurrency int `json:"max_concurrency,omitempty"`
+	// MaxConcSteps indicates the steps that MaxConcurrency takes effect.
+	// if empty or nil, MaxConcurrency takes effect in all steps.
+	// normally OOM only happens in some specific steps, so we can just limit the
+	// concurrency in those steps to reduce the impact on the overall performance.
+	MaxConcSteps []Step `json:"max_conc_steps,omitempty"`
 }
 
 // TaskBase contains the basic information of a task.
