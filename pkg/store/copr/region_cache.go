@@ -99,35 +99,20 @@ func formatRanges(ranges *KeyRanges) zap.Field {
 	}))
 }
 
-// compareKeyRangeBoundary compares two key range boundaries where empty means ±infinity.
-// The isStart parameters indicate whether each key is a start boundary (-inf when empty)
-// or end boundary (+inf when empty).
+// compareKeyRangeBoundary compares two key range boundaries where empty end keys mean +infinity.
+// Empty start keys are handled naturally by bytes.Compare (empty < any non-empty).
+// The isStart parameters indicate whether each key is a start boundary or end boundary (+inf when empty).
 // Returns -1 if a < b, 0 if a == b, 1 if a > b.
 func compareKeyRangeBoundary(a, b []byte, aIsStart, bIsStart bool) int {
-	aEmpty, bEmpty := len(a) == 0, len(b) == 0
-	if aEmpty && bEmpty {
-		// Both infinite: -inf == -inf, +inf == +inf
-		if aIsStart == bIsStart {
+	if len(a) == 0 && !aIsStart {
+		if len(b) == 0 && !bIsStart {
 			return 0
 		}
-		// -inf < +inf
-		if aIsStart {
-			return -1
-		}
 		return 1
+	} else if len(b) == 0 && !bIsStart {
+		return -1
 	}
-	if aEmpty {
-		if aIsStart {
-			return -1 // -inf < any
-		}
-		return 1 // +inf > any
-	}
-	if bEmpty {
-		if bIsStart {
-			return 1 // any > -inf
-		}
-		return -1 // any < +inf
-	}
+
 	return bytes.Compare(a, b)
 }
 
@@ -148,9 +133,15 @@ func locContainsStartKey(loc *tikv.KeyLocation, key []byte) bool {
 }
 
 // locCoversEndKey checks if loc covers the end key (end key can equal loc.EndKey).
+// The end key must be > loc.StartKey and <= loc.EndKey.
 func locCoversEndKey(loc *tikv.KeyLocation, endKey []byte) bool {
 	if loc == nil {
 		return false
+	}
+	if len(endKey) > 0 && len(loc.StartKey) > 0 {
+		if bytes.Compare(endKey, loc.StartKey) <= 0 {
+			return false
+		}
 	}
 	// Empty endKey means +inf, needs loc.EndKey to also be +inf
 	if len(endKey) == 0 {
