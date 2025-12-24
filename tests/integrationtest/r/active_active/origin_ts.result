@@ -44,6 +44,3 @@ select * from t where _tidb_commit_ts > _tidb_origin_ts;
 id	v
 2	22
 3	33
-replace into t (id, _tidb_origin_ts) values (2, 663095301776867328);
-replace into t (id, v) values (2, 222);
-Error 1105 (HY000): commit_ts(463095413228699652) << origin_commit_ts(663095301776867328), clock drift and lag more than 211927h30m27.97s

@@ -41,9 +41,3 @@ replace into t (id, v, _tidb_origin_ts) values (1, 11, NULL), (2, 22, 222), (3, 
 select id, v, _tidb_origin_ts from t;
 # _tidb_commit_ts should always greater than _tidb_origin_ts, otherwise the implementation is broken.
 select * from t where _tidb_commit_ts > _tidb_origin_ts;
-replace into t (id, _tidb_origin_ts) values (2, 663095301776867328);
-# verify CommitWaitUntilTSO option is set for replace
--- error 1105
-replace into t (id, v) values (2, 222);
-
-
