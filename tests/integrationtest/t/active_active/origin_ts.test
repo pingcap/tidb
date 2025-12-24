@@ -1,0 +1,49 @@
+create table t (id int primary key, v int) softdelete retention 7 day, active_active = 'on';
+insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205);
+
+# When duplicate key update involves multiple rows, the conflict rows should update their origin ts to <nil>
+insert into t (id, v) values (2, 22), (3, 33), (4, 44) on duplicate key update v = 42;
+select id, v, _tidb_origin_ts from t where id in (1, 2, 3, 4);
+
+# reset
+truncate table t;
+insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205);
+
+# insert _tidb_origin_ts is leagal
+# when conflict, _tidb_origin_ts should not be updated?
+insert into t (id, _tidb_origin_ts) values (1, 11111111) on duplicate key update v = 42;
+select id, v, _tidb_origin_ts from t where id = 1;
+
+# on duplicate, update _tidb_origin_ts is leagal, and _tidb_origin_ts should be updated
+insert into t (id, v) values (2, 22) on duplicate key update _tidb_origin_ts = 22222222;
+select id, v, _tidb_origin_ts from t where id = 2;
+
+# reset
+truncate table t;
+insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205);
+create table t1 (id int primary key, v int) softdelete retention 7 day, active_active = 'on';
+insert into t1 (id, v) values (1, 101);
+
+# update join involve multiple tables, all _tidb_origin_ts should be updated
+update t, t1 set t.v = t1.v, t1.v = 666 where t.id = t1.id;
+select id, v, _tidb_origin_ts from t where id = 1;
+select id, v, _tidb_origin_ts from t1 where id = 1;
+
+# update join _tidb_origin_ts is leagal, and _tidb_origin_ts should be updated
+update t, t1 set t1._tidb_origin_ts = 9876543 where t.id = t1.id;
+select id, v, _tidb_origin_ts from t1 where id = 1;
+
+# reset
+truncate table t;
+insert into t (id, v) values (1, 1), (2, 2), (3, 3);
+# if _tidb_origin_ts is set, it should be used.
+replace into t (id, v, _tidb_origin_ts) values (1, 11, NULL), (2, 22, 222), (3, 33, 333);
+select id, v, _tidb_origin_ts from t;
+# _tidb_commit_ts should always greater than _tidb_origin_ts, otherwise the implementation is broken.
+select * from t where _tidb_commit_ts > _tidb_origin_ts;
+replace into t (id, _tidb_origin_ts) values (2, 663095301776867328);
+# verify CommitWaitUntilTSO option is set for replace
+-- error 1105
+replace into t (id, v) values (2, 222);
+
+
