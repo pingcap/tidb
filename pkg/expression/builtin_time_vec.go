@@ -102,7 +102,7 @@ func (b *builtinDateSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result
 			continue
 		}
 		// for issue 59417, should return NULL when month or day is zero and sql_mode contains NO_ZERO_IN_DATE
-		if times[i].Year() != 0 && times[i].InvalidZero() && sqlMode(ctx).HasNoZeroInDateMode() {
+		if !times[i].IsZero() && times[i].InvalidZero() && sqlMode(ctx).HasNoZeroInDateMode() {
 			if err := handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
 				return err
 			}

@@ -3419,49 +3419,52 @@ Error 1426 (42000): Too-big precision 2147483647 specified for 'utc_timestamp'. 
 SELECT UTC_TIMESTAMP(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
 set sql_mode = 'NO_ZERO_IN_DATE';
-SELECT DATE('2024-00-15');
-DATE('2024-00-15')
-NULL
+select date(0), date('0000-00-00');
+date(0)	date('0000-00-00')
+0000-00-00	0000-00-00
 show warnings;
 Level	Code	Message
-Warning	1292	Incorrect datetime value: '2024-00-15 00:00:00.000000'
-SELECT DATE('2024-12-0');
-DATE('2024-12-0')
-NULL
+select date('0000-00-01'), date('0000-12-00'), date('2024-00-00');
+date('0000-00-01')	date('0000-12-00')	date('2024-00-00')
+NULL	NULL	NULL
 show warnings;
 Level	Code	Message
-Warning	1292	Incorrect datetime value: '2024-12-00 00:00:00.000000'
-SELECT DATE('2024-00-00');
-DATE('2024-00-00')
-NULL
-show warnings;
-Level	Code	Message
+Warning	1292	Incorrect datetime value: '0000-00-01 00:00:00.000000'
+Warning	1292	Incorrect datetime value: '0000-12-00 00:00:00.000000'
 Warning	1292	Incorrect datetime value: '2024-00-00 00:00:00.000000'
-SELECT DATE(0);
-DATE(0)
-0000-00-00
+select date('0000-12-01'), date('2024-00-01'), date('2024-12-00');
+date('0000-12-01')	date('2024-00-01')	date('2024-12-00')
+0000-12-01	NULL	NULL
 show warnings;
 Level	Code	Message
-SELECT DATE('0000-00-00');
-DATE('0000-00-00')
-0000-00-00
+Warning	1292	Incorrect datetime value: '2024-00-01 00:00:00.000000'
+Warning	1292	Incorrect datetime value: '2024-12-00 00:00:00.000000'
+select date('2024-12-01');
+date('2024-12-01')
+2024-12-01
 show warnings;
 Level	Code	Message
 drop table if exists t;
 create table t(test_date DATETIME);
 SET sql_mode = '';
-INSERT INTO t VALUES ('2024-00-15'),('2024-12-0'),('2024-00-00'),('2024-12-15'),(0),('0000-00-00');
+INSERT INTO t VALUES (0),('0000-00-00'),('0000-00-01'),('0000-12-00'),('2024-00-00'),('0000-12-01'),('2024-00-01'),('2024-12-00'),('2024-12-01');
 SET sql_mode = 'NO_ZERO_IN_DATE';
 SELECT DATE(test_date) FROM t;
 DATE(test_date)
-NULL
-NULL
-NULL
-2024-12-15
 0000-00-00
 0000-00-00
+NULL
+NULL
+NULL
+0000-12-01
+NULL
+NULL
+2024-12-01
 show warnings;
 Level	Code	Message
-Warning	1292	Incorrect datetime value: '2024-00-15 00:00:00'
-Warning	1292	Incorrect datetime value: '2024-12-00 00:00:00'
+Warning	1292	Incorrect datetime value: '0000-00-01 00:00:00'
+Warning	1292	Incorrect datetime value: '0000-12-00 00:00:00'
 Warning	1292	Incorrect datetime value: '2024-00-00 00:00:00'
+Warning	1292	Incorrect datetime value: '2024-00-01 00:00:00'
+Warning	1292	Incorrect datetime value: '2024-12-00 00:00:00'
+drop table if exists t;
