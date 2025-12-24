@@ -45,18 +45,21 @@ func TestImportTaskExecutor(t *testing.T) {
 	require.NotNil(t, executor.BaseTaskExecutor.Extension)
 	require.True(t, executor.IsIdempotent(&proto.Subtask{}))
 
+	taskMeta := []byte(`{"Plan":{"TableInfo":{}}}`)
 	for _, step := range []proto.Step{
 		proto.ImportStepImport,
 		proto.ImportStepEncodeAndSort,
 		proto.ImportStepMergeSort,
 		proto.ImportStepWriteAndIngest,
 		proto.ImportStepPostProcess,
+		proto.ImportStepCollectConflicts,
+		proto.ImportStepConflictResolution,
 	} {
-		exe, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: step}, Meta: []byte("{}")})
+		exe, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: step}, Meta: taskMeta})
 		require.NoError(t, err)
 		require.NotNil(t, exe)
 	}
-	_, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.StepInit}, Meta: []byte("{}")})
+	_, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.StepInit}, Meta: taskMeta})
 	require.Error(t, err)
 	_, err = executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}, Meta: []byte("")})
 	require.Error(t, err)

@@ -4144,7 +4144,19 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	ses[0].GetSessionVars().InRestrictedSQL = true
+	// Mark all bootstrap sessions as restricted since they are used for internal operations
+	// ses[0]: main bootstrap session
+	// ses[1-2]: reserved
+	// ses[3]: privilege loading
+	// ses[4]: sysvar cache
+	// ses[5]: telemetry, expression pushdown
+	// ses[6]: plan replayer collector
+	// ses[7]: dump file GC
+	// ses[8]: historical stats
+	// ses[9]: bootstrap SQL file
+	for i := range ses {
+		ses[i].GetSessionVars().InRestrictedSQL = true
+	}
 
 	// get system tz from mysql.tidb
 	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
@@ -4388,6 +4400,12 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
 		upgrade(s)
+	case ddl.Normal:
+		// We need to init MDL variable before start the domain to prevent potential stuck issue
+		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
+		if err := InitMDLVariable(store); err != nil {
+			logutil.BgLogger().Fatal("init metadata lock failed during normal startup", zap.Error(err))
+		}
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
