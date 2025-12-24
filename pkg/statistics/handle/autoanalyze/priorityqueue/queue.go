@@ -621,6 +621,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 }
 
 // RequeueMustRetryJobs requeues the must retry jobs.
+// Exported for testing.
 func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -724,19 +725,6 @@ func (pq *AnalysisPriorityQueue) GetRunningJobs() map[int64]struct{} {
 		runningJobs[id] = struct{}{}
 	}
 	return runningJobs
-}
-
-// Push pushes a job into the priority queue.
-// NOTE: This function is thread-safe.
-// Exported for testing.
-func (pq *AnalysisPriorityQueue) Push(job AnalysisJob) error {
-	pq.syncFields.mu.Lock()
-	defer pq.syncFields.mu.Unlock()
-	if !pq.syncFields.initialized {
-		return errors.New(notInitializedErrMsg)
-	}
-
-	return pq.pushWithoutLock(job)
 }
 
 func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {

@@ -42,11 +42,6 @@ func TestCallAPIBeforeInitialize(t *testing.T) {
 		require.False(t, isEmpty)
 	})
 
-	t.Run("Push", func(t *testing.T) {
-		err := pq.Push(nil)
-		require.Error(t, err)
-	})
-
 	t.Run("Pop", func(t *testing.T) {
 		poppedJob, err := pq.Pop()
 		require.Error(t, err)
