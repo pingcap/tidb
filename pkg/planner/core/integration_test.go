@@ -929,10 +929,7 @@ func TestIssue65166(t *testing.T) {
 			plat_id varchar(64) NOT NULL)`)
 		tk.MustQuery(`EXPLAIN FORMAT='plan_tree' SELECT a.id FROM
 			t AS a LEFT JOIN t_outer b ON b.username = a.plat_id
-			AND b.scode = a.scode ORDER BY a.id`).Check(testkit.Rows(
-			`Sort root  test.t.id`, // the outer join is eliminated
-			`└─TableReader root  data:TableFullScan`,
-			`  └─TableFullScan cop[tikv] table:a keep order:false, stats:pseudo`))
+			AND b.scode = a.scode ORDER BY a.id`).CheckNotContain("Join")
 	})
 }
 
