@@ -87,7 +87,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) (_ []base
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
 	taskTypes = admitIndexJoinTypes(taskTypes, prop)
-	if prop.TaskTp != property.RootTaskType &&lp.SCtx().GetSessionVars().IsMPPEnforced() && (canPushDownToMPP || prop.IsFlashProp()) {
+	if prop.TaskTp != property.RootTaskType && lp.SCtx().GetSessionVars().IsMPPEnforced() && (canPushDownToMPP || prop.IsFlashProp()) {
 		for _, taskTp := range taskTypes {
 			if taskTp == property.MppTaskType {
 				mppAggs := tryToGetMppHashAggs(la, prop)
