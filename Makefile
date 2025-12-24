@@ -356,7 +356,15 @@ tools/bin/revive:
 
 .PHONY: tools/bin/failpoint-ctl
 tools/bin/failpoint-ctl:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@9b3b6e3
+	$(eval FP_GITHASH := 9b3b6e3)
+	$(eval FP_PKG := github.com/pingcap/failpoint/failpoint-ctl)
+	$(eval FP_BIN := $(CURDIR)/tools/bin/failpoint-ctl)
+	@if [ ! -x "$(FP_BIN)" ] || [ "$$($(GO) version -m $(FP_BIN) 2>/dev/null | grep -o '$(FP_GITHASH)' || echo unknown)" != "$(FP_GITHASH)" ]; then \
+		echo "Installing $(FP_PKG)@$(FP_GITHASH)"; \
+		GOBIN=$$(pwd)/tools/bin $(GO) install $(FP_PKG)@$(FP_GITHASH) || { echo "failed to install $(FP_PKG)@$(FP_GITHASH)"; exit 1; }; \
+	else \
+		echo "Installed $(FP_PKG)@$(FP_GITHASH)"; \
+	fi
 
 .PHONY: tools/bin/errdoc-gen
 tools/bin/errdoc-gen:
