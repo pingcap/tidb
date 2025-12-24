@@ -500,14 +500,10 @@
         "SQL": "EXPLAIN format='brief' SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a); -- 1. hint use MERGE_JOIN",
         "Plan": [
           "MergeJoin 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
-          "├─Sort(Build) 10000.00 root  test.s.a",
-          "│ └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "│   └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│     └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "└─Sort(Probe) 10000.00 root  test.t.a",
-          "  └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
@@ -517,36 +513,31 @@
       {
         "SQL": "EXPLAIN format='brief' SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a; -- 2. hint use INL_JOIN",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
-          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "IndexJoin 12500.00 root  inner join, inner:TableReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "[planner:1815]Optimizer Hint /*+ INL_JOIN(t, s) */ or /*+ TIDB_INLJ(t, s) */ is inapplicable"
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
       {
         "SQL": "EXPLAIN format='brief' SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 12500.00 mpp[tiflash]  test.t.a",
-          "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
-          "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "IndexHashJoin 12500.00 root  inner join, inner:TableReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "[planner:1815]Optimizer Hint /*+ INL_HASH_JOIN(t, s) */ is inapplicable"
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
       {
@@ -679,13 +670,11 @@
       {
         "SQL": "explain format='brief' select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
         "Plan": [
-          "HashJoin 8000.00 root  anti semi join, left side:TableReader, equal:[eq(test.t.a, test.s.a)], left cond:[lt(test.t.a, 1)]",
-          "├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "MergeJoin 8000.00 root  anti semi join, left side:TableReader, left key:test.t.a, right key:test.s.a, left cond:lt(test.t.a, 1)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.",
