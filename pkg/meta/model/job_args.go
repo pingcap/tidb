@@ -1608,10 +1608,10 @@ func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 
 func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
 	var (
-		indexName              ast.CIStr
-		indexPartSpecification *ast.IndexPartSpecification
+		indexName               ast.CIStr
+		indexPartSpecification  *ast.IndexPartSpecification
 		indexPartSpecifications []*ast.IndexPartSpecification
-		indexOption            *ast.IndexOption
+		indexOption             *ast.IndexOption
 	)
 
 	if err := job.decodeArgs(
@@ -1633,10 +1633,10 @@ func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
 
 func (a *ModifyIndexArgs) decodeAddHybridIndexV1(job *Job) error {
 	var (
-		indexName              ast.CIStr
-		indexPartSpecification *ast.IndexPartSpecification
+		indexName               ast.CIStr
+		indexPartSpecification  *ast.IndexPartSpecification
 		indexPartSpecifications []*ast.IndexPartSpecification
-		indexOption            *ast.IndexOption
+		indexOption             *ast.IndexOption
 	)
 
 	if err := job.decodeArgs(
