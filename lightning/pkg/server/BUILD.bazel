@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "server",
     srcs = [
+        "checkpoint_control.go",
         "lightning.go",
         "run_options.go",
         "sigusr1_other.go",
@@ -17,10 +18,12 @@ go_library(
         "//lightning/pkg/importer",
         "//lightning/pkg/web",
         "//pkg/expression",
+        "//pkg/lightning/backend",
         "//pkg/lightning/backend/local",
         "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
+        "//pkg/lightning/importinto",
         "//pkg/lightning/log",
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",
@@ -51,17 +54,19 @@ go_test(
     name = "server_test",
     timeout = "short",
     srcs = [
+        "checkpoint_control_test.go",
         "lightning_serial_test.go",
         "lightning_server_serial_test.go",
         "main_test.go",
     ],
     embed = [":server"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 10,
     deps = [
         "//lightning/pkg/web",
         "//pkg/lightning/checkpoints",
         "//pkg/lightning/config",
+        "//pkg/lightning/importinto/mock",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
@@ -69,5 +74,6 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
     ],
 )

@@ -1026,31 +1026,6 @@ func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) e
 	return nil
 }
 
-// CheckpointRemove removes the checkpoint of the given table.
-func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	//nolint: errcheck
-	defer cpdb.Close()
-
-	// try to remove the metadata first.
-	taskCp, err := cpdb.TaskCheckpoint(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// a empty id means this task is not inited, we needn't further check metas.
-	if taskCp != nil && taskCp.TaskID != 0 {
-		// try to clean up table metas if exists
-		if err = CleanupMetas(ctx, cfg, tableName); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return errors.Trace(cpdb.RemoveCheckpoint(ctx, tableName))
-}
-
 // CleanupMetas removes the table metas of the given table.
 func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
 	if tableName == "all" {
