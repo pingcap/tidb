@@ -239,7 +239,7 @@ func checkRangesCovered(ctx context.Context, kvRanges []tikv.KeyRange, locs []*t
 				zap.Int("locIndex", locIdx),
 				zap.Int("totalLocs", len(locs)))
 			if locIdx < len(locs) && locs[locIdx] != nil {
-				logutil.Logger(ctx).Warn("[validateLocationCoverage] nearest location",
+				logutil.Logger(ctx).Warn("[validateLocationCoverage] next location",
 					zap.Uint64("regionID", locs[locIdx].Region.GetID()),
 					keyField("locStart", locs[locIdx].StartKey),
 					keyField("locEnd", locs[locIdx].EndKey))
