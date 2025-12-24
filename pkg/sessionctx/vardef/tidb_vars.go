@@ -1404,7 +1404,7 @@ const (
 	DefOptRiskGroupNDVSkewRatio             = 0.0
 	DefOptAlwaysKeepJoinKey                 = true
 	DefOptCartesianJoinOrderThreshold       = 0.0
-	DefOptOrderingPreservingJoinDiscount    = 0.95
+	DefOptOrderingPreservingJoinDiscount    = 1.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0
