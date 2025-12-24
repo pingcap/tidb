@@ -560,17 +560,19 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val kv.V
 	if e.Ctx().GetSessionVars().IsPessimisticReadConsistency() {
 		// Only Lock the existing keys in RC isolation.
 		if e.lock {
-			_, err = e.lockKeyIfExists(ctx, key)
+			tmp, err := e.lockKeyIfExists(ctx, key)
 			if err != nil {
 				return kv.ValueEntry{}, err
 			}
-		} else {
-			val, err = e.get(ctx, key)
-			if err != nil {
-				if !kv.ErrNotExist.Equal(err) {
-					return val, err
-				}
-				return val, nil
+			if e.commitTSOffset < 0 {
+				return kv.ValueEntry{Value: tmp}, nil
+			}
+		}
+
+		val, err = e.get(ctx, key)
+		if err != nil {
+			if !kv.ErrNotExist.Equal(err) {
+				return val, err
 			}
 		}
 		return val, nil
