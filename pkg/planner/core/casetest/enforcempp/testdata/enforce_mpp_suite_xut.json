@@ -214,9 +214,9 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t where a=1 -- 1. no replica",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#6",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -231,10 +231,10 @@
       {
         "SQL": "explain select count(*) from t where a=1 -- 2. replica not ready",
         "Plan": [
-          "HashAgg_11 1.00 root  funcs:count(Column#7)->Column#6",
-          "└─IndexReader_12 1.00 root  index:HashAgg_7",
-          "  └─HashAgg_7 1.00 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan_10 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_18 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─IndexReader_19 1.00 root  index:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─IndexRangeScan_17 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because tiflash replicas of table `t` not ready."
@@ -253,10 +253,10 @@
       {
         "SQL": "explain select count(*) from t where a=1 -- 3. isolation_engine not match",
         "Plan": [
-          "HashAgg_11 1.00 root  funcs:count(Column#7)->Column#6",
-          "└─IndexReader_12 1.00 root  index:HashAgg_7",
-          "  └─HashAgg_7 1.00 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan_10 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_18 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─IndexReader_19 1.00 root  index:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─IndexRangeScan_17 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tikv') not match, need 'tiflash'."
@@ -270,9 +270,9 @@
       {
         "SQL": "explain format = 'brief' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1 -- 4. hint use tikv",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#6",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -313,7 +313,7 @@
       {
         "SQL": "EXPLAIN format = 'brief' SELECT count(b) from t where a=1; -- 7. agg func has virtual column",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(test.t.b)->Column#6",
+          "StreamAgg 1.00 root  funcs:count(test.t.b)->Column#6",
           "└─Projection 10.00 root  test.t.b",
           "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -321,6 +321,8 @@
         ],
         "Warn": [
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "MPP mode may be blocked because column `test.t.b` is a virtual column which is not supported now.",
+          "MPP mode may be blocked because column `test.t.b` is a virtual column which is not supported now.",
           "MPP mode may be blocked because column `test.t.b` is a virtual column which is not supported now.",
           "MPP mode may be blocked because column `test.t.b` is a virtual column which is not supported now.",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now"
@@ -360,7 +362,7 @@
       {
         "SQL": "EXPLAIN format = 'brief' SELECT count(a) from t where c=1; -- 11. type not supported",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(test.t.a)->Column#6",
+          "StreamAgg 1.00 root  funcs:count(test.t.a)->Column#6",
           "└─TableReader 10.00 root  data:Projection",
           "  └─Projection 10.00 cop[tikv]  test.t.a",
           "    └─Selection 10.00 cop[tikv]  eq(test.t.c, 1)",
@@ -374,19 +376,29 @@
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'."
         ]
       },
       {
         "SQL": "EXPLAIN format = 'brief' SELECT count(a) from t where d=1; -- 11.1. type not supported",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(test.t.a)->Column#6",
+          "StreamAgg 1.00 root  funcs:count(test.t.a)->Column#6",
           "└─TableReader 10.00 root  data:Projection",
           "  └─Projection 10.00 cop[tikv]  test.t.a",
           "    └─Selection 10.00 cop[tikv]  eq(test.t.d, 1)",
           "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
