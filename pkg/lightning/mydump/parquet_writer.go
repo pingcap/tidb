@@ -37,16 +37,18 @@ type ParquetColumn struct {
 	Gen       func(numRows int) (any, []int16)
 }
 
-// WriteWrapper implements io.WriteCloser interface.
+// WriteCloserWrapper implements io.WriteCloser interface.
 // Exported for test.
 type WriteCloserWrapper struct {
 	Writer storage.ExternalFileWriter
 }
 
+// Write implements io.Writer interface.
 func (w *WriteCloserWrapper) Write(b []byte) (int, error) {
 	return w.Writer.Write(context.Background(), b)
 }
 
+// Close implements io.Closer interface.
 func (w *WriteCloserWrapper) Close() error {
 	return w.Writer.Close(context.Background())
 }
