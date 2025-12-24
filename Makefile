@@ -363,7 +363,7 @@ tools/bin/failpoint-ctl:
 		echo "Installing $(FP_PKG)@$(FP_GITHASH)"; \
 		GOBIN=$$(pwd)/tools/bin $(GO) install $(FP_PKG)@$(FP_GITHASH) || { echo "failed to install $(FP_PKG)@$(FP_GITHASH)"; exit 1; }; \
 	else \
-		echo "Installed $(FP_PKG)@$(FP_GITHASH)"; \
+		echo "Using existing $(FP_PKG)@$(FP_GITHASH)"; \
 	fi
 
 .PHONY: tools/bin/errdoc-gen
