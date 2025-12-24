@@ -41,6 +41,8 @@ rollback;
 begin;
 --replace_regex /^[1-9][0-9]+/TSO/
 select _tidb_commit_ts, v from t where id = 2 for update;
+--replace_regex /^[1-9][0-9]+/TSO/
+select _tidb_commit_ts, v from t where id in (1, 2) for update;
 
 # on temporary table, cached table
 create temporary table tmp (id int primary key, v int);
