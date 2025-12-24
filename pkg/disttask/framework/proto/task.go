@@ -90,12 +90,13 @@ type TaskBase struct {
 	// RequiredSlots is the required slots of the task, i.e. the max number of
 	// slots the task can use on each node.
 	// normally it also works as the task concurrency.
-	// Note: in the system table, we store it inside 'concurrency' column due to
-	// historical reason.
+	// Note: in the system table, we store it inside 'concurrency' column as
+	// required slots is introduced later.
 	RequiredSlots int
 	// TargetScope indicates that the task should be running on tidb nodes which
 	// contain the tidb_service_scope=TargetScope label.
-	// To be compatible with previous version, if it's "" or "background", the task try run on nodes of "background" scope,
+	// To be compatible with previous version, if it's "" or "background", the
+	// task try run on nodes of "background" scope,
 	// if there is no such nodes, will try nodes of "" scope.
 	TargetScope  string
 	CreateTime   time.Time
