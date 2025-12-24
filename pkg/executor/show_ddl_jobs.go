@@ -301,7 +301,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 
 func showCommentsFromJob(job *model.Job) string {
 	var labels []string
-	if job.MayNeedReorg() {
+	isAddingIndex := job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionAddPrimaryKey
+	if job.MayNeedReorg() && !(isAddingIndex && kerneltype.IsNextGen()) {
 		labels = append(labels, "need reorg")
 	}
 	if job.ReorgMeta != nil && job.ReorgMeta.IsValidating {
@@ -320,8 +322,6 @@ func showCommentsFromJob(job *model.Job) string {
 		labels = append(labels, "analyze_timeout")
 	default:
 	}
-	isAddingIndex := job.Type == model.ActionAddIndex ||
-		job.Type == model.ActionAddPrimaryKey
 	if isAddingIndex && kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
 		return strings.Join(labels, ", ")
@@ -367,8 +367,10 @@ func showCommentsFromJob(job *model.Job) string {
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	var labels []string
+	isAddingIndex := sub.Type == model.ActionAddIndex ||
+		sub.Type == model.ActionAddPrimaryKey
 	proxy := model.Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
-	if proxy.MayNeedReorg() {
+	if proxy.MayNeedReorg() && !(isAddingIndex && kerneltype.IsNextGen()) {
 		labels = append(labels, "need reorg")
 	}
 	// Note: We don't have IsValidating in SubJob yet, but MultiSchemaChange
