@@ -150,8 +150,8 @@ type baseJoinProbe struct {
 
 	probeCollision uint64
 
-	serializedKeysLens []int
-	continuousMem      []byte
+	serializedKeysBuffer []int
+	continuousMem        []byte
 }
 
 func (j *baseJoinProbe) GetProbeCollision() uint64 {
@@ -251,7 +251,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 
-	j.serializedKeysLens, j.continuousMem, err = codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.serializedKeysLens, j.continuousMem)
+	j.serializedKeysBuffer, j.continuousMem, err = codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.serializedKeysBuffer, j.continuousMem)
 	if err != nil {
 		return err
 	}
@@ -337,23 +337,16 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 
-	if cap(j.serializedKeysLens) < logicalRowCount {
-		j.serializedKeysLens = make([]int, logicalRowCount)
+	if cap(j.serializedKeysBuffer) < logicalRowCount {
+		j.serializedKeysBuffer = make([]int, logicalRowCount)
 	} else {
-		j.serializedKeysLens = j.serializedKeysLens[:logicalRowCount]
-	}
-
-	for i := range j.serializedKeysLens {
-		j.serializedKeysLens[i] = 0
+		clear(j.serializedKeysBuffer)
+		j.serializedKeysBuffer = j.serializedKeysBuffer[:logicalRowCount]
 	}
 
 	if cap(j.serializedKeys) >= logicalRowCount {
 		clear(j.serializedKeys[:])
 		j.serializedKeys = j.serializedKeys[:logicalRowCount]
-		for i := range logicalRowCount {
-			clear(j.serializedKeys[i][:])
-			j.serializedKeys[i] = nil
-		}
 	} else {
 		j.serializedKeys = make([][]byte, logicalRowCount)
 	}
@@ -368,7 +361,7 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		if !j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
 			keyLen := serializedKeysCol.GetRawLength(idx)
-			j.serializedKeysLens[idx] = keyLen
+			j.serializedKeysBuffer[idx] = keyLen
 			totalMemUsage += keyLen
 		}
 	}
@@ -381,7 +374,7 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 
 	start := 0
 	for _, idx := range j.usedRows {
-		keyLen := j.serializedKeysLens[idx]
+		keyLen := j.serializedKeysBuffer[idx]
 		j.serializedKeys[idx] = j.continuousMem[start : start : start+keyLen]
 		start += keyLen
 	}

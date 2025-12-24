@@ -68,6 +68,16 @@ func (*gbkChineseCICollator) MaxBytesOneCharacter() int {
 	return 4
 }
 
+// GetCharacterNumForString returns number of character for string type
+func (*gbkChineseCICollator) GetCharacterNumForString(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
+// GetCharacterNumForBytes returns number of character for []byte type
+func (*gbkChineseCICollator) GetCharacterNumForBytes(b []byte) int {
+	return utf8.RuneCount(b)
+}
+
 // Pattern implements Collator interface.
 func (*gbkChineseCICollator) Pattern() WildcardPattern {
 	return &gbkChineseCIPattern{}

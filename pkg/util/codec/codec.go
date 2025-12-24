@@ -20,7 +20,6 @@ import (
 	"hash"
 	"io"
 	"time"
-	"unicode/utf8"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -431,10 +430,8 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 	if cap(serializedKeyLens) < rowNum {
 		serializedKeyLens = make([]int, rowNum)
 	} else {
+		clear(serializedKeyLens)
 		serializedKeyLens = serializedKeyLens[:rowNum]
-		for i := range rowNum {
-			serializedKeyLens[i] = 0
-		}
 	}
 
 	for i, idx := range buildKeyIndex {
@@ -472,7 +469,15 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				if canSkip(physicalRowIndex) {
 					continue
 				}
-				strLen := utf8.RuneCount(column.GetBytes(physicalRowIndex)) * collator.MaxBytesOneCharacter()
+				strLen := collator.GetCharacterNumForBytes(column.GetBytes(physicalRowIndex)) * collator.MaxBytesOneCharacter()
+				// TODOnote strLen := utf8.RuneCount(column.GetBytes(physicalRowIndex)) * collator.MaxBytesOneCharacter()
+				data := collator.ImmutableKey(string(hack.String(column.GetBytes(physicalRowIndex))))
+				if len(data) > strLen {
+					// TODO note delete this if branch
+					strLen = collator.GetCharacterNumForBytes(column.GetBytes(physicalRowIndex)) * collator.MaxBytesOneCharacter()
+					data = collator.ImmutableKey(string(hack.String(column.GetBytes(physicalRowIndex))))
+					panic("123")
+				}
 				serializedKeyLens[j] += sizeByteNum + strLen
 			}
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
@@ -531,7 +536,8 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 						str = enum.Name
 					}
 
-					serializedKeyLens[j] += int(sizeByteNum) + utf8.RuneCountInString(str)*collator.MaxBytesOneCharacter()
+					serializedKeyLens[j] += int(sizeByteNum) + collator.GetCharacterNumForString(str)*collator.MaxBytesOneCharacter()
+					// TODOnote serializedKeyLens[j] += int(sizeByteNum) + utf8.RuneCountInString(str)*collator.MaxBytesOneCharacter()
 				}
 			}
 		case mysql.TypeSet:
@@ -551,7 +557,8 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 					return serializedKeyLens, continuousMem, err
 				}
 
-				serializedKeyLens[j] += int(sizeByteNum) + utf8.RuneCountInString(s.Name)*collator.MaxBytesOneCharacter()
+				serializedKeyLens[j] += int(sizeByteNum) + collator.GetCharacterNumForString(s.Name)*collator.MaxBytesOneCharacter()
+				// TODOnote serializedKeyLens[j] += int(sizeByteNum) + utf8.RuneCountInString(s.Name)*collator.MaxBytesOneCharacter()
 			}
 		case mysql.TypeBit:
 			signFlagLen := 0

@@ -112,6 +112,16 @@ func (*gb18030BinCollator) MaxBytesOneCharacter() int {
 	return 4
 }
 
+// GetCharacterNumForString returns number of character for string type
+func (*gb18030BinCollator) GetCharacterNumForString(s string) int {
+	return len(s)
+}
+
+// GetCharacterNumForBytes returns number of character for []byte type
+func (*gb18030BinCollator) GetCharacterNumForBytes(b []byte) int {
+	return len(b)
+}
+
 // Pattern implements Collator interface.
 func (*gb18030BinCollator) Pattern() WildcardPattern {
 	return &gb18030BinPattern{}

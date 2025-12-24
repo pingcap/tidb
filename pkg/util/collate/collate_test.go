@@ -166,17 +166,6 @@ func TestRewriteAndRestoreCollationID(t *testing.T) {
 	require.Equal(t, int32(-5), RestoreCollationIDIfNeeded(-5))
 }
 
-func TestDebug(t *testing.T) {
-	c1 := GetCollator("utf8mb4_general_ci")
-	c2 := GetCollator(charset.CollationGBKChineseCI)
-
-	s := "aaa"
-	b := c1.ImmutableKey(s)
-	fmt.Println(len(s), len(b))
-	b = c2.ImmutableKey(s)
-	fmt.Println(len(s), len(b))
-}
-
 func TestGetCollator(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)

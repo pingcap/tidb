@@ -50,6 +50,16 @@ func (*binCollator) MaxBytesOneCharacter() int {
 	return 1
 }
 
+// GetCharacterNumForString returns number of character for string type
+func (*binCollator) GetCharacterNumForString(s string) int {
+	return len(s)
+}
+
+// GetCharacterNumForBytes returns number of character for []byte type
+func (*binCollator) GetCharacterNumForBytes(b []byte) int {
+	return len(b)
+}
+
 // Pattern implements Collator interface.
 func (*binCollator) Pattern() WildcardPattern {
 	return &binPattern{}
@@ -93,6 +103,16 @@ func (*binPaddingCollator) KeyWithoutTrimRightSpace(str string) []byte {
 // MaxBytesOneCharacter implements Collator interface.
 func (*binPaddingCollator) MaxBytesOneCharacter() int {
 	return 4
+}
+
+// GetCharacterNumForString returns number of character for string type
+func (*binPaddingCollator) GetCharacterNumForString(s string) int {
+	return len(s)
+}
+
+// GetCharacterNumForBytes returns number of character for []byte type
+func (*binPaddingCollator) GetCharacterNumForBytes(b []byte) int {
+	return len(b)
 }
 
 // Pattern implements Collator interface.
