@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	h "github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/slice"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -88,8 +88,19 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	}
 	taskTypes = admitIndexJoinTypes(taskTypes, prop)
 	if lp.SCtx().GetSessionVars().IsMPPEnforced() && (canPushDownToMPP || prop.IsFlashProp()) {
-		taskTypes = slice.Filter(taskTypes, func(taskType property.TaskType) bool {
-			return taskType == property.MppTaskType
+		for _, taskTp := range taskTypes {
+			if taskTp == property.MppTaskType {
+				mppAggs := tryToGetMppHashAggs(la, prop)
+				if len(mppAggs) > 0 {
+					hashAggs = append(hashAggs, mppAggs...)
+				}
+			}
+		}
+		if len(hashAggs) > 0 {
+			return hashAggs
+		}
+		taskTypes = sliceutil.Filter(taskTypes, func(taskType property.TaskType) bool {
+			return taskType != property.MppTaskType
 		})
 	}
 	for _, taskTp := range taskTypes {
