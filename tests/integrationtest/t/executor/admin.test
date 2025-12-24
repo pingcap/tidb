@@ -256,3 +256,12 @@ admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
 alter table t_label modify column b varchar(200);
 --replace_column 1 <job_id> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
 admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
+
+# 4. Fallback from validating to reorg
+# VARCHAR to CHAR with trailing spaces triggers fallback
+drop table if exists t_fallback;
+create table t_fallback (a int, b varchar(100));
+insert into t_fallback values (1, 'test ');
+alter table t_fallback modify column b char(100);
+--replace_column 1 <job_id> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+admin show ddl jobs 1 where table_name='t_fallback' and job_type='modify column';

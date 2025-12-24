@@ -242,3 +242,10 @@ alter table t_label modify column b varchar(200);
 admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
 JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS
 <job_id>	executor__admin	t_label	modify column	public	<schema_id>	<table_id>	0	<create_time>	<start_time>	<end_time>	synced	
+drop table if exists t_fallback;
+create table t_fallback (a int, b varchar(100));
+insert into t_fallback values (1, 'test ');
+alter table t_fallback modify column b char(100);
+admin show ddl jobs 1 where table_name='t_fallback' and job_type='modify column';
+JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS
+<job_id>	executor__admin	t_fallback	modify column	public	<schema_id>	<table_id>	1	<create_time>	<start_time>	<end_time>	synced	need reorg, max_node_count=3

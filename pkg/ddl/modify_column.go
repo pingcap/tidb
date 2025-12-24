@@ -626,6 +626,9 @@ func (w *worker) precheckForVarcharToChar(
 	// Fallback to normal reorg type.
 	oldCol.DelFlag(mysql.PreventNullInsertFlag)
 	oldCol.ChangingFieldType = nil
+	if job.ReorgMeta != nil {
+		job.ReorgMeta.IsValidating = false
+	}
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)

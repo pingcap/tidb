@@ -129,6 +129,17 @@ func TestShowCommentsFromJob(t *testing.T) {
 	res = showCommentsFromJob(job)
 	require.Equal(t, "need reorg", res)
 
+	// Test fallback case: was validating, now reorging
+	job.ReorgMeta.IsValidating = true
+	job.ReorgMeta.ReorgTp = model.ReorgTypeNone
+	res = showCommentsFromJob(job)
+	require.Equal(t, "need reorg, validating", res)
+
+	job.ReorgMeta.IsValidating = false
+	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+	res = showCommentsFromJob(job)
+	require.Equal(t, "need reorg", res)
+
 	// Test MultiSchemaChange parent job labels summary
 	job.Type = model.ActionMultiSchemaChange
 	job.MultiSchemaInfo = &model.MultiSchemaInfo{
