@@ -371,7 +371,7 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	if proxy.MayNeedReorg() {
 		labels = append(labels, "need reorg")
 	}
-	// Note: We don't have IsValidating in SubJob yet, but MultiSchemaChange 
+	// Note: We don't have IsValidating in SubJob yet, but MultiSchemaChange
 	// currently doesn't trigger 'validating' path for subjobs in the same way.
 	// For now, we focus on the main Job and standard reorgs.
 
