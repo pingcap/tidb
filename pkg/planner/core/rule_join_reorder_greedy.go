@@ -299,8 +299,8 @@ func (s *joinReorderGreedySolver) tableHasIndexMatchingOrdering(plan base.Logica
 			}
 			
 			// Is this column covered by an equality predicate?
+			// If not, this index can't provide ordering
 			if !eqColIDs[colID] {
-				allPrefixHaveEq = false
 				break
 			}
 		}
