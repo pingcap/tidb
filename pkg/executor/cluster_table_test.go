@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,21 +53,24 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
+	host, port, err := net.SplitHostPort(lis.Addr().String())
+	require.NoError(t, err)
+	portNum, err := strconv.Atoi(port)
+	require.NoError(t, err)
 
 	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
-	port := lis.Addr().(*net.TCPAddr).Port
 	go func() {
 		err = srv.Serve(lis)
 		require.NoError(t, err)
 	}()
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Status.StatusPort = uint(port)
-		conf.AdvertiseAddress = "127.0.0.1"
+		conf.Status.StatusPort = uint(portNum)
+		conf.AdvertiseAddress = host
 	})
 
 	// Wait for server to be ready by attempting to dial
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	addr := lis.Addr().String()
 	var lastErr error
 	for range 100 {
 		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
