@@ -339,6 +339,11 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 		return nil, nil, 0, err
 	}
 	finalPlan := postOptimize(ctx, sctx, physical)
+
+	if err = finalPlan.ResolveIndices(); err != nil {
+		return nil, nil, 0, err
+	}
+
 	return logic, finalPlan, cost, nil
 }
 
@@ -1044,9 +1049,6 @@ func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost floa
 	// collect the warnings from task.
 	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*physicalop.RootTask).Warnings.GetWarnings())
 
-	if err = t.Plan().ResolveIndices(); err != nil {
-		return nil, 0, err
-	}
 	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
 }
