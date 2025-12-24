@@ -1198,10 +1198,10 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 	tk.MustExec("insert into t values(1,2)")
 	tk.MustQuery("explain select count(*) from t").Check(testkit.Rows(
 		`HashAgg_9 1.00 root  funcs:count(1)->Column#4`,
-		`└─UnionScan_10 10000.00 root  `,
-		`  └─TableReader_15 10000.00 root partition:all MppVersion: 3, data:ExchangeSender_14`,
-		`    └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
-		`      └─TableFullScan_13 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo, PartitionTableScan:true`))
+		`└─UnionScan_12 10000.00 root  `,
+		`  └─TableReader_17 10000.00 root partition:all MppVersion: 3, data:ExchangeSender_16`,
+		`    └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`      └─TableFullScan_15 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo, PartitionTableScan:true`))
 	tk.MustExec("rollback")
 }
 
