@@ -614,7 +614,6 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 
 	totalTimes := 0
 	preAllocMemForCol := func(srcCol *chunk.Column, dstCol *chunk.Column) {
-		nullBitmapTotalLenDelta := int64(0)
 		dataMemTotalLenDelta := int64(0)
 
 		if totalTimes == 0 {
@@ -624,14 +623,12 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 		}
 
 		offsetTotalLenDelta := int64(0)
-
+		nullBitmapTotalLenDelta := dstCol.CalculateLenDeltaForAppendCellNTimesForNullBitMap(totalTimes)
 		if dstCol.IsFixed() {
-			nullBitmapTotalLenDelta, dataMemTotalLenDelta = dstCol.CalculateLenDeltaForAppendCellNTimesForFixedElem(srcCol, totalTimes)
+			dataMemTotalLenDelta = dstCol.CalculateLenDeltaForAppendCellNTimesForFixedElem(srcCol, totalTimes)
 		} else {
 			for _, offsetAndLength := range j.offsetAndLengthArray {
-				nullBitmapLenDelta, dataLenDelta := dstCol.CalculateLenDeltaForAppendCellNTimesForVarElem(srcCol, offsetAndLength.offset, offsetAndLength.length)
-				nullBitmapTotalLenDelta += nullBitmapLenDelta
-				dataMemTotalLenDelta += dataLenDelta
+				dataMemTotalLenDelta += dstCol.CalculateLenDeltaForAppendCellNTimesForVarElem(srcCol, offsetAndLength.offset, offsetAndLength.length)
 			}
 			offsetTotalLenDelta = int64(totalTimes)
 		}
