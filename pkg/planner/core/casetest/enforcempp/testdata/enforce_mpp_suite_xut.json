@@ -1251,13 +1251,14 @@
         "SQL": "EXPLAIN select count(distinct b), json_objectagg(d,c) from t;",
         "Plan": [
           "HashAgg_8 1.00 root  funcs:count(distinct Column#9)->Column#7, funcs:json_objectagg(Column#10, Column#11)->Column#8",
-          "└─Projection_17 10000.00 root  test.t.b->Column#9, cast(test.t.d, var_string(10))->Column#10, test.t.c->Column#11",
-          "  └─TableReader_16 10000.00 root  MppVersion: 3, data:ExchangeSender_15",
-          "    └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan_14 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "└─Projection_27 10000.00 root  test.t.b->Column#9, cast(test.t.d, var_string(10))->Column#10, test.t.c->Column#11",
+          "  └─TableReader_18 10000.00 root  MppVersion: 3, data:ExchangeSender_17",
+          "    └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Aggregation can not be pushed to tiflash because AggFunc `json_objectagg` is not supported now",
+          "Aggregation can not be pushed to tikv because AggFunc `json_objectagg` can not be converted to pb expr",
           "Aggregation can not be pushed to tikv because AggFunc `json_objectagg` can not be converted to pb expr",
           "Aggregation can not be pushed to tiflash because AggFunc `json_objectagg` is not supported now"
         ]
