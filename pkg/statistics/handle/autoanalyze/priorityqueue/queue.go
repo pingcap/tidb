@@ -620,16 +620,6 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 	return oldJob
 }
 
-// GetLastFetchTimestamp returns the last fetch timestamp of DML updates.
-// NOTE: This function is thread-safe.
-// Exported for testing.
-func (pq *AnalysisPriorityQueue) GetLastFetchTimestamp() uint64 {
-	pq.syncFields.mu.RLock()
-	defer pq.syncFields.mu.RUnlock()
-
-	return pq.syncFields.lastDMLUpdateFetchTimestamp
-}
-
 // RequeueMustRetryJobs requeues the must retry jobs.
 func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 	pq.syncFields.mu.Lock()
