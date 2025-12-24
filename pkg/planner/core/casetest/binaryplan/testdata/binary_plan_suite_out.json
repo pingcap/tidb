@@ -71,16 +71,16 @@
             "name": "HashAgg_11",
             "children": [
               {
-                "name": "Projection_53",
+                "name": "Projection_50",
                 "children": [
                   {
-                    "name": "HashJoin_28",
+                    "name": "HashJoin_27",
                     "children": [
                       {
-                        "name": "IndexReader_33",
+                        "name": "IndexReader_32",
                         "children": [
                           {
-                            "name": "IndexFullScan_32",
+                            "name": "IndexFullScan_31",
                             "cost": 1628000.000001,
                             "est_rows": 10000,
                             "act_rows": 2,
@@ -97,13 +97,13 @@
                         "act_rows": 2,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "index:IndexFullScan_32"
+                        "operator_info": "index:IndexFullScan_31"
                       },
                       {
-                        "name": "TableReader_35",
+                        "name": "TableReader_34",
                         "children": [
                           {
-                            "name": "TableFullScan_34",
+                            "name": "TableFullScan_33",
                             "cost": 4546159.475587022,
                             "est_rows": 10000,
                             "act_rows": 4,
@@ -120,7 +120,7 @@
                         "act_rows": 4,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "data:TableFullScan_34"
+                        "operator_info": "data:TableFullScan_33"
                       }
                     ],
                     "cost": 1128387.631705868,
