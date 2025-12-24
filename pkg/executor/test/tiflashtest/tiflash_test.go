@@ -1818,29 +1818,29 @@ func TestMPP47766(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "traces")
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
-	tk.MustQuery("explain select date(test_time), count(1) as test_date from `traces` group by 1").Check(testkit.Rows(`TableReader_24 8000.00 root  MppVersion: 3, data:ExchangeSender_23`,
-		`└─ExchangeSender_23 8000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+	tk.MustQuery("explain select date(test_time), count(1) as test_date from `traces` group by 1").Check(testkit.Rows(
+		`TableReader_36 8000.00 root  MppVersion: 3, data:ExchangeSender_35`,
+		`└─ExchangeSender_35 8000.00 mpp[tiflash]  ExchangeType: PassThrough`,
 		`  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4`,
-		`    └─Projection_19 8000.00 mpp[tiflash]  Column#4, test.traces.test_time`,
-		`      └─HashAgg_20 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#4, funcs:firstrow(Column#15)->test.traces.test_time`,
-		`        └─ExchangeReceiver_22 8000.00 mpp[tiflash]  `,
-		`          └─ExchangeSender_21 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]`,
-		`            └─HashAgg_18 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#14, funcs:firstrow(Column#16)->Column#15`,
-		`              └─Projection_25 10000.00 mpp[tiflash]  test.traces.test_time->Column#16, date(test.traces.test_time)->Column#17`,
-		`                └─TableFullScan_8 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo`))
+		`    └─Projection_31 8000.00 mpp[tiflash]  Column#4, test.traces.test_time`,
+		`      └─HashAgg_32 8000.00 mpp[tiflash]  group by:Column#16, funcs:sum(Column#17)->Column#4, funcs:firstrow(Column#18)->test.traces.test_time`,
+		`        └─ExchangeReceiver_34 8000.00 mpp[tiflash]  `,
+		`          └─ExchangeSender_33 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]`,
+		`            └─HashAgg_30 8000.00 mpp[tiflash]  group by:Column#20, funcs:count(1)->Column#17, funcs:firstrow(Column#19)->Column#18`,
+		`              └─Projection_37 10000.00 mpp[tiflash]  test.traces.test_time->Column#19, date(test.traces.test_time)->Column#20`,
+		`                └─TableFullScan_20 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo`))
 	tk.MustQuery("explain select /*+ read_from_storage(tiflash[traces]) */ date(test_time) as test_date, count(1) from `traces` group by 1").
 		Check(testkit.Rows(
-			`TableReader_36 8000.00 root  MppVersion: 3, data:ExchangeSender_35`,
-			`└─ExchangeSender_35 8000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+			`TableReader_31 8000.00 root  MppVersion: 3, data:ExchangeSender_30`,
+			`└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough`,
 			`  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4`,
-			`    └─Projection_31 8000.00 mpp[tiflash]  Column#4, test.traces.test_time`,
-			`      └─HashAgg_32 8000.00 mpp[tiflash]  group by:Column#16, funcs:sum(Column#17)->Column#4, funcs:firstrow(Column#18)->test.traces.test_time`,
-			`        └─ExchangeReceiver_34 8000.00 mpp[tiflash]  `,
-			`          └─ExchangeSender_33 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]`,
-			`            └─HashAgg_30 8000.00 mpp[tiflash]  group by:Column#20, funcs:count(1)->Column#17, funcs:firstrow(Column#19)->Column#18`,
-			`              └─Projection_37 10000.00 mpp[tiflash]  test.traces.test_time->Column#19, date(test.traces.test_time)->Column#20`,
-			`                └─TableFullScan_20 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo`,
-		))
+			`    └─Projection_26 8000.00 mpp[tiflash]  Column#4, test.traces.test_time`,
+			`      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#4, funcs:firstrow(Column#15)->test.traces.test_time`,
+			`        └─ExchangeReceiver_29 8000.00 mpp[tiflash]  `,
+			`          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]`,
+			`            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#14, funcs:firstrow(Column#16)->Column#15`,
+			`              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#16, date(test.traces.test_time)->Column#17`,
+			`                └─TableFullScan_15 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo`))
 }
 
 func TestUnionScan(t *testing.T) {
