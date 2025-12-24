@@ -78,12 +78,9 @@ func (s *mockImportServer) MultiIngest(_ context.Context, req *import_sstpb.Mult
 
 func TestImportClient(t *testing.T) {
 	ctx := context.Background()
-	var lis net.Listener
-	var err error
-	addr := ":0"
-	lis, err = net.Listen("tcp", addr)
-	t.Log(err)
-	addr = lis.Addr().String()
+	lis, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	addr := lis.Addr().String()
 	s := grpc.NewServer()
 	import_sstpb.RegisterImportSSTServer(s, &mockImportServer{ErrCount: 3})
 

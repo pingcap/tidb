@@ -49,12 +49,9 @@ func (s *mockImportServer) SwitchMode(_ context.Context, req *import_sstpb.Switc
 
 func TestRestorePreWork(t *testing.T) {
 	ctx := context.Background()
-	var lis net.Listener
-	var err error
-	addr := ":0"
-	lis, err = net.Listen("tcp", addr)
-	t.Log(err)
-	addr = lis.Addr().String()
+	lis, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	addr := lis.Addr().String()
 
 	s := grpc.NewServer()
 	ch := make(chan struct{})
