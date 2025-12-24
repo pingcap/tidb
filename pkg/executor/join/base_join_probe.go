@@ -661,15 +661,15 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 
 				if intest.InTest {
 					if nullBitmapCapBefore != dstCol.GetNullBitmapCap() {
-						panic("Can't reserve enough memory")
+						panic("Don't reserve enough memory")
 					}
 
 					if offsetCapBefore != dstCol.GetOffsetCap() {
-						panic("Can't reserve enough memory")
+						panic("Don't reserve enough memory")
 					}
 
 					if dataCapBefore != dstCol.GetDataCap() {
-						panic("Can't reserve enough memory")
+						panic("Don't reserve enough memory")
 					}
 				}
 			}
