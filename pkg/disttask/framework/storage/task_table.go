@@ -291,7 +291,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 		return 0, err
 	}
 	if requiredSlots > cpuCount {
-		return 0, errors.Errorf("task requiredSlots(%d) larger than cpu count(%d) of managed node", requiredSlots, cpuCount)
+		return 0, errors.Errorf("task required slots(%d) larger than cpu count(%d) of managed node", requiredSlots, cpuCount)
 	}
 	extraParamBytes, err := json.Marshal(extraParams)
 	if err != nil {

@@ -52,7 +52,7 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
 	_, err := gm.CreateTask(ctx, "key1", "test", "", 999, "", 0, proto.ExtraParams{}, []byte("test"))
-	require.ErrorContains(t, err, "task concurrency(999) larger than cpu count")
+	require.ErrorContains(t, err, "task required slots(999) larger than cpu count")
 
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
 	id, err := gm.CreateTask(ctx, "key1", "test", "test_keyspace", 4, "aaa", 12, proto.ExtraParams{ManualRecovery: true}, []byte("testmeta"))
