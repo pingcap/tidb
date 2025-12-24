@@ -1280,7 +1280,21 @@ func TestAggPushDownCountStar(t *testing.T) {
 
 	tk.MustExec("set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_opt_agg_push_down=1")
-
+	tk.MustQuery("explain format='plan_tree' select count(*) from c, o where c.c_id=o.c_id").Check(testkit.Rows(
+		`HashAgg root  funcs:count(Column#5)->Column#4`,
+		`└─TableReader root  MppVersion: 3, data:ExchangeSender`,
+		`  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough`,
+		`    └─Projection mpp[tiflash]  Column#5`,
+		`      └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]`,
+		`        ├─ExchangeReceiver(Build) mpp[tiflash]  `,
+		`        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST`,
+		`        │   └─Projection mpp[tiflash]  Column#5, test.o.c_id`,
+		`        │     └─HashAgg mpp[tiflash]  group by:test.o.c_id, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.o.c_id)->test.o.c_id`,
+		`        │       └─ExchangeReceiver mpp[tiflash]  `,
+		`        │         └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.c_id, collate: binary]`,
+		`        │           └─HashAgg mpp[tiflash]  group by:test.o.c_id, funcs:count(1)->Column#6`,
+		`        │             └─TableFullScan mpp[tiflash] table:o keep order:false, stats:pseudo`,
+		`        └─TableFullScan(Probe) mpp[tiflash] table:c keep order:false, stats:pseudo`))
 	tk.MustQuery("select count(*) from c, o where c.c_id=o.c_id").Check(testkit.Rows("5"))
 }
 
