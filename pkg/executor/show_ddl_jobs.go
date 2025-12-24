@@ -301,13 +301,11 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 
 func showCommentsFromJob(job *model.Job) string {
 	var labels []string
-	if !kerneltype.IsNextGen() {
-		if job.MayNeedReorg() {
-			labels = append(labels, "need reorg")
-		}
-		if job.ReorgMeta != nil && job.ReorgMeta.IsValidating {
-			labels = append(labels, "validating")
-		}
+	if job.MayNeedReorg() {
+		labels = append(labels, "need reorg")
+	}
+	if job.ReorgMeta != nil && job.ReorgMeta.IsValidating {
+		labels = append(labels, "validating")
 	}
 	m := job.ReorgMeta
 	if m == nil {
@@ -369,13 +367,11 @@ func showCommentsFromJob(job *model.Job) string {
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	var labels []string
-	if !kerneltype.IsNextGen() {
-		proxy := model.Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
-		if proxy.MayNeedReorg() {
-			labels = append(labels, "need reorg")
-		}
+	proxy := model.Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
+	if proxy.MayNeedReorg() {
+		labels = append(labels, "need reorg")
 	}
-	// Note: We don't have IsValidating in SubJob yet, but MultiSchemaChange
+	// Note: We don't have IsValidating in SubJob yet, but MultiSchemaChange 
 	// currently doesn't trigger 'validating' path for subjobs in the same way.
 	// For now, we focus on the main Job and standard reorgs.
 
