@@ -717,6 +717,7 @@ func (ds *DataSource) canUseTiflash4Logical() bool {
 		return false
 	}
 	sessionVars := ds.SCtx().GetSessionVars()
+
 	_, hasTiFlashEngine := sessionVars.IsolationReadEngines[kv.TiFlash]
 	return hasTiFlashEngine
 }
