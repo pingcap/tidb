@@ -1762,6 +1762,7 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
 	jc.cloudStorageURI = handle.GetCloudStorageURI(w.workCtx, w.store)
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
+	failpoint.InjectCall("afterLoadCloudStorageURI", job)
 }
 
 func doReorgWorkForCreateIndex(
