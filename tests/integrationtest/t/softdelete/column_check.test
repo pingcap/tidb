@@ -41,6 +41,21 @@ insert into t values (1, 'new') on duplicate key update _tidb_softdelete_time = 
 -- error 1815
 insert into t (id, name, _tidb_softdelete_time) values (1, 'new', null);
 
+# Non-transactional DML with _tidb_softdelete_time should fail
+-- error 1815
+batch on id limit 10 delete from t where _tidb_softdelete_time is not null;
+
+-- error 1815
+batch on id limit 10 update t set name = 'batch' where _tidb_softdelete_time is null;
+
+# Data import with _tidb_softdelete_time should fail
+-- error 1815
+load data local infile 'non_existing_file' into table t(id, name, _tidb_softdelete_time);
+
+# Data import with _tidb_softdelete_time should fail
+-- error 1815
+import into t(id, name, _tidb_softdelete_time) from 'non_existing_file';
+
 # Verify normal operations still work
 select id, name from t order by id;
 insert into t values (4, 'd');
