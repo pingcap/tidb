@@ -245,11 +245,8 @@ Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__cor
 explain format='plan_tree' select t1.* from t1 left outer join t2 on t1.a=t2.a;
 id	task	access object	operator info
 Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d
-└─MergeJoin	root		left outer join, left side:TableReader, left key:planner__core__casetest__rule__rule_result_reorder.t1.a, right key:planner__core__casetest__rule__rule_result_reorder.t2.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select t1.* from t1 join t2 on t1.a!=t2.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d
