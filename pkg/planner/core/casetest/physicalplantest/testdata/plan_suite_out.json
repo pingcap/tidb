@@ -3632,10 +3632,11 @@
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t.a, Column#10",
           "    └─Projection mpp[tiflash]  Column#10, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:test.t.a, funcs:count(1)->Column#10, funcs:firstrow(test.t.a)->test.t.a",
+          "      └─HashAgg mpp[tiflash]  group by:test.t.a, funcs:sum(Column#17)->Column#10, funcs:firstrow(test.t.a)->test.t.a",
           "        └─ExchangeReceiver mpp[tiflash]  ",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "            └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "            └─HashAgg mpp[tiflash]  group by:test.t.a, funcs:count(1)->Column#17",
+          "              └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
