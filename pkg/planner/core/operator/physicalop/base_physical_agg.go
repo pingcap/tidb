@@ -935,8 +935,8 @@ func (p *BasePhysicalAgg) ResolveIndices() (err error) {
 func ExhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalAggregation)
 	preferHash, preferStream := la.ResetHintIfConflicted()
-	hashAggs := getHashAggs(la, prop)
-	if len(hashAggs) > 0 && (preferHash || la.SCtx().GetSessionVars().IsMPPEnforced()) {
+	hashAggs, onlyMPP := getHashAggs(la, prop)
+	if len(hashAggs) > 0 && (preferHash || (la.SCtx().GetSessionVars().IsMPPEnforced() && onlyMPP)) {
 		// stream agg is not supported in the tiflash
 		return hashAggs, true, nil
 	}
