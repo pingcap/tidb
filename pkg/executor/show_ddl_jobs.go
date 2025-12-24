@@ -305,9 +305,8 @@ func showCommentsFromJob(job *model.Job) string {
 	var labels []string
 	isAddingIndex := job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey
-	// For next-gen (V2 DDL), adding index is always done via distributed framework,
-	// so we don't need to show 'need reorg' to users.
-	if job.MayNeedReorg() && !(isAddingIndex && kerneltype.IsNextGen()) {
+	// For adding index, we don't need to show 'need reorg' to users.
+	if job.MayNeedReorg() && !isAddingIndex {
 		labels = append(labels, "need reorg")
 	}
 	if job.ReorgMeta != nil && job.ReorgMeta.IsValidating {
@@ -377,9 +376,8 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	isAddingIndex := sub.Type == model.ActionAddIndex ||
 		sub.Type == model.ActionAddPrimaryKey
 	proxy := model.Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
-	// For next-gen (V2 DDL), adding index is always done via distributed framework,
-	// so we don't need to show 'need reorg' to users.
-	if proxy.MayNeedReorg() && !(isAddingIndex && kerneltype.IsNextGen()) {
+	// For adding index, we don't need to show 'need reorg' to users.
+	if proxy.MayNeedReorg() && !isAddingIndex {
 		labels = append(labels, "need reorg")
 	}
 	// Note: We don't have IsValidating in SubJob yet, but MultiSchemaChange
