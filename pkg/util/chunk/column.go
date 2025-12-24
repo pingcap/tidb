@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
@@ -126,30 +125,45 @@ func newColumn(ts, capacity int) *Column {
 func newFixedLenColumn(elemLen, capacity int) *Column {
 	return &Column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, getDataMemCap(capacity, elemLen)),
-		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
+		data:       make([]byte, 0, getInitDataMemCap(capacity, elemLen)),
+		nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
 	}
 }
 
 // newVarLenColumn creates a variable length Column with initial data capacity.
 func newVarLenColumn(capacity int) *Column {
 	return &Column{
-		offsets:    make([]int64, 1, getOffsetsCap(capacity)),
-		data:       make([]byte, 0, getDataMemCap(capacity, estimatedElemLen)),
-		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
+		offsets:    make([]int64, 1, getInitOffsetsCap(capacity)),
+		data:       make([]byte, 0, getInitDataMemCap(capacity, estimatedElemLen)),
+		nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
 	}
 }
 
-func getDataMemCap(capacity int, elemLen int) int64 {
+func getInitDataMemCap(capacity int, elemLen int) int64 {
 	return int64(elemLen * capacity)
 }
 
-func getNullBitmapCap(capacity int) int64 {
+func getInitNullBitmapCap(capacity int) int64 {
 	return int64((capacity + 7) >> 3)
 }
 
-func getOffsetsCap(capacity int) int64 {
+func getInitOffsetsCap(capacity int) int64 {
 	return int64(capacity + 1)
+}
+
+// GetNullBitmapCap returns the capacity of nullBitmap
+func (c *Column) GetNullBitmapCap() int {
+	return cap(c.nullBitmap)
+}
+
+// GetOffsetCap returns the capacity of offsets
+func (c *Column) GetOffsetCap() int {
+	return cap(c.offsets)
+}
+
+// GetDataCap returns the capacity of data
+func (c *Column) GetDataCap() int {
+	return cap(c.data)
 }
 
 func (c *Column) typeSize() int {
@@ -298,31 +312,12 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 	if c.IsFixed() {
 		elemLen := len(src.elemBuf)
 		offset := pos * elemLen
-		if intest.InTest {
-			appendedByteNum := elemLen * times
-			availableMem := cap(c.data) - len(c.data)
-			if availableMem < appendedByteNum {
-				panic("Can't pre-alloc enough memory")
-			}
-		}
 
 		for range times {
 			c.data = append(c.data, src.data[offset:offset+elemLen]...)
 		}
 	} else {
 		start, end := src.offsets[pos], src.offsets[pos+1]
-
-		if intest.InTest {
-			appendedByteNum := int(end-start) * times
-			availableMem := cap(c.data) - len(c.data)
-			if availableMem < appendedByteNum {
-				panic("Can't pre-alloc enough memory")
-			}
-
-			if cap(c.offsets)-len(c.offsets) < times {
-				panic("Can't pre-alloc enough memory")
-			}
-		}
 
 		for range times {
 			c.data = append(c.data, src.data[start:end]...)

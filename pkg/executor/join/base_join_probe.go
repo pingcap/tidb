@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/serialization"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
@@ -647,10 +648,33 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 
 				preAllocMemForCol(srcCol, dstCol)
 
+				nullBitmapCapBefore := 0
+				offsetCapBefore := 0
+				dataCapBefore := 0
+				if intest.InTest {
+					nullBitmapCapBefore = dstCol.GetNullBitmapCap()
+					offsetCapBefore = dstCol.GetOffsetCap()
+					dataCapBefore = dstCol.GetDataCap()
+				}
+
 				for _, offsetAndLength := range j.offsetAndLengthArray {
 					dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
 				}
 				usedColumnMap[colIndex] = struct{}{}
+
+				if intest.InTest {
+					if nullBitmapCapBefore != dstCol.GetNullBitmapCap() {
+						panic("Can't reserve enough memory")
+					}
+
+					if offsetCapBefore != dstCol.GetOffsetCap() {
+						panic("Can't reserve enough memory")
+					}
+
+					if dataCapBefore != dstCol.GetDataCap() {
+						panic("Can't reserve enough memory")
+					}
+				}
 			}
 		}
 	} else {
