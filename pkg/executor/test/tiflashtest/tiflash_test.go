@@ -145,13 +145,13 @@ func TestAggPushDownApplyAll(t *testing.T) {
 		`  └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender`,
 		`    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough`,
 		`      └─Projection mpp[tiflash]  Column#7, Column#8, Column#9, Column#10`,
-		`        └─HashAgg mpp[tiflash]  funcs:max(Column#16)->Column#7, funcs:sum(Column#17)->Column#8, funcs:sum(Column#18)->Column#9, funcs:sum(Column#19)->Column#10`,
+		`        └─HashAgg mpp[tiflash]  funcs:max(Column#19)->Column#7, funcs:sum(Column#20)->Column#8, funcs:sum(Column#21)->Column#9, funcs:sum(Column#22)->Column#10`,
 		`          └─ExchangeReceiver mpp[tiflash]  `,
 		`            └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST`,
-		`              └─HashAgg mpp[tiflash]  funcs:max(Column#13)->Column#16, funcs:count(distinct test.bar.a)->Column#17, funcs:sum(Column#14)->Column#18, funcs:sum(Column#15)->Column#19`,
+		`              └─HashAgg mpp[tiflash]  funcs:max(Column#16)->Column#19, funcs:count(distinct test.bar.a)->Column#20, funcs:sum(Column#17)->Column#21, funcs:sum(Column#18)->Column#22`,
 		`                └─ExchangeReceiver mpp[tiflash]  `,
 		`                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.bar.a, collate: binary]`,
-		`                    └─HashAgg mpp[tiflash]  group by:test.bar.a, funcs:max(test.bar.a)->Column#13, funcs:sum(0)->Column#14, funcs:count(1)->Column#15`,
+		`                    └─HashAgg mpp[tiflash]  group by:test.bar.a, funcs:max(test.bar.a)->Column#16, funcs:sum(0)->Column#17, funcs:count(1)->Column#18`,
 		`                      └─Selection mpp[tiflash]  eq(test.bar.b, cast(test.foo.b, decimal(10,0) BINARY))`,
 		`                        └─TableFullScan mpp[tiflash] table:bar keep order:false, stats:pseudo`))
 }
