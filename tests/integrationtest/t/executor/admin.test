@@ -246,34 +246,18 @@ admin check table t;
 drop table if exists t_label;
 create table t_label (a int, b varchar(100));
 insert into t_label values (1, 'test_label_data');
+
+# 1. Normal Add Index (need reorg)
 alter table t_label add index idx_a(a);
-# We only check if 'need reorg' exists in the output to avoid issues with dynamic IDs/TSO
+--replace_column 1 <job_id> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
 admin show ddl jobs 1 where table_name='t_label' and job_type='add index';
 
-# TestAdminShowDDLJobsLabels
-drop table if exists t_label;
-create table t_label (a int, b varchar(100));
-insert into t_label values (1, 'test_label_data');
-alter table t_label add index idx_a(a);
-admin show ddl jobs 1 where table_name='t_label' and job_type='add index';
-# Test validating label
+# 2. Lossy DDL - Shrink Varchar (validating)
 alter table t_label modify column b varchar(50);
+--replace_column 1 <job_id> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
 admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
 
-# 5. Metadata-only change (No labels)
-# Increasing varchar length should trigger ModifyTypeNoReorg
+# 3. Metadata-only change (No labels)
 alter table t_label modify column b varchar(200);
-admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
-
-# TestAdminShowDDLJobsLabels
-drop table if exists t_label;
-create table t_label (a int, b varchar(100));
-insert into t_label values (1, 'test_label_data');
-alter table t_label add index idx_a(a);
-admin show ddl jobs 1 where table_name='t_label' and job_type='add index';
-# Test validating label
-alter table t_label modify column b varchar(50);
-admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
-# Test metadata-only label (no need reorg, no validating)
-alter table t_label modify column b varchar(200);
+--replace_column 1 <job_id> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
 admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
