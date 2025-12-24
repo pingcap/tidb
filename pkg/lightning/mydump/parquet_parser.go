@@ -47,12 +47,18 @@ const (
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
+)
 
-	// parquetParserMemoryLimit is the memory limit for the parquet parser.
-	// If the memory consumption exceeds this limit during schema check,
-	// the import is rejected. It might not be an optimal value, but should
-	// be sufficient for most cases.
-	parquetParserMemoryLimit = 512 << 20 // 512MB
+var (
+	// ParquetParserMemoryLimit is the memory limit for the parquet parser
+	// during precheck. It is used to validate that parsing a Parquet file
+	// does not consume excessive memory. If the peak memory usage exceeds this
+	// limit, the precheck will fail to prevent potential OOM errors during the
+	// actual import. The value 512MB is chosen as a safe upper bound under the
+	// assumption that worker nodes has >= 2GiB/core, where half of the memory
+	// is allocated to the external writer.
+	// Exported for test.
+	ParquetParserMemoryLimit int64 = 512 << 20 // 512MB
 )
 
 var (
@@ -85,7 +91,8 @@ func estimateRowSize(row []types.Datum) int {
 	return length
 }
 
-// innerReader defines the interface for reading value with given type T from parquet column reader.
+// innerReader defines the interface for reading value with given type T from
+// parquet column reader.
 type innerReader[T parquet.ColumnTypes] interface {
 	ReadBatchInPage(batchSize int64, values []T, defLvls, repLvls []int16) (int64, int, error)
 }
@@ -147,8 +154,8 @@ func (it *columnIterator[T, R]) Close() error {
 }
 
 func (it *columnIterator[T, R]) readNextBatch() error {
-	// ReadBatchInPage reads a batch of values from the current page.
-	// And the values returned may be shallow copies from the internal page buffer.
+	// ReadBatchInPage reads a batch of values from the current page. And the
+	// values returned may be shallow copies from the internal page buffer.
 	var err error
 	it.levelsBuffered, it.valuesBuffered, err = it.reader.ReadBatchInPage(
 		it.batchSize,
@@ -500,7 +507,7 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 	pp.lastRow.RowID = rowID
 }
 
-// OpenParquetReader opens a parquet file and returns a handle that can at least read the file.
+// OpenParquetReader opens a parquet file and returns a ReadSeekCloser.
 func OpenParquetReader(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -521,7 +528,7 @@ func OpenParquetReader(
 	return pf, nil
 }
 
-// ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
+// ReadParquetFileRowCountByFile reads the parquet file row count.
 func ReadParquetFileRowCountByFile(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -700,7 +707,7 @@ func CheckParquetImport(
 		return ParquetCheckResult{false, false}, err
 	}
 
-	allocator := &simpleAllocator{}
+	allocator := &trackingAllocator{}
 	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
 
 	if err != nil {
@@ -717,8 +724,11 @@ func CheckParquetImport(
 		return ParquetCheckResult{true, true}, nil
 	}
 
-	reader := parser.reader
-	for range reader.MetaData().NumRows {
+	if len(parser.reader.MetaData().RowGroups) == 0 {
+		return ParquetCheckResult{true, true}, nil
+	}
+
+	for range parser.reader.MetaData().RowGroups[0].NumRows {
 		err = parser.ReadRow()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
@@ -727,13 +737,16 @@ func CheckParquetImport(
 			return ParquetCheckResult{false, false}, err
 		}
 		parser.RecycleRow(parser.LastRow())
+		if allocator.peakAllocation.Load() >= ParquetParserMemoryLimit {
+			return ParquetCheckResult{true, false}, nil
+		}
 	}
 
-	return ParquetCheckResult{true, allocator.peakAllocation.Load() < parquetParserMemoryLimit}, nil
+	return ParquetCheckResult{true, true}, nil
 }
 
-// addressOf returns the address of a buffer, return 0 if the buffer is nil or empty.
-// This is used to create unique identifiers for tracking buffer allocations.
+// addressOf returns the address of a buffer, return 0 if the buffer is nil or
+// empty. It's used to create unique identifiers for tracking buffer allocations.
 func addressOf(buf []byte) uintptr {
 	if buf == nil || cap(buf) == 0 {
 		return 0
@@ -742,13 +755,16 @@ func addressOf(buf []byte) uintptr {
 	return uintptr(unsafe.Pointer(&buf[0]))
 }
 
-type simpleAllocator struct {
+// trackingAllocator is a simple memory allocator that tracks current and peak
+// memory allocation. It's used to estimate the memory consumption of parquet
+// parser during precheck.
+type trackingAllocator struct {
 	currentAllocation atomic.Int64
 	peakAllocation    atomic.Int64
 	allocMap          sync.Map // uintptr -> size
 }
 
-func (a *simpleAllocator) Allocate(n int) []byte {
+func (a *trackingAllocator) Allocate(n int) []byte {
 	b := make([]byte, n)
 	a.allocMap.Store(addressOf(b), n)
 
@@ -765,16 +781,17 @@ func (a *simpleAllocator) Allocate(n int) []byte {
 	return b
 }
 
-func (a *simpleAllocator) Free(b []byte) {
+func (a *trackingAllocator) Free(b []byte) {
 	addr := addressOf(b)
-	size, ok := a.allocMap.Load(addr)
+	v, ok := a.allocMap.Load(addr)
+	size, _ := v.(int)
 	if ok {
-		a.currentAllocation.Add(-int64(size.(int)))
+		a.currentAllocation.Add(-int64(size))
 		a.allocMap.Delete(addr)
 	}
 }
 
-func (a *simpleAllocator) Reallocate(size int, b []byte) []byte {
+func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
 	a.Free(b)
 	return a.Allocate(size)
 }

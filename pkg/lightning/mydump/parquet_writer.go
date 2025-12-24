@@ -37,23 +37,17 @@ type ParquetColumn struct {
 	Gen       func(numRows int) (any, []int16)
 }
 
-type writeWrapper struct {
+// WriteWrapper implements io.WriteCloser interface.
+// Exported for test.
+type WriteCloserWrapper struct {
 	Writer storage.ExternalFileWriter
 }
 
-func (*writeWrapper) Seek(_ int64, _ int) (int64, error) {
-	return 0, nil
-}
-
-func (*writeWrapper) Read(_ []byte) (int, error) {
-	return 0, nil
-}
-
-func (w *writeWrapper) Write(b []byte) (int, error) {
+func (w *WriteCloserWrapper) Write(b []byte) (int, error) {
 	return w.Writer.Write(context.Background(), b)
 }
 
-func (w *writeWrapper) Close() error {
+func (w *WriteCloserWrapper) Close() error {
 	return w.Writer.Close(context.Background())
 }
 
@@ -70,18 +64,19 @@ func getStore(path string) (storage.ExternalStorage, error) {
 	return store, nil
 }
 
-// WriteParquetFile writes a simple Parquet file with the specified columns and number of rows.
-// It's used for test and DON'T use this function to generate large Parquet files.
-func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...parquet.WriterProperty) error {
-	s, err := getStore(path)
-	if err != nil {
-		return err
-	}
+// WriteParquetFileWithStore writes a simple Parquet file with the specified
+// columns and number of rows. It's used for test and DON'T use this function
+// to generate large Parquet files.
+func WriteParquetFileWithStore(
+	s storage.ExternalStorage, fileName string,
+	pcolumns []ParquetColumn, rows int,
+	addOpts ...parquet.WriterProperty,
+) error {
 	writer, err := s.Create(context.Background(), fileName, nil)
 	if err != nil {
 		return err
 	}
-	wrapper := &writeWrapper{Writer: writer}
+	wrapper := &WriteCloserWrapper{Writer: writer}
 
 	fields := make([]schema.Node, len(pcolumns))
 	opts := make([]parquet.WriterProperty, 0, len(pcolumns)*2)
@@ -154,4 +149,15 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int,
 	}
 
 	return nil
+}
+
+// WriteParquetFile is a helper function that writes a simple Parquet file
+// to the specified local path. It's used for test.
+func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...parquet.WriterProperty) error {
+	s, err := getStore(path)
+	if err != nil {
+		return err
+	}
+
+	return WriteParquetFileWithStore(s, fileName, pcolumns, rows, addOpts...)
 }

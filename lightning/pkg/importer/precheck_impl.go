@@ -1122,6 +1122,7 @@ type parquetImportCheckItem struct {
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
+// NewParquetImportCheckItem creates a new parquetImportCheckItem.
 func NewParquetImportCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.Checker {
 	return &parquetImportCheckItem{
 		cfg:           cfg,
