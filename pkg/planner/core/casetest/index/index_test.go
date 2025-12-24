@@ -235,10 +235,10 @@ func TestOrderedIndexWithIsNull(t *testing.T) {
 		testKit.MustExec("insert into t2 values (), (), ()")
 		testKit.MustExec("analyze table t2")
 		testKit.MustQuery("explain select count(*) from t2 where id is null;").Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#5)->Column#3",
-			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#5",
-			"    └─IndexRangeScan_18 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
+			`StreamAgg_18 1.00 root  funcs:count(Column#5)->Column#3`,
+			`└─IndexReader_19 1.00 root  index:StreamAgg_10`,
+			`  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#5`,
+			`    └─IndexRangeScan_17 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false`))
 	})
 }
 
