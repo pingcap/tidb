@@ -67,8 +67,8 @@ github.com/DATA-DOG/go-sqlmock v1.5.0 h1:Shsta01QNfFxHCfpW6YH2STWB0MudeXXEWMr20O
 github.com/DATA-DOG/go-sqlmock v1.5.0/go.mod h1:f/Ixk793poVmq4qj/V1dPUg2JEAKC73Q5eFN3EC/SaM=
 github.com/DataDog/zstd v1.5.5 h1:oWf5W7GtOLgp6bciQYDmhHHjdhYkALu6S/5Ni9ZgSvQ=
 github.com/DataDog/zstd v1.5.5/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwSAmyw=
-github.com/GMHDBJD/client-go/v2 v2.0.0-20251223041939-c2a22fcf0e0e h1:IFZLPFaK+obBJ0T6+6FjG2uKzq3CpkjmYkWjBImlKSA=
-github.com/GMHDBJD/client-go/v2 v2.0.0-20251223041939-c2a22fcf0e0e/go.mod h1:KnEweZyz0raWXCYPsbz3iUo3dwCQdiRhksyk7QW7TgQ=
+github.com/GMHDBJD/client-go/v2 v2.0.0-20251224102120-d71ba346424f h1:j8pe2k3USnf6/+OR29JHUjOyZ9ik7LwpupFULyiNick=
+github.com/GMHDBJD/client-go/v2 v2.0.0-20251224102120-d71ba346424f/go.mod h1:KnEweZyz0raWXCYPsbz3iUo3dwCQdiRhksyk7QW7TgQ=
 github.com/HdrHistogram/hdrhistogram-go v1.1.2 h1:5IcZpTvzydCQeHzK4Ef/D5rrSqwxob0t8PQPMybUNFM=
 github.com/HdrHistogram/hdrhistogram-go v1.1.2/go.mod h1:yDgFjdqOqDEKOvasDdhWNXYg9BVp4O+o5f6V/ehm6Oo=
 github.com/Masterminds/goutils v1.1.1 h1:5nUrii3FMTL5diU80unEVvNevw1nH4+ZV4DSLVJLSYI=
