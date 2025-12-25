@@ -354,10 +354,10 @@ func showCommentsFromJob(job *model.Job) string {
 		if maxWriteSpeed != vardef.DefTiDBDDLReorgMaxWriteSpeed {
 			labels = append(labels, fmt.Sprintf("max_write_speed=%d", maxWriteSpeed))
 		}
-		if m.TargetScope != "" {
+		if m.IsDistReorg && m.TargetScope != "" {
 			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
 		}
-		if m.MaxNodeCount != 0 {
+		if m.IsDistReorg && m.MaxNodeCount != 0 {
 			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
 		}
 	}
