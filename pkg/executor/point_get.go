@@ -356,7 +356,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			} else {
 				if e.lock {
 					handleVal, err := e.lockKeyIfExists(ctx, e.idxKey)
-					e.handleVal = handleVal.Value
+					e.handleVal = handleVal
 					if err != nil {
 						return err
 					}
@@ -560,17 +560,19 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val kv.V
 	if e.Ctx().GetSessionVars().IsPessimisticReadConsistency() {
 		// Only Lock the existing keys in RC isolation.
 		if e.lock {
-			val, err = e.lockKeyIfExists(ctx, key)
+			tmp, err := e.lockKeyIfExists(ctx, key)
 			if err != nil {
-				return val, err
+				return kv.ValueEntry{}, err
 			}
-		} else {
-			val, err = e.get(ctx, key)
-			if err != nil {
-				if !kv.ErrNotExist.Equal(err) {
-					return val, err
-				}
-				return val, nil
+			if e.commitTSOffset < 0 {
+				return kv.ValueEntry{Value: tmp}, nil
+			}
+		}
+
+		val, err = e.get(ctx, key)
+		if err != nil {
+			if !kv.ErrNotExist.Equal(err) {
+				return val, err
 			}
 		}
 		return val, nil
@@ -597,13 +599,13 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 
 // lockKeyIfExists locks the key if needed, but won't lock the key if it doesn't exis.
 // Returns the value of the key if the key exist.
-func (e *PointGetExecutor) lockKeyIfExists(ctx context.Context, key []byte) (kv.ValueEntry, error) {
+func (e *PointGetExecutor) lockKeyIfExists(ctx context.Context, key []byte) ([]byte, error) {
 	return e.lockKeyBase(ctx, key, true)
 }
 
 func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 	key []byte,
-	lockOnlyIfExists bool) (val kv.ValueEntry, err error) {
+	lockOnlyIfExists bool) (val []byte, err error) {
 	if len(key) == 0 {
 		return val, nil
 	}
@@ -642,26 +644,23 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 
 func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
 	lockCtx *kv.LockCtx,
-	key []byte) (kv.ValueEntry, error) {
+	key []byte) ([]byte, error) {
 	if val, ok := lockCtx.Values[string(key)]; ok {
 		if val.Exists {
-			if e.commitTSOffset >= 0 {
-				return kv.ValueEntry{}, errors.Errorf("TODO: _tidb_commit_ts should return NULL but not implemented yet")
-			}
-			return kv.ValueEntry{Value: val.Value}, nil
+			return val.Value, nil
 		} else if val.AlreadyLocked {
 			val, err := e.get(ctx, key)
 			if err != nil {
 				if !kv.ErrNotExist.Equal(err) {
-					return kv.ValueEntry{}, err
+					return []byte{}, err
 				}
-				return kv.ValueEntry{}, nil
+				return []byte{}, nil
 			}
-			return val, nil
+			return val.Value, nil
 		}
 	}
 
-	return kv.ValueEntry{}, nil
+	return []byte{}, nil
 }
 
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
@@ -689,10 +688,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		// key does not exist in mem buffer, check the lock cache
 		if e.lock {
 			val1, ok := e.Ctx().GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-			if ok {
-				if e.commitTSOffset >= 0 {
-					return kv.ValueEntry{}, errors.Errorf("TODO: _tidb_commit_ts should return NULL but not implemented yet")
-				}
+			if ok && e.commitTSOffset < 0 {
 				return kv.ValueEntry{Value: val1}, nil
 			}
 		}
