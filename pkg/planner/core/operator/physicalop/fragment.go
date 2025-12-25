@@ -547,14 +547,14 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var metas []kv.MPPTaskMeta
 	if val := req.ToString(); e.tableReaderCache[val] != nil {
 		metas = e.tableReaderCache[val]
-		failpoint.InjectCall("mppTaskGeneratorTableReaderCacheHit")
+		failpoint.Call(_curpkg_("mppTaskGeneratorTableReaderCacheHit"))
 	} else {
 		metas, err = e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy, tiflashReplicaRead, e.ctx.GetSessionVars().StmtCtx.AppendWarning)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.tableReaderCache[val] = metas
-		failpoint.InjectCall("mppTaskGeneratorTableReaderCacheMiss")
+		failpoint.Call(_curpkg_("mppTaskGeneratorTableReaderCacheMiss"))
 	}
 
 	mppVersion := e.ctx.GetSessionVars().ChooseMppVersion()

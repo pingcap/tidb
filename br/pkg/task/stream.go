@@ -1540,12 +1540,12 @@ func restoreStream(
 	client.BuildMigrations(migs.Migs)
 
 	skipCleanup := false
-	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("skip-migration-read-lock-cleanup")); _err_ == nil {
 		// Skip the cleanup - this keeps the read lock held
 		// and will cause lock conflicts for other restore operations
 		log.Info("Skipping migration read lock cleanup due to failpoint")
 		skipCleanup = true
-	})
+	}
 
 	if !skipCleanup {
 		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
@@ -1652,7 +1652,7 @@ func restoreStream(
 	}
 
 	// Failpoint for testing scheduler pausing behavior
-	failpoint.InjectCall("log-restore-scheduler-paused")
+	failpoint.Call(_curpkg_("log-restore-scheduler-paused"))
 
 	// Always run the post-work even on error, so we don't stuck in the import
 	// mode or emptied schedulers
@@ -1739,11 +1739,11 @@ func restoreStream(
 
 		if cfg.UseCheckpoint {
 			// TODO make a failpoint iter inside the logclient.
-			failpoint.Inject("corrupt-files", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("corrupt-files")); _err_ == nil {
 				var retErr error
 				logFilesIterWithSplit, retErr = logclient.WrapLogFilesIterWithCheckpointFailpoint(v, logFilesIterWithSplit, rewriteRules)
 				defer func() { pErr = retErr }()
-			})
+			}
 		}
 
 		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIterWithSplit,
@@ -1754,9 +1754,9 @@ func restoreStream(
 	}
 
 	if cfg.ExplicitFilter {
-		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
-			failpoint.Return(errors.New("fail before setting table mode to normal"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("before-set-table-mode-to-normal")); _err_ == nil {
+			return errors.New("fail before setting table mode to normal")
+		}
 
 		if err = client.SetTableModeToNormal(ctx, schemasReplace); err != nil {
 			return errors.Trace(err)
@@ -1765,13 +1765,13 @@ func restoreStream(
 
 	// failpoint to stop for a while after restoring kvs
 	// this is to mimic the scenario that restore takes long time and the lease in schemaInfo has expired and needs refresh
-	failpoint.Inject("post-restore-kv-pending", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("post-restore-kv-pending")); _err_ == nil {
 		if val.(bool) {
 			// not ideal to use sleep but not sure what's the better way right now
 			log.Info("sleep after restoring kv")
 			time.Sleep(2 * time.Second)
 		}
-	})
+	}
 
 	// make sure schema reload finishes before proceeding
 	if err = waitUntilSchemaReload(ctx, client); err != nil {
@@ -1801,11 +1801,11 @@ func restoreStream(
 		}
 	}
 
-	failpoint.Inject("do-checksum-with-rewrite-rules", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("do-checksum-with-rewrite-rules")); _err_ == nil {
 		if err := client.FailpointDoChecksumForLogRestore(ctx, mgr.GetStorage().GetClient(), mgr.GetPDClient(), rewriteRules); err != nil {
-			failpoint.Return(errors.Annotate(err, "failed to do checksum"))
+			return errors.Annotate(err, "failed to do checksum")
 		}
-	})
+	}
 
 	gcDisabledRestorable = true
 

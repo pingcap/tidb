@@ -274,9 +274,9 @@ func (w *worker) resetSnapshotInterval(newRate int32) {
 func (w *worker) changeSnapshotInterval(_ context.Context, d string) error {
 	n, err := strconv.Atoi(d)
 
-	failpoint.Inject("FastRunawayGC", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FastRunawayGC")); _err_ == nil {
 		err = errors.New("fake error")
-	})
+	}
 
 	if err != nil {
 		return errWrongValueForVar.GenWithStackByArgs(repositorySnapshotInterval, d)

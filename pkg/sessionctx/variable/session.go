@@ -2499,9 +2499,9 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead with adjusted.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	// For test purpose, you can enable this failpoint to get the unadjusted replica read.
-	failpoint.Inject("GetReplicaReadUnadjusted", func(_ failpoint.Value) {
-		failpoint.Return(s.replicaRead)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("GetReplicaReadUnadjusted")); _err_ == nil {
+		return s.replicaRead
+	}
 	// Replica read only works for read-only statements.
 	if !s.StmtCtx.IsReadOnly {
 		if s.StmtCtx.HasReplicaReadHint {

@@ -245,11 +245,11 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.prepared = true
 	}
 
-	failpoint.Inject("shuffleError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("shuffleError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(errors.New("ShuffleExec.Next error"))
+			return errors.New("ShuffleExec.Next error")
 		}
-	})
+	}
 
 	if e.executed {
 		return nil
@@ -293,12 +293,12 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 		waitGroup.Done()
 	}()
 
-	failpoint.Inject("shuffleExecFetchDataAndSplit", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("shuffleExecFetchDataAndSplit")); _err_ == nil {
 		if val.(bool) {
 			time.Sleep(100 * time.Millisecond)
 			panic("shuffleExecFetchDataAndSplitPanic")
 		}
-	})
+	}
 
 	for {
 		err = exec.Next(ctx, e.dataSources[dataSourceIndex], chk)
@@ -414,7 +414,7 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 		waitGroup.Done()
 	}()
 
-	failpoint.Inject("shuffleWorkerRun", nil)
+	failpoint.Eval(_curpkg_("shuffleWorkerRun"))
 	for {
 		select {
 		case <-e.finishCh:

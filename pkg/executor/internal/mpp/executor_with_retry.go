@@ -84,11 +84,11 @@ func NewExecutorWithRetry(ctx context.Context, sctx sessionctx.Context, parentTr
 	// 3. For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
 	enableMPPRecovery := disaggTiFlashWithAutoScaler && !allowTiFlashFallback
 
-	failpoint.Inject("mpp_recovery_test_mock_enable", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mpp_recovery_test_mock_enable")); _err_ == nil {
 		if !allowTiFlashFallback {
 			enableMPPRecovery = true
 		}
-	})
+	}
 
 	recoveryHandler := NewRecoveryHandler(disaggTiFlashWithAutoScaler,
 		uint64(holdCap), enableMPPRecovery, parentTracker)
@@ -160,9 +160,9 @@ func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying
 	}
 
 	_, kvRanges, err := r.coord.Execute(ctx)
-	failpoint.Inject("mpp_coordinator_execute_err", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mpp_coordinator_execute_err")); _err_ == nil {
 		err = errors.New("mock mpp error")
-	})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -182,12 +182,12 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 		resp, mppErr := r.coord.Next(ctx)
 
 		// Mock recovery n times.
-		failpoint.Inject("mpp_recovery_test_max_err_times", func(forceErrCnt failpoint.Value) {
+		if forceErrCnt, _err_ := failpoint.Eval(_curpkg_("mpp_recovery_test_max_err_times")); _err_ == nil {
 			forceErrCntInt := forceErrCnt.(int)
 			if r.mppErrRecovery.RecoveryCnt() < uint32(forceErrCntInt) {
 				mppErr = errors.New("mock mpp error")
 			}
-		})
+		}
 
 		if mppErr != nil {
 			recoveryErr := r.mppErrRecovery.Recovery(&RecoveryInfo{
@@ -196,14 +196,14 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 			})
 
 			// Mock recovery succeed, ignore no recovery handler err.
-			failpoint.Inject("mpp_recovery_test_ignore_recovery_err", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("mpp_recovery_test_ignore_recovery_err")); _err_ == nil {
 				if recoveryErr == nil {
 					panic("mocked mpp err should got recovery err")
 				}
 				if strings.Contains(mppErr.Error(), "mock mpp error") && strings.Contains(recoveryErr.Error(), "no handler to recovery") {
 					recoveryErr = nil
 				}
-			})
+			}
 
 			if recoveryErr != nil {
 				logutil.BgLogger().Error("recovery mpp error failed", zap.Any("mppErr", mppErr),
@@ -230,14 +230,14 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 		r.mppErrRecovery.HoldResult(resp.(*mppResponse))
 	}
 
-	failpoint.Inject("mpp_recovery_test_hold_size", func(num failpoint.Value) {
+	if num, _err_ := failpoint.Eval(_curpkg_("mpp_recovery_test_hold_size")); _err_ == nil {
 		// Note: this failpoint only execute once.
 		curRows := r.mppErrRecovery.NumHoldResp()
 		numInt := num.(int)
 		if curRows != numInt {
 			panic(fmt.Sprintf("unexpected holding rows, cur: %d", curRows))
 		}
-	})
+	}
 	return nil
 }
 

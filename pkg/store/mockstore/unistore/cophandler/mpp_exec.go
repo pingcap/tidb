@@ -524,7 +524,7 @@ func (e *indexLookUpExec) next() (ret *chunk.Chunk, _ error) {
 
 func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts []int, indexChk *chunk.Chunk, err error) {
 	var handleFilter func(kv.Handle) bool
-	failpoint.InjectCall("inject-index-lookup-handle-filter", &handleFilter)
+	failpoint.Call(_curpkg_("inject-index-lookup-handle-filter"), &handleFilter)
 	type Handle struct {
 		kv.Handle
 		IndexOrder int

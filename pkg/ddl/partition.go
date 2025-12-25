@@ -182,10 +182,10 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
 		// replica only -> public
-		failpoint.Inject("sleepBeforeReplicaOnly", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("sleepBeforeReplicaOnly")); _err_ == nil {
 			sleepSecond := val.(int)
 			time.Sleep(time.Duration(sleepSecond) * time.Second)
-		})
+		}
 		// Here need do some tiflash replica complement check.
 		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
@@ -417,16 +417,16 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 }
 
 func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.PartitionDefinition, jobCtx *jobContext) (needWait bool, err error) {
-	failpoint.Inject("mockWaitTiFlashReplica", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockWaitTiFlashReplica")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(true, nil)
+			return true, nil
 		}
-	})
-	failpoint.Inject("mockWaitTiFlashReplicaOK", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("mockWaitTiFlashReplicaOK")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(false, nil)
+			return false, nil
 		}
-	})
+	}
 
 	ctx := context.Background()
 	pdCli := jobCtx.store.(tikv.Storage).GetRegionCache().PDClient()
@@ -454,9 +454,9 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 		// no pending peers, that means the replication has completed.
 		for _, region := range regions {
 			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, region.Meta.Peers)
-			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("ForceTiflashNotAvailable")); _err_ == nil {
 				tiflashPeerAtLeastOne = v.(bool)
-			})
+			}
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
 			if tiflashPeerAtLeastOne {
@@ -2538,13 +2538,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, tblInfo)
 	}
 
-	failpoint.Inject("truncatePartCancel1", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("truncatePartCancel1")); _err_ == nil {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
 			err = errors.New("Injected error by truncatePartCancel1")
-			failpoint.Return(ver, err)
+			return ver, err
 		}
-	})
+	}
 
 	var oldDefinitions []model.PartitionDefinition
 	var newDefinitions []model.PartitionDefinition
@@ -2571,13 +2571,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			scatterScope = val
 		}
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
-		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("truncatePartFail1")); _err_ == nil {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail1")
-				failpoint.Return(ver, err)
+				return ver, err
 			}
-		})
+		}
 		// This work as a flag to ignore Global Index entries from the old partitions!
 		// Used in IDsInDDLToIgnore() for filtering old partitions from
 		// the global index
@@ -2605,13 +2605,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		if err != nil || !done {
 			return ver, errors.Trace(err)
 		}
-		failpoint.Inject("truncatePartFail2", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("truncatePartFail2")); _err_ == nil {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail2")
-				failpoint.Return(ver, err)
+				return ver, err
 			}
-		})
+		}
 		// For the truncatePartitionEvent
 		oldDefinitions = pi.DroppingDefinitions
 		newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
@@ -2641,13 +2641,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			}
 		}
 
-		failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("truncatePartFail3")); _err_ == nil {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail3")
-				failpoint.Return(ver, err)
+				return ver, err
 			}
-		})
+		}
 		// used by ApplyDiff in updateSchemaVersion
 		args.ShouldUpdateAffectedPartitions = true
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -2679,9 +2679,9 @@ func clearTruncatePartitionTiflashStatus(tblInfo *model.TableInfo, newPartitions
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
 		e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID)
-		failpoint.Inject("FailTiFlashTruncatePartition", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("FailTiFlashTruncatePartition")); _err_ == nil {
 			e = errors.New("enforced error")
-		})
+		}
 		if e != nil {
 			logutil.DDLLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(e))
 			return e
@@ -2949,11 +2949,11 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 		return ver, errors.Trace(err)
 	}
 
-	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("exchangePartitionErr")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
+			return ver, errors.New("occur an error after updating partition id")
 		}
-	})
+	}
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	// TODO: Fix the issue of big transactions during EXCHANGE PARTITION with AutoID.
@@ -2972,20 +2972,20 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 		return ver, errors.Trace(err)
 	}
 
-	failpoint.Inject("exchangePartitionAutoID", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("exchangePartitionAutoID")); _err_ == nil {
 		if val.(bool) {
 			seCtx, err := w.sessPool.Get()
 			defer w.sessPool.Put(seCtx)
 			if err != nil {
-				failpoint.Return(ver, err)
+				return ver, err
 			}
 			se := sess.NewSession(seCtx)
 			_, err = se.Execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
 			if err != nil {
-				failpoint.Return(ver, err)
+				return ver, err
 			}
 		}
-	})
+	}
 
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
@@ -3295,12 +3295,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			newIndex.Global = newGlobal
 			tblInfo.Indices = append(tblInfo.Indices, newIndex)
 		}
-		failpoint.Inject("reorgPartCancel1", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartCancel1")); _err_ == nil {
 			if val.(bool) {
 				job.State = model.JobStateCancelled
-				failpoint.Return(ver, errors.New("Injected error by reorgPartCancel1"))
+				return ver, errors.New("Injected error by reorgPartCancel1")
 			}
-		})
+		}
 		// From now on we cannot just cancel the DDL, we must roll back if changesMade!
 		changesMade := false
 		if tblInfo.TiFlashReplica != nil {
@@ -3358,12 +3358,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		failpoint.Inject("reorgPartRollback1", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartRollback1")); _err_ == nil {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback1")
-				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
+				return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 			}
-		})
+		}
 
 		// Is really both StateDeleteOnly AND StateWriteOnly needed?
 		// If transaction A in WriteOnly inserts row 1 (into both new and old partition set)
@@ -3416,12 +3416,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 		tblInfo.Partition.DDLState = model.StateWriteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.2 / float64(math.MaxUint64))
-		failpoint.Inject("reorgPartRollback2", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartRollback2")); _err_ == nil {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback2")
-				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
+				return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 			}
-		})
+		}
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.Partition.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -3444,19 +3444,19 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		if err2 != nil {
 			return ver, errors.Trace(err2)
 		}
-		failpoint.Inject("reorgPartFail1", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartFail1")); _err_ == nil {
 			// Failures will retry, then do rollback
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
-				failpoint.Return(ver, errors.New("Injected error by reorgPartFail1"))
+				return ver, errors.New("Injected error by reorgPartFail1")
 			}
-		})
-		failpoint.Inject("reorgPartRollback3", func(val failpoint.Value) {
+		}
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartRollback3")); _err_ == nil {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback3")
-				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
+				return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 			}
-		})
+		}
 		var done bool
 		done, ver, err = doPartitionReorgWork(w, jobCtx, job, tbl, physicalTableIDs)
 
@@ -3464,12 +3464,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			return ver, err
 		}
 
-		failpoint.Inject("reorgPartRollback4", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartRollback4")); _err_ == nil {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback4")
-				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
+				return rollbackReorganizePartitionWithErr(jobCtx, job, err)
 			}
-		})
+		}
 
 		for _, index := range tblInfo.Indices {
 			isNew, ok := tblInfo.Partition.DDLChangedIndex[index.ID]
@@ -3501,12 +3501,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			tblInfo.Partition.Columns, tblInfo.Partition.DDLColumns = tblInfo.Partition.DDLColumns, tblInfo.Partition.Columns
 		}
 
-		failpoint.Inject("reorgPartFail2", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartFail2")); _err_ == nil {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
-				failpoint.Return(ver, errors.New("Injected error by reorgPartFail2"))
+				return ver, errors.New("Injected error by reorgPartFail2")
 			}
-		})
+		}
 
 		// Now all the data copying is done, but we cannot simply remove the droppingDefinitions
 		// since they are a part of the normal Definitions that other nodes with
@@ -3536,12 +3536,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			// but needs to be deleted, in case previous state clients inserts.
 			index.State = model.StateDeleteOnly
 		}
-		failpoint.Inject("reorgPartFail3", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartFail3")); _err_ == nil {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
-				failpoint.Return(ver, errors.New("Injected error by reorgPartFail3"))
+				return ver, errors.New("Injected error by reorgPartFail3")
 			}
-		})
+		}
 		job.SchemaState = model.StatePublic
 		tblInfo.Partition.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -3587,12 +3587,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				args.OldGlobalIndexes = append(args.OldGlobalIndexes, model.TableIDIndexID{TableID: tblInfo.ID, IndexID: indexInfo.ID})
 			}
 		}
-		failpoint.Inject("reorgPartFail4", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartFail4")); _err_ == nil {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
-				failpoint.Return(ver, errors.New("Injected error by reorgPartFail4"))
+				return ver, errors.New("Injected error by reorgPartFail4")
 			}
-		})
+		}
 		var oldTblID int64
 		if job.Type != model.ActionReorganizePartition {
 			// ALTER TABLE ... PARTITION BY
@@ -3639,15 +3639,15 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			return ver, err
 		}
 
-		failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("reorgPartFail5")); _err_ == nil {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
-				failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
+				return ver, errors.New("Injected error by reorgPartFail5")
 			}
-		})
-		failpoint.Inject("updateVersionAndTableInfoErrInStateDeleteReorganization", func() {
-			failpoint.Return(ver, errors.New("Injected error in StateDeleteReorganization"))
-		})
+		}
+		if _, _err_ := failpoint.Eval(_curpkg_("updateVersionAndTableInfoErrInStateDeleteReorganization")); _err_ == nil {
+			return ver, errors.New("Injected error in StateDeleteReorganization")
+		}
 		args.OldPhysicalTblIDs = physicalTableIDs
 		args.NewPartitionIDs = newIDs
 		job.SchemaState = model.StateNone
@@ -3846,7 +3846,7 @@ func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorg
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		failpoint.InjectCall("PartitionBackfillData", len(w.rowRecords) > 0)
+		failpoint.Call(_curpkg_("PartitionBackfillData"), len(w.rowRecords) > 0)
 		// For non-clustered tables, we need to replace the _tidb_rowid handles since
 		// there may be duplicates across different partitions, due to EXCHANGE PARTITION.
 		// Meaning we need to check here if a record was double written to the new partition,
@@ -3856,7 +3856,7 @@ func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorg
 		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
 		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
 		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
-			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
+			failpoint.Call(_curpkg_("PartitionBackfillNonClustered"), w.rowRecords[0].vals)
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
 
@@ -4057,12 +4057,12 @@ func (w *worker) reorgPartitionDataAndIndex(
 		}
 	}
 
-	failpoint.Inject("reorgPartitionAfterDataCopy", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("reorgPartitionAfterDataCopy")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test in reorgPartitionAfterDataCopy")
 		}
-	})
+	}
 
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 		// row data has been copied, now proceed with creating the indexes
@@ -5213,9 +5213,9 @@ func checkPartitionDefinitionConstraints(ctx expression.BuildContext, tbInfo *mo
 
 	switch tbInfo.Partition.Type {
 	case ast.PartitionTypeRange:
-		failpoint.Inject("CheckPartitionByRangeErr", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("CheckPartitionByRangeErr")); _err_ == nil {
 			panic("mockCheckPartitionByRangeErr")
-		})
+		}
 		err = checkPartitionByRange(ctx, tbInfo)
 	case ast.PartitionTypeHash, ast.PartitionTypeKey:
 		err = checkPartitionByHash(tbInfo)

@@ -400,11 +400,11 @@ func (w *worker) runReorgJob(
 	}
 
 	updateProgressInverval := 5 * time.Second
-	failpoint.Inject("updateProgressIntervalInMs", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("updateProgressIntervalInMs")); _err_ == nil {
 		if v, ok := val.(int); ok {
 			updateProgressInverval = time.Duration(v) * time.Millisecond
 		}
-	})
+	}
 	updateProcessTicker := time.NewTicker(updateProgressInverval)
 	defer updateProcessTicker.Stop()
 	for {
@@ -456,7 +456,7 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
-			failpoint.InjectCall("onRunReorgJobTimeout")
+			failpoint.Call(_curpkg_("onRunReorgJobTimeout"))
 			return jobCtx.genReorgTimeoutErr()
 		}
 	}
@@ -919,15 +919,15 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	if job.SnapshotVer == 0 {
 		// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 		// Third step, we need to remove the element information to make sure we can save the reorganized information to storage.
-		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("MockGetIndexRecordErr")); _err_ == nil {
 			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 3, 4) {
 				if err := rh.RemoveReorgElementFailPoint(job); err != nil {
-					failpoint.Return(nil, errors.Trace(err))
+					return nil, errors.Trace(err)
 				}
 				info.first = true
-				failpoint.Return(&info, nil)
+				return &info, nil
 			}
-		})
+		}
 
 		info.first = true
 		delayForAsyncCommit()
@@ -968,9 +968,9 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.String("endKey", hex.EncodeToString(end)))
 
-		failpoint.Inject("errorUpdateReorgHandle", func() {
-			failpoint.Return(&info, errors.New("occur an error when update reorg handle"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("errorUpdateReorgHandle")); _err_ == nil {
+			return &info, errors.New("occur an error when update reorg handle")
+		}
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
@@ -979,16 +979,16 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 		job.SnapshotVer = ver.Ver
 		element = elements[0]
 	} else {
-		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("MockGetIndexRecordErr")); _err_ == nil {
 			// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 			// Second step, we need to remove the element information to make sure we can get the error of "ErrDDLReorgElementNotExist".
 			// However, since "txn.Reset()" will be called later, the reorganized information cannot be saved to storage.
 			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 2, 3) {
 				if err := rh.RemoveReorgElementFailPoint(job); err != nil {
-					failpoint.Return(nil, errors.Trace(err))
+					return nil, errors.Trace(err)
 				}
 			}
-		})
+		}
 
 		var err error
 		element, start, end, pid, err = rh.GetDDLReorgHandle(job)

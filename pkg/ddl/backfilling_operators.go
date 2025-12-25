@@ -124,7 +124,7 @@ func NewAddIndexIngestPipeline(
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
-	failpoint.InjectCall("beforeAddIndexScan")
+	failpoint.Call(_curpkg_("beforeAddIndexScan"))
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
@@ -184,11 +184,11 @@ func NewWriteIndexToExternalStoragePipeline(
 
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
-	failpoint.Inject("mockWriterMemSizeInKB", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockWriterMemSizeInKB")); _err_ == nil {
 		if v, ok := val.(int); ok {
 			memSizePerIndex = uint64(v) * size.KB
 		}
-	})
+	}
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
@@ -492,9 +492,9 @@ type tableScanWorker struct {
 }
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) error {
-	failpoint.Inject("injectPanicForTableScan", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("injectPanicForTableScan")); _err_ == nil {
 		panic("mock panic")
-	})
+	}
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
@@ -537,10 +537,10 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		scanCtx = context.WithValue(w.ctx, kvutil.ExecDetailsKey, &execDetails)
 	}
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
-		failpoint.Inject("mockScanRecordError", func() {
-			failpoint.Return(errors.New("mock scan record error"))
-		})
-		failpoint.InjectCall("scanRecordExec", w.reorgMeta)
+		if _, _err_ := failpoint.Eval(_curpkg_("mockScanRecordError")); _err_ == nil {
+			return errors.New("mock scan record error")
+		}
+		failpoint.Call(_curpkg_("scanRecordExec"), w.reorgMeta)
 		selExpr, err := w.copCtx.GetCondition()
 		if err != nil {
 			return err
@@ -562,7 +562,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		var done bool
 		var lastTableScanRowCount int64
 		for !done {
-			failpoint.InjectCall("beforeGetChunk")
+			failpoint.Call(_curpkg_("beforeGetChunk"))
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk)
 			if err != nil || scanCtx.Err() != nil {
@@ -636,9 +636,9 @@ func NewWriteExternalStoreOperator(
 	collector execute.Collector,
 ) *WriteExternalStoreOperator {
 	onDuplicateKey := engineapi.OnDuplicateKeyError
-	failpoint.Inject("ignoreReadIndexDupKey", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("ignoreReadIndexDupKey")); _err_ == nil {
 		onDuplicateKey = engineapi.OnDuplicateKeyIgnore
-	})
+	}
 
 	totalCount := new(atomic.Int64)
 	blockSize := external.GetAdjustedBlockSize(memoryQuota, external.DefaultBlockSize)
@@ -794,7 +794,7 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 			w.srcChunkPool.Put(ck.Chunk)
 		}
 	}()
-	failpoint.InjectCall("mockIndexIngestWorkerFault")
+	failpoint.Call(_curpkg_("mockIndexIngestWorkerFault"))
 
 	result := IndexWriteResult{
 		ID: ck.ID,
@@ -879,10 +879,10 @@ func (w *indexIngestWorker) Close() error {
 
 // WriteChunk will write index records to lightning engine.
 func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes int, err error) {
-	failpoint.Inject("mockWriteLocalError", func(_ failpoint.Value) {
-		failpoint.Return(0, 0, errors.New("mock write local error"))
-	})
-	failpoint.InjectCall("writeLocalExec", rs.Done)
+	if _, _err_ := failpoint.Eval(_curpkg_("mockWriteLocalError")); _err_ == nil {
+		return 0, 0, errors.New("mock write local error")
+	}
+	failpoint.Call(_curpkg_("writeLocalExec"), rs.Done)
 
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars() //nolint:forbidigo
@@ -976,9 +976,9 @@ func (s *indexWriteResultSink) flush() error {
 	if s.backendCtx == nil {
 		return nil
 	}
-	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("mock flush error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockFlushError")); _err_ == nil {
+		return errors.New("mock flush error")
+	}
 	return s.backendCtx.Ingest(s.ctx)
 }
 
@@ -1195,9 +1195,9 @@ type mergeTempIndexWorker struct {
 }
 
 func (w *mergeTempIndexWorker) HandleTask(task tempIndexScanTask, sender func(tempIdxResult)) error {
-	failpoint.Inject("injectPanicForTableScan", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("injectPanicForTableScan")); _err_ == nil {
 		panic("mock panic")
-	})
+	}
 	start := task.Start
 	done := false
 	for !done {
@@ -1274,7 +1274,7 @@ func (w *mergeTempIndexWorker) handleOneRange(
 					return err
 				}
 
-				failpoint.InjectCall("mockDMLExecutionMergingInTxn")
+				failpoint.Call(_curpkg_("mockDMLExecutionMergingInTxn"))
 
 				result.addCount++
 			}
@@ -1302,12 +1302,12 @@ func (w *mergeTempIndexWorker) handleOneRange(
 	}
 
 	metrics.DDLSetTempIndexScanAndMerge(w.ptbl.GetPhysicalID(), uint64(result.scanCount), uint64(result.addCount))
-	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionMerging")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionMerging != nil {
 			MockDMLExecutionMerging()
 		}
-	})
+	}
 	logSlowOperations(time.Since(oprStartTime), "mergeTempIndexExecutorHandleOneRange", 3000)
 	w.totalCount.Add(int64(result.scanCount))
 	return result, nil

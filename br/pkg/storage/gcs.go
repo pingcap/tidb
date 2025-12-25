@@ -617,12 +617,12 @@ type gcsObjectReader struct {
 
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
-	failpoint.Inject("GCSReadUnexpectedEOF", func(n failpoint.Value) {
+	if n, _err_ := failpoint.Eval(_curpkg_("GCSReadUnexpectedEOF")); _err_ == nil {
 		if r.prefetchSize > 0 && r.pos > 0 && rand.Intn(2) == 0 {
 			log.Info("ingest error in gcs reader read")
-			failpoint.Return(n.(int), io.ErrUnexpectedEOF)
+			return n.(int), io.ErrUnexpectedEOF
 		}
-	})
+	}
 	if r.reader == nil {
 		length := r.endPos - r.pos
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)

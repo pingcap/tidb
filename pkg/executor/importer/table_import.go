@@ -731,9 +731,9 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	if err != nil {
 		return 0, err
 	}
-	failpoint.Inject("mockImportFromSelectErr", func() {
-		failpoint.Return(0, errors.New("mock import from select error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockImportFromSelectErr")); _err_ == nil {
+		return 0, errors.New("mock import from select error")
+	}
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
@@ -885,12 +885,12 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 	}
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
-	failpoint.Inject("waitCtxDone", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("waitCtxDone")); _err_ == nil {
 		<-ctx.Done()
-	})
-	failpoint.Inject("retryableError", func() {
-		failpoint.Return(common.ErrWriteTooSlow)
-	})
+	}
+	if _, _err_ := failpoint.Eval(_curpkg_("retryableError")); _err_ == nil {
+		return common.ErrWriteTooSlow
+	}
 
 	remoteChecksum, err := getRemoteChecksumFn()
 	if err != nil {
@@ -969,9 +969,9 @@ func RemoteChecksumTableBySQL(ctx context.Context, se sessionctx.Context, plan *
 				return errors.New("empty checksum result")
 			}
 
-			failpoint.Inject("errWhenChecksum", func() {
-				failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
-			})
+			if _, _err_ := failpoint.Eval(_curpkg_("errWhenChecksum")); _err_ == nil {
+				return errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline")
+			}
 
 			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
 			// 	mysql> admin checksum table test.t;

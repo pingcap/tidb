@@ -102,11 +102,11 @@ func getModifyColumnType(
 		return model.ModifyTypeReorg
 	}
 
-	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("disableLossyDDLOptimization")); _err_ == nil {
 		if v, ok := val.(bool); ok && v {
-			failpoint.Return(model.ModifyTypeReorg)
+			return model.ModifyTypeReorg
 		}
-	})
+	}
 
 	// FIXME(joechenrh): remove this when stats correctness is resolved.
 	// Since stats may store bytes encoded by codec.EncodeKey, we should disable the optimization
@@ -228,7 +228,7 @@ func initializeChangingIndexes(
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyColumnArgs(job)
 	defer func() {
-		failpoint.InjectCall("getModifyColumnType", args.ModifyColumnType)
+		failpoint.Call(_curpkg_("getModifyColumnType"), args.ModifyColumnType)
 	}()
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -650,7 +650,7 @@ func (w *worker) doModifyColumnWithCheck(
 	// For the first time we get here, just add the flag
 	// and check the existing data in the next round.
 	if !hasModifyFlag(oldCol) {
-		failpoint.InjectCall("beforeDoModifyColumnSkipReorgCheck")
+		failpoint.Call(_curpkg_("beforeDoModifyColumnSkipReorgCheck"))
 		if isNullToNotNullChange(oldCol, newCol) {
 			oldCol.AddFlag(mysql.PreventNullInsertFlag)
 		}
@@ -675,7 +675,7 @@ func (w *worker) doModifyColumnWithCheck(
 		return ver, errors.Trace(err)
 	}
 
-	failpoint.InjectCall("afterDoModifyColumnSkipReorgCheck")
+	failpoint.Call(_curpkg_("afterDoModifyColumnSkipReorgCheck"))
 
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
@@ -949,12 +949,12 @@ func (w *worker) doModifyColumnTypeWithData(
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
-		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockInsertValueAfterCheckNull")); _err_ == nil {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
 				sctx, err := w.sessPool.Get()
 				if err != nil {
-					failpoint.Return(ver, err)
+					return ver, err
 				}
 				defer w.sessPool.Put(sctx)
 
@@ -963,10 +963,10 @@ func (w *worker) doModifyColumnTypeWithData(
 				_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
-					failpoint.Return(ver, err)
+					return ver, err
 				}
 			}
-		})
+		}
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -977,7 +977,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingColumn = changingCol
 		args.ChangingIdxs = changingIdxs
-		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
+		failpoint.Call(_curpkg_("modifyColumnTypeWithData"), job, args)
 		job.FillArgs(args)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
@@ -1000,7 +1000,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteOnly
-		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
+		failpoint.Call(_curpkg_("afterModifyColumnStateDeleteOnly"), job.ID)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		updateObjectState(changingCol, changingIdxs, model.StateWriteReorganization)
@@ -1052,7 +1052,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
-			failpoint.InjectCall("afterReorgWorkForModifyColumn")
+			failpoint.Call(_curpkg_("afterReorgWorkForModifyColumn"))
 			oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 			if tblInfo.TTLInfo != nil {
 				updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, colName)
@@ -1196,7 +1196,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		job.SchemaState = model.StateDeleteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingIdxs = changingIdxInfos
-		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
+		failpoint.Call(_curpkg_("modifyColumnTypeWithData"), job, args)
 		job.FillArgs(args)
 	case model.StateDeleteOnly:
 		checked, err := checkModifyColumnData(
@@ -1217,7 +1217,7 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteOnly
-		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
+		failpoint.Call(_curpkg_("afterModifyColumnStateDeleteOnly"), job.ID)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		updateObjectState(nil, changingIdxInfos, model.StateWriteReorganization)
@@ -1260,7 +1260,7 @@ func (w *worker) doModifyColumnIndexReorg(
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
-			failpoint.InjectCall("afterReorgWorkForModifyColumn")
+			failpoint.Call(_curpkg_("afterReorgWorkForModifyColumn"))
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 			oldTp := oldCol.FieldType
 			oldName := oldCol.Name
@@ -1360,7 +1360,7 @@ func doReorgWorkForModifyColumn(
 	// With a failpoint-enabled version of TiDB, you can trigger this failpoint by the following command:
 	// enable: curl -X PUT -d "pause" "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/pkg/ddl/mockDelayInModifyColumnTypeWithData".
 	// disable: curl -X DELETE "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/pkg/ddl/mockDelayInModifyColumnTypeWithData"
-	failpoint.Inject("mockDelayInModifyColumnTypeWithData", func() {})
+	failpoint.Eval(_curpkg_("mockDelayInModifyColumnTypeWithData"))
 	err = w.runReorgJob(jobCtx, reorgInfo, tbl.Meta(), func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 			func() {

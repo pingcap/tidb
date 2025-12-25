@@ -144,11 +144,11 @@ func updateDelta(sctx sessionctx.Context, count, modifyCount int64, tid int64) e
 	if err != nil {
 		return err
 	}
-	failpoint.Inject("mockStatsVersion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockStatsVersion")); _err_ == nil {
 		if val.(bool) {
 			version = 1000
 		}
-	})
+	}
 	if _, _, err := util.ExecRows(sctx,
 		updateDeltaSQL,
 		version, count, count, modifyCount, tid,

@@ -197,11 +197,11 @@ func (s *Syncer) setDynamicServerInfo(ds *DynamicInfo) {
 
 // GetAllServerInfo returns all server information from etcd.
 func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
-	failpoint.Inject("mockGetAllServerInfo", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockGetAllServerInfo")); _err_ == nil {
 		res := make(map[string]*ServerInfo)
 		err := json.Unmarshal([]byte(val.(string)), &res)
-		failpoint.Return(res, err)
-	})
+		return res, err
+	}
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
 		info := s.info.Load()
@@ -458,14 +458,14 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *S
 
 	metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, info.GitHash).Set(float64(info.StartTimestamp))
 
-	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockServerInfo")); _err_ == nil {
 		if val.(bool) {
 			info.StartTimestamp = 1282967700
 			info.Labels = map[string]string{
 				"foo": "bar",
 			}
 		}
-	})
+	}
 
 	return info
 }

@@ -246,12 +246,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 		return err
 	}
 	close(a.cmsketch)
-	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("PanicSameTime")); _err_ == nil {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
 			panic("test for PanicSameTime")
 		}
-	})
+	}
 	err = a.loadHistogramAndTopN(sctx, a.globalTableInfo, isIndex)
 	if err != nil {
 		close(a.ioWorkerExitWhenErrChan)
@@ -286,12 +286,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 		statslogutil.StatsLogger().Warn("dealCMSketch failed", zap.Error(err))
 		return err
 	}
-	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("PanicSameTime")); _err_ == nil {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
 			panic("test for PanicSameTime")
 		}
-	})
+	}
 	err = a.dealHistogramAndTopN(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
 	if err != nil {
 		statslogutil.StatsLogger().Warn("dealHistogramAndTopN failed", zap.Error(err))
@@ -371,7 +371,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
-	failpoint.Inject("PanicInIOWorker", nil)
+	failpoint.Eval(_curpkg_("PanicInIOWorker"))
 	for i := range a.globalStats.Num {
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
@@ -399,12 +399,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
-	failpoint.Inject("ErrorSameTime", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("ErrorSameTime")); _err_ == nil {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
-			failpoint.Return(errors.New("ErrorSameTime returned error"))
+			return errors.New("ErrorSameTime returned error")
 		}
-	})
+	}
 	for i := range a.globalStats.Num {
 		hists := make([]*statistics.Histogram, 0, a.partitionNum)
 		topn := make([]*statistics.TopN, 0, a.partitionNum)
@@ -446,7 +446,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
-	failpoint.Inject("PanicInCPUWorker", nil)
+	failpoint.Eval(_curpkg_("PanicInCPUWorker"))
 	for {
 		select {
 		case fms, ok := <-a.fmsketch:
@@ -465,11 +465,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
-	failpoint.Inject("dealCMSketchErr", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("dealCMSketchErr")); _err_ == nil {
 		if val, _ := val.(bool); val {
-			failpoint.Return(errors.New("dealCMSketch returned error"))
+			return errors.New("dealCMSketch returned error")
 		}
-	})
+	}
 	for {
 		select {
 		case cms, ok := <-a.cmsketch:
@@ -491,17 +491,17 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
-	failpoint.Inject("dealHistogramAndTopNErr", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("dealHistogramAndTopNErr")); _err_ == nil {
 		if val, _ := val.(bool); val {
-			failpoint.Return(errors.New("dealHistogramAndTopNErr returned error"))
+			return errors.New("dealHistogramAndTopNErr returned error")
 		}
-	})
-	failpoint.Inject("ErrorSameTime", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("ErrorSameTime")); _err_ == nil {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
-			failpoint.Return(errors.New("ErrorSameTime returned error"))
+			return errors.New("ErrorSameTime returned error")
 		}
-	})
+	}
 	for {
 		select {
 		case item, ok := <-a.histogramAndTopn:

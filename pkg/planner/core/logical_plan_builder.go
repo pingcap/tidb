@@ -4404,13 +4404,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
 				usePartitionProcessor := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)
 
-				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
+				if val, _err_ := failpoint.Eval(_curpkg_("forceDynamicPrune")); _err_ == nil {
 					if val.(bool) {
 						if isDynamicEnabled {
 							usePartitionProcessor = false
 						}
 					}
-				})
+				}
 
 				if usePartitionProcessor {
 					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
@@ -4984,7 +4984,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 			terror.ErrorNotEqual(err, plannererrors.ErrNotSupportedYet) {
 			err = plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
-		failpoint.Inject("BuildDataSourceFailed", func() {})
+		failpoint.Eval(_curpkg_("BuildDataSourceFailed"))
 		return nil, err
 	}
 	pm := privilege.GetPrivilegeManager(b.ctx)

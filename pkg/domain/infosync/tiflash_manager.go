@@ -111,11 +111,11 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspac
 	for _, store := range tiFlashStores {
 		regionReplica := make(map[int64]int)
 		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, keyspaceID, tableID, &regionReplica)
-		failpoint.Inject("OneTiFlashStoreDown", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("OneTiFlashStoreDown")); _err_ == nil {
 			if store.Store.StateName == "Down" {
 				err = errors.New("mock TiFlash down")
 			}
-		})
+		}
 		if err != nil {
 			// Just skip down or offline or tombstone stores, because PD will migrate regions from these stores.
 			if store.Store.StateName == "Up" || store.Store.StateName == "Disconnected" {

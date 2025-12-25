@@ -668,7 +668,7 @@ func (do *Domain) Init(
 		time.Second,
 	)
 	// TODO(lance6716): find a more representative place for subscriber
-	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
+	failpoint.Call(_curpkg_("afterDDLNotifierCreated"), do.ddlNotifier)
 
 	d := do.ddl
 	eBak := do.ddlExecutor
@@ -683,12 +683,12 @@ func (do *Domain) Init(
 		ddl.WithEventPublishStore(ddlNotifierStore),
 	)
 
-	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockReplaceDDL")); _err_ == nil {
 		if val.(bool) {
 			do.ddl = d
 			do.ddlExecutor = eBak
 		}
-	})
+	}
 	var checker *schematracker.Checker
 	if ddlInjector != nil {
 		checker = ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
@@ -1062,11 +1062,11 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockDisableDistTask")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 
 	taskManager := storage.NewTaskManager(do.dxfSessionPool)
 	storage.SetTaskManager(taskManager)
@@ -1448,7 +1448,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			case <-time.After(duration):
 			}
 
-			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("skipLoadSysVarCacheLoop")); _err_ == nil {
 				// In some pkg integration test, there are many testSuite, and each testSuite has separate storage and
 				// `LoadSysVarCacheLoop` background goroutine. Then each testSuite `RebuildSysVarCache` from it's
 				// own storage.
@@ -1456,9 +1456,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				// That's the problem, each testSuit use different storage to update some same local variables.
 				// So just skip `RebuildSysVarCache` in some integration testing.
 				if val.(bool) {
-					failpoint.Continue()
+					continue
 				}
-			})
+			}
 
 			if !ok {
 				logutil.BgLogger().Warn("LoadSysVarCacheLoop loop watch channel closed")
@@ -2254,9 +2254,9 @@ func (do *Domain) deltaUpdateTickerWorker() {
 	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
 	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
 	updateDuration := 20*lease + randDuration
-	failpoint.Inject("deltaUpdateDuration", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("deltaUpdateDuration")); _err_ == nil {
 		updateDuration = 20 * time.Second
-	})
+	}
 
 	deltaUpdateTicker := time.NewTicker(updateDuration)
 	statsHandle := do.StatsHandle()

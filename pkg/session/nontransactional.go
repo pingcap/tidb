@@ -425,11 +425,11 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	rs, err := se.ExecuteStmt(ctx, options.stmt.DMLStmt)
 
 	// collect errors
-	failpoint.Inject("batchDMLError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("batchDMLError")); _err_ == nil {
 		if val.(bool) {
 			err = errors.New("injected batch(non-transactional) DML error")
 		}
-	})
+	}
 	if err != nil {
 		logutil.Logger(ctx).Info("Non-transactional DML SQL failed", zap.String("job", dmlSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
 		job.err = err
@@ -538,13 +538,13 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 		currentStart = *currentStart.Clone()
 	}
 
-	failpoint.Inject("CheckMaxExecutionTime", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("CheckMaxExecutionTime")); _err_ == nil {
 		if val.(bool) {
 			if se.GetSessionVars().MaxExecutionTime > 0 {
 				err = errors.New("injected max execution time exceeded error")
 			}
 		}
-	})
+	}
 
 	return jobs, err
 }

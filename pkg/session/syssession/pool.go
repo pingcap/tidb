@@ -303,9 +303,9 @@ func (p *AdvancedSessionPool) WithForceBlockGCSession(ctx context.Context, fn fu
 			// It is only enabled explicitly in tests through a failpoint.
 			if intest.InTest {
 				forceBlockGCInTest := false
-				failpoint.Inject("ForceBlockGCInTest", func(val failpoint.Value) {
+				if val, _err_ := failpoint.Eval(_curpkg_("ForceBlockGCInTest")); _err_ == nil {
 					forceBlockGCInTest = val.(bool)
-				})
+				}
 				if !forceBlockGCInTest {
 					break
 				}

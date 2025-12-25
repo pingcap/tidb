@@ -355,7 +355,7 @@ func (w *ProbeWorkerV1) runJoinWorker() {
 			return
 		case probeSideResult, ok = <-w.probeResultCh:
 		}
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		if !ok {
 			break
 		}
@@ -884,11 +884,11 @@ func (w *ProbeWorkerV1) join2Chunk(probeSideChk *chunk.Chunk, hCtx *HashContext,
 
 	for i := range selected {
 		err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal()
-		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("killedInJoin2Chunk")); _err_ == nil {
 			if val.(bool) {
 				err = exeerrors.ErrQueryInterrupted
 			}
-		})
+		}
 		if err != nil {
 			joinResult.err = err
 			return false, waitTime, joinResult
@@ -962,11 +962,11 @@ func (w *ProbeWorkerV1) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hC
 	}
 	for i := range probeSideChk.NumRows() {
 		err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal()
-		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("killedInJoin2ChunkForOuterHashJoin")); _err_ == nil {
 			if val.(bool) {
 				err = exeerrors.ErrQueryInterrupted
 			}
-		})
+		}
 		if err != nil {
 			joinResult.err = err
 			return false, waitTime, joinResult
@@ -1097,12 +1097,12 @@ func (w *BuildWorkerV1) BuildHashTableForList(buildSideResultCh <-chan *chunk.Ch
 	rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	if vardef.EnableTmpStorageOnOOM.Load() {
 		actionSpill := rowContainer.ActionSpill()
-		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testRowContainerSpill")); _err_ == nil {
 			if val.(bool) {
 				actionSpill = rowContainer.rowContainer.ActionSpillForTest()
 				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
 			}
-		})
+		}
 		w.HashJoinCtx.SessCtx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {
@@ -1125,7 +1125,7 @@ func (w *BuildWorkerV1) BuildHashTableForList(buildSideResultCh <-chan *chunk.Ch
 				err = rowContainer.PutChunkSelected(chk, selected, w.HashJoinCtx.IsNullEQ)
 			}
 		}
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		if err != nil {
 			return err
 		}

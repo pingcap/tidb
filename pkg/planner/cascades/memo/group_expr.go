@@ -240,9 +240,9 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	// their group ndv signal is passed in CollectPredicateColumnsPoint which is applied
 	// behind join reorder rule, we should build their group ndv again (implied in DeriveStats).
 	skipDeriveStats := false
-	failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockPlanSkipMemoDeriveStats")); _err_ == nil {
 		skipDeriveStats = val.(bool)
-	})
+	}
 	if !skipDeriveStats {
 		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
 		tmpStats, _, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)

@@ -300,21 +300,21 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
-	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockLoadBatchRegionData")); _err_ == nil {
 		kvs := make([]KVPair, 0)
 		kvs = append(kvs, KVPair{[]byte{}, []byte{}})
 		data := e.buildIngestData(kvs, nil)
 		data.IncRef()
 		select {
 		case <-ctx.Done():
-			failpoint.Return(ctx.Err())
+			return ctx.Err()
 		case outCh <- engineapi.DataAndRanges{
 			Data: data,
 		}:
 			e.activeIngestDataFlags = append(e.activeIngestDataFlags, data.released)
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
@@ -488,10 +488,10 @@ func (e *Engine) updateActiveIngestDataFlags() {
 // recreate a new memory pool to this engine. And it will returns the current batch size
 func (e *Engine) handleConcurrencyChange(ctx context.Context, currBatchSize int) int {
 	newBatchSize := int(e.workerConcurrency.Load())
-	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("LoadIngestDataBatchSize")); _err_ == nil {
 		currBatchSize = val.(int)
 		newBatchSize = currBatchSize
-	})
+	}
 
 	if newBatchSize == currBatchSize {
 		e.updateActiveIngestDataFlags()
@@ -643,7 +643,7 @@ func (e *Engine) UpdateResource(ctx context.Context, concurrency int, memCapacit
 	e.memLimit = getEngineMemoryLimit(memCapacity)
 	e.workerConcurrency.Store(int32(concurrency))
 
-	failpoint.InjectCall("afterUpdateWorkerConcurrency")
+	failpoint.Call(_curpkg_("afterUpdateWorkerConcurrency"))
 
 	// Wait for current data being consumed and new memory pool created.
 	select {

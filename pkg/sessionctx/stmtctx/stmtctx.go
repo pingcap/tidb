@@ -890,7 +890,7 @@ func (sc *StatementContext) AffectedRows() uint64 {
 func (sc *StatementContext) FoundRows() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	failpoint.InjectCall("afterFoundRowsLocked", sc)
+	failpoint.Call(_curpkg_("afterFoundRowsLocked"), sc)
 	return sc.mu.foundRows
 }
 

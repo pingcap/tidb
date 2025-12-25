@@ -1033,9 +1033,9 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) (firstKey, la
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
-	failpoint.Inject("mockGetFirstAndLastKey", func() {
-		failpoint.Return(lowerBound, upperBound, nil)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockGetFirstAndLastKey")); _err_ == nil {
+		return lowerBound, upperBound, nil
+	}
 
 	iter := e.newKVIter(context.Background(), opt, nil)
 	//nolint: errcheck
@@ -1357,13 +1357,13 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	failpoint.Inject("orphanWriterGoRoutine", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("orphanWriterGoRoutine")); _err_ == nil {
 		_ = common.KillMySelf()
 		// mimic we meet context cancel error when `addSST`
 		<-ctx.Done()
 		time.Sleep(5 * time.Second)
-		failpoint.Return(errors.Trace(ctx.Err()))
-	})
+		return errors.Trace(ctx.Err())
+	}
 
 	err = w.addSST(ctx, meta)
 	if err != nil {
@@ -1573,12 +1573,12 @@ type dbSSTIngester struct {
 }
 
 func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error) {
-	failpoint.InjectCall("beforeMergeSSTs")
-	failpoint.Inject("mockErrInMergeSSTs", func(val failpoint.Value) {
+	failpoint.Call(_curpkg_("beforeMergeSSTs"))
+	if val, _err_ := failpoint.Eval(_curpkg_("mockErrInMergeSSTs")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mocked error in mergeSSTs"))
+			return nil, errors.New("mocked error in mergeSSTs")
 		}
-	})
+	}
 
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")

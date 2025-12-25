@@ -461,7 +461,7 @@ func (rc *SnapClient) RestoreSSTFiles(
 	tableIDWithFilesGroup []restore.BatchBackupFileSet,
 	onProgress func(int64),
 ) (retErr error) {
-	failpoint.Inject("corrupt-files", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("corrupt-files")); _err_ == nil {
 		if cmd, ok := v.(string); ok {
 			switch cmd {
 			case "corrupt-last-table-files": // skip some files and eventually return an error to make the restore fail
@@ -477,7 +477,7 @@ func (rc *SnapClient) RestoreSSTFiles(
 				}
 			}
 		}
-	})
+	}
 
 	r := rc.GetRestorer(rc.checkpointRunner)
 	retErr = r.GoRestore(onProgress, tableIDWithFilesGroup...)

@@ -476,7 +476,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 
 // NewImportPlan creates a new import into plan.
 func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
-	failpoint.InjectCall("NewImportPlan", plan)
+	failpoint.Call(_curpkg_("NewImportPlan"), plan)
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
@@ -1220,11 +1220,11 @@ func estimateCompressionRatio(
 	if tp != mydump.SourceTypeParquet {
 		return 1.0, nil
 	}
-	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("skipEstimateCompressionForParquet")); _err_ == nil {
 		if v, ok := val.(bool); ok && v {
-			failpoint.Return(2.0, nil)
+			return 2.0, nil
 		}
-	})
+	}
 	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
 	if err != nil {
 		return 1.0, err
@@ -1507,7 +1507,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		return err
 	}
 	totalSize := e.TotalFileSize
-	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	failpoint.Call(_curpkg_("mockImportDataSize"), &totalSize)
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
 	if numOfIndexGenKV > 0 {

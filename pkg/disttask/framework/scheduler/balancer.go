@@ -134,9 +134,9 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 	// managed nodes, subtasks of task might not be balanced.
 	adjustedNodes := filterNodesWithEnoughSlots(b.currUsedSlots, b.slotMgr.getCapacity(),
 		eligibleNodes, task.RequiredSlots)
-	failpoint.Inject("mockNoEnoughSlots", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockNoEnoughSlots")); _err_ == nil {
 		adjustedNodes = []string{}
-	})
+	}
 	adjustedNodes = filterNodesByMaxNodeCnt(adjustedNodes, subtasks, task.MaxNodeCount)
 	if len(adjustedNodes) == 0 {
 		// no node has enough slots to run the subtasks, skip balance and skip

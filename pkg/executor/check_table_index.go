@@ -407,9 +407,9 @@ func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string
 
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) error {
-	failpoint.Inject("mockFastCheckTableError", func() {
-		failpoint.Return(errors.New("mock fast check table error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockFastCheckTableError")); _err_ == nil {
+		return errors.New("mock fast check table error")
+	}
 
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())

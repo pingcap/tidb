@@ -413,11 +413,11 @@ func makeParquetFileRegion(
 			numberRows = dataFile.FileMeta.FileSize
 		}
 
-		failpoint.Inject("mockParquetRowCount", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockParquetRowCount")); _err_ == nil {
 			if v, ok := val.(int); ok {
 				numberRows = int64(v)
 			}
-		})
+		}
 	}
 
 	// endOffset is used to indicate the read range of the file.

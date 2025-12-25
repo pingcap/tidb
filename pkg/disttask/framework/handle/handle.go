@@ -111,7 +111,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, ke
 		return nil, err
 	}
 
-	failpoint.InjectCall("afterDXFTaskSubmitted")
+	failpoint.Call(_curpkg_("afterDXFTaskSubmitted"))
 
 	NotifyTaskChange()
 	return task, nil
@@ -428,7 +428,7 @@ func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
 	if err = metering.WriteMeterData(ctx, ts, fmt.Sprintf("%s_%d", task.Type, task.ID), []map[string]any{item}); err != nil {
 		return errors.Trace(err)
 	}
-	failpoint.InjectCall("afterSendRowAndSizeMeterData", item)
+	failpoint.Call(_curpkg_("afterSendRowAndSizeMeterData"), item)
 	return nil
 }
 

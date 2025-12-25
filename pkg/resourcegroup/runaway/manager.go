@@ -139,12 +139,12 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 	// we can guarantee a watch record can be seen by the user within 1s.
 	runawayRecordFlushTimer := time.NewTimer(runawayRecordFlushInterval)
 	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
-	failpoint.Inject("FastRunawayGC", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FastRunawayGC")); _err_ == nil {
 		runawayRecordFlushTimer.Stop()
 		runawayRecordGCTicker.Stop()
 		runawayRecordFlushTimer = time.NewTimer(time.Millisecond * 50)
 		runawayRecordGCTicker = time.NewTicker(time.Millisecond * 200)
-	})
+	}
 
 	fired := false
 	recordCh := rm.runawayRecordChan()
@@ -186,9 +186,9 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 			} else {
 				recordMap[key] = r
 			}
-			failpoint.Inject("FastRunawayGC", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("FastRunawayGC")); _err_ == nil {
 				flushRunawayRecords()
-			})
+			}
 			if len(recordMap) >= flushThreshold {
 				flushRunawayRecords()
 			} else if fired {

@@ -156,7 +156,7 @@ func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, sl
 	slotMgr.updateCapacity(cpuCount)
 	nm.nodes.Store(&newNodes)
 
-	failpoint.InjectCall("syncRefresh")
+	failpoint.Call(_curpkg_("syncRefresh"))
 }
 
 // GetNodes returns the nodes managed by the framework.

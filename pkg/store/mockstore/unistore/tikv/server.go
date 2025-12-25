@@ -236,7 +236,7 @@ func (svr *Server) KvScan(ctx context.Context, req *kvrpcpb.ScanRequest) (*kvrpc
 
 // KvPessimisticLock implements the tikvpb.TikvServer interface.
 func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.PessimisticLockRequest) (*kvrpcpb.PessimisticLockResponse, error) {
-	failpoint.Inject("pessimisticLockReturnWriteConflict", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("pessimisticLockReturnWriteConflict")); _err_ == nil {
 		if val.(bool) {
 			time.Sleep(time.Millisecond * 100)
 			err := &kverrors.ErrConflict{
@@ -244,9 +244,9 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 				ConflictTS:       req.GetForUpdateTs() + 1,
 				ConflictCommitTS: req.GetForUpdateTs() + 2,
 			}
-			failpoint.Return(&kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil)
+			return &kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil
 		}
-	})
+	}
 
 	reqCtx, err := newRequestCtx(svr, req.Context, "PessimisticLock")
 	if err != nil {

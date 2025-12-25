@@ -242,12 +242,12 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 	if intest.InTest {
 		// The failpoint to skip system table check, for testing only.
 		skipSystemTableCheck := false
-		failpoint.Inject("SkipSystemTableCheck", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("SkipSystemTableCheck")); _err_ == nil {
 			skip, ok := val.(bool)
 			if ok && skip {
 				skipSystemTableCheck = true
 			}
-		})
+		}
 
 		// In some test environments, the session pool may be nil.
 		// In such cases, we cannot determine if it's a system table, so we skip the check.

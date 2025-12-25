@@ -372,14 +372,14 @@ func waitVersionSynced(
 	job *model.Job,
 	latestSchemaVersion int64,
 ) (err error) {
-	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkDownBeforeUpdateGlobalVersion")); _err_ == nil {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
 			}
 			mockDDLErrOnce = -1
 		}
-	})
+	}
 	timeStart := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLWaitSchemaSynced, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
@@ -393,7 +393,7 @@ func waitVersionSynced(
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
 		return err
 	}
-	failpoint.InjectCall("afterWaitVersionSynced", sum)
+	failpoint.Call(_curpkg_("afterWaitVersionSynced"), sum)
 	logger.Info("wait schema version synced success",
 		zap.Duration("take time", time.Since(timeStart)),
 		zap.String("job", job.String()), zap.Stringer("summary", sum))
@@ -426,12 +426,12 @@ func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *m
 	}
 
 	ver, err := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
-	failpoint.Inject("mockGetCurrentVersionFailed", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockGetCurrentVersionFailed")); _err_ == nil {
 		if val.(bool) {
 			// ref: https://github.com/tikv/client-go/blob/master/tikv/kv.go#L505-L532
 			ver, err = kv.NewVersion(0), tikverr.NewErrPDServerTimeout("mock PD timeout")
 		}
-	})
+	}
 
 	// If we failed to get the current version, caller will retry after one second again.
 	if err != nil {
@@ -451,14 +451,14 @@ func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *m
 		intest.Assert(latestSchemaVersion > 0, "latestSchemaVersion should be greater than 0")
 	}
 
-	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkDownBeforeUpdateGlobalVersion")); _err_ == nil {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
 			}
 			mockDDLErrOnce = -1
 		}
-	})
+	}
 
 	return updateGlobalVersionAndWaitSynced(ctx, jobCtx, latestSchemaVersion, job)
 }

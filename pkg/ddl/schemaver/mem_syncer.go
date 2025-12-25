@@ -64,11 +64,11 @@ func (*MemSyncer) WatchGlobalSchemaVer(context.Context) {}
 
 // UpdateSelfVersion implements Syncer.UpdateSelfVersion interface.
 func (s *MemSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version int64) error {
-	failpoint.Inject("mockUpdateMDLToETCDError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockUpdateMDLToETCDError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(errors.New("mock update mdl to etcd error"))
+			return errors.New("mock update mdl to etcd error")
 		}
-	})
+	}
 	if vardef.IsMDLEnabled() {
 		s.mdlSchemaVersions.Store(jobID, version)
 	} else {
@@ -107,11 +107,11 @@ func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVe
 	ticker := time.NewTicker(checkVersionsInterval)
 	defer ticker.Stop()
 
-	failpoint.Inject("mockOwnerCheckAllVersionSlow", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockOwnerCheckAllVersionSlow")); _err_ == nil {
 		if v, ok := val.(int); ok && v == int(jobID) {
 			time.Sleep(2 * time.Second)
 		}
-	})
+	}
 
 	for {
 		select {

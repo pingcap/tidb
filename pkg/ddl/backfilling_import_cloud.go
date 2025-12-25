@@ -168,9 +168,9 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	defer e.engine.Store(nil)
 
 	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockCloudImportRunSubtaskError")); _err_ == nil {
 		err = context.DeadlineExceeded
-	})
+	}
 	if err == nil {
 		return nil
 	}

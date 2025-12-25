@@ -397,7 +397,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			break
 		}
 	}
-	failpoint.InjectCall("afterHandleBackfillTask", task.jobID)
+	failpoint.Call(_curpkg_("afterHandleBackfillTask"), task.jobID)
 
 	logutil.DDLLogger().Info("backfill worker finish task",
 		zap.Stringer("worker", w), zap.Stringer("task", task),
@@ -445,22 +445,22 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		d.setDDLLabelForTopSQL(job.ID, job.Query)
 
 		logger.Debug("backfill worker got task", zap.Int("workerID", w.GetCtx().id), zap.Stringer("task", task))
-		failpoint.Inject("mockBackfillRunErr", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockBackfillRunErr")); _err_ == nil {
 			if w.GetCtx().id == 0 {
 				result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
 				w.sendResult(result)
-				failpoint.Continue()
+				continue
 			}
-		})
+		}
 
-		failpoint.Inject("mockHighLoadForAddIndex", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForAddIndex")); _err_ == nil {
 			sqlPrefixes := []string{"alter"}
 			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
-		})
+		}
 
-		failpoint.Inject("mockBackfillSlow", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockBackfillSlow")); _err_ == nil {
 			time.Sleep(100 * time.Millisecond)
-		})
+		}
 
 		// Change the batch size dynamically.
 		currentBatchCnt := w.GetCtx().batchCnt
@@ -506,20 +506,20 @@ func loadTableRanges(
 			zap.Int64("physicalTableID", pid))
 		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 	}
-	failpoint.Inject("setLimitForLoadTableRanges", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("setLimitForLoadTableRanges")); _err_ == nil {
 		if v, ok := val.(int); ok {
 			limit = v
 		}
-	})
+	}
 
 	rc := s.GetRegionCache()
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
 	var ranges []kv.KeyRange
 	maxRetryTimes := util.DefaultMaxRetries
-	failpoint.Inject("loadTableRangesNoRetry", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("loadTableRangesNoRetry")); _err_ == nil {
 		maxRetryTimes = 1
-	})
+	}
 	err := util.RunWithRetry(maxRetryTimes, util.RetryInterval, func() (bool, error) {
 		logutil.DDLLogger().Info("load table ranges from PD",
 			zap.Int64("physicalTableID", pid),
@@ -530,7 +530,7 @@ func loadTableRanges(
 			return false, errors.Trace(err)
 		}
 		var mockErr bool
-		failpoint.InjectCall("beforeLoadRangeFromPD", &mockErr)
+		failpoint.Call(_curpkg_("beforeLoadRangeFromPD"), &mockErr)
 		if mockErr {
 			return false, kv.ErrTxnRetryable
 		}
@@ -554,7 +554,7 @@ func loadTableRanges(
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
 		zap.String("range end", hex.EncodeToString(ranges[len(ranges)-1].EndKey)),
 		zap.Int("range count", len(ranges)))
-	failpoint.InjectCall("afterLoadTableRanges", len(ranges))
+	failpoint.Call(_curpkg_("afterLoadTableRanges"), len(ranges))
 	return ranges, nil
 }
 
@@ -590,9 +590,9 @@ func splitRangesByKeys(ranges []kv.KeyRange, splitKeys []kv.Key) []kv.KeyRange {
 }
 
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
-	failpoint.Inject("validateAndFillRangesErr", func() {
-		failpoint.Return(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("mock"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("validateAndFillRangesErr")); _err_ == nil {
+		return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("mock")
+	}
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
@@ -858,7 +858,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			failpoint.InjectCall("onUpdateJobParam")
+			failpoint.Call(_curpkg_("onUpdateJobParam"))
 			reorgInfo.UpdateConfigFromSysTbl(ctx)
 			maxWriteSpeed := reorgInfo.ReorgMeta.GetMaxWriteSpeed()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
@@ -879,7 +879,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
 					zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
 			}
-			failpoint.InjectCall("checkReorgConcurrency", reorgInfo.Job)
+			failpoint.Call(_curpkg_("checkReorgConcurrency"), reorgInfo.Job)
 		}
 	}
 }
@@ -900,7 +900,7 @@ func executeAndClosePipeline(ctx *workerpool.Context, pipe *operator.AsyncPipeli
 	}
 
 	err = pipe.Close()
-	failpoint.InjectCall("afterPipeLineClose", pipe)
+	failpoint.Call(_curpkg_("afterPipeLineClose"), pipe)
 	cancel()
 	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
@@ -971,12 +971,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		}
 	}()
 
-	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockCaseWhenParseFailure")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(reorgInfo.Job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
+			return errors.New("job.ErrCount:" + strconv.Itoa(int(reorgInfo.Job.ErrorCount)) + ", mock unknown type: ast.whenClause.")
 		}
-	})
+	}
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
 		return dc.addIndexWithLocalIngest(ctx, sessPool, t, reorgInfo)
 	}
@@ -1046,7 +1046,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
-					failpoint.InjectCall("afterUpdateReorgMeta")
+					failpoint.Call(_curpkg_("afterUpdateReorgMeta"))
 				}
 			}
 		}
@@ -1114,7 +1114,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 							zap.Int("current worker count", exec.currentWorkerSize()))
 					}
 				}
-				failpoint.InjectCall("checkReorgWorkerCnt", reorgInfo.Job)
+				failpoint.Call(_curpkg_("checkReorgWorkerCnt"), reorgInfo.Job)
 			}
 		}
 		return nil

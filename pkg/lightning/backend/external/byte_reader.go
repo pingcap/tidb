@@ -346,11 +346,11 @@ func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) 
 		zap.Int("dropBytes", r.concurrentReader.bufSizePerConc*(len(r.curBuf)-r.curBufIdx)-r.curBufOffset),
 		zap.Int("curBufIdx", r.curBufIdx),
 	)
-	failpoint.Inject("assertReloadAtMostOnce", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertReloadAtMostOnce")); _err_ == nil {
 		if r.concurrentReader.reloadCnt > 1 {
 			panic(fmt.Sprintf("reloadCnt is %d", r.concurrentReader.reloadCnt))
 		}
-	})
+	}
 	r.concurrentReader.largeBufferPool.Destroy()
 	r.concurrentReader.largeBuf = nil
 	r.concurrentReader.now = false

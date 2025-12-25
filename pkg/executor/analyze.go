@@ -146,12 +146,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		prepareV2AnalyzeJobInfo(task.colExec)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
 	}
-	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockKillPendingAnalyzeJob")); _err_ == nil {
 		dom := domain.GetDomain(e.Ctx())
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
-	})
+	}
 TASKLOOP:
 	for _, task := range tasks {
 		select {
@@ -176,12 +176,12 @@ TASKLOOP:
 		return err
 	}
 
-	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockKillFinishedAnalyzeJob")); _err_ == nil {
 		dom := domain.GetDomain(e.Ctx())
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
-	})
+	}
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
@@ -193,9 +193,9 @@ TASKLOOP:
 	if intest.EnableInternalCheck {
 		for {
 			stop := true
-			failpoint.Inject("mockStuckAnalyze", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("mockStuckAnalyze")); _err_ == nil {
 				stop = false
-			})
+			}
 			if stop {
 				break
 			}
@@ -432,7 +432,7 @@ func (e *AnalyzeExec) handleResultsError(
 		zap.Int("buildStatsConcurrency", buildStatsConcurrency),
 		zap.Int("saveStatsConcurrency", saveStatsConcurrency),
 	)
-	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
+	failpoint.Eval(_curpkg_("handleResultsErrorSingleThreadPanic"))
 	return e.handleResultsErrorWithConcurrency(buildStatsConcurrency, saveStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh)
 }
 
@@ -528,7 +528,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if !ok {
 			break
 		}
-		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
+		failpoint.Eval(_curpkg_("handleAnalyzeWorkerPanic"))
 		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:

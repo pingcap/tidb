@@ -249,9 +249,9 @@ func CheckSkipColumnPartiion(sctx sessionctx.Context, tblID int64, isIndex int, 
 
 // ExtendedStatsFromStorage reads extended stats from storage.
 func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, tableID int64, loadAll bool) (*statistics.Table, error) {
-	failpoint.Inject("injectExtStatsLoadErr", func() {
-		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("injectExtStatsLoadErr")); _err_ == nil {
+		return nil, errors.New("gofail extendedStatsFromStorage error")
+	}
 	lastVersion := uint64(0)
 	if table.ExtendedStats != nil && !loadAll {
 		lastVersion = table.ExtendedStats.LastUpdateVersion

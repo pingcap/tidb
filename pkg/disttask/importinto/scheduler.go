@@ -331,9 +331,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		}
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
 	case proto.ImportStepWriteAndIngest:
-		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
-			failpoint.Return(nil, errors.New("injected error"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("failWhenDispatchWriteIngestSubtask")); _err_ == nil {
+			return nil, errors.New("injected error")
+		}
 		// merge sort might be skipped for some kv groups, so we need to get all
 		// subtask metas of ImportStepEncodeAndSort step too.
 		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
@@ -370,15 +370,15 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		}
 	case proto.ImportStepPostProcess:
 		sch.switchTiKV2NormalMode(ctx, task, logger)
-		failpoint.Inject("clearLastSwitchTime", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("clearLastSwitchTime")); _err_ == nil {
 			sch.lastSwitchTime.Store(time.Time{})
-		})
+		}
 		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepValidating); err != nil {
 			return nil, err
 		}
-		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
-			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("failWhenDispatchPostProcessSubtask")); _err_ == nil {
+			return nil, errors.New("injected error after ImportStepImport")
+		}
 		step := getStepOfEncode(sch.GlobalSort)
 		metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, step)
 		if err != nil {
@@ -615,7 +615,7 @@ func updateTaskSummary(
 }
 
 func (sch *importScheduler) startJob(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, jobStep string) error {
-	failpoint.InjectCall("syncBeforeJobStarted", taskMeta.JobID)
+	failpoint.Call(_curpkg_("syncBeforeJobStarted"), taskMeta.JobID)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
 		return err
@@ -633,7 +633,7 @@ func (sch *importScheduler) startJob(ctx context.Context, logger *zap.Logger, ta
 			})
 		},
 	)
-	failpoint.InjectCall("syncAfterJobStarted")
+	failpoint.Call(_curpkg_("syncAfterJobStarted"))
 	return err
 }
 

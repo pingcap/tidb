@@ -130,7 +130,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err
 	}
 
-	failpoint.InjectCall("cancellableCtx", &ctx)
+	failpoint.Call(_curpkg_("cancellableCtx"), &ctx)
 
 	jobID, task, err := e.submitTask(ctx)
 	if err != nil {

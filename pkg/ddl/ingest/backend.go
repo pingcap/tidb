@@ -217,7 +217,7 @@ func (bc *litBackendCtx) Ingest(ctx context.Context) error {
 		defer release()
 	}
 
-	failpoint.InjectCall("beforeBackendIngest")
+	failpoint.Call(_curpkg_("beforeBackendIngest"))
 
 	err = bc.unsafeImportAndResetAllEngines(ctx)
 	if err != nil {
@@ -296,9 +296,9 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 
 	// TS will be set before local backend import. We don't need to alloc a new one when reset.
 	err = bc.backend.ResetEngineSkipAllocTS(ctx, ei.uuid)
-	failpoint.Inject("mockResetEngineFailed", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockResetEngineFailed")); _err_ == nil {
 		err = fmt.Errorf("mock reset engine failed")
-	})
+	}
 	if err != nil {
 		logger.Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
 		err1 := closedEngine.Cleanup(bc.ctx)
@@ -316,10 +316,10 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 var ForceSyncFlagForTest atomic.Bool
 
 func (bc *litBackendCtx) checkFlush() (shouldFlush bool, shouldImport bool) {
-	failpoint.Inject("forceSyncFlagForTest", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("forceSyncFlagForTest")); _err_ == nil {
 		// used in a manual test
 		ForceSyncFlagForTest.Store(true)
-	})
+	}
 	if ForceSyncFlagForTest.Load() {
 		return true, true
 	}
@@ -327,11 +327,11 @@ func (bc *litBackendCtx) checkFlush() (shouldFlush bool, shouldImport bool) {
 	shouldImport = LitDiskRoot.ShouldImport()
 	interval := bc.updateInterval
 	// This failpoint will be manually set through HTTP status port.
-	failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockSyncIntervalMs")); _err_ == nil {
 		if v, ok := val.(int); ok {
 			interval = time.Duration(v) * time.Millisecond
 		}
-	})
+	}
 	shouldFlush = shouldImport ||
 		time.Since(bc.timeOfLastFlush.Load()) >= interval
 	return shouldFlush, shouldImport
@@ -404,11 +404,11 @@ func (bc *litBackendCtx) GetImportTS() uint64 {
 
 // AdvanceWatermark implements CheckpointOperator interface.
 func (bc *litBackendCtx) AdvanceWatermark(imported bool) (err error) {
-	failpoint.Inject("ddlIngestFailOnceBeforeCheckpointUpdated", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("ddlIngestFailOnceBeforeCheckpointUpdated")); _err_ == nil {
 		if imported {
-			failpoint.Return(errors.New("failpoint: ddlIngestFailOnceBeforeCheckpointUpdated"))
+			return errors.New("failpoint: ddlIngestFailOnceBeforeCheckpointUpdated")
 		}
-	})
+	}
 	if bc.checkpointMgr != nil {
 		return bc.checkpointMgr.AdvanceWatermark(imported)
 	}

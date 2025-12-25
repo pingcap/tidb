@@ -246,7 +246,7 @@ func (e *LoadDataWorker) load(ctx context.Context, readerInfos []importer.LoadDa
 	})
 	// commitWork goroutines.
 	group.Go(func() error {
-		failpoint.Inject("BeforeCommitWork", nil)
+		failpoint.Eval(_curpkg_("BeforeCommitWork"))
 		return committer.commitWork(groupCtx, commitTaskCh)
 	})
 
@@ -631,9 +631,9 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
 		return err
 	}
-	failpoint.Inject("commitOneTaskErr", func() {
-		failpoint.Return(errors.New("mock commit one task error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("commitOneTaskErr")); _err_ == nil {
+		return errors.New("mock commit one task error")
+	}
 	return nil
 }
 

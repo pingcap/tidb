@@ -371,9 +371,9 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 		}
 	}
 
-	failpoint.Inject("avoidEagerCursorFetch", func() {
-		failpoint.Return(false, errors.New("failpoint avoids eager cursor fetch"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("avoidEagerCursorFetch")); _err_ == nil {
+		return false, errors.New("failpoint avoids eager cursor fetch")
+	}
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.Clean()
 	// fetch all results of the resultSet, and stored them locally, so that the future `FETCH` command can read
@@ -389,12 +389,12 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 	rowContainer.GetDiskTracker().AttachTo(vars.DiskTracker)
 	rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
 	if vardef.EnableTmpStorageOnOOM.Load() {
-		failpoint.Inject("testCursorFetchSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testCursorFetchSpill")); _err_ == nil {
 			if val, ok := val.(bool); val && ok {
 				actionSpill := rowContainer.ActionSpillForTest()
 				defer actionSpill.WaitForTest()
 			}
-		})
+		}
 		action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
 		vars.MemTracker.FallbackOldAndSetNewAction(action)
 	}

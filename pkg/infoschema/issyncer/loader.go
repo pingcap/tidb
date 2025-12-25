@@ -220,7 +220,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
 				zap.Strings("diffTypes", diffTypes))
-			failpoint.InjectCall("afterLoadSchemaDiffs", is.SchemaMetaVersion())
+			failpoint.Call(_curpkg_("afterLoadSchemaDiffs"), is.SchemaMetaVersion())
 			return is, false, currentSchemaVersion, relatedChanges, nil
 		}
 		// We can fall back to full load, don't need to return the error.
@@ -228,13 +228,13 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	}
 
 	// add failpoint to simulate long-running schema loading scenario
-	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mock-load-schema-long-time")); _err_ == nil {
 		if val.(bool) {
 			// not ideal to use sleep, but not sure if there is a better way
 			l.logger.Error("sleep before doing a full load")
 			time.Sleep(15 * time.Second)
 		}
-	})
+	}
 
 	// full load.
 	schemas, err := l.fetchAllSchemasWithTables(m, schemaCacheSize)
@@ -323,22 +323,22 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 		diffs = append(diffs, diff)
 	}
 
-	failpoint.Inject("MockTryLoadDiffError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockTryLoadDiffError")); _err_ == nil {
 		switch val.(string) {
 		case "exchangepartition":
 			if diffs[0].Type == model.ActionExchangeTablePartition {
-				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+				return nil, nil, nil, errors.New("mock error")
 			}
 		case "renametable":
 			if diffs[0].Type == model.ActionRenameTable {
-				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+				return nil, nil, nil, errors.New("mock error")
 			}
 		case "dropdatabase":
 			if diffs[0].Type == model.ActionDropSchema {
-				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+				return nil, nil, nil, errors.New("mock error")
 			}
 		}
-	})
+	}
 
 	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, l.infoCache.Data, useV2).
 		WithCrossKS(l.crossKS)
@@ -456,9 +456,9 @@ func (*Loader) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 }
 
 func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {
-	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
-		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-fetch-schemas-with-tables")); _err_ == nil {
+		return errors.New("failpoint: failed to fetch schemas with tables")
+	}
 
 	for _, di := range schemas {
 		// if the ctx has been canceled, stop fetching schemas.

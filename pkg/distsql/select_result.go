@@ -481,9 +481,9 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if r.selectResp == nil {
 			return nil
 		}
-		failpoint.Inject("mockConsumeSelectRespSlow", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockConsumeSelectRespSlow")); _err_ == nil {
 			time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
-		})
+		}
 	}
 	// TODO(Shenghui Wu): add metrics
 	encodeType := r.selectResp.GetEncodeType()
@@ -505,11 +505,11 @@ func (r *selectResult) IntoIter(intermediateFieldTypes [][]*types.FieldType) (Se
 
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
-	failpoint.Inject("mockNextRawError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockNextRawError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mockNextRawError"))
+			return nil, errors.New("mockNextRawError")
 		}
-	})
+	}
 
 	if r.iter != nil {
 		return nil, errors.New("selectResult is invalid after IntoIter()")

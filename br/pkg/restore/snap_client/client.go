@@ -1165,11 +1165,11 @@ func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, tableSlice, newTS) // ddl job for [lastSent:i)
-			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("restore-createtables-error")); _err_ == nil {
 				if val.(bool) {
 					err = errors.New("sample error without extra message")
 				}
-			})
+			}
 			if err != nil {
 				log.Error("create tables fail", zap.Error(err))
 				return err
@@ -1281,9 +1281,9 @@ func (rc *SnapClient) IsFullClusterRestore() bool {
 
 // IsIncremental returns whether this backup is incremental.
 func (rc *SnapClient) IsIncremental() bool {
-	failpoint.Inject("mock-incr-backup-data", func() {
-		failpoint.Return(true)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mock-incr-backup-data")); _err_ == nil {
+		return true
+	}
 	return !(rc.backupMeta.StartVersion == rc.backupMeta.EndVersion ||
 		rc.backupMeta.StartVersion == 0)
 }
@@ -1392,9 +1392,9 @@ func (rc *SnapClient) execAndValidateChecksum(
 	checksumMatch := item.Crc64xor == expectedChecksumStats.Crc64Xor &&
 		item.TotalKvs == expectedChecksumStats.TotalKvs &&
 		item.TotalBytes == expectedChecksumStats.TotalBytes
-	failpoint.Inject("full-restore-validate-checksum", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("full-restore-validate-checksum")); _err_ == nil {
 		checksumMatch = false
-	})
+	}
 	if !checksumMatch {
 		// Enhanced logging with more detailed information
 		logger.Error("failed in validate checksum",

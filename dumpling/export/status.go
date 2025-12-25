@@ -18,11 +18,11 @@ const logProgressTick = 2 * time.Minute
 
 func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 	logProgressTicker := time.NewTicker(logProgressTick)
-	failpoint.Inject("EnableLogProgress", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("EnableLogProgress")); _err_ == nil {
 		logProgressTicker.Stop()
 		logProgressTicker = time.NewTicker(time.Duration(1) * time.Second)
 		tctx.L().Debug("EnableLogProgress")
-	})
+	}
 	lastCheckpoint := time.Now()
 	lastBytes := float64(0)
 	defer logProgressTicker.Stop()

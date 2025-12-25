@@ -923,14 +923,14 @@ func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store
 
 // SampleFileCompressRatio samples the compress ratio of the compressed file. Exported for test.
 func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
-	failpoint.Inject("SampleFileCompressPercentage", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("SampleFileCompressPercentage")); _err_ == nil {
 		switch v := val.(type) {
 		case string:
-			failpoint.Return(1.0, errors.New(v))
+			return 1.0, errors.New(v)
 		case int:
-			failpoint.Return(float64(v)/100, nil)
+			return float64(v) / 100, nil
 		}
-	})
+	}
 	if fileMeta.Compression == CompressionNone {
 		return 1, nil
 	}

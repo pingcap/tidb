@@ -87,14 +87,14 @@ func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) (er
 		job.done(w.jobWg)
 	}, false)
 
-	failpoint.Inject("injectPanicForRegionJob", nil)
+	failpoint.Eval(_curpkg_("injectPanicForRegionJob"))
 
 	defer func() {
-		failpoint.Inject("mockJobWgDone", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockJobWgDone")); _err_ == nil {
 			if v, ok := val.(int); ok {
 				w.jobWg.Add(-v)
 			}
-		})
+		}
 	}()
 
 	return w.process(job)
@@ -107,7 +107,7 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 	if job.region != nil && job.region.Region != nil {
 		peers = job.region.Region.GetPeers()
 	}
-	failpoint.InjectCall("beforeExecuteRegionJob", ctx)
+	failpoint.Call(_curpkg_("beforeExecuteRegionJob"), ctx)
 	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 	err := w.runJob(ctx, job)
 	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
@@ -168,10 +168,10 @@ func (*regionJobBaseWorker) Close() error {
 // If retryable error occurs, it will return nil and caller should check the stage
 // of the regionJob to determine what to do with it.
 func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error {
-	failpoint.Inject("mockRunJobSucceed", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockRunJobSucceed")); _err_ == nil {
 		job.convertStageTo(regionScanned)
-		failpoint.Return(nil)
-	})
+		return nil
+	}
 
 	if err := w.preRunJobFn(ctx, job); err != nil {
 		return err
@@ -287,10 +287,9 @@ type blkStoreRegionJobWorker struct {
 }
 
 func (w *blkStoreRegionJobWorker) preRunJob(ctx context.Context, job *regionJob) error {
-	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
-		failpoint.Return(
-			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("WriteToTiKVNotEnoughDiskSpace")); _err_ == nil {
+		return errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again")
+	}
 	if w.checkTiKVSpace {
 		for _, peer := range job.region.Region.GetPeers() {
 			store, err := w.pdHTTPCli.GetStore(ctx, peer.StoreId)

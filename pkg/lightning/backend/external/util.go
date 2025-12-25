@@ -189,9 +189,9 @@ func GetAllFileNames(
 // CleanUpFiles delete all data and stat files under the same non-partitioned dir.
 // see randPartitionedPrefix for how we partition the files.
 func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartitionedDir string) error {
-	failpoint.Inject("skipCleanUpFiles", func() {
-		failpoint.Return(nil)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("skipCleanUpFiles")); _err_ == nil {
+		return nil
+	}
 	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
 	if err != nil {
 		return err

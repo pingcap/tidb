@@ -611,16 +611,16 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 			close(resultCh)
 		}
 	}()
-	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockAnalyzeSamplingMergeWorkerPanic")); _err_ == nil {
 		panic("failpoint triggered")
-	})
-	failpoint.Inject("mockAnalyzeMergeWorkerSlowConsume", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("mockAnalyzeMergeWorkerSlowConsume")); _err_ == nil {
 		times := val.(int)
 		for range times {
 			e.memTracker.Consume(5 << 20)
 			time.Sleep(100 * time.Millisecond)
 		}
-	})
+	}
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for range l {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
@@ -677,9 +677,9 @@ func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *
 			resultCh <- getAnalyzePanicErr(r)
 		}
 	}()
-	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockAnalyzeSamplingBuildWorkerPanic")); _err_ == nil {
 		panic("failpoint triggered")
-	})
+	}
 
 	colLen := len(e.colsInfo)
 	bufferedMemSize := int64(0)
@@ -851,18 +851,18 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	// After all tasks are sent, close the mergeTaskCh to notify the mergeWorker that all tasks have been sent.
 	defer close(mergeTaskCh)
 	for {
-		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockKillRunningV2AnalyzeJob")); _err_ == nil {
 			dom := domain.GetDomain(ctx)
 			for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 				dom.SysProcTracker().KillSysProcess(id)
 			}
-		})
+		}
 		if err := ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
-		failpoint.Inject("mockSlowAnalyzeV2", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockSlowAnalyzeV2")); _err_ == nil {
 			time.Sleep(1000 * time.Second)
-		})
+		}
 
 		data, err := handler.nextRaw(context.TODO())
 		if err != nil {

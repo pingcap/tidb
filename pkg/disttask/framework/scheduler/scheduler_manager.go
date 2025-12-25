@@ -224,7 +224,7 @@ func (sm *Manager) scheduleTaskLoop() {
 		case <-handle.TaskChangedCh:
 		}
 
-		failpoint.InjectCall("beforeGetSchedulableTasks")
+		failpoint.Call(_curpkg_("beforeGetSchedulableTasks"))
 		schedulableTasks, err := sm.getSchedulableTasks(ctx)
 		trace.DiscardOrFlush(ctx)
 		if err != nil {
@@ -321,7 +321,7 @@ func (sm *Manager) failTask(id int64, currState proto.TaskState, err error) {
 
 func (sm *Manager) gcSubtaskHistoryTableLoop() {
 	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
-	failpoint.InjectCall("historySubtaskTableGcInterval", &historySubtaskTableGcInterval)
+	failpoint.Call(_curpkg_("historySubtaskTableGcInterval"), &historySubtaskTableGcInterval)
 
 	sm.logger.Info("subtask table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
@@ -410,7 +410,7 @@ func (sm *Manager) cleanupTaskLoop() {
 //
 //	tasks with global sort should clean up tmp files stored on S3.
 func (sm *Manager) doCleanupTask() {
-	failpoint.InjectCall("doCleanupTask")
+	failpoint.Call(_curpkg_("doCleanupTask"))
 	tasks, err := sm.taskMgr.GetTasksInStates(
 		sm.ctx,
 		proto.TaskStateFailed,
@@ -430,7 +430,7 @@ func (sm *Manager) doCleanupTask() {
 		sm.logger.Warn("cleanup routine failed", zap.Error(err))
 		return
 	}
-	failpoint.InjectCall("WaitCleanUpFinished")
+	failpoint.Call(_curpkg_("WaitCleanUpFinished"))
 	sm.logger.Info("cleanup routine success")
 }
 
@@ -461,9 +461,9 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		sm.logger.Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
 	}
 
-	failpoint.Inject("mockTransferErr", func() {
-		failpoint.Return(errors.New("transfer err"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockTransferErr")); _err_ == nil {
+		return errors.New("transfer err")
+	}
 
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }

@@ -569,16 +569,16 @@ func (alloc *allocator) GetType() AllocatorType {
 
 // NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
-	failpoint.Inject("mockAutoIDCustomize", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockAutoIDCustomize")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(3)
+			return 3
 		}
-	})
-	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("mockAutoIDChange")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(GetStep())
+			return GetStep()
 		}
-	})
+	}
 
 	consumeRate := defaultConsumeTime.Seconds() / consumeDur.Seconds()
 	res := int64(float64(curStep) * consumeRate)
@@ -612,11 +612,11 @@ func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *sin
 	}
 
 	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.
-	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockAutoIDChange")); _err_ == nil {
 		if val.(bool) {
 			spa = nil
 		}
-	})
+	}
 	return spa
 }
 

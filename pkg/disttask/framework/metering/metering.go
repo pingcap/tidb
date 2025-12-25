@@ -249,7 +249,7 @@ func (m *Meter) afterFlush(flushedData map[int64]*Data) {
 	removedRecorders := m.cleanupUnregisteredRecorders()
 	for _, r := range removedRecorders {
 		data := r.currData()
-		failpoint.InjectCall("meteringFinalFlush", data)
+		failpoint.Call(_curpkg_("meteringFinalFlush"), data)
 		m.logger.Info("recorder unregistered and finished final flush",
 			zap.Stringer("accumulatedData", data))
 	}
@@ -397,7 +397,7 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 
 // WriteMeterData writes the metering data.
 func (m *Meter) WriteMeterData(ctx context.Context, ts int64, uuid string, items []map[string]any) (err error) {
-	failpoint.InjectCall("forceTSAtMinuteBoundary", &ts)
+	failpoint.Call(_curpkg_("forceTSAtMinuteBoundary"), &ts)
 	meteringData := &common.MeteringData{
 		SelfID:    uuid,
 		Timestamp: ts,

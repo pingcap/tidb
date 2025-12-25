@@ -244,13 +244,13 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	if maxExecutionTime > 0 && maxExecutionTime < uint64(syncWait) {
 		syncWait = int64(maxExecutionTime)
 	}
-	failpoint.Inject("assertSyncWaitFailed", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertSyncWaitFailed")); _err_ == nil {
 		if val.(bool) {
 			if syncWait != 1 {
 				panic("syncWait should be 1(ms)")
 			}
 		}
-	})
+	}
 	var timeout = time.Duration(syncWait * time.Millisecond.Nanoseconds())
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)

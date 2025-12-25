@@ -227,7 +227,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 			continue
 		}
-		failpoint.InjectCall("beforeCallStartTaskExecutor", task.TaskBase)
+		failpoint.Call(_curpkg_("beforeCallStartTaskExecutor"), task.TaskBase)
 		if !m.startTaskExecutor(task.TaskBase) {
 			// we break to make sure the order of running.
 			// it's possible some other low ranking tasks alloc more slots at

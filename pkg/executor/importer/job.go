@@ -230,9 +230,9 @@ func CreateJob(
 		return 0, errors.Errorf("unexpected result length: %d", len(rows))
 	}
 
-	failpoint.Inject("setLastImportJobID", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("setLastImportJobID")); _err_ == nil {
 		TestLastImportJobID.Store(rows[0].GetInt64(0))
-	})
+	}
 	return rows[0].GetInt64(0), nil
 }
 

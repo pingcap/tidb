@@ -459,19 +459,19 @@ func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	if killed {
 		return true, 1
 	}
-	failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("BatchAddTiFlashSendDone")); _err_ == nil {
 		done = val.(bool)
-	})
+	}
 	return done, 0
 }
 
 func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
 	configRetry := tiflashCheckPendingTablesRetry
 	configWaitTime := tiflashCheckPendingTablesWaitTime
-	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("FastFailCheckTiFlashPendingTables")); _err_ == nil {
 		configRetry = value.(int)
 		configWaitTime = time.Millisecond * 200
-	})
+	}
 
 	for range configRetry {
 		done, killed := isSessionDone(sctx)
@@ -1214,12 +1214,12 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	infos []*model.TableInfo,
 	cs ...CreateTableOption,
 ) error {
-	failpoint.Inject("RestoreBatchCreateTableEntryTooLarge", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("RestoreBatchCreateTableEntryTooLarge")); _err_ == nil {
 		injectBatchSize := val.(int)
 		if len(infos) > injectBatchSize {
-			failpoint.Return(kv.ErrEntryTooLarge)
+			return kv.ErrEntryTooLarge
 		}
-	})
+	}
 	c := GetCreateTableConfig(cs)
 
 	job := &model.Job{
@@ -1367,7 +1367,7 @@ func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
 func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
-	failpoint.InjectCall("preSplitAndScatter", scatterScope)
+	failpoint.Call(_curpkg_("preSplitAndScatter"), scatterScope)
 	if tbInfo.TempTableType != model.TempTableNone {
 		return
 	}
@@ -2147,7 +2147,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	failpoint.InjectCall("afterGetSchemaAndTableByIdent", ctx)
+	failpoint.Call(_curpkg_("afterGetSchemaAndTableByIdent"), ctx)
 	tbInfo := t.Meta()
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
 		return errors.Trace(err)
@@ -2528,7 +2528,7 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = e.doDDLJob2(ctx, job, args)
-	failpoint.InjectCall("afterReorganizePartition")
+	failpoint.Call(_curpkg_("afterReorganizePartition"))
 	if err == nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
 	}
@@ -3156,7 +3156,7 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 	if err != nil {
 		return errors.Trace(err)
 	}
-	failpoint.InjectCall("afterGetSchemaAndTableByIdent", ctx)
+	failpoint.Call(_curpkg_("afterGetSchemaAndTableByIdent"), ctx)
 
 	isDropable, err := checkIsDroppableColumn(ctx, e.infoCache.GetLatest(), schema, t, spec)
 	if err != nil {
@@ -6822,7 +6822,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	}
 	e.deliverJobTask(jobW)
 
-	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockParallelSameDDLJobTwice")); _err_ == nil {
 		if val.(bool) {
 			<-jobW.ResultCh[0]
 			// The same job will be put to the DDL queue twice.
@@ -6832,7 +6832,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			// The second job result is used for test.
 			jobW = newJobW
 		}
-	})
+	}
 
 	var result jobSubmitResult
 	select {
@@ -6850,7 +6850,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
 	}
-	failpoint.InjectCall("waitJobSubmitted")
+	failpoint.Call(_curpkg_("waitJobSubmitted"))
 
 	sessVars := ctx.GetSessionVars()
 	sessVars.StmtCtx.IsDDLJobInQueue.Store(true)
@@ -6898,7 +6898,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	i := 0
 	notifyCh, _ := e.getJobDoneCh(jobID)
 	for {
-		failpoint.InjectCall("storeCloseInLoop")
+		failpoint.Call(_curpkg_("storeCloseInLoop"))
 		select {
 		case _, ok := <-notifyCh:
 			if !ok {

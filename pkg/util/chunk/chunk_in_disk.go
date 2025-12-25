@@ -380,7 +380,7 @@ func (d *DataInDiskByChunks) NumChunks() int {
 
 func injectChunkInDiskRandomError() error {
 	var err error
-	failpoint.Inject("ChunkInDiskError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("ChunkInDiskError")); _err_ == nil {
 		if val.(bool) {
 			randNum := rand.Int31n(10000)
 			if randNum < 3 {
@@ -390,6 +390,6 @@ func injectChunkInDiskRandomError() error {
 				time.Sleep(time.Duration(delayTime) * time.Millisecond)
 			}
 		}
-	})
+	}
 	return err
 }

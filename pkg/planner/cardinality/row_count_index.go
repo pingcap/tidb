@@ -510,10 +510,10 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	// Sort selectivities ascending (most selective first) for exponential backoff
 	slices.Sort(singleColumnEstResults)
 	l := len(singleColumnEstResults)
-	failpoint.Inject("cleanEstResults", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("cleanEstResults")); _err_ == nil {
 		singleColumnEstResults = singleColumnEstResults[:0]
 		l = 0
-	})
+	}
 	if l == 1 {
 		return singleColumnEstResults[0], singleColumnEstResults[0], singleColumnEstResults[0], true, nil
 	} else if l == 0 {

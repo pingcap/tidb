@@ -121,6 +121,6 @@ func (s *BoundedHandleSet) Merge(other *BoundedHandleSet) {
 // BoundExceeded checks whether the size limit is exceeded.
 func (s *BoundedHandleSet) BoundExceeded() bool {
 	limit := s.sizeLimit
-	failpoint.InjectCall("mockHandleSetSizeLimit", &limit)
+	failpoint.Call(_curpkg_("mockHandleSetSizeLimit"), &limit)
 	return s.sharedSize.Load() >= limit
 }

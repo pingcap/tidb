@@ -100,11 +100,11 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 			return tbInfo, errors.Trace(err)
 		}
 
-		failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("checkOwnerCheckAllVersionsWaitTime")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(tbInfo, errors.New("mock create table error"))
+				return tbInfo, errors.New("mock create table error")
 			}
-		})
+		}
 
 		// build table & partition bundles if any.
 		if err = checkAllTablePlacementPoliciesExistAndCancelNonExistJob(jobCtx.metaMut, job, tbInfo); err != nil {
@@ -203,16 +203,16 @@ func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableIn
 		}
 	}
 
-	failpoint.InjectCall("handleAutoIncID")
+	failpoint.Call(_curpkg_("handleAutoIncID"))
 	return nil
 }
 
 func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockExceedErrorLimit")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(ver, errors.New("mock do job error"))
+			return ver, errors.New("mock do job error")
 		}
-	})
+	}
 
 	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.onCreateTable")
 	defer r.End()
@@ -387,7 +387,7 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
-	failpoint.InjectCall("onDDLCreateView", job)
+	failpoint.Call(_curpkg_("onDDLCreateView"), job)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			job.State = model.JobStateCancelled

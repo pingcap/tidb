@@ -38,79 +38,79 @@ const ttlTaskHeartBeatTickerInterval = time.Minute
 const ttlGCInterval = 10 * time.Minute
 
 func getCheckJobInterval() time.Duration {
-	failpoint.Inject("check-job-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("check-job-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return jobManagerLoopTickerInterval
 }
 
 func getHeartbeatInterval() time.Duration {
-	failpoint.Inject("heartbeat-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("heartbeat-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return jobManagerLoopTickerInterval
 }
 
 func getJobManagerLoopSyncTimerInterval() time.Duration {
-	failpoint.Inject("sync-timer", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("sync-timer")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return time.Second
 }
 
 func getUpdateInfoSchemaCacheInterval() time.Duration {
-	failpoint.Inject("update-info-schema-cache-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("update-info-schema-cache-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return updateInfoSchemaCacheInterval
 }
 
 func getUpdateTTLTableStatusCacheInterval() time.Duration {
-	failpoint.Inject("update-status-table-cache-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("update-status-table-cache-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return updateTTLTableStatusCacheInterval
 }
 
 func getResizeWorkersInterval() time.Duration {
-	failpoint.Inject("resize-workers-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("resize-workers-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return resizeWorkersInterval
 }
 
 func getTaskManagerLoopCheckTaskInterval() time.Duration {
-	failpoint.Inject("check-task-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("check-task-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return time.Second * 5
 }
 
 func getTaskManagerLoopTickerInterval() time.Duration {
-	failpoint.Inject("task-manager-loop-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("task-manager-loop-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return taskManagerLoopTickerInterval
 }
 
 func getTaskManagerHeartBeatInterval() time.Duration {
-	failpoint.Inject("task-manager-heartbeat-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("task-manager-heartbeat-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return ttlTaskHeartBeatTickerInterval
 }
 
 func getCheckJobTriggeredInterval() time.Duration {
-	failpoint.Inject("check-job-triggered-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("check-job-triggered-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return 2 * time.Second
 }
 
 func getTTLGCInterval() time.Duration {
-	failpoint.Inject("gc-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("gc-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return ttlGCInterval
 }
 
