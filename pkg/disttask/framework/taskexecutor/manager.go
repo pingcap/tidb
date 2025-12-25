@@ -313,7 +313,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	if !m.slotManager.alloc(&task.TaskBase) {
 		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
 			zap.Int64("task-id", taskBase.ID), zap.String("task-key", taskBase.Key),
-			zap.Int("concurrency", taskBase.Concurrency),
+			zap.Int("required-slots", taskBase.RequiredSlots),
 			zap.Int("remaining-slots", m.slotManager.availableSlots()))
 		return false
 	}
@@ -344,7 +344,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	}
 	m.addTaskExecutor(executor)
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
-		zap.Stringer("type", task.Type), zap.Int("concurrency", task.Concurrency),
+		zap.Stringer("type", task.Type), zap.Int("required-slots", task.RequiredSlots),
 		zap.Int("remaining-slots", m.slotManager.availableSlots()))
 	m.executorWG.RunWithLog(func() {
 		defer func() {

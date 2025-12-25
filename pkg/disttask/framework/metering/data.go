@@ -34,8 +34,8 @@ const (
 	DataKVBytesField = "data_kv_bytes"
 	// IndexKVBytesField represents the bytes of index KV ingested into the cluster.
 	IndexKVBytesField = "index_kv_bytes"
-	// ConcurrencyField represents the concurrency of the task.
-	ConcurrencyField = "concurrency"
+	// RequiredSlotsField represents the required slots of the task.
+	RequiredSlotsField = "required_slots"
 	// MaxNodeCountField represents the maximum number of nodes used during the task.
 	MaxNodeCountField = "max_node_count"
 	// DurationSecondsField represents the duration of the task in seconds.

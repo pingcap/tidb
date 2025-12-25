@@ -93,11 +93,11 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 }
 
 // tasks are created in order, so they have increasing IDs starting from 1.
-func (c *resourceCtrlCaseContext) runTaskAsync(prefix string, concurrencies []int) {
+func (c *resourceCtrlCaseContext) runTaskAsync(prefix string, slotsArr []int) {
 	scope := handle.GetTargetScope()
-	for i, concurrency := range concurrencies {
+	for i, slots := range slotsArr {
 		taskKey := fmt.Sprintf("%s-%d", prefix, i)
-		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, "", concurrency, scope, 0, nil)
+		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, "", slots, scope, 0, nil)
 		require.NoError(c.T, err)
 		c.taskWG.RunWithLog(func() {
 			task := testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
@@ -194,7 +194,7 @@ func (c *resourceCtrlCaseContext) waitTasks() {
 
 func TestResourceControl(t *testing.T) {
 	t.Run("fully-utilized", func(t *testing.T) {
-		// we have 4 16c nodes, and we have 4 tasks of concurrency 4, each task have 4 subtasks,
+		// we have 4 16c nodes, and we have 4 tasks of required slots 4, each task have 4 subtasks,
 		// so the resource can run all subtasks concurrently.
 		c := newResourceCtrlCaseContext(t, 4, map[int64]map[proto.Step]int{
 			1: {proto.StepOne: 4},
@@ -209,7 +209,7 @@ func TestResourceControl(t *testing.T) {
 	})
 
 	t.Run("fully-utilized-after-scale-out", func(t *testing.T) {
-		// we have 2 16c nodes, and we have 4 tasks of concurrency 4, each task have 4 subtasks,
+		// we have 2 16c nodes, and we have 4 tasks of required slots 4, each task have 4 subtasks,
 		// so only 8 subtask can be run at first, and all task can be run at the same time
 		// after scale out 2 nodes, all subtasks can be run
 		c := newResourceCtrlCaseContext(t, 2, map[int64]map[proto.Step]int{
@@ -230,7 +230,7 @@ func TestResourceControl(t *testing.T) {
 	})
 
 	t.Run("scale-in", func(t *testing.T) {
-		// we have 4 16c nodes, and we have 4 tasks of concurrency 4, each task have 4 subtasks,
+		// we have 4 16c nodes, and we have 4 tasks of required slots 4, each task have 4 subtasks,
 		// so the resource can run all subtasks concurrently.
 		c := newResourceCtrlCaseContext(t, 4, map[int64]map[proto.Step]int{
 			1: {proto.StepOne: 4},

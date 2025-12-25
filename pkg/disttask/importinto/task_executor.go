@@ -373,7 +373,7 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 
 type mergeSortStepExecutor struct {
 	taskexecutor.BaseStepExecutor
-	taskID   int64
+	task     *proto.TaskBase
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 	// subtask of a task is run in serial now, so we don't need lock here.
@@ -439,7 +439,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 	}
 
-	prefix := subtaskPrefix(m.taskID, subtask.ID)
+	prefix := subtaskPrefix(m.task.ID, subtask.ID)
 
 	partSize := m.dataKVPartSize
 	if sm.KVGroup != external.DataKVGroup {
@@ -467,7 +467,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err = external.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		subtask.Concurrency, // the concurrency used to split subtask
+		m.task.RequiredSlots, // the concurrency used to split subtask
 		op,
 	); err != nil {
 		return errors.Trace(err)
@@ -491,7 +491,7 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	}
 	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
 	subtaskMeta.RecordedConflictKVCount = subtaskMeta.SortedKVMeta.ConflictInfo.Count
-	subtaskMeta.ExternalPath = external.SubtaskMetaPath(m.taskID, subtask.ID)
+	subtaskMeta.ExternalPath = external.SubtaskMetaPath(m.task.ID, subtask.ID)
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, sortStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
@@ -822,7 +822,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
-			taskID:       task.ID,
+			task:         &task.TaskBase,
 			taskMeta:     &taskMeta,
 			logger:       logger,
 			store:        store,
@@ -837,9 +837,9 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			indicesGenKV: indicesGenKV,
 		}, nil
 	case proto.ImportStepCollectConflicts:
-		return NewCollectConflictsStepExecutor(task.ID, store, &taskMeta, logger), nil
+		return NewCollectConflictsStepExecutor(&task.TaskBase, store, &taskMeta, logger), nil
 	case proto.ImportStepConflictResolution:
-		return NewConflictResolutionStepExecutor(task.ID, store, &taskMeta, logger), nil
+		return NewConflictResolutionStepExecutor(&task.TaskBase, store, &taskMeta, logger), nil
 	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, store, e.GetTaskTable(), &taskMeta, task.Keyspace, logger), nil
 	default:

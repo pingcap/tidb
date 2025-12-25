@@ -112,7 +112,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			return err
 		}
 		calc := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, factors)
-		autoConc = calc.CalcConcurrency()
+		autoConc = calc.CalcRequiredSlots()
 		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
 		factorField = zap.Float64("amplifyFactor", factors.AmplifyFactor)
 	}

@@ -87,12 +87,16 @@ type TaskBase struct {
 	// Priority is the priority of task, the smaller value means the higher priority.
 	// valid range is [1, 1024], default is NormalPriority.
 	Priority int
-	// Concurrency controls the max resource usage of the task, i.e. the max number
-	// of slots the task can use on each node.
-	Concurrency int
+	// RequiredSlots is the required slots of the task, i.e. the max number of
+	// slots the task can use on each node.
+	// normally it also works as the task concurrency.
+	// Note: in the system table, we store it inside 'concurrency' column as
+	// required slots is introduced later.
+	RequiredSlots int
 	// TargetScope indicates that the task should be running on tidb nodes which
 	// contain the tidb_service_scope=TargetScope label.
-	// To be compatible with previous version, if it's "" or "background", the task try run on nodes of "background" scope,
+	// To be compatible with previous version, if it's "" or "background", the
+	// task try run on nodes of "background" scope,
 	// if there is no such nodes, will try nodes of "" scope.
 	TargetScope  string
 	CreateTime   time.Time
@@ -128,8 +132,8 @@ func (t *TaskBase) Compare(other *TaskBase) int {
 
 // String implements fmt.Stringer interface.
 func (t *TaskBase) String() string {
-	return fmt.Sprintf("{id: %d, key: %s, type: %s, state: %s, step: %s, priority: %d, concurrency: %d, target scope: %s, create time: %s}",
-		t.ID, t.Key, t.Type, t.State, Step2Str(t.Type, t.Step), t.Priority, t.Concurrency, t.TargetScope, t.CreateTime.Format(time.RFC3339Nano))
+	return fmt.Sprintf("{id: %d, key: %s, type: %s, state: %s, step: %s, priority: %d, required slots: %d, target scope: %s, create time: %s}",
+		t.ID, t.Key, t.Type, t.State, Step2Str(t.Type, t.Step), t.Priority, t.RequiredSlots, t.TargetScope, t.CreateTime.Format(time.RFC3339Nano))
 }
 
 // Task represents the task of distributed framework, see doc.go for more details.
