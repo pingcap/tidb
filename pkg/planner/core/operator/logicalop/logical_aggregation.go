@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"slices"
-	"sync"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
