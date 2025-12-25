@@ -1356,6 +1356,7 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 				return fmt.Sprintf("func: %v, case %+v, row: %v, rowData: %v", funcName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
 			output2 := output.CopyConstruct()
+			require.True(t, expr.Vectorized(), "func %s is not vectorized", funcName)
 			require.NoErrorf(t, evalOneVec(ctx, expr, input, output, 0), "func: %v, case: %+v", funcName, testCase)
 			it := chunk.NewIterator4Chunk(input)
 			require.NoErrorf(t, evalOneColumn(ctx, expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
@@ -1428,6 +1429,10 @@ func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases)
 				exprName = fmt.Sprintf("%v", reflect.TypeOf(sf.Function))
 				tmp := strings.Split(exprName, ".")
 				exprName = tmp[len(tmp)-1]
+			}
+
+			if !expr.Vectorized() {
+				panic(fmt.Sprintf("func %s is not vectorized", funcName))
 			}
 
 			b.Run(exprName+"-EvalOneVec", func(b *testing.B) {
@@ -1522,6 +1527,9 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 	if err != nil {
 		panic(err)
 	}
+	if !baseFunc.vectorized() || !baseFunc.isChildrenVectorized() {
+		panic(fmt.Sprintf("func %s is not vectorized", funcName))
+	}
 	result = chunk.NewColumn(eType2FieldType(testCase.retEvalType), testCase.chunkSize)
 	// Mess up the output to make sure vecEvalXXX to call ResizeXXX/ReserveXXX itself.
 	result.AppendNull()
@@ -1595,15 +1603,12 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
-			if !baseFunc.vectorized() || !baseFunc.isChildrenVectorized() {
-				t.Fatalf("func %s is not vectorized", baseFuncName)
-			}
 
 			if !testAll && (!testFunc[baseFuncName] && !testFunc[funcName]) {
 				continue
 			}
 			// do not forget to implement the vectorized method.
-			require.Truef(t, baseFunc.vectorized(), "func: %v, case: %+v", baseFuncName, testCase)
+			require.Truef(t, baseFunc.vectorized() && baseFunc.isChildrenVectorized(), "func: %v, case: %+v", baseFuncName, testCase)
 			commentf := func(row int) string {
 				return fmt.Sprintf("func: %v, case %+v, row: %v, rowData: %v", baseFuncName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
@@ -1774,7 +1779,7 @@ func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCas
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 			// do not forget to implement the vectorized method.
-			require.Truef(t, baseFunc.vectorized(), "func: %v", baseFuncName)
+			require.Truef(t, baseFunc.vectorized() && baseFunc.isChildrenVectorized(), "func: %v", baseFuncName)
 			switch testCase.retEvalType {
 			case types.ETReal:
 				err := baseFunc.vecEvalReal(ctx, input, output)

@@ -70,6 +70,7 @@ func TestInDecimal(t *testing.T) {
 	col1 := &Column{RetType: ft, Index: 1}
 	inFunc, err := funcs[ast.In].getFunction(ctx, []Expression{col0, col1})
 	require.NoError(t, err)
+	require.True(t, inFunc.vectorized() && inFunc.isChildrenVectorized())
 
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 1024)
 	for i := range 1024 {
