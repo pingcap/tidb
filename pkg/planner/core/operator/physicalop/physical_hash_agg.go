@@ -56,7 +56,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	}
 	var canPushDownToMPP bool
 	if prop.TaskTp == property.MppTaskType {
-		if canPushDownToMPP = checkCanPushDownToMPP(la); canPushDownToMPP {
+		if canPushDownToMPP = checkCanPushDownToMPP(la); !canPushDownToMPP {
 			return nil
 		}
 	}
