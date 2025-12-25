@@ -54,9 +54,11 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
-	canPushDownToMPP := checkCanPushDownToMPP(la)
-	if prop.TaskTp == property.MppTaskType && !canPushDownToMPP {
-		return nil
+	var canPushDownToMPP bool
+	if prop.TaskTp == property.MppTaskType {
+		if canPushDownToMPP = checkCanPushDownToMPP(la); canPushDownToMPP {
+			return nil
+		}
 	}
 	hashAggs := make([]base.PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
