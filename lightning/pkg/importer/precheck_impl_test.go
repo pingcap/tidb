@@ -805,7 +805,6 @@ func (s *precheckImplSuite) TestParquetImportCheckItem() {
 		s.Require().False(result.Passed)
 		s.Require().Contains(result.Message, tc.expectMsg)
 	}
-
 }
 
 func writeParquetFileWithList(ctx context.Context, s storage.ExternalStorage, fileName string) error {
