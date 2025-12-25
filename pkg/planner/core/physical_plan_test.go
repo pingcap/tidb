@@ -237,15 +237,12 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
 
 		tk.MustExec("create table t (a int, b int, c int)")
-		tk.MustExec("alter table t set tiflash replica 1")
 		tk.MustExec("set @@session.tidb_allow_mpp=ON")
-		tb := external.GetTableByName(t, tk, "test", "t")
-		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
 
 		tk.MustExec("explain select a, sum(b) from t group by a, c")
 		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
@@ -282,7 +279,7 @@ func TestMPPHintsWithBinding(t *testing.T) {
 		tk.MustExec("drop global binding for select * from t t1, t t2 where t1.a=t2.a;")
 		res = tk.MustQuery("show global bindings").Rows()
 		require.Equal(t, len(res), 0)
-	}, mockstore.WithMockTiFlash(2))
+	})
 }
 
 func TestJoinHintCompatibilityWithBinding(t *testing.T) {

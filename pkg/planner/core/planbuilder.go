@@ -1242,17 +1242,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	publicPaths = append(publicPaths, tablePath)
 
 	// consider hypo TiFlash replicas
-	isHypoTiFlashReplica := false
-	if ctx.GetSessionVars().StmtCtx.InExplainStmt && ctx.GetSessionVars().HypoTiFlashReplicas != nil {
-		hypoReplicas := ctx.GetSessionVars().HypoTiFlashReplicas
-		originalTableName := tblInfo.Name.L
-		if hypoReplicas[dbName.L] != nil {
-			if _, ok := hypoReplicas[dbName.L][originalTableName]; ok {
-				isHypoTiFlashReplica = true
-			}
-		}
-	}
-
+	isHypoTiFlashReplica := logicalop.UsedHypoTiFlashReplicas(ctx.GetSessionVars(), dbName, tblInfo)
 	if tblInfo.TiFlashReplica == nil {
 		if isHypoTiFlashReplica {
 			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
