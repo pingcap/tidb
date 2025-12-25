@@ -368,11 +368,11 @@ const (
 	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
 	TiDBOptCartesianJoinOrderThreshold = "tidb_opt_cartesian_join_order_threshold"
 
-	// TiDBOptOrderingPreservingJoinDiscount controls the discount factor applied to join orders that preserve ordering.
-	// When join reordering considers physical ordering properties, joins that preserve ordering get a cost discount.
-	// Value range: 0.0 to 1.0. Lower values mean stronger preference for ordering-preserving joins.
-	// Default: 0.95 (5% discount). Set to 1.0 to disable ordering-aware join reordering.
-	TiDBOptOrderingPreservingJoinDiscount = "tidb_opt_ordering_preserving_join_discount"
+	// TiDBOptOrderPreservingJoinDiscount controls the discount factor applied to join orders that preserve order.
+	// When join reorder-preserving ordering get a cost discount.
+	// Value range: 0.0 to 1.0. Lower values mean stronger preference for order-preserving joins.
+	// Default: 0.95 (5% discount). Set to 1.0 to disable order-aware join reordering.
+	TiDBOptOrderPreservingJoinDiscount = "tidb_opt_order_preserving_join_discount"
 
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
@@ -1404,7 +1404,7 @@ const (
 	DefOptRiskGroupNDVSkewRatio             = 0.0
 	DefOptAlwaysKeepJoinKey                 = true
 	DefOptCartesianJoinOrderThreshold       = 0.0
-	DefOptOrderingPreservingJoinDiscount    = 1.0
+	DefOptOrderPreservingJoinDiscount       = 1.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0

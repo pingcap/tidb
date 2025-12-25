@@ -69,14 +69,14 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan) (base.
 	})
 
 	// If there's an ORDER BY and a table has a matching index, prioritize it as the starting table.
-	// This enables index join to preserve ordering and avoid a separate sort operation.
-	// Only apply when tidb_opt_ordering_preserving_join_discount < 1.0 (feature enabled)
-	discount := s.ctx.GetSessionVars().OrderingPreservingJoinDiscount
+	// This enables index join to preserve order and avoid a separate sort operation.
+	// Only apply when tidb_opt_order_preserving_join_discount < 1.0 (feature enabled)
+	discount := s.ctx.GetSessionVars().OrderPreservingJoinDiscount
 	if discount > 0 && discount < 1.0 {
-		if orderingIdx := s.findOrderingPreservingTableIndex(); orderingIdx > 0 {
-			// Move the ordering-preserving table to the front
-			orderingNode := s.curJoinGroup[orderingIdx]
-			s.curJoinGroup = slices.Delete(s.curJoinGroup, orderingIdx, orderingIdx+1)
+		if orderIdx := s.findOrderPreservingTableIndex(); orderIdx > 0 {
+			// Move the order-preserving table to the front
+			orderingNode := s.curJoinGroup[orderIdx]
+			s.curJoinGroup = slices.Delete(s.curJoinGroup, orderIdx, orderIdx+1)
 			s.curJoinGroup = slices.Insert(s.curJoinGroup, 0, orderingNode)
 		}
 	}
@@ -195,14 +195,14 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 	return join, otherConds, len(usedEdges) == 0
 }
 
-// findOrderingPreservingTableIndex finds the index of a table in the join group
+// findOrderPreservingTableIndex finds the index of a table in the join group
 // that has an index matching the ORDER BY columns. Returns -1 if none found.
-func (s *joinReorderGreedySolver) findOrderingPreservingTableIndex() int {
-	if len(s.orderingProperties) == 0 {
+func (s *joinReorderGreedySolver) findOrderPreservingTableIndex() int {
+	if len(s.orderProperties) == 0 {
 		return -1
 	}
 
-	for _, orderingCols := range s.orderingProperties {
+	for _, orderingCols := range s.orderProperties {
 		if len(orderingCols) == 0 {
 			continue
 		}

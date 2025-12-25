@@ -202,18 +202,13 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		otherConds = append(otherConds, tmpOtherConds...)
 	}
 	// Capture ordering properties from the join for index-preserving optimization
-	var orderingProperties [][]*expression.Column
-	if len(join.LeftOrderingProperties) > 0 {
-		orderingProperties = join.LeftOrderingProperties
-	} else if len(join.RightOrderingProperties) > 0 {
-		orderingProperties = join.RightOrderingProperties
-	}
+	orderProperties := join.OrderProperties
 
 	return &joinGroupResult{
-		group:              group,
-		hasOuterJoin:       hasOuterJoin,
-		joinOrderHintInfo:  joinOrderHintInfo,
-		orderingProperties: orderingProperties,
+		group:             group,
+		hasOuterJoin:      hasOuterJoin,
+		joinOrderHintInfo: joinOrderHintInfo,
+		orderProperties:   orderProperties,
 		basicJoinGroupInfo: &basicJoinGroupInfo{
 			eqEdges:            eqEdges,
 			otherConds:         otherConds,
@@ -274,7 +269,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
 			ctx:                ctx,
 			basicJoinGroupInfo: result.basicJoinGroupInfo,
-			orderingProperties: result.orderingProperties,
+			orderProperties:    result.orderProperties,
 		}
 
 		joinGroupNum := len(curJoinGroup)
@@ -397,19 +392,19 @@ type basicJoinGroupInfo struct {
 }
 
 type joinGroupResult struct {
-	group              []base.LogicalPlan
-	hasOuterJoin       bool
-	joinOrderHintInfo  []*h.PlanHints
-	orderingProperties [][]*expression.Column // ORDER BY columns that could benefit from index ordering
+	group             []base.LogicalPlan
+	hasOuterJoin      bool
+	joinOrderHintInfo []*h.PlanHints
+	orderProperties   [][]*expression.Column // ORDER BY columns that could benefit from index ordering
 	*basicJoinGroupInfo
 }
 
 // nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
-	ctx                base.PlanContext
-	curJoinGroup       []*jrNode
-	leadingJoinGroup   base.LogicalPlan
-	orderingProperties [][]*expression.Column // ORDER BY columns for index-preserving join selection
+	ctx              base.PlanContext
+	curJoinGroup     []*jrNode
+	leadingJoinGroup base.LogicalPlan
+	orderProperties  [][]*expression.Column // ORDER BY columns for index-preserving join selection
 	*basicJoinGroupInfo
 }
 

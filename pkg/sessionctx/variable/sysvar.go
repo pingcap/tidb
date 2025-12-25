@@ -2178,8 +2178,8 @@ var defaultSysVars = []*SysVar{
 		s.CartesianJoinOrderThreshold = tidbOptFloat64(val, vardef.DefOptCartesianJoinOrderThreshold)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptOrderingPreservingJoinDiscount, Value: strconv.FormatFloat(vardef.DefOptOrderingPreservingJoinDiscount, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
-		s.OrderingPreservingJoinDiscount = tidbOptFloat64(val, vardef.DefOptOrderingPreservingJoinDiscount)
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptOrderPreservingJoinDiscount, Value: strconv.FormatFloat(vardef.DefOptOrderPreservingJoinDiscount, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.OrderPreservingJoinDiscount = tidbOptFloat64(val, vardef.DefOptOrderPreservingJoinDiscount)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskEqSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskEqSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
