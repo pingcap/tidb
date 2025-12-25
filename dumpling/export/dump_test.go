@@ -68,6 +68,45 @@ func TestDumpExit(t *testing.T) {
 	require.ErrorIs(t, d.dumpDatabases(writerCtx, baseConn, taskChan), sqlmock.ErrCancelled)
 }
 
+func TestResolveAutoConsistencyFallback(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+
+	conf := DefaultConfig()
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.Consistency = ConsistencyTypeAuto
+
+	d := &Dumper{
+		tctx:      tctx,
+		conf:      conf,
+		cancelCtx: cancel,
+		dbHandle:  db,
+	}
+
+	// resolveAutoConsistency will:
+	// 1. Get a connection from the pool.
+	// 2. Attempt FLUSH TABLES WITH READ LOCK (which we delay to trigger timeout).
+	// 3. Attempt UNLOCK TABLES (due to defer).
+	// 4. Close the connection (due to defer).
+
+	// We don't need to mock Conn() explicitly as sqlmock handles pool connections,
+	// but we must mock the SQL executed on it.
+	mock.ExpectExec("FLUSH TABLES WITH READ LOCK").
+		WillDelayFor(6 * time.Second).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UNLOCK TABLES").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	err = resolveAutoConsistency(d)
+	require.NoError(t, err)
+
+	// Verify fallback happened to 'lock'
+	require.Equal(t, ConsistencyTypeLock, d.conf.Consistency)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestDumpTableMeta(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
