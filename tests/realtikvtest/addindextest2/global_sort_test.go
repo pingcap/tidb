@@ -999,3 +999,43 @@ func getStepSummary(t *testing.T, taskMgr *diststorage.TaskManager, taskID int64
 	}
 	return &accumSummary
 }
+
+func TestGlobalSortExtraParams(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/beforeSubmitTask",
+		func(requiredSlots *int, params *proto.ExtraParams) {
+			*requiredSlots = 16
+			params.MaxRuntimeSlots = 12
+		},
+	)
+	var callCnt int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool/NewWorkerPool", func(numWorkers int) {
+		// readerCnt or writerCnt is calculated, about half of the runtime slots
+		// merge-sort/ingest is 12
+		if numWorkers != 6 && numWorkers != 8 && numWorkers != 12 {
+			t.Fatalf("unexpected numWorkers: %d", numWorkers)
+		}
+		callCnt++
+	})
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists extra_params;")
+	tk.MustExec("create database extra_params;")
+	tk.MustExec("use extra_params;")
+	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
+	defer func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	}()
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (2), (3);")
+	tk.MustExec("alter table t add unique index idx(a);")
+	// read-index/merge-sort/ingest all create worker pool once
+	require.Equal(t, 4, callCnt)
+}

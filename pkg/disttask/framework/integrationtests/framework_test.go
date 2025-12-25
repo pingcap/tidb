@@ -354,16 +354,14 @@ func TestMaxRuntimeSlots(t *testing.T) {
 			require.Equal(t, 16, int(rc.CPU.Capacity()))
 		}
 	})
-	scope := handle.GetTargetScope()
-	_, err := handle.SubmitTaskWithExtraParams(c.Ctx, "key1", proto.TaskTypeExample,
-		"", 16, scope, 0, nil,
-		proto.ExtraParams{
-			MaxRuntimeSlots: 12,
-			TargetSteps:     []proto.Step{proto.StepOne},
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/beforeSubmitTask",
+		func(requiredSlots *int, params *proto.ExtraParams) {
+			params.MaxRuntimeSlots = 12
+			params.TargetSteps = []proto.Step{proto.StepOne}
 		},
 	)
-	require.NoError(t, err)
-	task := testutil.WaitTaskDoneOrPaused(c.Ctx, t, "key1")
+	scope := handle.GetTargetScope()
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 16)
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	require.EqualValues(t, 2, callCount.Load())
 }
