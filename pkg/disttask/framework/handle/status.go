@@ -147,16 +147,16 @@ func CalculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 			if needed <= 0 {
 				break
 			}
-			if avail >= t.Concurrency {
-				availResources[i] -= t.Concurrency
+			if avail >= t.RequiredSlots {
+				availResources[i] -= t.RequiredSlots
 				needed--
 			}
 		}
 		for range needed {
-			// we have restricted the concurrency of each task to be less than
-			// node CPU count at submit time, so t.Concurrency > cpuCount should
+			// we have restricted the required slots of each task to be less than
+			// node CPU count at submit time, so t.RequiredSlots > cpuCount should
 			// not happen.
-			availResources = append(availResources, cpuCount-t.Concurrency)
+			availResources = append(availResources, cpuCount-t.RequiredSlots)
 		}
 	}
 	// make sure 1 node exist for DXF owner and works as a reserved node, to make

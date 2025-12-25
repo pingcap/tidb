@@ -46,17 +46,17 @@ func NewNodeResource(totalCPU int, totalMem int64, totalDisk uint64) *NodeResour
 // NodeResourceForTest is only used for test.
 var NodeResourceForTest = NewNodeResource(32, 32*units.GB, 100*units.GB)
 
-// GetStepResource gets the step resource according to concurrency.
-func (nr *NodeResource) GetStepResource(concurrency int) *StepResource {
+// GetStepResource gets the step resource according to slots.
+func (nr *NodeResource) GetStepResource(slots int) *StepResource {
 	return &StepResource{
-		CPU: NewAllocatable(int64(concurrency)),
+		CPU: NewAllocatable(int64(slots)),
 		// same proportion as CPU
-		Mem: NewAllocatable(int64(float64(concurrency) / float64(nr.TotalCPU) * float64(nr.TotalMem))),
+		Mem: NewAllocatable(int64(float64(slots) / float64(nr.TotalCPU) * float64(nr.TotalMem))),
 	}
 }
 
 // GetTaskDiskResource gets available disk for a task.
-func (nr *NodeResource) GetTaskDiskResource(concurrency int, quotaHint uint64) uint64 {
+func (nr *NodeResource) GetTaskDiskResource(slots int, quotaHint uint64) uint64 {
 	availableDisk := min(nr.TotalDisk, quotaHint)
-	return uint64(float64(concurrency) / float64(nr.TotalCPU) * float64(availableDisk))
+	return uint64(float64(slots) / float64(nr.TotalCPU) * float64(availableDisk))
 }

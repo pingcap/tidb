@@ -52,7 +52,7 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
 	_, err := gm.CreateTask(ctx, "key1", "test", "", 999, "", 0, proto.ExtraParams{}, []byte("test"))
-	require.ErrorContains(t, err, "task concurrency(999) larger than cpu count")
+	require.ErrorContains(t, err, "task required slots(999) larger than cpu count")
 
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
 	id, err := gm.CreateTask(ctx, "key1", "test", "test_keyspace", 4, "aaa", 12, proto.ExtraParams{ManualRecovery: true}, []byte("testmeta"))
@@ -66,7 +66,7 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, proto.TaskType("test"), task.Type)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, proto.NormalPriority, task.Priority)
-	require.Equal(t, 4, task.Concurrency)
+	require.Equal(t, 4, task.RequiredSlots)
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, "aaa", task.TargetScope)
 	require.Equal(t, 12, task.MaxNodeCount)
@@ -1227,7 +1227,7 @@ func checkBasicTaskEq(t *testing.T, expectedTask, task *proto.TaskBase) {
 	require.Equal(t, expectedTask.State, task.State)
 	require.Equal(t, expectedTask.Step, task.Step)
 	require.Equal(t, expectedTask.Priority, task.Priority)
-	require.Equal(t, expectedTask.Concurrency, task.Concurrency)
+	require.Equal(t, expectedTask.RequiredSlots, task.RequiredSlots)
 	require.Equal(t, expectedTask.CreateTime, task.CreateTime)
 }
 
