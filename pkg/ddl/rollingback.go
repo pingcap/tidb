@@ -64,6 +64,7 @@ func convertAddIdxJob2RollbackJob(
 	// sub-job individually. Therefore, we update the state of all sub-jobs
 	// so they can rollback correctly in subsequent loops.
 	if job.Type == model.ActionMultiSchemaChange {
+		//nolint: errcheck
 		rollingBackMultiSchemaChange(job)
 		return 0, err
 	}
