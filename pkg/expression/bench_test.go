@@ -1338,6 +1338,10 @@ func genVecExprBenchCase(ctx BuildContext, funcName string, testCase vecExprBenc
 	}
 
 	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType(ctx.GetEvalCtx()).EvalType())}, testCase.chunkSize, testCase.chunkSize)
+
+	if !expr.Vectorized() {
+		panic(fmt.Sprintf("func %s is not vectorized", funcName))
+	}
 	return expr, fts, input, output
 }
 
@@ -1591,6 +1595,9 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
+			if !baseFunc.vectorized() || !baseFunc.isChildrenVectorized() {
+				t.Fatalf("func %s is not vectorized", baseFuncName)
+			}
 
 			if !testAll && (!testFunc[baseFuncName] && !testFunc[funcName]) {
 				continue
@@ -1834,6 +1841,9 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
+			if !baseFunc.vectorized() || !baseFunc.isChildrenVectorized() {
+				panic(fmt.Sprintf("func %s is not vectorized", funcName))
+			}
 
 			if !testAll && !testFunc[baseFuncName] && !testFunc[funcName] {
 				continue
