@@ -180,6 +180,7 @@ type HybridIndexInfo struct {
 	Vector   []*HybridVectorSpec   `json:"vector,omitempty"`
 	Inverted []*HybridInvertedSpec `json:"inverted,omitempty"`
 	Sort     *HybridSortSpec       `json:"sort,omitempty"`
+	Sharding *HybridShardingSpec   `json:"sharding_key,omitempty"`
 }
 
 // HybridFullTextSpec describes the configuration for a fulltext segment in a hybrid index.
@@ -233,6 +234,11 @@ type HybridSortSpec struct {
 	IsAsc []bool `json:"is_asc,omitempty"`
 }
 
+// HybridShardingSpec describes the sharding key definition of the hybrid index.
+type HybridShardingSpec struct {
+	Columns []*IndexColumn `json:"columns,omitempty"`
+}
+
 // Clone clones HybridIndexInfo.
 func (info *HybridIndexInfo) Clone() *HybridIndexInfo {
 	if info == nil {
@@ -268,6 +274,9 @@ func (info *HybridIndexInfo) Clone() *HybridIndexInfo {
 	}
 	if info.Sort != nil {
 		cloned.Sort = info.Sort.Clone()
+	}
+	if info.Sharding != nil {
+		cloned.Sharding = info.Sharding.Clone()
 	}
 	return cloned
 }
@@ -384,6 +393,16 @@ func (opt *HybridSortSpec) Clone() *HybridSortSpec {
 	if len(opt.IsAsc) > 0 {
 		cloned.IsAsc = append([]bool(nil), opt.IsAsc...)
 	}
+	return cloned
+}
+
+// Clone clones HybridShardingSpec.
+func (opt *HybridShardingSpec) Clone() *HybridShardingSpec {
+	if opt == nil {
+		return nil
+	}
+	cloned := &HybridShardingSpec{}
+	cloned.Columns = cloneIndexColumnSlice(opt.Columns)
 	return cloned
 }
 
@@ -567,9 +586,9 @@ func (index *IndexInfo) IsColumnarIndex() bool {
 	return index.VectorInfo != nil || index.InvertedInfo != nil // || index.FullTextInfo != nil
 }
 
-// IsFulltextIndexOnTiCI checks whether the index is a fulltext index.
+// IsTiCIIndex checks whether the index is a fulltext index.
 // Fulltext index only exists in TiCI, no actual index data need to be written to KV layer.
-func (index *IndexInfo) IsFulltextIndexOnTiCI() bool {
+func (index *IndexInfo) IsTiCIIndex() bool {
 	return index.FullTextInfo != nil || index.HybridInfo != nil
 }
 

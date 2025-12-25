@@ -17,6 +17,7 @@ package tici
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -42,7 +43,7 @@ const (
 func GetFulltextIndexes(tbl *model.TableInfo) []*model.IndexInfo {
 	var result []*model.IndexInfo
 	for _, idx := range tbl.Indices {
-		if idx.IsFulltextIndexOnTiCI() {
+		if idx.IsTiCIIndex() {
 			result = append(result, idx)
 		}
 	}
@@ -312,13 +313,12 @@ func (g *DataWriterGroup) FinishPartitionUpload(
 	if fileWriter == nil {
 		return errors.New("TICIFileWriter is not initialized")
 	}
-	uri := fileWriter.URI()
-	if uri == "" {
-		g.logger.Warn("no uri set for FinishPartitionUpload")
-		return nil // or return an error if uri is required
+	uri, err := fileWriter.URI()
+	if err != nil || uri == "" {
+		return fmt.Errorf("uri is empty or Error occurred: %v", err)
 	}
 
-	err := g.mgrCtx.FinishPartitionUpload(ctx, g.indexMeta.tidbTaskID, lowerBound, upperBound, uri)
+	err = g.mgrCtx.FinishPartitionUpload(ctx, g.indexMeta.tidbTaskID, lowerBound, upperBound, uri)
 	if err != nil {
 		g.logger.Error("failed to finish partition upload",
 			zap.String("uri", uri),

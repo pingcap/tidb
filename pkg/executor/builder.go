@@ -4151,7 +4151,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	indexPlans := v.IndexPlans
 	storeType := kv.TiKV
-	if is.Index.IsFulltextIndexOnTiCI() {
+	if is.Index.IsTiCIIndex() {
 		indexPlans = []base.PhysicalPlan{v.IndexPlans[len(v.IndexPlans)-1]}
 		storeType = kv.TiFlash
 	}
@@ -4326,6 +4326,9 @@ func buildIndexLookUpPushDownDAGReq(ctx sessionctx.Context, columns []*model.Ind
 // buildIndexReq is designed to create a DAG for index request.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans ...base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
+	if idxScan.Index.IsTiCIIndex() {
+		plans = []base.PhysicalPlan{plans[len(plans)-1]}
+	}
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, idxScan.StoreType)
 	if err != nil {
 		return nil, err
@@ -4371,6 +4374,16 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 		}
 	}
 
+	if p.Index.IsTiCIIndex() {
+		return handleOutputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen), nil
+	}
+
+	return handleOutputOffsetsForTiKVIndexLookUp(outputOffsets, handleLen, columns, p.NeedExtraOutputCol()), nil
+}
+
+// handleOutputOffsetsForTiKVIndexLookUp handles the output offsets for TiKV index look up requests.
+// See the InitSchemaForTiKVIndex for the row layout.
+func handleOutputOffsetsForTiKVIndexLookUp(outputOffsets []uint32, handleLen int, columns []*model.IndexColumn, needExtraOutputCol bool) []uint32 {
 	for i := range handleLen {
 		outputOffsets = append(outputOffsets, uint32(len(columns)+i))
 	}
@@ -4379,7 +4392,16 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 		// need add one more column for pid or physical table id
 		outputOffsets = append(outputOffsets, uint32(len(columns)+handleLen))
 	}
-	return outputOffsets, nil
+	return outputOffsets
+}
+
+// handleOutputOffsetsForTiCIIndexLookUp handles the output offsets for TiCI index look up requests.
+// See the InitSchemaForTiCIIndex for the row layout.
+func handleOutputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int) []uint32 {
+	for i := range handleLen {
+		outputOffsets = append(outputOffsets, uint32(i))
+	}
+	return outputOffsets
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
@@ -4395,10 +4417,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 	var err error
 	if v.IndexLookUpPushDown {
 		indexReq, err = buildIndexLookUpPushDownDAGReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans, v.IndexPlansUnNatureOrders)
-	} else if !is.Index.IsFulltextIndexOnTiCI() {
-		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans...)
 	} else {
-		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans[len(v.IndexPlans)-1])
+		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans...)
 	}
 	if err != nil {
 		return nil, err

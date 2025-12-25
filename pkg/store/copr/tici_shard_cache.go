@@ -35,7 +35,7 @@ import (
 
 const (
 	btreeDegree           = 32
-	defaultShardsPerBatch = 128
+	defaultShardsPerBatch = 1024
 )
 
 // Shard represents a shard of data for tici.

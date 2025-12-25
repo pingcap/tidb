@@ -571,7 +571,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
-		if idx.Meta().IsColumnarIndex() || idx.Meta().IsFulltextIndexOnTiCI() {
+		if idx.Meta().IsColumnarIndex() || idx.Meta().IsTiCIIndex() {
 			continue
 		}
 
@@ -603,7 +603,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if !IsIndexWritable(idx) {
 			continue
 		}
-		if idx.Meta().IsColumnarIndex() || idx.Meta().IsFulltextIndexOnTiCI() {
+		if idx.Meta().IsColumnarIndex() || idx.Meta().IsTiCIIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
@@ -987,7 +987,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if !IsIndexWritable(v) {
 			continue
 		}
-		if v.Meta().IsColumnarIndex() || v.Meta().IsFulltextIndexOnTiCI() {
+		if v.Meta().IsColumnarIndex() || v.Meta().IsTiCIIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && v.Meta().Primary {
@@ -1258,7 +1258,7 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue
 		}
-		if v.Meta().IsColumnarIndex() || v.Meta().IsFulltextIndexOnTiCI() {
+		if v.Meta().IsColumnarIndex() || v.Meta().IsTiCIIndex() {
 			continue
 		}
 		intest.AssertFunc(func() bool {

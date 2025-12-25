@@ -440,6 +440,7 @@ type hybridIndexParameter struct {
 	Vector   []hybridVectorSpec     `json:"vector"`
 	Inverted hybridInvertedSpecList `json:"inverted"`
 	Sort     *hybridSortSpec        `json:"sort"`
+	Sharding *hybridShardingSpec    `json:"sharding_key"`
 }
 
 type hybridFullTextSpec struct {
@@ -470,6 +471,10 @@ type hybridSortSpec struct {
 	Columns    stringList `json:"columns"`
 	Directions []string   `json:"directions"`
 	Order      []string   `json:"order"`
+}
+
+type hybridShardingSpec struct {
+	Columns stringList `json:"columns"`
 }
 
 type stringList []string
@@ -1043,6 +1048,11 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 		sortSpec = param.Sort
 	}
 
+	var shardingSpec *hybridShardingSpec
+	if param.Sharding != nil {
+		shardingSpec = param.Sharding
+	}
+
 	if len(param.Inverted) > 0 {
 		info.Inverted = make([]*model.HybridInvertedSpec, 0, len(param.Inverted))
 		for i, spec := range param.Inverted {
@@ -1077,6 +1087,14 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 			return nil, err
 		}
 		info.Sort = sortInfo
+	}
+
+	if shardingSpec != nil {
+		shardingInfo, err := buildHybridShardingSpec(shardingSpec, resolveColumn)
+		if err != nil {
+			return nil, err
+		}
+		info.Sharding = shardingInfo
 	}
 
 	return info, nil
@@ -1128,6 +1146,28 @@ func buildHybridSortSpec(spec *hybridSortSpec, resolveColumn func(string) (*mode
 		Columns: columns,
 		IsAsc:   normalized,
 	}, nil
+}
+
+func buildHybridShardingSpec(spec *hybridShardingSpec, resolveColumn func(string) (*model.ColumnInfo, error)) (*model.HybridShardingSpec, error) {
+	if spec == nil {
+		return nil, nil
+	}
+	if len(spec.Columns) == 0 {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index sharding_key must specify columns")
+	}
+	columns := make([]*model.IndexColumn, 0, len(spec.Columns))
+	for _, colName := range spec.Columns {
+		colInfo, err := resolveColumn(colName)
+		if err != nil {
+			return nil, err
+		}
+		columns = append(columns, &model.IndexColumn{
+			Name:   colInfo.Name,
+			Offset: colInfo.Offset,
+			Length: types.UnspecifiedLength,
+		})
+	}
+	return &model.HybridShardingSpec{Columns: columns}, nil
 }
 
 func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,

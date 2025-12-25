@@ -336,7 +336,7 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 
 	results := make([]kv.KeyRange, 0, len(groupedRanges))
 	for _, ranges := range groupedRanges {
-		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index, nil)
+		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index, nil, e.table)
 		if err != nil {
 			return nil, err
 		}
@@ -362,7 +362,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetMemTracker(e.memTracker).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.netDataSize)).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-	if e.index.IsFulltextIndexOnTiCI() {
+	if e.index.IsTiCIIndex() {
 		builder.SetStoreType(kv.TiFlash).SetPaging(false).SetFullText(true).SetAllowBatchCop(true)
 		builder.FullTextInfo.TableID = e.table.Meta().ID
 		builder.FullTextInfo.IndexID = e.index.ID
@@ -383,7 +383,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		if !e.index.IsFulltextIndexOnTiCI() {
+		if !e.index.IsTiCIIndex() {
 			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
 		} else {
 			var executors []*tipb.Executor
@@ -639,14 +639,15 @@ func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 	physicalIDs []int64,
 	index *model.IndexInfo,
 	memTracker *memory.Tracker,
+	table table.Table,
 ) ([][]kv.KeyRange, error) {
 	results := make([][]kv.KeyRange, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
 		if pRange, ok := rangeOverrideForPartitionID[physicalID]; ok {
 			ranges = pRange
 		}
-		if index.IsFulltextIndexOnTiCI() {
-			kvRanges, err := distsql.FulltextIndexRangesToKVRanges(dctx, []int64{physicalID}, ranges)
+		if index.IsTiCIIndex() {
+			kvRanges, err := distsql.FulltextIndexRangesToKVRanges(dctx, []int64{physicalID}, ranges, table.Meta().IsCommonHandle)
 			if err != nil {
 				return nil, err
 			}
@@ -688,7 +689,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	kvRanges := make([][]kv.KeyRange, 0, len(groupedRanges))
 	physicalTblIDsForPartitionKVRanges := make([]int64, 0, len(tableIDs)*len(groupedRanges))
 	for _, ranges := range groupedRanges {
-		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index, e.memTracker)
+		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index, e.memTracker, e.table)
 		if err != nil {
 			return err
 		}
@@ -730,7 +731,7 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		if !e.index.IsFulltextIndexOnTiCI() {
+		if !e.index.IsTiCIIndex() {
 			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
 		} else {
 			var executors []*tipb.Executor
@@ -898,18 +899,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 				SetMemTracker(tracker).
 				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-			if e.index.IsFulltextIndexOnTiCI() {
+			if e.index.IsTiCIIndex() {
 				builder.SetPaging(false).SetFullText(true).SetAllowBatchCop(true).SetStoreType(kv.TiFlash)
 				builder.FullTextInfo.TableID = e.table.Meta().ID
 				builder.FullTextInfo.IndexID = e.index.ID
 				builder.FullTextInfo.ExecutorID = e.idxPlans[0].ExplainID().String()
-
-				id := e.Table().Meta().ID
-				startKey := tablecodec.EncodeTablePrefix(id)
-				endKey := tablecodec.EncodeTablePrefix(id + 1)
-				kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
-				kvRanges = kvRanges[:0]
-				kvRanges = append(kvRanges, []kv.KeyRange{kvRange})
 			}
 
 			if e.indexLookUpPushDown {

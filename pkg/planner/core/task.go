@@ -663,7 +663,7 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 		if len(cop.IdxMergePartPlans) == 0 {
 			// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 			// because handles would be reordered before being sent to table scan.
-			if (!cop.KeepOrder || !cop.IndexPlanFinished || cop.IndexPlan == nil) && len(cop.RootTaskConds) == 0 && cop.GetStoreType() != kv.TiCI {
+			if (!cop.KeepOrder || !cop.IndexPlanFinished || cop.IndexPlan == nil) && len(cop.RootTaskConds) == 0 {
 				// When limit is pushed down, we should remove its offset.
 				newCount := p.Offset + p.Count
 				childProfile := cop.Plan().StatsInfo()
@@ -1162,6 +1162,31 @@ func containVirtualColumn(p *physicalop.PhysicalTopN, tCols []*expression.Column
 	return false
 }
 
+func checkTopNPushDownByCopType(p *physicalop.PhysicalTopN, task base.Task, taskType kv.StoreType) bool {
+	if !canExpressionConvertedToPB(p, taskType) {
+		return false
+	}
+	copTask, ok := task.(*physicalop.CopTask)
+	if ok {
+		if len(copTask.RootTaskConds) != 0 {
+			return false
+		}
+		// Check for index merge because it has multiple partial plans.
+		if !copTask.IndexPlanFinished && len(copTask.IdxMergePartPlans) > 0 {
+			for _, partialPlan := range copTask.IdxMergePartPlans {
+				if containVirtualColumn(p, partialPlan.Schema().Columns) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	if containVirtualColumn(p, task.Plan().Schema().Columns) {
+		return false
+	}
+	return true
+}
+
 // canPushDownToTiKV checks whether this topN can be pushed down to TiKV.
 func canPushDownToTiKV(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) bool {
 	if !canExpressionConvertedToPB(p, kv.TiKV) {
@@ -1276,13 +1301,22 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 			return newTask
 		}
 	}
-	if copTask, ok := t.(*physicalop.CopTask); ok && needPushDown && canPushDownToTiKV(p, copTask) && len(copTask.RootTaskConds) == 0 {
+	if copTask, ok := t.(*physicalop.CopTask); ok && needPushDown && checkTopNPushDownByCopType(p, copTask, copTask.GetStoreType()) && len(copTask.RootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *physicalop.PhysicalTopN
 		var newGlobalTopN *physicalop.PhysicalTopN
 		if !copTask.IndexPlanFinished && canPushToIndexPlan(copTask.IndexPlan, cols) {
-			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.IndexPlan, copTask.GetStoreType())
+			indexScanPlan := copTask.IndexPlan
+			for len(indexScanPlan.Children()) > 0 {
+				indexScanPlan = indexScanPlan.Children()[0]
+			}
+			indexScan := indexScanPlan.(*physicalop.PhysicalIndexScan)
+			// The pushed down TopN is calculated on TiFlash, the embedded TopN info in TiCI is built in TryToPassTiCITopN.
+			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.IndexPlan, indexScan.StoreType)
+			if indexScan.StoreType == kv.TiCI {
+				indexScan.TryToPassTiCITopN(pushedDownTopN)
+			}
 			copTask.IndexPlan = pushedDownTopN
 			if newGlobalTopN != nil {
 				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
@@ -1294,6 +1328,21 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 				return attachPlan2Task(newGlobalTopN, rootTask)
 			}
 		} else {
+			// TODO: Currently, we only enable TiCI to return columns of pk.
+			// But actually it can return the columns defined in inverted clause and sort clause.
+			// Before we fix the tici side's output columns, there's some TopN cannot be pushed down to TiCI index plan.
+			// So we try to add a TopN to TiCI side again here.
+			// This will be removed once we fix the TiCI side's output columns.
+			if !copTask.IndexPlanFinished && copTask.IndexPlan != nil {
+				indexScanPlan := copTask.IndexPlan
+				for len(indexScanPlan.Children()) > 0 {
+					indexScanPlan = indexScanPlan.Children()[0]
+				}
+				indexScan := indexScanPlan.(*physicalop.PhysicalIndexScan)
+				if indexScan.StoreType == kv.TiCI {
+					indexScan.TryToPassTiCITopN(p)
+				}
+			}
 			// It works for both normal index scan and index merge scan.
 			copTask.FinishIndexPlan()
 			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())
