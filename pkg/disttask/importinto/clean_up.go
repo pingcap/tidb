@@ -17,9 +17,11 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	goerrors "errors"
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -66,9 +69,22 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
 		}); err != nil {
-			return err
+			if !goerrors.Is(err, infoschema.ErrTableNotExists) {
+				return err
+			}
+
+			logutil.BgLogger().Warn(
+				"table not found when altering table mode to normal during cleanup, skip altering",
+				zap.Int64("tableID", taskMeta.Plan.TableInfo.ID),
+			)
 		}
 	}
+
+	failpoint.InjectCall("mockCleanupError", &err)
+	if err != nil {
+		return err
+	}
+
 	// Not use cloud storage, no need to cleanUp.
 	if taskMeta.Plan.CloudStorageURI == "" {
 		return nil

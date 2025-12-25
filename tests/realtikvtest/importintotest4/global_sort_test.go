@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -578,4 +579,65 @@ func TestNextGenMetering(t *testing.T) {
 			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
 			items[metering.DurationSecondsField].(int64) > 0
 	}, 30*time.Second, 100*time.Millisecond)
+}
+
+func TestDropTableBeforeCleanup(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("switching table mode is not supported in nextgen")
+	}
+
+	bak := scheduler.DefaultCleanUpInterval
+	scheduler.DefaultCleanUpInterval = time.Second
+	t.Cleanup(func() {
+		scheduler.DefaultCleanUpInterval = bak
+	})
+
+	s := &mockGCSSuite{}
+	s.SetT(t)
+	s.SetupSuite()
+	t.Cleanup(func() {
+		s.TearDownSuite()
+	})
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	srcDirURI := realtikvtest.GetNextGenObjStoreURI("drop-test")
+	srcStore, err2 := handle.NewObjStore(ctx, srcDirURI)
+	s.NoError(err2)
+	s.NoError(srcStore.WriteFile(ctx, "data.csv", []byte("1,1\n2,2\n")))
+	s.prepareAndUseDB("drop_test")
+	glSortURI := realtikvtest.GetNextGenObjStoreURI("drop-sort")
+	s.tk.MustExec("create table table_mode (id int primary key, fk int)")
+
+	dropCh := make(chan struct{})
+	waitDropCh := make(chan struct{})
+	var mockError atomic.Bool
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/mockCleanupError", func(err *error) {
+		if mockError.CompareAndSwap(false, true) {
+			// Start drop table and wait finished
+			close(waitDropCh)
+			<-dropCh
+			*err = fmt.Errorf("mock clean up global sort dir error")
+			return
+		}
+	})
+
+	importSQL := fmt.Sprintf(`import into table_mode FROM '%s'
+		with cloud_storage_uri='%s'`, realtikvtest.GetNextGenObjStoreURI("drop-test/*.csv"), glSortURI)
+	s.tk.MustExec(importSQL)
+	query := "SELECT * FROM table_mode"
+
+	// Wait import finish without altering table mode back, then drop table
+	s.tk.MustQuery(importSQL)
+	s.checkMode(s.tk, query, "table_mode", true)
+	s.tk.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
+
+	<-waitDropCh
+	s.tk.MustExec("drop table table_mode")
+	close(dropCh)
+
+	// Make sure all tasks can be cleaned up successfully.
+	require.Eventually(t, func() bool {
+		rs := s.tk.MustQuery("select count(*) from mysql.tidb_global_task").Rows()
+		return rs[0][0].(string) == "0"
+	}, 30*time.Second, time.Second)
 }
