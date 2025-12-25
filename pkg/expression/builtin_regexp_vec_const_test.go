@@ -63,6 +63,7 @@ func genVecBuiltinRegexpBenchCaseForConstants(ctx BuildContext) (baseFunc builti
 func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
 	ctx := mock.NewContext()
 	bf, childrenFieldTypes, input, output := genVecBuiltinRegexpBenchCaseForConstants(ctx)
+	require.True(t, bf.vectorized() && bf.isChildrenVectorized())
 	err := vecEvalType(ctx, bf, types.ETInt, input, output)
 	require.NoError(t, err)
 	i64s := output.Int64s()
