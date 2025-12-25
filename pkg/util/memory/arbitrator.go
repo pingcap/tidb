@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -137,6 +138,8 @@ const (
 var errArbitrateFailError = errors.New("failed to allocate resource from arbitrator")
 
 var arbitrationPriorityNames = [maxArbitrationPriority]string{"LOW", "MEDIUM", "HIGH"}
+
+var mockNow func() time.Time
 
 // String returns the string representation of the ArbitrationPriority
 func (p ArbitrationPriority) String() string {
@@ -515,12 +518,11 @@ type MemArbitrator struct {
 		sync.Mutex
 		running atomic.Bool
 	}
-	debug           struct{ now func() time.Time } // mock time.Now
-	privilegedEntry *rootPoolEntry                 // entry with privilege will always be satisfied first
-	underKill       mapEntryWithMem                // entries under `KILL` operation
-	underCancel     mapEntryWithMem                // entries under `CANCEL` operation
-	notifer         Notifer                        // wake up the async work process
-	cleanupMu       struct {                       // cleanup the state of the entry
+	privilegedEntry *rootPoolEntry  // entry with privilege will always be satisfied first
+	underKill       mapEntryWithMem // entries under `KILL` operation
+	underCancel     mapEntryWithMem // entries under `CANCEL` operation
+	notifer         Notifer         // wake up the async work process
+	cleanupMu       struct {        // cleanup the state of the entry
 		fifoTasks wrapList[*rootPoolEntry]
 		sync.Mutex
 	}
@@ -2068,16 +2070,13 @@ func (m *MemArbitrator) restartEntryByContext(entry *rootPoolEntry, ctx *Arbitra
 		m.entryMap.contextCache.num.Add(1)
 	}
 
-	if entry.pool.actions.OutOfCapacityActionCB == nil {
-		entry.pool.actions.OutOfCapacityActionCB = func(s OutOfCapacityActionArgs) error {
-			if m.blockingAllocate(entry, s.Request) != ArbitrateOk {
-				return errArbitrateFailError
-			}
-			return nil
+	entry.pool.actions.OutOfCapacityActionCB = func(s OutOfCapacityActionArgs) error {
+		if m.blockingAllocate(entry, s.Request) != ArbitrateOk {
+			return errArbitrateFailError
 		}
+		return nil
 	}
 	entry.pool.mu.stopped = false
-
 	entry.setExecState(execStateRunning)
 
 	return true
@@ -2121,9 +2120,14 @@ type TrackedConcurrentBudget struct {
 	_         cpuCacheLinePad
 }
 
-// Clear clears the concurrent budget and returns the capacity
-func (b *ConcurrentBudget) Clear() int64 {
+// Stop stops the concurrent budget and releases all the capacity and make the pool non-allocatable
+func (b *ConcurrentBudget) Stop() int64 {
 	b.Lock()
+	defer b.Unlock()
+
+	b.Pool.SetOutOfCapacityAction(func(s OutOfCapacityActionArgs) error {
+		return errArbitrateFailError
+	})
 
 	budgetCap := b.Capacity
 	b.Capacity = 0
@@ -2131,9 +2135,7 @@ func (b *ConcurrentBudget) Clear() int64 {
 	if budgetCap > 0 {
 		b.Pool.release(budgetCap)
 	}
-	b.Pool = nil
 
-	b.Unlock()
 	return budgetCap
 }
 
@@ -2760,8 +2762,10 @@ func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 }
 
 func (m *MemArbitrator) innerTime() time.Time {
-	if m.debug.now != nil {
-		return m.debug.now()
+	if intest.InTest {
+		if mockNow != nil {
+			return mockNow()
+		}
 	}
 	return now()
 }
@@ -3071,7 +3075,7 @@ type ArbitrateHelper interface {
 	Finish()
 }
 
-// ArbitrationContext represents the context & properties of the root pool
+// ArbitrationContext represents the context & properties of the root pool which is accessible for the global mem-arbitrator
 type ArbitrationContext struct {
 	arbitrateHelper ArbitrateHelper
 	cancelCh        <-chan struct{}

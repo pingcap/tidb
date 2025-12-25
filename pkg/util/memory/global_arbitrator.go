@@ -61,10 +61,13 @@ var (
 				updateUtimeSec atomic.Int64
 				execMetricsCounter
 			}
-			smallPool atomic.Int64
-			bigPool   struct {
-				atomic.Int64
-				into atomic.Int64
+			pools struct {
+				internal        atomic.Int64
+				internalSession atomic.Int64
+
+				small   atomic.Int64
+				big     atomic.Int64
+				intoBig atomic.Int64
 			}
 			init  atomic.Bool
 			reset atomic.Bool
@@ -135,13 +138,15 @@ func reportGlobalMemArbitratorMetrics() {
 		setRootPool := func(label string, value int64) {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorRootPool, label, value)
 		}
-		setRootPool("root-pool-uid", m.RootPoolNum())
+		setRootPool("root-pool", m.RootPoolNum())
+		setRootPool("internal-session", globalArbitrator.metrics.pools.internalSession.Load())
 		setRootPool("under-kill", m.underKill.approxSize())
 		setRootPool("under-cancel", m.underCancel.approxSize())
 		setRootPool("digest-cache", m.digestProfileCache.num.Load())
-		setRootPool("big-running", globalArbitrator.metrics.bigPool.Load())
-		setRootPool("small-running", globalArbitrator.metrics.smallPool.Load())
-		setRootPool("into-big", globalArbitrator.metrics.bigPool.into.Load())
+		setRootPool("big-sql", globalArbitrator.metrics.pools.big.Load())
+		setRootPool("small-sql", globalArbitrator.metrics.pools.small.Load())
+		setRootPool("internal-sql", globalArbitrator.metrics.pools.internal.Load())
+		setRootPool("small-into-big", globalArbitrator.metrics.pools.intoBig.Load())
 	}
 	{ // counter
 		newExecMetrics := m.ExecMetrics()
@@ -301,6 +306,8 @@ func CleanupGlobalMemArbitratorForTest() {
 	m.stop()
 	globalArbitrator.v.Store(nil)
 	_ = os.Remove(runtimeMemStateRecorderFilePath(globalArbitrator.v.baseDir))
+	mockNow = nil
+	mockDebugInject = nil
 }
 
 // SetupGlobalMemArbitratorForTest sets up the global memory arbitrator for tests.
