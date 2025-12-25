@@ -131,7 +131,7 @@ func (pq *AnalysisPriorityQueue) IsInitialized() bool {
 }
 
 // Initialize initializes the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Initialize(ctx context.Context) error {
 	pq.syncFields.mu.Lock()
 	if pq.syncFields.initialized {
@@ -166,7 +166,7 @@ func (pq *AnalysisPriorityQueue) Initialize(ctx context.Context) error {
 }
 
 // Rebuild rebuilds the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Rebuild() error {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -179,7 +179,7 @@ func (pq *AnalysisPriorityQueue) Rebuild() error {
 }
 
 // rebuildWithoutLock rebuilds the priority queue without holding the lock.
-// Note: Please hold the lock before calling this function.
+// NOTE: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) rebuildWithoutLock(ctx context.Context) error {
 	pq.syncFields.inner = newHeap()
 
@@ -200,7 +200,7 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock(ctx context.Context) error {
 }
 
 // fetchAllTablesAndBuildAnalysisJobs builds analysis jobs for all eligible tables and partitions.
-// Note: Please hold the lock before calling this function.
+// NOTE: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.Context) error {
 	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
@@ -369,8 +369,9 @@ func (pq *AnalysisPriorityQueue) run() {
 }
 
 // ProcessDMLChanges processes DML changes.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 // Performance: To scan all table stats and process the DML changes, it takes about less than 100ms for 1m tables.
+// Exported for testing.
 func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -422,7 +423,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 	}
 }
 
-// Note: Please hold the lock before calling this function.
+// NOTE: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) processTableStats(
 	sctx sessionctx.Context,
 	stats *statistics.Table,
@@ -535,7 +536,7 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			)
 		} else {
 			// If the table is locked, we do not analyze it.
-			// Note: the table meta is the parent table meta.
+			// NOTE: the table meta is the parent table meta.
 			if _, ok := lockedTables[tableMeta.ID]; ok {
 				return nil
 			}
@@ -617,17 +618,8 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 	return oldJob
 }
 
-// GetLastFetchTimestamp returns the last fetch timestamp of DML updates.
-// Note: This function is thread-safe.
-// Exported for testing.
-func (pq *AnalysisPriorityQueue) GetLastFetchTimestamp() uint64 {
-	pq.syncFields.mu.RLock()
-	defer pq.syncFields.mu.RUnlock()
-
-	return pq.syncFields.lastDMLUpdateFetchTimestamp
-}
-
 // RequeueMustRetryJobs requeues the must retry jobs.
+// Exported for testing.
 func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -643,7 +635,7 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		for tableID := range pq.syncFields.mustRetryJobs {
-			// Note: Delete the job first to ensure it can be added back to the queue
+			// NOTE: Delete the job first to ensure it can be added back to the queue
 			delete(pq.syncFields.mustRetryJobs, tableID)
 			tblInfo, ok := pq.statsHandle.TableInfoByID(is, tableID)
 			if !ok {
@@ -663,7 +655,8 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 }
 
 // RefreshLastAnalysisDuration refreshes the last analysis duration of all jobs in the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
+// Exported for testing
 func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -719,7 +712,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 }
 
 // GetRunningJobs returns the running jobs.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 // Exported for testing.
 func (pq *AnalysisPriorityQueue) GetRunningJobs() map[int64]struct{} {
 	pq.syncFields.mu.RLock()
@@ -730,18 +723,6 @@ func (pq *AnalysisPriorityQueue) GetRunningJobs() map[int64]struct{} {
 		runningJobs[id] = struct{}{}
 	}
 	return runningJobs
-}
-
-// Push pushes a job into the priority queue.
-// Note: This function is thread-safe.
-func (pq *AnalysisPriorityQueue) Push(job AnalysisJob) error {
-	pq.syncFields.mu.Lock()
-	defer pq.syncFields.mu.Unlock()
-	if !pq.syncFields.initialized {
-		return errors.New(notInitializedErrMsg)
-	}
-
-	return pq.pushWithoutLock(job)
 }
 
 func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
@@ -785,7 +766,7 @@ func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 }
 
 // Pop pops a job from the priority queue and marks it as running.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
@@ -829,8 +810,9 @@ func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 	return job, nil
 }
 
-// Peek peeks the top job from the priority queue.
-func (pq *AnalysisPriorityQueue) Peek() (AnalysisJob, error) {
+// PeekForTest peeks the top job from the priority queue.
+// Exported for testing.
+func (pq *AnalysisPriorityQueue) PeekForTest() (AnalysisJob, error) {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	if !pq.syncFields.initialized {
@@ -840,9 +822,10 @@ func (pq *AnalysisPriorityQueue) Peek() (AnalysisJob, error) {
 	return pq.syncFields.inner.peek()
 }
 
-// IsEmpty checks whether the priority queue is empty.
-// Note: This function is thread-safe.
-func (pq *AnalysisPriorityQueue) IsEmpty() (bool, error) {
+// IsEmptyForTest checks whether the priority queue is empty.
+// NOTE: This function is thread-safe.
+// Exported for testing.
+func (pq *AnalysisPriorityQueue) IsEmptyForTest() (bool, error) {
 	pq.syncFields.mu.RLock()
 	defer pq.syncFields.mu.RUnlock()
 	if !pq.syncFields.initialized {
@@ -853,7 +836,7 @@ func (pq *AnalysisPriorityQueue) IsEmpty() (bool, error) {
 }
 
 // Len returns the number of jobs in the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Len() (int, error) {
 	pq.syncFields.mu.RLock()
 	defer pq.syncFields.mu.RUnlock()
@@ -897,7 +880,7 @@ func (pq *AnalysisPriorityQueue) Snapshot() (
 }
 
 // Close closes the priority queue.
-// Note: This function is thread-safe.
+// NOTE: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Close() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
