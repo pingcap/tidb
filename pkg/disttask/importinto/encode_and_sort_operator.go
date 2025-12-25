@@ -22,7 +22,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -114,15 +113,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) (*external.Writer, error) {
-			idx, ok := op.indicesGenKV[indexID]
-			if !ok {
-				// shouldn't happen normally, unless we have bug at getIndicesGenKV
-				return nil, errors.Errorf("unknown index with ID: %d", indexID)
-			}
-			onDup := common.OnDuplicateKeyRemove
-			if idx.unique {
-				onDup = common.OnDuplicateKeyRecord
-			}
+			onDup := common.OnDuplicateKeyIgnore
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
@@ -142,7 +133,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
-			SetOnDup(common.OnDuplicateKeyRecord)
+			SetOnDup(common.OnDuplicateKeyIgnore)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
