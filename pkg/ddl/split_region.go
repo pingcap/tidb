@@ -367,7 +367,12 @@ func normalizeSplitPolicy(splitOpt *ast.SplitIndexOption, tbInfo *model.TableInf
 	if tbInfo.HasClusteredIndex() && splitOpt.PrimaryKey {
 		// cannot specify both SPLIT PRIMARY for CLUSTERED table
 		// it is for unclustered primary
-		return nil, "", dbterror.ErrInvalidRegionSplitPolicy
+		return nil, "", dbterror.ErrInvalidRegionSplitPolicyClustered
+	}
+
+	if splitOpt.SplitOpt.Num < 1 {
+		// must larger than 1
+		return nil, "", dbterror.ErrInvalidRegionSplitPolicyNumber
 	}
 
 	indexName := ""

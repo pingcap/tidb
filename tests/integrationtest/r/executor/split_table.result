@@ -346,6 +346,8 @@ status varchar(10)
 );
 alter table t add index idx_user_id (user_id);
 alter table t split index idx_user_id between (0) and (10000) regions 5;
+alter table t split index idx_user_id between (0) and (10000) regions 0;
+Error 1105 (HY000): Must have at least one region to split
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (

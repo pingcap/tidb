@@ -298,6 +298,8 @@ create table t (
 );
 alter table t add index idx_user_id (user_id);
 alter table t split index idx_user_id between (0) and (10000) regions 5;
+-- error 1105
+alter table t split index idx_user_id between (0) and (10000) regions 0;
 show create table t;
 alter table t add index idx_status (status);
 show warnings;

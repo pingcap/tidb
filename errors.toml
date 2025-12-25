@@ -808,7 +808,7 @@ Incorrect table name '%-.100s'
 
 ["ddl:1105"]
 error = '''
-It is recommended to add a region split strategy to the new index to avoid write hotspots
+Must have at least one region to split
 '''
 
 ["ddl:1111"]
