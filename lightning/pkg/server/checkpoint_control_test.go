@@ -19,9 +19,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	mockimport "github.com/pingcap/tidb/lightning/pkg/importinto/mock"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	mockimport "github.com/pingcap/tidb/pkg/lightning/importinto/mock"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -54,7 +54,7 @@ func TestImportIntoCheckpointControl(t *testing.T) {
 				return control.Remove(ctx, "db.t1")
 			},
 			setup: func() {
-				mockMgr.EXPECT().Remove(ctx, "db", "t1").Return(nil)
+				mockMgr.EXPECT().Remove(ctx, "db.t1").Return(nil)
 				mockMgr.EXPECT().Close().Return(nil)
 			},
 			wantErr: false,
@@ -65,7 +65,7 @@ func TestImportIntoCheckpointControl(t *testing.T) {
 				return control.IgnoreError(ctx, "db.t1")
 			},
 			setup: func() {
-				mockMgr.EXPECT().IgnoreError(ctx, "db", "t1").Return(nil)
+				mockMgr.EXPECT().IgnoreError(ctx, "db.t1").Return(nil)
 				mockMgr.EXPECT().Close().Return(nil)
 			},
 			wantErr: false,
@@ -99,16 +99,6 @@ func TestImportIntoCheckpointControl(t *testing.T) {
 			},
 			setup:   func() {},
 			wantErr: false,
-		},
-		{
-			name: "ParseTable Error",
-			operation: func() error {
-				return control.Remove(ctx, "invalid")
-			},
-			setup: func() {
-				mockMgr.EXPECT().Close().Return(nil)
-			},
-			wantErr: true,
 		},
 	}
 

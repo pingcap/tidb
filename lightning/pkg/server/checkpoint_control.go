@@ -21,12 +21,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/lightning/pkg/importer"
+	"github.com/pingcap/tidb/lightning/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/importinto"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"go.uber.org/zap"
 )
@@ -227,30 +227,18 @@ func NewImportIntoCheckpointControl(cfg *config.Config, tls *common.TLS) (*Impor
 // Remove deletes checkpoints in the import-into backend.
 func (c *ImportIntoCheckpointControl) Remove(ctx context.Context, tableName string) error {
 	defer c.closeManager()
-	db, tbl, err := importinto.ParseTable(tableName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return c.mgr.Remove(ctx, db, tbl)
+	return c.mgr.Remove(ctx, tableName)
 }
 
 // IgnoreError resets failed checkpoints to allow resuming the import.
 func (c *ImportIntoCheckpointControl) IgnoreError(ctx context.Context, tableName string) error {
 	defer c.closeManager()
-	db, tbl, err := importinto.ParseTable(tableName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return c.mgr.IgnoreError(ctx, db, tbl)
+	return c.mgr.IgnoreError(ctx, tableName)
 }
 
 // DestroyError removes failed checkpoints completely.
 func (c *ImportIntoCheckpointControl) DestroyError(ctx context.Context, tableName string) error {
 	defer c.closeManager()
-	db, tbl, err := importinto.ParseTable(tableName)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	target, err := importer.NewTiDBManager(ctx, c.cfg.TiDB, c.tls)
 	if err != nil {
@@ -258,16 +246,15 @@ func (c *ImportIntoCheckpointControl) DestroyError(ctx context.Context, tableNam
 	}
 	defer target.Close()
 
-	destroyed, err := c.mgr.DestroyError(ctx, db, tbl)
+	destroyed, err := c.mgr.DestroyError(ctx, tableName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	var errs []error
 	for _, cp := range destroyed {
-		fullTableName := common.UniqueTable(cp.DBName, cp.TableName)
-		log.L().Info("Dropping table", zap.String("table", fullTableName))
-		if err := target.DropTable(ctx, fullTableName); err != nil {
+		log.L().Info("Dropping table", zap.String("table", cp.TableName))
+		if err := target.DropTable(ctx, cp.TableName); err != nil {
 			log.L().Error("Encountered error while dropping table", zap.Error(err))
 			errs = append(errs, err)
 		}
