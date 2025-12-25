@@ -998,6 +998,9 @@ func getStepSummary(t *testing.T, taskMgr *diststorage.TaskManager, taskID int64
 }
 
 func TestUseCloudStorageSetCorrectly(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen always use cloud storage")
+	}
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
