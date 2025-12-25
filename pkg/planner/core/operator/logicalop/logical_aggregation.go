@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"slices"
+	"sync"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -51,7 +52,9 @@ type LogicalAggregation struct {
 	// Deprecated: NoCopPushDown is substituted by prop.NoCopPushDown.
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
-	NoCopPushDown bool
+	NoCopPushDown      bool
+	aggCanPushMPPPOnce sync.Once
+	aggCanPushMPP      bool
 }
 
 // Init initializes LogicalAggregation.
@@ -769,4 +772,40 @@ func (*LogicalAggregation) getGroupNDVs(childProfile *property.StatsInfo, gbyCol
 		return nil
 	}
 	return []property.GroupNDV{*groupNDV}
+}
+
+// CheckAggCanPushMPP is to check whether this agg can be pushed down into tiflash.
+func (a *LogicalAggregation) CheckAggCanPushMPP() (result bool) {
+	a.aggCanPushMPPPOnce.Do(func() {
+		a.aggCanPushMPP = checkAggCanPushMPP(a)
+	})
+	return a.aggCanPushMPP
+}
+
+func checkAggCanPushMPP(s base.LogicalPlan) bool {
+	if _, ok := s.SCtx().GetSessionVars().IsolationReadEngines[kv.TiFlash]; !ok {
+		return false
+	}
+	switch l := s.(type) {
+	case *LogicalLock:
+		if l.Lock != nil && l.Lock.LockType != ast.SelectLockNone {
+			return false
+		}
+	case *LogicalSelection:
+		pushed, _ := expression.PushDownExprs(util.GetPushDownCtx(l.SCtx()), l.Conditions, kv.TiFlash)
+		if len(pushed) == 0 {
+			// if this selection's Expr cannot be pushed into tiflash, it has to be in the root/tikv node.
+			return false
+		}
+	case *DataSource:
+		return l.CanUseTiflash4Physical()
+	case *LogicalUnionScan, *LogicalPartitionUnionAll:
+		return false
+	}
+	for _, child := range s.Children() {
+		if !checkAggCanPushMPP(child) {
+			return false
+		}
+	}
+	return true
 }

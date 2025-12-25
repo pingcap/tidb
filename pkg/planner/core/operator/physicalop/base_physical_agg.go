@@ -982,35 +982,7 @@ func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 	}
 	// if it has a lock or UnionScan, this Agg cannot be pushed down to MPP
 	if CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash) {
-		return checkAggCanPushMPP(la)
+		return la.CheckAggCanPushMPP()
 	}
 	return false
-}
-
-func checkAggCanPushMPP(s base.LogicalPlan) bool {
-	if _, ok := s.SCtx().GetSessionVars().IsolationReadEngines[kv.TiFlash]; !ok {
-		return false
-	}
-	switch l := s.(type) {
-	case *logicalop.LogicalLock:
-		if l.Lock != nil && l.Lock.LockType != ast.SelectLockNone {
-			return false
-		}
-	case *logicalop.LogicalSelection:
-		pushed, _ := expression.PushDownExprs(util.GetPushDownCtx(l.SCtx()), l.Conditions, kv.TiFlash)
-		if len(pushed) == 0 {
-			// if this selection's Expr cannot be pushed into tiflash, it has to be in the root/tikv node.
-			return false
-		}
-	case *logicalop.DataSource:
-		return l.CanUseTiflash4Physical()
-	case *logicalop.LogicalUnionScan, *logicalop.LogicalPartitionUnionAll:
-		return false
-	}
-	for _, child := range s.Children() {
-		if !checkAggCanPushMPP(child) {
-			return false
-		}
-	}
-	return true
 }
