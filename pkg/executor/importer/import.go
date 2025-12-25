@@ -1291,6 +1291,39 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		sourceType       mydump.SourceType
 		compressionRatio = 1.0
 	)
+
+	checkFirstFile := func(s storage.ExternalStorage, path string, size int64) error {
+		var (
+			err      error
+			checkRes mydump.ParquetCheckResult
+		)
+
+		e.detectAndUpdateFormat(path)
+		sourceType := e.getSourceType()
+		if sourceType != mydump.SourceTypeParquet {
+			return nil
+		}
+
+		compressionRatio, err = estimateCompressionRatio(ctx, path, size, sourceType, s)
+		if err != nil {
+			return err
+		}
+
+		checkRes, err = mydump.CheckParquetImport(ctx, s, path, true)
+		if err != nil {
+			return err
+		}
+		if !checkRes.SchemaValid {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
+				"parquet file schema invalid")
+		}
+		if !checkRes.MemoryValid {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
+				"parquet files are too large and may cause OOM, consider changing to CSV format")
+		}
+		return nil
+	}
+
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
 	// check glob pattern is present in filename.
@@ -1308,10 +1341,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
-		e.detectAndUpdateFormat(fileNameKey)
-		sourceType = e.getSourceType()
-		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
-		if err != nil {
+		if err := checkFirstFile(s, fileNameKey, size); err != nil {
 			return errors.Trace(err)
 		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
@@ -1361,9 +1391,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				// pick arbitrary one file to detect the format.
 				var err2 error
 				once.Do(func() {
-					e.detectAndUpdateFormat(path)
-					sourceType = e.getSourceType()
-					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+					err2 = checkFirstFile(s, path, size)
 				})
 				if err2 != nil {
 					return nil, err2
