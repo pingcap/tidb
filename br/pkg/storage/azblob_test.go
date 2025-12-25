@@ -179,6 +179,10 @@ func TestAzblob(t *testing.T) {
 	// Note, change it to maxCnt - offs
 	require.Equal(t, int64(26), offs)
 
+	offs, err = efr.Seek(0, io.SeekEnd)
+	require.NoError(t, err)
+	require.Equal(t, int64(33), offs)
+
 	n, err = efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 5, n)
