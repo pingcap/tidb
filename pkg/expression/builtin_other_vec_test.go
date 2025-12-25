@@ -101,6 +101,7 @@ func TestGetParamVec(t *testing.T) {
 	col := &Column{RetType: ft, Index: 0}
 	fn, err := funcs[ast.GetParam].getFunction(ctx, []Expression{col})
 	require.NoError(t, err)
+	require.True(t, fn.vectorized() && fn.isChildrenVectorized())
 
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 3)
 	for i := range params {
