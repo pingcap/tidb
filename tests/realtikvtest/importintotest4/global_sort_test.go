@@ -450,7 +450,7 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/ForceTableSplitThreshold", func(threshold *int) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
 		*threshold = 0
 	})
 	var addCnt, removeCnt atomic.Int32

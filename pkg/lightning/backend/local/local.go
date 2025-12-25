@@ -125,9 +125,9 @@ var (
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
 
-	// ForceTableSplitThreshold is the threshold of regions to force split table range.
+	// ForcePartitionRegionThreshold is the threshold of regions to force split table range.
 	// It is exported for testing.
-	ForceTableSplitThreshold = 100
+	ForcePartitionRegionThreshold = 100
 )
 
 // importClientFactory is factory to create new import client for specific store.
@@ -901,8 +901,20 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 			failedStores  = make([]string, 0, len(clients))
 			rpcWg         util.WaitGroupWrapper
 		)
+		concurrency := int(local.WorkerConcurrency.Load())
+		if concurrency <= 0 {
+			concurrency = 1
+		}
+		sem := make(chan struct{}, concurrency)
 		for i, c := range clients {
 			rpcWg.Run(func() {
+				select {
+				case sem <- struct{}{}:
+				case <-subctx.Done():
+					return
+				}
+				defer func() { <-sem }()
+
 				failpoint.InjectCall("AddPartitionRangeForTable")
 				_, err := c.AddForcePartitionRange(subctx, addReq)
 				mu.Lock()
@@ -951,8 +963,20 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 			failedStores  = make([]string, 0, len(clients))
 			rpcWg         util.WaitGroupWrapper
 		)
+		concurrency := int(local.WorkerConcurrency.Load())
+		if concurrency <= 0 {
+			concurrency = 1
+		}
+		sem := make(chan struct{}, concurrency)
 		for i, c := range clients {
 			rpcWg.Run(func() {
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+				defer func() { <-sem }()
+
 				failpoint.InjectCall("RemovePartitionRangeRequest")
 				_, err := c.RemoveForcePartitionRange(ctx, removeReq)
 				mu.Lock()
@@ -1373,8 +1397,8 @@ func (local *Backend) ImportEngine(
 	intest.Assert(len(splitKeys) > 0)
 	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	forceSplitThreshold := ForceTableSplitThreshold
-	failpoint.InjectCall("ForceTableSplitThreshold", &forceSplitThreshold)
+	forceSplitThreshold := ForcePartitionRegionThreshold
+	failpoint.InjectCall("ForcePartitionRegionThreshold", &forceSplitThreshold)
 	// We only force table split range when the table is large enough (>= 100 regions).
 	// This is to avoid unnecessary RPC calls for small tables.
 	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 && len(splitKeys)-1 >= forceSplitThreshold {
