@@ -95,7 +95,7 @@ func genMockVecPlusIntBuiltinFunc(ctx BuildContext) (*mockVecPlusIntBuiltinFunc,
 		input.AppendInt64(0, int64(i))
 		input.AppendInt64(1, int64(i))
 	}
-	if plus.isChildrenVectorized() == false {
+	if !plus.isChildrenVectorized() {
 		panic("mockVecPlusIntBuiltinFunc's children should be vectorized")
 	}
 	return plus, input, buf
@@ -472,7 +472,7 @@ func genMockRowDouble(ctx BuildContext, eType types.EvalType, enableVec bool) (b
 			input.AppendTime(0, types.NewTime(t, mysqlType, 0))
 		}
 	}
-	if rowDouble.isChildrenVectorized() == false {
+	if !rowDouble.isChildrenVectorized() {
 		return nil, nil, nil, errors.New("mockBuiltinDouble's children should be vectorized")
 	}
 	return rowDouble, input, buf, nil
