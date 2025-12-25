@@ -302,16 +302,8 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 // showCommentsFromJob generates the comments for a DDL job, including reorg status,
 // analyze status and reorg parameters.
 func showCommentsFromJob(job *model.Job) string {
-	var labels []string
-	isAddingIndex := job.Type == model.ActionAddIndex ||
-		job.Type == model.ActionAddPrimaryKey
-	// For adding index, we don't need to show 'need reorg' to users.
-	if job.MayNeedReorg() && !isAddingIndex {
-		labels = append(labels, "need reorg")
-	}
-	if job.ReorgMeta != nil && job.ReorgMeta.IsValidating {
-		labels = append(labels, "validating")
-	}
+	labels := getReorgAndVerifyLabels(job.Type, job.MayNeedReorg(),
+		job.ReorgMeta != nil && job.ReorgMeta.IsValidating)
 	m := job.ReorgMeta
 	if m == nil {
 		return strings.Join(labels, ", ")
@@ -325,6 +317,8 @@ func showCommentsFromJob(job *model.Job) string {
 		labels = append(labels, "analyze_timeout")
 	default:
 	}
+	isAddingIndex := job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionAddPrimaryKey
 	if isAddingIndex && kerneltype.IsNextGen() {
 		// In next-gen, the parameters (concurrency, batch size, etc.) are determined
 		// automatically by the distributed framework, so we don't show them.
@@ -370,19 +364,24 @@ func showCommentsFromJob(job *model.Job) string {
 	return strings.Join(labels, ", ")
 }
 
-// showCommentsFromSubjob generates the comments for a sub-job in a multi-schema change.
-func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
+func getReorgAndVerifyLabels(jobType model.ActionType, mayNeedReorg bool, isValidating bool) []string {
 	var labels []string
-	isAddingIndex := sub.Type == model.ActionAddIndex ||
-		sub.Type == model.ActionAddPrimaryKey
-	proxy := model.Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
+	isAddingIndex := jobType == model.ActionAddIndex ||
+		jobType == model.ActionAddPrimaryKey
 	// For adding index, we don't need to show 'need reorg' to users.
-	if proxy.MayNeedReorg() && !isAddingIndex {
+	if mayNeedReorg && !isAddingIndex && jobType != model.ActionMultiSchemaChange {
 		labels = append(labels, "need reorg")
 	}
-	// Note: We don't have IsValidating in SubJob yet, but MultiSchemaChange
-	// currently doesn't trigger 'validating' path for subjobs in the same way.
-	// For now, we focus on the main Job and standard reorgs.
+	if isValidating {
+		labels = append(labels, "validating")
+	}
+	return labels
+}
+
+// showCommentsFromSubjob generates the comments for a sub-job in a multi-schema change.
+func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
+	proxy := sub.ToProxyJob(&model.Job{Type: model.ActionMultiSchemaChange}, 0)
+	labels := getReorgAndVerifyLabels(sub.Type, proxy.MayNeedReorg(), sub.IsValidating)
 
 	if kerneltype.IsNextGen() {
 		// In next-gen, the parameters are determined automatically, so we don't show them.

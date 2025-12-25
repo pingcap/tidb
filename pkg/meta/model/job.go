@@ -357,7 +357,7 @@ type Job struct {
 
 	// NeedReorg indicates whether the job needs reorg.
 	// It's only used by modify column and not the accurate value.
-	NeedReorg bool `json:"need_reorg"`
+	NeedReorg bool `json:"-"`
 
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
@@ -778,10 +778,17 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
-		return job.NeedReorg
+		if job.NeedReorg {
+			return true
+		}
+		if args, err := GetModifyColumnArgs(job); err == nil {
+			return args.ModifyColumnType == ModifyTypeReorg ||
+				args.ModifyColumnType == ModifyTypeIndexReorg
+		}
+		return false
 	case ActionMultiSchemaChange:
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := sub.ToProxyJob(job, i)
 			if proxyJob.MayNeedReorg() {
 				return true
 			}
@@ -905,11 +912,12 @@ type SubJob struct {
 	State        JobState        `json:"state"`
 	RowCount     int64           `json:"row_count"`
 	Warning      *terror.Error   `json:"warning"`
-	NeedReorg    bool            `json:"need_reorg"`
+	NeedReorg    bool            `json:"-"`
 	SchemaVer    int64           `json:"schema_version"`
 	ReorgTp      ReorgType       `json:"reorg_tp"`
 	ReorgStage   ReorgStage      `json:"reorg_stage"`
 	AnalyzeState int8            `json:"analyze_state"`
+	IsValidating bool            `json:"is_validating"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -938,6 +946,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		reorgMeta.ReorgTp = sub.ReorgTp
 		reorgMeta.Stage = sub.ReorgStage
 		reorgMeta.AnalyzeState = sub.AnalyzeState
+		reorgMeta.IsValidating = sub.IsValidating
 	}
 	return Job{
 		Version:         parentJob.Version,
@@ -990,6 +999,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 		sub.ReorgStage = proxyJob.ReorgMeta.Stage
 		sub.AnalyzeState = proxyJob.ReorgMeta.AnalyzeState
+		sub.IsValidating = proxyJob.ReorgMeta.IsValidating
 	}
 }
 

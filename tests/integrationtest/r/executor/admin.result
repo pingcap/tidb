@@ -237,7 +237,7 @@ insert into t_label values (1, 'test_label_data');
 alter table t_label modify column b varchar(50);
 admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
 JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS
-<job_id>	executor__admin	t_label	modify column	public	<schema_id>	<table_id>	0	<create_time>	<start_time>	<end_time>	synced	need reorg, validating, max_node_count=3
+<job_id>	executor__admin	t_label	modify column	public	<schema_id>	<table_id>	0	<create_time>	<start_time>	<end_time>	synced	validating
 alter table t_label modify column b varchar(200);
 admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
 JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS

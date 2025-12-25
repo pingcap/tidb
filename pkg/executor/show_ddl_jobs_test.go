@@ -154,7 +154,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 		},
 	}
 	res = showCommentsFromJob(job)
-	require.Equal(t, "need reorg", res)
+	require.Equal(t, "", res)
 }
 
 func TestShowCommentsFromSubJob(t *testing.T) {
@@ -189,4 +189,8 @@ func TestShowCommentsFromSubJob(t *testing.T) {
 	subJob.NeedReorg = true
 	res = showCommentsFromSubjob(subJob, false, false)
 	require.Equal(t, "need reorg", res)
+
+	subJob.IsValidating = true
+	res = showCommentsFromSubjob(subJob, false, false)
+	require.Equal(t, "need reorg, validating", res)
 }
