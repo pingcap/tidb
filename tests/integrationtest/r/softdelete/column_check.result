@@ -28,6 +28,14 @@ insert into t values (1, 'new') on duplicate key update _tidb_softdelete_time = 
 Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
 insert into t (id, name, _tidb_softdelete_time) values (1, 'new', null);
 Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+batch on id limit 10 delete from t where _tidb_softdelete_time is not null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+batch on id limit 10 update t set name = 'batch' where _tidb_softdelete_time is null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+load data local infile 'non_existing_file' into table t(id, name, _tidb_softdelete_time);
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+import into t(id, name, _tidb_softdelete_time) from 'non_existing_file';
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
 select id, name from t order by id;
 id	name
 2	b
@@ -39,14 +47,6 @@ select id, name from t order by id;
 id	name
 2	b
 3	c
-batch on id limit 10 delete from t where _tidb_softdelete_time is not null;
-Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
-batch on id limit 10 update t set name = 'batch' where _tidb_softdelete_time is null;
-Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
-load data local infile 'non_existing_file' into table t(id, name, _tidb_softdelete_time);
-Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
-import into t(id, name, _tidb_softdelete_time) from 'non_existing_file';
-Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
 set tidb_translate_softdelete_sql = false;
 drop table t;
 create table t2 (id int primary key nonclustered, val int) softdelete retention 7 day;
