@@ -143,7 +143,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
 		// TODO(tangenta): use available disk during adding index.
-		availableDisk := sch.nodeRes.GetTaskDiskResource(task.RequiredSlots, vardef.DDLDiskQuota.Load())
+		availableDisk := sch.nodeRes.GetTaskDiskResource(&task.TaskBase, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
 		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, nodeCnt, logger)
 	case proto.BackfillStepMergeSort:
@@ -673,8 +673,9 @@ func generateMergeSortPlan(
 	}
 
 	allSkip := true
+	concurrency := task.GetEffectiveSlots()
 	for _, multiStats := range multiStatsGroup {
-		if !skipMergeSort(multiStats, task.RequiredSlots) {
+		if !skipMergeSort(multiStats, concurrency) {
 			allSkip = false
 			break
 		}
@@ -702,7 +703,7 @@ func generateMergeSortPlan(
 		if i < len(eleIDs) {
 			eleID = []int64{eleIDs[i]}
 		}
-		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, task.RequiredSlots)
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, concurrency)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

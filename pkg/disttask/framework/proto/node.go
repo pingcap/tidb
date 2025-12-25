@@ -47,7 +47,8 @@ func NewNodeResource(totalCPU int, totalMem int64, totalDisk uint64) *NodeResour
 var NodeResourceForTest = NewNodeResource(32, 32*units.GB, 100*units.GB)
 
 // GetStepResource gets the step resource according to slots.
-func (nr *NodeResource) GetStepResource(slots int) *StepResource {
+func (nr *NodeResource) GetStepResource(task *TaskBase) *StepResource {
+	slots := task.GetEffectiveSlots()
 	return &StepResource{
 		CPU: NewAllocatable(int64(slots)),
 		// same proportion as CPU
@@ -56,7 +57,8 @@ func (nr *NodeResource) GetStepResource(slots int) *StepResource {
 }
 
 // GetTaskDiskResource gets available disk for a task.
-func (nr *NodeResource) GetTaskDiskResource(slots int, quotaHint uint64) uint64 {
+func (nr *NodeResource) GetTaskDiskResource(task *TaskBase, quotaHint uint64) uint64 {
+	slots := task.GetEffectiveSlots()
 	availableDisk := min(nr.TotalDisk, quotaHint)
 	return uint64(float64(slots) / float64(nr.TotalCPU) * float64(availableDisk))
 }

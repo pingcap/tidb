@@ -74,21 +74,23 @@ type ExtraParams struct {
 	// if enabled, the task will enter 'awaiting-resolution' state when it failed,
 	// then the user can recover the task manually or fail it if it's not recoverable.
 	ManualRecovery bool `json:"manual_recovery,omitempty"`
-	// MaxConcurrency is the max concurrency of the task when running subtasks
-	// in MaxConcSteps steps.
-	// normally it's 0, means it's not set, and we will use the RequiredSlots as
-	// the concurrency, if set, we will use the min of RequiredSlots and MaxConcurrency
-	// as the execution concurrency of the task step defined in MaxConcSteps.
+	// MaxRuntimeSlots is the max slots when running subtasks of this task in
+	// TargetSteps steps.
+	// normally it's 0, means we will use the RequiredSlots to run the subtasks.
+	// if set, we will use the min of RequiredSlots and MaxRuntimeSlots as the
+	// execution effective slots of the task step defined in TargetSteps.
 	// this field is used to workaround OOM issue where TiDB might repeatedly
-	// restart, so it's not part of the normal schedule workflow, and the DXF
-	// framework won't detect changes in this field, when TiDB restarts the newest
-	// value will be used.
-	MaxConcurrency int `json:"max_concurrency,omitempty"`
-	// MaxConcSteps indicates the steps that MaxConcurrency takes effect.
-	// if empty or nil, MaxConcurrency takes effect in all steps.
+	// restart. the DXF framework won't detect changes in this field, so it's not
+	// part of normal schedule workflow, when TiDB restarts the newest value will
+	// be used.
+	// RequiredSlots might be modified, and MaxRuntimeSlots is not touched in this
+	// case due to above reason, so MaxRuntimeSlots might > RequiredSlots.
+	MaxRuntimeSlots int `json:"max_runtime_slots,omitempty"`
+	// TargetSteps indicates the steps that MaxRuntimeSlots takes effect.
+	// if empty or nil, MaxRuntimeSlots takes effect in all steps.
 	// normally OOM only happens in some specific steps, so we can just limit the
 	// concurrency in those steps to reduce the impact on the overall performance.
-	MaxConcSteps []Step `json:"max_conc_steps,omitempty"`
+	TargetSteps []Step `json:"target_steps,omitempty"`
 }
 
 // TaskBase contains the basic information of a task.
@@ -102,9 +104,15 @@ type TaskBase struct {
 	// Priority is the priority of task, the smaller value means the higher priority.
 	// valid range is [1, 1024], default is NormalPriority.
 	Priority int
-	// RequiredSlots is the required slots of the task, i.e. the max number of
-	// slots the task can use on each node.
-	// normally it also works as the task concurrency.
+	// RequiredSlots is the required slots of the task.
+	// we use this field to allocate slots when scheduling and creating the task
+	// executor, but the effective slots when running the task is determined by
+	// GetEffectiveSlots.
+	// in normal case, they are the same. but when meeting OOM and TiDB repeatedly
+	// restarts, we might set a lower MaxRuntimeSlots in ExtraParams, then the
+	// effective slots is smaller than RequiredSlots.
+	// Note: in application layer, don't use this field directly, use GetEffectiveSlots
+	// or GetResource of step executor instead.
 	// Note: in the system table, we store it inside 'concurrency' column as
 	// required slots is introduced later.
 	RequiredSlots int
@@ -116,7 +124,7 @@ type TaskBase struct {
 	TargetScope  string
 	CreateTime   time.Time
 	MaxNodeCount int
-	ExtraParams
+	ExtraParams  ExtraParams
 	// keyspace name is the keyspace that the task belongs to.
 	// it's only useful for nextgen cluster.
 	Keyspace string
@@ -143,6 +151,22 @@ func (t *TaskBase) Compare(other *TaskBase) int {
 		return r
 	}
 	return cmp.Compare(t.ID, other.ID)
+}
+
+// GetEffectiveSlots gets the effective slots of current task step.
+// application layer might use this as the concurrency of the task step.
+func (t *TaskBase) GetEffectiveSlots() int {
+	if t.ExtraParams.MaxRuntimeSlots > 0 {
+		if len(t.ExtraParams.TargetSteps) == 0 {
+			return min(t.ExtraParams.MaxRuntimeSlots, t.RequiredSlots)
+		}
+		for _, step := range t.ExtraParams.TargetSteps {
+			if step == t.Step {
+				return min(t.ExtraParams.MaxRuntimeSlots, t.RequiredSlots)
+			}
+		}
+	}
+	return t.RequiredSlots
 }
 
 // String implements fmt.Stringer interface.

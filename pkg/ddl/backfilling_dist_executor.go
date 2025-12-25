@@ -183,7 +183,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().RequiredSlots)
+		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepMergeTempIndex:
 		return newMergeTempIndexExecutor(&s.task.TaskBase, jobMeta, store, tbl)
 	default:

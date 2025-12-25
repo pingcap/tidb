@@ -462,7 +462,10 @@ func (s *BaseScheduler) switch2NextStep() error {
 	nextStep := s.GetNextStep(&task.TaskBase)
 	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
-		zap.String("next-step", proto.Step2Str(task.Type, nextStep)))
+		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
+		zap.Int("required-slots", task.RequiredSlots),
+		zap.Int("effective-slots", task.GetEffectiveSlots()),
+	)
 
 	if nextStep == proto.StepDone {
 		if err := s.OnDone(s.ctx, s, task); err != nil {
@@ -604,7 +607,7 @@ func (s *BaseScheduler) revertTask(taskErr error) error {
 
 func (s *BaseScheduler) revertTaskOrManualRecover(taskErr error) error {
 	task := s.getTaskClone()
-	if task.ManualRecovery {
+	if task.ExtraParams.ManualRecovery {
 		if err := s.taskMgr.AwaitingResolveTask(s.ctx, task.ID, task.State, taskErr); err != nil {
 			return err
 		}

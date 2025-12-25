@@ -405,7 +405,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      nodeCnt,
 		Store:                sch.store,
-		ThreadCnt:            task.RequiredSlots,
+		ThreadCnt:            task.GetEffectiveSlots(),
 	}
 	logicalPlan := &LogicalPlan{Logger: logger}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
