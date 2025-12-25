@@ -215,7 +215,7 @@ func createTiCIIndexes(jobCtx *jobContext, schemaName string, tblInfo *model.Tab
 	}
 
 	for _, index := range tblInfo.Indices {
-		if !index.IsFulltextIndexOnTiCI() {
+		if !index.IsTiCIIndex() {
 			continue
 		}
 		if err := tici.CreateFulltextIndex(ctx, jobCtx.store, tblInfo, index, schemaName); err != nil {
@@ -237,7 +237,7 @@ func dropTiCIIndexes(jobCtx *jobContext, tblInfo *model.TableInfo) error {
 	}
 
 	for _, index := range tblInfo.Indices {
-		if !index.IsFulltextIndexOnTiCI() {
+		if !index.IsTiCIIndex() {
 			continue
 		}
 		if err := tici.DropFullTextIndex(ctx, jobCtx.store, tblInfo.ID, index.ID); err != nil {
