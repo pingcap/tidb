@@ -64,7 +64,6 @@ func (s CheckpointStatus) String() string {
 
 // TableCheckpoint represents the checkpoint state for a single table.
 type TableCheckpoint struct {
-	DBName    string           `json:"db_name"`
 	TableName string           `json:"table_name"`
 	JobID     int64            `json:"job_id"`
 	Status    CheckpointStatus `json:"status"`
@@ -77,16 +76,16 @@ type CheckpointManager interface {
 	// Initialize loads existing checkpoints.
 	Initialize(ctx context.Context) error
 	// Get returns the checkpoint for a specific table. Returns nil if not found.
-	Get(dbName, tableName string) (*TableCheckpoint, error)
+	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	// Update updates the checkpoint for a specific table.
 	Update(ctx context.Context, cp *TableCheckpoint) error
 	// Remove removes the checkpoint for a specific table.
-	Remove(ctx context.Context, dbName, tableName string) error
+	Remove(ctx context.Context, tableName string) error
 	// IgnoreError resets the status of a failed checkpoint to Pending.
-	IgnoreError(ctx context.Context, dbName, tableName string) error
+	IgnoreError(ctx context.Context, tableName string) error
 	// DestroyError removes the checkpoint for a specific table if it is in Failed state.
 	// It returns the list of checkpoints that were removed.
-	DestroyError(ctx context.Context, dbName, tableName string) ([]*TableCheckpoint, error)
+	DestroyError(ctx context.Context, tableName string) ([]*TableCheckpoint, error)
 	// DumpTables dumps the table checkpoints to a writer.
 	DumpTables(ctx context.Context, writer io.Writer) error
 	// DumpEngines dumps the engine checkpoints to a writer.
@@ -122,7 +121,7 @@ type NoopCheckpointManager struct{}
 func (*NoopCheckpointManager) Initialize(_ context.Context) error { return nil }
 
 // Get implements CheckpointManager.
-func (*NoopCheckpointManager) Get(string, string) (*TableCheckpoint, error) {
+func (*NoopCheckpointManager) Get(_ context.Context, _ string) (*TableCheckpoint, error) {
 	return nil, nil
 }
 
@@ -130,17 +129,17 @@ func (*NoopCheckpointManager) Get(string, string) (*TableCheckpoint, error) {
 func (*NoopCheckpointManager) Update(_ context.Context, _ *TableCheckpoint) error { return nil }
 
 // Remove implements CheckpointManager.
-func (*NoopCheckpointManager) Remove(_ context.Context, _, _ string) error {
+func (*NoopCheckpointManager) Remove(_ context.Context, _ string) error {
 	return nil
 }
 
 // IgnoreError implements CheckpointManager.
-func (*NoopCheckpointManager) IgnoreError(_ context.Context, _, _ string) error {
+func (*NoopCheckpointManager) IgnoreError(_ context.Context, _ string) error {
 	return nil
 }
 
 // DestroyError implements CheckpointManager.
-func (*NoopCheckpointManager) DestroyError(_ context.Context, _, _ string) ([]*TableCheckpoint, error) {
+func (*NoopCheckpointManager) DestroyError(_ context.Context, _ string) ([]*TableCheckpoint, error) {
 	return nil, nil
 }
 
@@ -209,11 +208,10 @@ func (m *FileCheckpointManager) Initialize(ctx context.Context) error {
 }
 
 // Get retrieves a checkpoint by database and table name.
-func (m *FileCheckpointManager) Get(dbName, tableName string) (*TableCheckpoint, error) {
+func (m *FileCheckpointManager) Get(_ context.Context, tableName string) (*TableCheckpoint, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	key := common.UniqueTable(dbName, tableName)
-	if cp, ok := m.checkpoints[key]; ok {
+	if cp, ok := m.checkpoints[tableName]; ok {
 		// Return a copy to avoid race conditions if the caller modifies it
 		cpCopy := *cp
 		return &cpCopy, nil
@@ -226,14 +224,13 @@ func (m *FileCheckpointManager) Update(ctx context.Context, cp *TableCheckpoint)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := common.UniqueTable(cp.DBName, cp.TableName)
-	m.checkpoints[key] = cp
+	m.checkpoints[cp.TableName] = cp
 
 	return m.save(ctx)
 }
 
 // Remove deletes checkpoints for specific tables or all tables.
-func (m *FileCheckpointManager) Remove(ctx context.Context, dbName, tableName string) error {
+func (m *FileCheckpointManager) Remove(ctx context.Context, tableName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -246,13 +243,12 @@ func (m *FileCheckpointManager) Remove(ctx context.Context, dbName, tableName st
 		return nil
 	}
 
-	key := common.UniqueTable(dbName, tableName)
-	delete(m.checkpoints, key)
+	delete(m.checkpoints, tableName)
 	return m.save(ctx)
 }
 
 // IgnoreError resets failed checkpoints back to the pending state.
-func (m *FileCheckpointManager) IgnoreError(ctx context.Context, dbName, tableName string) error {
+func (m *FileCheckpointManager) IgnoreError(ctx context.Context, tableName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -265,8 +261,7 @@ func (m *FileCheckpointManager) IgnoreError(ctx context.Context, dbName, tableNa
 			}
 		}
 	} else {
-		key := common.UniqueTable(dbName, tableName)
-		if cp, ok := m.checkpoints[key]; ok && cp.Status == CheckpointStatusFailed {
+		if cp, ok := m.checkpoints[tableName]; ok && cp.Status == CheckpointStatusFailed {
 			cp.Status = CheckpointStatusPending
 			cp.Message = ""
 			cp.JobID = 0
@@ -276,7 +271,7 @@ func (m *FileCheckpointManager) IgnoreError(ctx context.Context, dbName, tableNa
 }
 
 // DestroyError removes failed checkpoints entirely.
-func (m *FileCheckpointManager) DestroyError(ctx context.Context, dbName, tableName string) ([]*TableCheckpoint, error) {
+func (m *FileCheckpointManager) DestroyError(ctx context.Context, tableName string) ([]*TableCheckpoint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -289,10 +284,9 @@ func (m *FileCheckpointManager) DestroyError(ctx context.Context, dbName, tableN
 			}
 		}
 	} else {
-		key := common.UniqueTable(dbName, tableName)
-		if cp, ok := m.checkpoints[key]; ok && cp.Status == CheckpointStatusFailed {
+		if cp, ok := m.checkpoints[tableName]; ok && cp.Status == CheckpointStatusFailed {
 			destroyed = append(destroyed, cp)
-			delete(m.checkpoints, key)
+			delete(m.checkpoints, tableName)
 		}
 	}
 	if err := m.save(ctx); err != nil {
@@ -309,13 +303,12 @@ func (m *FileCheckpointManager) DumpTables(_ context.Context, writer io.Writer) 
 	w := csv.NewWriter(writer)
 
 	// Write header
-	if err := w.Write([]string{"db_name", "table_name", "job_id", "status", "message", "group_key"}); err != nil {
+	if err := w.Write([]string{"table_name", "job_id", "status", "message", "group_key"}); err != nil {
 		return errors.Trace(err)
 	}
 
 	for _, cp := range m.checkpoints {
 		record := []string{
-			cp.DBName,
 			cp.TableName,
 			fmt.Sprintf("%d", cp.JobID),
 			fmt.Sprintf("%d", cp.Status),
@@ -413,17 +406,16 @@ func (m *MySQLCheckpointManager) Initialize(ctx context.Context) error {
 }
 
 // Get fetches a checkpoint from the MySQL checkpoint table.
-func (m *MySQLCheckpointManager) Get(dbName, tableName string) (*TableCheckpoint, error) {
-	query := fmt.Sprintf("SELECT job_id, status, message, group_key FROM %s.%s WHERE db_name = ? AND table_name = ?",
+func (m *MySQLCheckpointManager) Get(ctx context.Context, tableName string) (*TableCheckpoint, error) {
+	query := fmt.Sprintf("SELECT job_id, status, message, group_key FROM %s.%s WHERE table_name = ?",
 		common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 
 	var cp TableCheckpoint
-	cp.DBName = dbName
 	cp.TableName = tableName
 	var msg sql.NullString
 	var groupKey sql.NullString
 
-	err := m.db.QueryRow(query, dbName, tableName).Scan(&cp.JobID, &cp.Status, &msg, &groupKey)
+	err := m.db.QueryRowContext(ctx, query, tableName).Scan(&cp.JobID, &cp.Status, &msg, &groupKey)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -437,8 +429,8 @@ func (m *MySQLCheckpointManager) Get(dbName, tableName string) (*TableCheckpoint
 
 // Update inserts or updates a checkpoint row.
 func (m *MySQLCheckpointManager) Update(ctx context.Context, cp *TableCheckpoint) error {
-	query := fmt.Sprintf(`INSERT INTO %s.%s (db_name, table_name, job_id, status, message, group_key)
-		VALUES (?, ?, ?, ?, ?, ?)
+	query := fmt.Sprintf(`INSERT INTO %s.%s (table_name, job_id, status, message, group_key)
+		VALUES (?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 		job_id = VALUES(job_id),
 		status = VALUES(status),
@@ -446,56 +438,56 @@ func (m *MySQLCheckpointManager) Update(ctx context.Context, cp *TableCheckpoint
 		group_key = VALUES(group_key)`,
 		common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 
-	_, err := m.db.ExecContext(ctx, query, cp.DBName, cp.TableName, cp.JobID, cp.Status, cp.Message, cp.GroupKey)
+	_, err := m.db.ExecContext(ctx, query, cp.TableName, cp.JobID, cp.Status, cp.Message, cp.GroupKey)
 	return errors.Trace(err)
 }
 
 // Remove deletes checkpoints for one table or all tables.
-func (m *MySQLCheckpointManager) Remove(ctx context.Context, dbName, tableName string) error {
+func (m *MySQLCheckpointManager) Remove(ctx context.Context, tableName string) error {
 	if tableName == common.AllTables {
 		query := fmt.Sprintf("DELETE FROM %s.%s", common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 		_, err := m.db.ExecContext(ctx, query)
 		return errors.Trace(err)
 	}
-	query := fmt.Sprintf("DELETE FROM %s.%s WHERE db_name = ? AND table_name = ?",
+	query := fmt.Sprintf("DELETE FROM %s.%s WHERE table_name = ?",
 		common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
-	_, err := m.db.ExecContext(ctx, query, dbName, tableName)
+	_, err := m.db.ExecContext(ctx, query, tableName)
 	return errors.Trace(err)
 }
 
 // IgnoreError resets failed checkpoints back to pending.
-func (m *MySQLCheckpointManager) IgnoreError(ctx context.Context, dbName, tableName string) error {
+func (m *MySQLCheckpointManager) IgnoreError(ctx context.Context, tableName string) error {
 	if tableName == common.AllTables {
 		query := fmt.Sprintf("UPDATE %s.%s SET status = ?, message = '', job_id = 0 WHERE status = ?",
 			common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 		_, err := m.db.ExecContext(ctx, query, CheckpointStatusPending, CheckpointStatusFailed)
 		return errors.Trace(err)
 	}
-	query := fmt.Sprintf("UPDATE %s.%s SET status = ?, message = '', job_id = 0 WHERE db_name = ? AND table_name = ? AND status = ?",
+	query := fmt.Sprintf("UPDATE %s.%s SET status = ?, message = '', job_id = 0 WHERE table_name = ? AND status = ?",
 		common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
-	_, err := m.db.ExecContext(ctx, query, CheckpointStatusPending, dbName, tableName, CheckpointStatusFailed)
+	_, err := m.db.ExecContext(ctx, query, CheckpointStatusPending, tableName, CheckpointStatusFailed)
 	return errors.Trace(err)
 }
 
 // DestroyError deletes checkpoints that are stuck in failed state.
-func (m *MySQLCheckpointManager) DestroyError(ctx context.Context, dbName, tableName string) ([]*TableCheckpoint, error) {
+func (m *MySQLCheckpointManager) DestroyError(ctx context.Context, tableName string) ([]*TableCheckpoint, error) {
 	var (
 		selectQuery string
 		deleteQuery string
 		args        []any
 	)
 	if tableName == common.AllTables {
-		selectQuery = fmt.Sprintf("SELECT db_name, table_name, job_id, status, message, group_key FROM %s.%s WHERE status = ?",
+		selectQuery = fmt.Sprintf("SELECT table_name, job_id, status, message, group_key FROM %s.%s WHERE status = ?",
 			common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 		deleteQuery = fmt.Sprintf("DELETE FROM %s.%s WHERE status = ?",
 			common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 		args = []any{CheckpointStatusFailed}
 	} else {
-		selectQuery = fmt.Sprintf("SELECT db_name, table_name, job_id, status, message, group_key FROM %s.%s WHERE db_name = ? AND table_name = ? AND status = ?",
+		selectQuery = fmt.Sprintf("SELECT table_name, job_id, status, message, group_key FROM %s.%s WHERE table_name = ? AND status = ?",
 			common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
-		deleteQuery = fmt.Sprintf("DELETE FROM %s.%s WHERE db_name = ? AND table_name = ? AND status = ?",
+		deleteQuery = fmt.Sprintf("DELETE FROM %s.%s WHERE table_name = ? AND status = ?",
 			common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
-		args = []any{dbName, tableName, CheckpointStatusFailed}
+		args = []any{tableName, CheckpointStatusFailed}
 	}
 
 	var destroyed []*TableCheckpoint
@@ -512,7 +504,7 @@ func (m *MySQLCheckpointManager) DestroyError(ctx context.Context, dbName, table
 			var cp TableCheckpoint
 			var msg sql.NullString
 			var groupKey sql.NullString
-			if e := rows.Scan(&cp.DBName, &cp.TableName, &cp.JobID, &cp.Status, &msg, &groupKey); e != nil {
+			if e := rows.Scan(&cp.TableName, &cp.JobID, &cp.Status, &msg, &groupKey); e != nil {
 				return errors.Trace(e)
 			}
 			cp.Message = msg.String
@@ -537,7 +529,7 @@ func (m *MySQLCheckpointManager) DestroyError(ctx context.Context, dbName, table
 
 // DumpTables exports all checkpoint rows in CSV format.
 func (m *MySQLCheckpointManager) DumpTables(ctx context.Context, writer io.Writer) error {
-	query := fmt.Sprintf("SELECT db_name, table_name, job_id, status, message, group_key FROM %s.%s",
+	query := fmt.Sprintf("SELECT table_name, job_id, status, message, group_key FROM %s.%s",
 		common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
@@ -562,7 +554,7 @@ func (*MySQLCheckpointManager) DumpChunks(context.Context, io.Writer) error {
 
 // GetCheckpoints loads all checkpoints from MySQL.
 func (m *MySQLCheckpointManager) GetCheckpoints(ctx context.Context) ([]*TableCheckpoint, error) {
-	query := fmt.Sprintf("SELECT db_name, table_name, job_id, status, message, group_key FROM %s.%s",
+	query := fmt.Sprintf("SELECT table_name, job_id, status, message, group_key FROM %s.%s",
 		common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
@@ -575,7 +567,7 @@ func (m *MySQLCheckpointManager) GetCheckpoints(ctx context.Context) ([]*TableCh
 		var cp TableCheckpoint
 		var msg sql.NullString
 		var groupKey sql.NullString
-		if err := rows.Scan(&cp.DBName, &cp.TableName, &cp.JobID, &cp.Status, &msg, &groupKey); err != nil {
+		if err := rows.Scan(&cp.TableName, &cp.JobID, &cp.Status, &msg, &groupKey); err != nil {
 			return nil, errors.Trace(err)
 		}
 		cp.Message = msg.String
