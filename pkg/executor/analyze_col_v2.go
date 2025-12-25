@@ -235,7 +235,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
 	mergeTaskCh := make(chan []byte, 1)
-	var taskEg errgroup.Group
+	taskEg, taskCtx := errgroup.WithContext(context.Background())
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() (err error) {
 		defer func() {
@@ -243,7 +243,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 				err = getAnalyzePanicErr(r)
 			}
 		}()
-		return readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
+		return readDataAndSendTask(taskCtx,e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
 	})
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(samplingStatsConcurrency)
@@ -255,7 +255,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	}
 	// Merge the result from collectors.
 	mergeWorkerPanicCnt := 0
-	mergeEg, mergeCtx := errgroup.WithContext(context.Background())
+	mergeEg, mergeCtx := errgroup.WithContext(taskCtx)
 	mergeEg.Go(func() (err error) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -863,24 +863,24 @@ type samplingBuildTask struct {
 	slicePos         int
 }
 
-func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {
+func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {
 	// After all tasks are sent, close the mergeTaskCh to notify the mergeWorker that all tasks have been sent.
 	defer close(mergeTaskCh)
 	for {
 		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
-			dom := domain.GetDomain(ctx)
+			dom := domain.GetDomain(sctx)
 			for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 				dom.SysProcTracker().KillSysProcess(id)
 			}
 		})
-		if err := ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
 			time.Sleep(1000 * time.Second)
 		})
 
-		data, err := handler.nextRaw(context.TODO())
+		data, err := handler.nextRaw(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
