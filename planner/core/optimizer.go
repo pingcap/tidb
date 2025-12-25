@@ -38,7 +38,9 @@ import (
 	"github.com/pingcap/tidb/util/cmp"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
@@ -1034,7 +1036,7 @@ func disableReuseChunkIfNeeded(sctx sessionctx.Context, plan PhysicalPlan) {
 		return
 	}
 
-	if checkOverlongColType(sctx, plan) {
+	if disableReuseChunk, continueIterating := checkOverlongColType(sctx, plan); disableReuseChunk || !continueIterating {
 		return
 	}
 
@@ -1044,40 +1046,89 @@ func disableReuseChunkIfNeeded(sctx sessionctx.Context, plan PhysicalPlan) {
 }
 
 // checkOverlongColType Check if read field type is long field.
-func checkOverlongColType(sctx sessionctx.Context, plan PhysicalPlan) bool {
+func checkOverlongColType(sctx sessionctx.Context, plan PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
 	if plan == nil {
-		return false
+		return false, false
 	}
 	switch plan.(type) {
 	case *PhysicalTableReader, *PhysicalIndexReader,
-		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
-		if existsOverlongType(plan.Schema()) {
+		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader:
+		if existsOverlongType(plan.Schema(), false) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true, false
+		}
+	case *PointGetPlan:
+		if existsOverlongType(plan.Schema(), true) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true, false
+		}
+	default:
+		// Other physical operators do not read data, so we can continue to iterate.
+		return false, true
+	}
+	// PhysicalReader and PointGet is at the root, their children are nil or on the tikv/tiflash side.
+	// So we can stop iterating.
+	return false, false
+}
+
+var (
+	// MaxMemoryLimitForOverlongType is the memory limit for overlong type column check.
+	// Why is it not 128 ?
+	// Because many customers allocate a portion of memory to their management programs,
+	// the actual amount of usable memory does not align to 128GB.
+	// TODO: We are also lacking test data for instances with less than 128GB of memory, so we need to plan the rules here.
+	// TODO: internal sql can force to use chunk reuse if we ensure the memory usage is safe.
+	// TODO: We can consider the limit/Topn in the future.
+	MaxMemoryLimitForOverlongType = 120 * size.GB
+	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
+)
+
+// existsOverlongType Check if exists long type column.
+// If pointGet is true, we will check the total Flen of all columns, if it exceeds maxFlenForOverlongType,
+// we will disable chunk reuse.
+// For a point get, there is only one row, so we can easily estimate the size.
+// However, for a non-point get, there may be many rows, and it is impossible to determine the memory size used.
+// Therefore, we can only forcibly skip the reuse chunk.
+func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
+	if schema == nil {
+		return false
+	}
+	totalFlen := 0
+	for _, column := range schema.Columns {
+		switch column.RetType.GetType() {
+		case mysql.TypeLongBlob,
+			mysql.TypeBlob, mysql.TypeJSON:
+			return true
+		case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob:
+			// if the column is varchar and the length of
+			// the column is defined to be more than 1000,
+			// the column is considered a large type and
+			// disable chunk_reuse.
+			if column.RetType.GetFlen() <= 1000 {
+				continue
+			}
+			if pointGet {
+				totalFlen += column.RetType.GetFlen()
+				if checkOverlongTypeForPointGet(totalFlen) {
+					return true
+				}
+				continue
+			}
 			return true
 		}
 	}
 	return false
 }
 
-// existsOverlongType Check if exists long type column.
-func existsOverlongType(schema *expression.Schema) bool {
-	if schema == nil {
-		return false
+func checkOverlongTypeForPointGet(totalFlen int) bool {
+	totalMemory, err := memory.MemTotal()
+	if err != nil || totalMemory <= 0 {
+		return true
 	}
-	for _, column := range schema.Columns {
-		switch column.RetType.GetType() {
-		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeBlob, mysql.TypeJSON:
-			return true
-		case mysql.TypeVarString, mysql.TypeVarchar:
-			// if the column is varchar and the length of
-			// the column is defined to be more than 1000,
-			// the column is considered a large type and
-			// disable chunk_reuse.
-			if column.RetType.GetFlen() > 1000 {
-				return true
-			}
+	if totalMemory >= MaxMemoryLimitForOverlongType {
+		if totalFlen <= maxFlenForOverlongType {
+			return false
 		}
 	}
-	return false
+	return true
 }

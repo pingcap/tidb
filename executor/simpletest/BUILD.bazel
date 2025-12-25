@@ -30,6 +30,7 @@ go_test(
         "//statistics/handle",
         "//store/mockstore",
         "//testkit",
+        "//util/size",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

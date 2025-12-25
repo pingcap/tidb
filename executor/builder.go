@@ -3447,7 +3447,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if e.table.Meta().TempTableType != model.TempTableNone {
 		e.dummy = true
 	}
-
 	return e, nil
 }
 
@@ -3733,7 +3732,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	if e.table.Meta().TempTableType != model.TempTableNone {
 		e.dummy = true
 	}
-
 	return e, nil
 }
 
