@@ -24,6 +24,26 @@ select * from t where _tidb_softdelete_time is null except select id from t wher
 Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
 prepare stmt from 'select id from t where _tidb_softdelete_time > ?';
 Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+set @@tidb_translate_softdelete_sql = false;
+prepare stmt from 'select id from t where _tidb_softdelete_time > ?';
+set @a = now();
+execute stmt using @a;
+id
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt using @a;
+id
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_translate_softdelete_sql = true;
+execute stmt using @a;
+id
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare stmt;
 update t set _tidb_softdelete_time = now() where id = 2;
 Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
 update t set name = 'updated' where _tidb_softdelete_time is null;

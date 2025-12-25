@@ -30,6 +30,18 @@ select * from t where _tidb_softdelete_time is null except select id from t wher
 
 -- error 1815
 prepare stmt from 'select id from t where _tidb_softdelete_time > ?';
+set @@tidb_translate_softdelete_sql = false;
+prepare stmt from 'select id from t where _tidb_softdelete_time > ?';
+set @a = now();
+execute stmt using @a;
+select @@last_plan_from_cache;
+execute stmt using @a;
+select @@last_plan_from_cache;
+set tidb_translate_softdelete_sql = true;
+# Due to issue #65266, this execute won't error now.
+execute stmt using @a;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
 
 # UPDATE with _tidb_softdelete_time should fail
 -- error 1815
