@@ -61,18 +61,18 @@ func (mr *MockCheckpointManagerMockRecorder) Close() *gomock.Call {
 }
 
 // DestroyError mocks base method.
-func (m *MockCheckpointManager) DestroyError(arg0 context.Context, arg1, arg2 string) ([]*importinto.TableCheckpoint, error) {
+func (m *MockCheckpointManager) DestroyError(arg0 context.Context, arg1 string) ([]*importinto.TableCheckpoint, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DestroyError", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "DestroyError", arg0, arg1)
 	ret0, _ := ret[0].([]*importinto.TableCheckpoint)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DestroyError indicates an expected call of DestroyError.
-func (mr *MockCheckpointManagerMockRecorder) DestroyError(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockCheckpointManagerMockRecorder) DestroyError(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DestroyError", reflect.TypeOf((*MockCheckpointManager)(nil).DestroyError), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DestroyError", reflect.TypeOf((*MockCheckpointManager)(nil).DestroyError), arg0, arg1)
 }
 
 // DumpChunks mocks base method.
@@ -118,7 +118,7 @@ func (mr *MockCheckpointManagerMockRecorder) DumpTables(arg0, arg1 any) *gomock.
 }
 
 // Get mocks base method.
-func (m *MockCheckpointManager) Get(arg0, arg1 string) (*importinto.TableCheckpoint, error) {
+func (m *MockCheckpointManager) Get(arg0 context.Context, arg1 string) (*importinto.TableCheckpoint, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Get", arg0, arg1)
 	ret0, _ := ret[0].(*importinto.TableCheckpoint)
@@ -148,17 +148,17 @@ func (mr *MockCheckpointManagerMockRecorder) GetCheckpoints(arg0 any) *gomock.Ca
 }
 
 // IgnoreError mocks base method.
-func (m *MockCheckpointManager) IgnoreError(arg0 context.Context, arg1, arg2 string) error {
+func (m *MockCheckpointManager) IgnoreError(arg0 context.Context, arg1 string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IgnoreError", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "IgnoreError", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IgnoreError indicates an expected call of IgnoreError.
-func (mr *MockCheckpointManagerMockRecorder) IgnoreError(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockCheckpointManagerMockRecorder) IgnoreError(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IgnoreError", reflect.TypeOf((*MockCheckpointManager)(nil).IgnoreError), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IgnoreError", reflect.TypeOf((*MockCheckpointManager)(nil).IgnoreError), arg0, arg1)
 }
 
 // Initialize mocks base method.
@@ -176,17 +176,17 @@ func (mr *MockCheckpointManagerMockRecorder) Initialize(arg0 any) *gomock.Call {
 }
 
 // Remove mocks base method.
-func (m *MockCheckpointManager) Remove(arg0 context.Context, arg1, arg2 string) error {
+func (m *MockCheckpointManager) Remove(arg0 context.Context, arg1 string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Remove", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "Remove", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Remove indicates an expected call of Remove.
-func (mr *MockCheckpointManagerMockRecorder) Remove(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockCheckpointManagerMockRecorder) Remove(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Remove", reflect.TypeOf((*MockCheckpointManager)(nil).Remove), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Remove", reflect.TypeOf((*MockCheckpointManager)(nil).Remove), arg0, arg1)
 }
 
 // Update mocks base method.
