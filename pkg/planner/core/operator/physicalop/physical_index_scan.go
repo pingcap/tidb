@@ -304,6 +304,9 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 			buffer.Write(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.AccessCondition))
 		}
 		buffer.WriteString(", ")
+		if p.FtsQueryInfo.TopK != nil {
+			buffer.WriteString(fmt.Sprintf("topK: %d, ", *p.FtsQueryInfo.TopK))
+		}
 	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
@@ -364,7 +367,7 @@ func (p *PhysicalIndexScan) GetScanRowSize() float64 {
 	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.TblColHists, scanCols, p.Index.Unique)
 }
 
-// InitSchema is used to set the schema of PhysicalIndexScan. Before calling this,
+// InitSchemaForTiKVIndex is used to set the schema of PhysicalIndexScan. Before calling this,
 // make sure the following field of PhysicalIndexScan are initialized:
 //
 //	PhysicalIndexScan.Table         *model.TableInfo
@@ -372,7 +375,7 @@ func (p *PhysicalIndexScan) GetScanRowSize() float64 {
 //	PhysicalIndexScan.Index.Columns []*IndexColumn
 //	PhysicalIndexScan.IdxCols       []*expression.Column
 //	PhysicalIndexScan.Columns       []*model.ColumnInfo
-func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
+func (p *PhysicalIndexScan) InitSchemaForTiKVIndex(idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(p.IdxCols), len(p.Index.Columns)+1)
 	copy(indexCols, p.IdxCols)
 
@@ -444,6 +447,38 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 	}
 
 	p.SetSchema(expression.NewSchema(indexCols...))
+}
+
+// InitSchemaForTiCIIndex is used to set the schema of PhysicalIndexScan.
+// Unlike the normal TiKV index, the indexed columns in TiCI index may not store its original data.
+// Currently, only primary key can return from the index library.
+func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols []*expression.Column) {
+	intest.Assert(!p.Index.Global && !p.Index.MVIndex)
+	handleLen := 1
+	if p.Table.IsCommonHandle {
+		handleLen = len(possibleHandleCols)
+	}
+	handleCols := make([]*expression.Column, 0, handleLen)
+	handleCols = append(handleCols, possibleHandleCols...)
+	if len(handleCols) == 0 {
+		foundIntPK := false
+		for i, col := range p.Columns {
+			if (mysql.HasPriKeyFlag(col.GetFlag()) && p.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+				handleCols = append(handleCols, p.DataSourceSchema.Columns[i])
+				foundIntPK = true
+				break
+			}
+		}
+		if !foundIntPK {
+			handleCols = append(handleCols, &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				ID:       model.ExtraHandleID,
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+				OrigName: model.ExtraHandleName.O,
+			})
+		}
+	}
+	p.SetSchema(expression.NewSchema(handleCols...))
 }
 
 // AddSelectionConditionForGlobalIndex adds partition filtering conditions for global index scans.
@@ -647,6 +682,37 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
 	return utilfuncp.GetPlanCostVer24PhysicalIndexScan(p, taskType, option, args...)
 }
 
+// TryToPassTiCITopN checks whether the TopN can be embedded into TiCI index scan.
+func (p *PhysicalIndexScan) TryToPassTiCITopN(topN *PhysicalTopN) {
+	hybridSearchInfo := p.Index.HybridInfo
+	if hybridSearchInfo == nil || hybridSearchInfo.Sort == nil {
+		return
+	}
+	orderPos := 0
+	for _, byItem := range topN.ByItems {
+		// All order by items should be covered by hybrid index sort columns.
+		if orderPos >= len(hybridSearchInfo.Sort.Columns) {
+			return
+		}
+		switch x := byItem.Expr.(type) {
+		case *expression.Column:
+			if byItem.Desc != !hybridSearchInfo.Sort.IsAsc[orderPos] {
+				return
+			}
+			colID := p.Table.Columns[hybridSearchInfo.Sort.Columns[orderPos].Offset].ID
+			if colID != x.ID {
+				return
+			}
+			orderPos++
+		case *expression.ScalarFunction:
+			return
+		}
+	}
+	p.FtsQueryInfo.TopK = new(uint32)
+	// The passed TopN here may be the global one. We need to consider the offset.
+	*p.FtsQueryInfo.TopK = uint32(topN.Count) + uint32(topN.Offset)
+}
+
 // GetPhysicalIndexScan4LogicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
 func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
 	ds := s.Source
@@ -667,7 +733,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 		PkIsHandleCol:    ds.GetPKIsHandleCol(),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	is.SetStats(stats)
-	is.InitSchema(s.FullIdxCols, s.IsDoubleRead)
+	is.InitSchemaForTiKVIndex(s.FullIdxCols, s.IsDoubleRead)
 	return is
 }
 
@@ -698,7 +764,11 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		is.StoreType = kv.TiCI
 	}
 	rowCount := path.CountAfterAccess
-	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
+	if is.FtsQueryInfo != nil {
+		is.InitSchemaForTiCIIndex(ds.CommonHandleCols)
+	} else {
+		is.InitSchemaForTiKVIndex(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
+	}
 
 	// If (1) tidb_opt_ordering_index_selectivity_threshold is enabled (not 0)
 	// and (2) there exists an index whose selectivity is smaller than or equal to the threshold,

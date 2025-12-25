@@ -6,7 +6,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -15,7 +15,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_prefix('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -24,7 +24,7 @@
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
         "Plan": [
           "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -32,7 +32,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10",
         "Plan": [
           "IndexLookUp 3333.33 root  ",
-          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─Selection(Probe) 3333.33 cop[tikv]  gt(test.t1.id, 10)",
           "  └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -42,7 +42,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
         "Plan": [
           "IndexLookUp 2666.67 root  ",
-          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─Selection(Probe) 2666.67 cop[tikv]  gt(length(test.t1.title), 1), gt(test.t1.id, 10)",
           "  └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -53,7 +53,7 @@
         "Plan": [
           "Projection 2666.67 root  test.t1.title",
           "└─IndexLookUp 2666.67 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "  └─Selection(Probe) 2666.67 cop[tikv]  gt(length(test.t1.title), 1), gt(test.t1.id, 10)",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -62,20 +62,20 @@
       {
         "SQL": "explain format='brief' select count(id) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t1.id)->Column#7",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t1.id)->Column#6",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select count(*) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -83,7 +83,7 @@
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
         "Plan": [
           "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -91,7 +91,7 @@
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10",
         "Plan": [
           "IndexLookUp 3333.33 root  ",
-          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─Selection(Probe) 3333.33 cop[tikv]  gt(test.t1.id, 10)",
           "  └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -101,7 +101,7 @@
         "SQL": "explain format='brief' select id from t1 where (not fts_match_word('hello', title)) AND id > 10",
         "Plan": [
           "IndexLookUp 3333.33 root  ",
-          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:not(istrue_with_null(fts_match_word(\"hello\", test.t1.title))), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:not(istrue_with_null(fts_match_word(\"hello\", test.t1.title))), keep order:false, stats:pseudo",
           "└─Selection(Probe) 3333.33 cop[tikv]  gt(test.t1.id, 10)",
           "  └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -112,7 +112,7 @@
         "Plan": [
           "Projection 8000.00 root  test.t1.id",
           "└─IndexLookUp 8000.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "  └─Selection(Probe) 8000.00 cop[tikv]  gt(length(test.t1.body), 10)",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -121,11 +121,10 @@
       {
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) limit 1",
         "Plan": [
-          "Limit 1.00 root  offset:0, count:1",
-          "└─IndexLookUp 0.10 root  ",
-          "  ├─IndexRangeScan(Build) 0.10 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
-          "  └─Limit(Probe) 0.10 cop[tikv]  offset:0, count:1",
-          "    └─TableRowIDScan 0.10 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
+          "├─Limit(Build) 0.10 cop[tici]  offset:0, count:1",
+          "│ └─IndexRangeScan 0.10 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.10 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -133,7 +132,7 @@
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) and fts_match_word('world', title)",
         "Plan": [
           "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), fts_match_word(\"world\", test.t1.title), keep order:false, stats:pseudo"
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), fts_match_word(\"world\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -141,7 +140,7 @@
         "SQL": "explain format='brief' select id from t1 where (fts_match_word('apple', title) and fts_match_word('boy', title)) or (fts_match_word('banana', title) and fts_match_word('girl', title))",
         "Plan": [
           "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:or(and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:or(and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -149,7 +148,7 @@
         "SQL": "explain format='brief' select id from t1 where (fts_match_prefix('apple', title) and fts_match_word('boy', title)) or (fts_match_word('banana', title) and fts_match_word('girl', title))",
         "Plan": [
           "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:or(and(istrue_with_null(fts_match_prefix(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:or(and(istrue_with_null(fts_match_prefix(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -181,8 +180,9 @@
         "SQL": "explain format='brief' select /*+ LIMIT_TO_COP() */ a from t3 where fts_match_word('hello', title) limit 1",
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─IndexReader 0.10 root  index:IndexRangeScan",
-          "  └─IndexRangeScan 0.10 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "└─IndexReader 0.10 root  index:Limit",
+          "  └─Limit 0.10 cop[tici]  offset:0, count:1",
+          "    └─IndexRangeScan 0.10 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
@@ -191,9 +191,9 @@
       {
         "SQL": "explain format='brief' select count(a) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.a)->Column#6",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.a)->Column#5",
           "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -202,7 +202,7 @@
         "SQL": "explain format='brief' select b from t3 where fts_match_word('hello', title)",
         "Plan": [
           "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "└─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -226,29 +226,29 @@
       {
         "SQL": "explain format='brief' select count(*) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#5",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select count(b) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.b)->Column#6",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.b)->Column#5",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select sum(a) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#6)->Column#4",
+          "HashAgg 1.00 root  funcs:sum(Column#5)->Column#4",
           "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:sum(test.t3.a)->Column#6",
+          "  └─HashAgg 1.00 cop[tici]  funcs:sum(test.t3.a)->Column#5",
           "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -259,6 +259,214 @@
           "HashAgg 8000.00 root  group by:test.t3.a, funcs:count(1)->Column#4",
           "└─IndexReader 1000.00 root  index:IndexRangeScan",
           "  └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i > 1",
+        "Plan": [
+          "IndexLookUp 1000.00 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:(1,+inf], search func:gt(test.t4.i, 1), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i > 1 and ts < '2025-11-30 00:00:00'",
+        "Plan": [
+          "IndexLookUp 1000.00 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:(1,+inf], search func:gt(test.t4.i, 1), lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i > 1 and ts < '2025-11-30 00:00:00' limit 10 offset 15",
+        "Plan": [
+          "IndexLookUp 10.00 root  limit embedded(offset:15, count:10)",
+          "├─Limit(Build) 2.50 cop[tici]  offset:0, count:25",
+          "│ └─IndexRangeScan 2.50 cop[tici] table:t4, index:idx1(i, ts, d, t) range:(1,+inf], search func:gt(test.t4.i, 1), lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 2.50 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i",
+        "Plan": [
+          "Sort 10000.00 root  test.t4.i",
+          "└─IndexLookUp 1000.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 10, keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 10.00 cop[tikv]  test.t4.i, test.t4.ts:desc, offset:0, count:10",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts limit 10 offset 5",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts, offset:5, count:10",
+          "└─IndexLookUp 15.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts, offset:0, count:15",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc limit 10 offset 5",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, offset:5, count:10",
+          "└─IndexLookUp 15.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 15, keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts:desc, offset:0, count:15",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, d limit 10 offset 5",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.d, offset:5, count:10",
+          "└─IndexLookUp 15.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 15, keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:15",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, d, t limit 10 offset 5",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.d, test.t4.t, offset:5, count:10",
+          "└─IndexLookUp 15.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts:desc, test.t4.d, test.t4.t, offset:0, count:15",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, t, d limit 10 offset 5",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.t, test.t4.d, offset:5, count:10",
+          "└─IndexLookUp 15.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 15.00 cop[tikv]  test.t4.i, test.t4.ts:desc, test.t4.t, test.t4.d, offset:0, count:15",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and d between '2025-11-01' and '2025-11-30' order by i, ts desc, d limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:ge(test.t4.d, 2025-11-01 00:00:00.000000), in(test.t4.i, 1, 2, 3), le(test.t4.d, 2025-11-30 00:00:00.000000), topK: 10, keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 10.00 cop[tikv]  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:10",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select i from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.t4.i, test.t4.ts:desc, offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 10, keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 10.00 cop[tikv]  test.t4.i, test.t4.ts:desc, offset:0, count:10",
+          "    └─TableRowIDScan 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ inl_join(t4), use_index(t4, idx) */ * from t4, t2 where t2.a=t4.i and t4.t = 'apple'",
+        "Plan": [
+          "Projection 12487.50 root  test.t4.i, test.t4.ts, test.t4.d, test.t4.t, test.t2.a, test.t2.col",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t2.a, test.t4.i)]",
+          "  ├─IndexLookUp(Build) 1000.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[-inf,+inf], search func:eq(test.t4.t, \"apple\"), keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Optimizer Hint /*+ INL_JOIN(t4) */ or /*+ TIDB_INLJ(t4) */ is inapplicable"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTiCIWithIndexHintCases",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select * from t1 use index(idx_title)",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:3126]Hint USE_INDEX is ignored as conflicting/duplicated."
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 use index(idx_field) where fts_match_word('hello', title)",
+        "Plan": [
+          "IndexLookUp 1000.00 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:3126]Hint USE_INDEX is ignored as conflicting/duplicated."
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from t2 use index(idx1)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:3126]Hint USE_INDEX is ignored as conflicting/duplicated."
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from t2 use index(idx1) where i > 10",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t2, index:idx1(i, ts, d, t) range:(10,+inf], search func:gt(test.t2.i, 10), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from t2 use index(primary) where i > 10",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader 1.00 root  data:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─TableRangeScan 3333.33 cop[tikv] table:t2 range:(10,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ order_index(t2, primary) */ * from t2 where i > 10 order by i",
+        "Plan": [
+          "TableReader 3333.33 root  data:TableRangeScan",
+          "└─TableRangeScan 3333.33 cop[tikv] table:t2 range:(10,+inf], keep order:true, stats:pseudo"
         ],
         "Warn": null
       }

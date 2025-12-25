@@ -131,10 +131,6 @@ type AccessPath struct {
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
 
-	FullText     bool
-	QueryColumns []*expression.Column
-	QueryJSONStr string
-
 	FtsQueryInfo *tipb.FTSQueryInfo
 
 	// Whether to use the index lookup push down optimization for this access path.
@@ -468,6 +464,17 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 		}
 	}
 	if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
+		return true
+	}
+	return false
+}
+
+// IsUndetermined checks whether the usability of this path depends on the pushed down predicates.
+func (path *AccessPath) IsUndetermined() bool {
+	if path.IsTablePath() || path.Index == nil {
+		return false
+	}
+	if path.Index.MVIndex || path.Index.IsTiCIIndex() {
 		return true
 	}
 	return false

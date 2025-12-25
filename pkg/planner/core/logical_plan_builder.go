@@ -4443,7 +4443,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
+	possiblePaths, hasForceHint, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
 	if err != nil {
 		return nil, err
 	}
@@ -4585,6 +4585,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		AstIndexHints:          tn.IndexHints,
 		IndexHints:             b.TableHints().IndexHintList,
 		IndexMergeHints:        indexMergeHints,
+		HasForceHints:          hasForceHint,
 		PossibleAccessPaths:    possiblePaths,
 		AllPossibleAccessPaths: allPaths,
 		Columns:                make([]*model.ColumnInfo, 0, countCnt),

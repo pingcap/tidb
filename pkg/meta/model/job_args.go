@@ -1445,7 +1445,7 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 	// Add Full text index or hybrid index
 	if job.Type == ActionAddFullTextIndex || job.Type == ActionAddHybridIndex {
 		arg := a.IndexArgs[0]
-		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption}
+		return []any{arg.IndexName, arg.IndexPartSpecifications, arg.IndexOption}
 	}
 
 	// Add primary key
@@ -1608,19 +1608,24 @@ func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 
 func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
 	var (
-		indexName              ast.CIStr
-		indexPartSpecification *ast.IndexPartSpecification
-		indexOption            *ast.IndexOption
+		indexName               ast.CIStr
+		indexPartSpecification  *ast.IndexPartSpecification
+		indexPartSpecifications []*ast.IndexPartSpecification
+		indexOption             *ast.IndexOption
 	)
 
 	if err := job.decodeArgs(
-		&indexName, &indexPartSpecification, &indexOption); err != nil {
-		return errors.Trace(err)
+		&indexName, &indexPartSpecifications, &indexOption); err != nil {
+		if err = job.decodeArgs(
+			&indexName, &indexPartSpecification, &indexOption); err != nil {
+			return errors.Trace(err)
+		}
+		indexPartSpecifications = []*ast.IndexPartSpecification{indexPartSpecification}
 	}
 
 	a.IndexArgs = []*IndexArg{{
 		IndexName:               indexName,
-		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
+		IndexPartSpecifications: indexPartSpecifications,
 		IndexOption:             indexOption,
 	}}
 	return nil
@@ -1628,19 +1633,24 @@ func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
 
 func (a *ModifyIndexArgs) decodeAddHybridIndexV1(job *Job) error {
 	var (
-		indexName              ast.CIStr
-		indexPartSpecification *ast.IndexPartSpecification
-		indexOption            *ast.IndexOption
+		indexName               ast.CIStr
+		indexPartSpecification  *ast.IndexPartSpecification
+		indexPartSpecifications []*ast.IndexPartSpecification
+		indexOption             *ast.IndexOption
 	)
 
 	if err := job.decodeArgs(
-		&indexName, &indexPartSpecification, &indexOption); err != nil {
-		return errors.Trace(err)
+		&indexName, &indexPartSpecifications, &indexOption); err != nil {
+		if err = job.decodeArgs(
+			&indexName, &indexPartSpecification, &indexOption); err != nil {
+			return errors.Trace(err)
+		}
+		indexPartSpecifications = []*ast.IndexPartSpecification{indexPartSpecification}
 	}
 
 	a.IndexArgs = []*IndexArg{{
 		IndexName:               indexName,
-		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
+		IndexPartSpecifications: indexPartSpecifications,
 		IndexOption:             indexOption,
 	}}
 	return nil

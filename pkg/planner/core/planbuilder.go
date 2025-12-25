@@ -1212,7 +1212,7 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	return true
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, bool, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1250,6 +1250,8 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	var err error
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
+	hasTiCIIndex := false
+	ticiIndexPaths := make([]*util.AccessPath, 0, len(publicPaths))
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
@@ -1263,7 +1265,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if check && latestIndexes == nil {
 				latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tblInfo.ID, 0)
 				if err != nil {
-					return nil, err
+					return nil, false, err
 				}
 			}
 			if check {
@@ -1288,6 +1290,13 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			}
 			path := &util.AccessPath{Index: index}
 			publicPaths = append(publicPaths, path)
+			if index.IsTiCIIndex() {
+				hasTiCIIndex = true
+				// FTS_MATCH_XXX can only be executed in TiCI engine.
+				// So we need to store it here and try to add it later if the USE_INDEX hint delete any of them.
+				// The removal of the unhinted TiCI index paths will be done after we dicide the availability of each index.
+				ticiIndexPaths = append(ticiIndexPaths, path)
+			}
 		}
 	}
 
@@ -1368,7 +1377,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				err := plannererrors.ErrKeyDoesNotExist.FastGenByArgs(idxName, tblInfo.Name)
 				// if hint is from comment-style sql hints, we should throw a warning instead of error.
 				if i < indexHintsLen {
-					return nil, err
+					return nil, false, err
 				}
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -1382,7 +1391,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
 				if i < indexHintsLen {
-					return nil, err
+					return nil, false, err
 				}
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -1429,20 +1438,36 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// If all available paths are Multi-Valued Index, TiCI Index or other special indexes, it's possible that the only special index is inapplicable,
 	// so that the table paths are still added here to avoid failing to find any physical plan.
-	allMVIIndexPath := true
+	allUndeterminedPath := true
 	for _, availablePath := range available {
-		if !isMVIndexPath(availablePath) {
-			allMVIIndexPath = false
+		if !availablePath.IsUndetermined() {
+			allUndeterminedPath = false
 			break
 		}
 	}
-	if allMVIIndexPath {
+	if allUndeterminedPath {
 		available = append(available, tablePath)
 	}
+	if hasTiCIIndex {
+		// Following previous comments, we add back the unhinted TiCI index paths.
+		// And remove them later after we decide the availability of each index.
+		tiCIIndexMap := make(map[int64]*util.AccessPath)
+		for _, path := range ticiIndexPaths {
+			tiCIIndexMap[path.Index.ID] = path
+		}
+		for _, path := range available {
+			if path.Index != nil && path.Index.IsTiCIIndex() {
+				delete(tiCIIndexMap, path.Index.ID)
+			}
+		}
+		for _, path := range tiCIIndexMap {
+			available = append(available, path)
+		}
+	}
 
-	return available, nil
+	return available, hasUseOrForce, nil
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
@@ -1685,7 +1710,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 			is.Columns = append(is.Columns, c.ColumnInfo)
 		}
 	}
-	is.InitSchema(append(is.IdxCols, commonCols...), true)
+	is.InitSchemaForTiKVIndex(append(is.IdxCols, commonCols...), true)
 
 	// It's double read case.
 	ts := physicalop.PhysicalTableScan{

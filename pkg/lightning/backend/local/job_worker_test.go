@@ -189,6 +189,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 		ingestCli:           mockIngestCli,
 		writeBatchSize:      8,
 		bufPool:             nil,
+		ticiWriteGroup:      nil,
 	}
 	cloudW.regionJobBaseWorker.writeFn = cloudW.write
 	cloudW.regionJobBaseWorker.ingestFn = cloudW.ingest

@@ -2012,3 +2012,33 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
 	tk.MustExec("admin check table t")
 }
+
+func TestHybridIndexShardingKeyColumns(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(col1 int, col2 text, col3 int, col4 int)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	tk.MustContainErrMsg(`create hybrid index idx_bad on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sharding_key": {"columns": ["col3"]}
+	}'`, "column 'col3' referenced in HYBRID index PARAMETER must appear in index definition")
+
+	tk.MustExec(`create hybrid index idx_ok on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sharding_key": {"columns": ["col1", "col4"]}
+	}'`)
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("idx_ok")
+	require.NotNil(t, idx)
+	require.NotNil(t, idx.HybridInfo)
+	require.NotNil(t, idx.HybridInfo.Sharding)
+	require.Len(t, idx.HybridInfo.Sharding.Columns, 2)
+	require.Equal(t, "col1", idx.HybridInfo.Sharding.Columns[0].Name.O)
+	require.Equal(t, "col4", idx.HybridInfo.Sharding.Columns[1].Name.O)
+}

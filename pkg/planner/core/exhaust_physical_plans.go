@@ -902,6 +902,10 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		if path.IsTablePath() {
 			return false
 		}
+		// Currently fulltext index is not supported in index join.
+		if path.Index != nil && path.Index.IsTiCIIndex() {
+			return false
+		}
 		// if path is index path. index path currently include two kind of, one is normal, and the other is mv index.
 		// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
 		// on mvi, it will return many index rows which breaks handle-unique attribute here.
@@ -910,10 +914,7 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		if !isMVIndexPath(path) {
 			return true // not a MVIndex path, it can successfully be index join probe side.
 		}
-		// Currently fulltext index is not supported in index join.
-		if path.FtsQueryInfo != nil {
-			return true
-		}
+
 		return false
 	}
 	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp, indexValid)
@@ -1141,6 +1142,10 @@ func buildIndexJoinInner2IndexScan(
 	ds := wrapper.ds
 	indexValid := func(path *util.AccessPath) bool {
 		if path.IsTablePath() {
+			return false
+		}
+		// Currently fulltext index is not supported in index join.
+		if path.Index != nil && path.Index.IsTiCIIndex() {
 			return false
 		}
 		// if path is index path. index path currently include two kind of, one is normal, and the other is mv index.
@@ -1518,7 +1523,7 @@ func constructDS2IndexScanTask(
 	if cop.TablePlan != nil && ds.TableInfo.IsCommonHandle {
 		cop.CommonHandleCols = ds.CommonHandleCols
 	}
-	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
+	is.InitSchemaForTiKVIndex(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.

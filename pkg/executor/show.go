@@ -2834,11 +2834,16 @@ type hybridSortSpecForShow struct {
 	Order   []string `json:"order,omitempty"`
 }
 
+type hybridShardingSpecForShow struct {
+	Columns []string `json:"columns,omitempty"`
+}
+
 type hybridIndexInfoForShow struct {
 	FullText []*hybridFullTextSpecForShow `json:"fulltext,omitempty"`
 	Vector   []*hybridVectorSpecForShow   `json:"vector,omitempty"`
 	Inverted []*hybridInvertedSpecForShow `json:"inverted,omitempty"`
 	Sort     *hybridSortSpecForShow       `json:"sort,omitempty"`
+	Sharding *hybridShardingSpecForShow   `json:"sharding_key,omitempty"`
 }
 
 func hybridIndexColumnsToNames(cols []*model.IndexColumn) []string {
@@ -2936,8 +2941,11 @@ func hybridParameterJSONForShow(tableInfo *model.TableInfo, idxInfo *model.Index
 	if clone.Sort != nil && len(clone.Sort.Columns) == 0 {
 		clone.Sort = nil
 	}
+	if clone.Sharding != nil && len(clone.Sharding.Columns) == 0 {
+		clone.Sharding = nil
+	}
 
-	if len(clone.FullText) == 0 && len(clone.Vector) == 0 && len(clone.Inverted) == 0 && clone.Sort == nil {
+	if len(clone.FullText) == 0 && len(clone.Vector) == 0 && len(clone.Inverted) == 0 && clone.Sort == nil && clone.Sharding == nil {
 		return "", nil
 	}
 
@@ -3023,8 +3031,14 @@ func hybridParameterJSONForShow(tableInfo *model.TableInfo, idxInfo *model.Index
 			}
 		}
 	}
+	if clone.Sharding != nil {
+		columns := hybridIndexColumnsToNames(clone.Sharding.Columns)
+		if len(columns) > 0 {
+			show.Sharding = &hybridShardingSpecForShow{Columns: columns}
+		}
+	}
 
-	if len(show.FullText) == 0 && len(show.Vector) == 0 && len(show.Inverted) == 0 && show.Sort == nil {
+	if len(show.FullText) == 0 && len(show.Vector) == 0 && len(show.Inverted) == 0 && show.Sort == nil && show.Sharding == nil {
 		return "", nil
 	}
 
