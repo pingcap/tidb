@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/vitess"
 )
@@ -215,6 +216,126 @@ func (b *builtinUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 			return err
 		}
 		result.AppendString(id.String())
+	}
+	return nil
+}
+
+func (b *builtinUUIDv4Sig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUUIDv4Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ReserveString(n)
+	var id uuid.UUID
+	var err error
+	for range n {
+		id, err = uuid.NewRandom()
+		if err != nil {
+			return err
+		}
+		result.AppendString(id.String())
+	}
+	return nil
+}
+
+func (b *builtinUUIDv7Sig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUUIDv7Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ReserveString(n)
+	var id uuid.UUID
+	var err error
+	for range n {
+		id, err = uuid.NewV7()
+		if err != nil {
+			return err
+		}
+		result.AppendString(id.String())
+	}
+	return nil
+}
+
+func (b *builtinUUIDVersionSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUUIDVersionSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	result.MergeNulls(buf)
+	for i := range n {
+		if result.IsNull(i) {
+			continue
+		}
+		val := buf.GetString(i)
+		u, err := uuid.Parse(val)
+		if err != nil {
+			return err
+		}
+		i64s[i] = int64(u.Version())
+	}
+	return nil
+}
+
+func (b *builtinUUIDTimestampSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUUIDTimestampSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	d := result.Decimals()
+	for i := range n {
+		if result.IsNull(i) {
+			continue
+		}
+		val := buf.GetString(i)
+		u, err := uuid.Parse(val)
+		if err != nil {
+			return err
+		}
+		switch u.Version() {
+		case 1:
+		case 6:
+		case 7:
+		default:
+			// No timestamp, return NULL
+			continue
+		}
+
+		s, ns := u.Time().UnixTime()
+		r := new(types.MyDecimal)
+		r.FromInt((s * 1000000) + (ns / 1000))
+		err = r.Shift(-6)
+		if err != nil {
+			return err
+		}
+		err = r.Round(r, 6, types.ModeHalfUp)
+		if err != nil {
+			return err
+		}
+		d[i] = *r
 	}
 	return nil
 }
