@@ -69,6 +69,10 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
 		}); err != nil {
+			// If we don't find the table, it means the table has been either
+			// dropped, renamed or truncated. In all these cases, it implies that
+			// the mode of this table has already been changed to normal, so we
+			// can just ignore this error.
 			if !goerrors.Is(err, infoschema.ErrTableNotExists) {
 				return err
 			}
