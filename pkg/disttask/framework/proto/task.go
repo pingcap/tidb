@@ -107,11 +107,11 @@ type TaskBase struct {
 	// RequiredSlots is the required slots of the task.
 	// we use this field to allocate slots when scheduling and creating the task
 	// executor, but the effective slots when running the task is determined by
-	// GetEffectiveSlots.
+	// GetRuntimeSlots.
 	// in normal case, they are the same. but when meeting OOM and TiDB repeatedly
 	// restarts, we might set a lower MaxRuntimeSlots in ExtraParams, then the
 	// effective slots is smaller than RequiredSlots.
-	// Note: in application layer, don't use this field directly, use GetEffectiveSlots
+	// Note: in application layer, don't use this field directly, use GetRuntimeSlots
 	// or GetResource of step executor instead.
 	// Note: in the system table, we store it inside 'concurrency' column as
 	// required slots is introduced later.
@@ -153,9 +153,9 @@ func (t *TaskBase) Compare(other *TaskBase) int {
 	return cmp.Compare(t.ID, other.ID)
 }
 
-// GetEffectiveSlots gets the effective slots of current task step.
+// GetRuntimeSlots gets the runtime slots of current task step.
 // application layer might use this as the concurrency of the task step.
-func (t *TaskBase) GetEffectiveSlots() int {
+func (t *TaskBase) GetRuntimeSlots() int {
 	if t.ExtraParams.MaxRuntimeSlots > 0 {
 		if len(t.ExtraParams.TargetSteps) == 0 {
 			return min(t.ExtraParams.MaxRuntimeSlots, t.RequiredSlots)

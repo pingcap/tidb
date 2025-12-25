@@ -673,7 +673,7 @@ func generateMergeSortPlan(
 	}
 
 	allSkip := true
-	concurrency := task.GetEffectiveSlots()
+	concurrency := task.GetRuntimeSlots()
 	for _, multiStats := range multiStatsGroup {
 		if !skipMergeSort(multiStats, concurrency) {
 			allSkip = false

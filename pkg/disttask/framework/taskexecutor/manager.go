@@ -345,7 +345,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	m.addTaskExecutor(executor)
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
 		zap.Stringer("type", task.Type), zap.Int("required-slots", task.RequiredSlots),
-		zap.Int("effective-slots", task.GetEffectiveSlots()),
+		zap.Int("runtime-slots", task.GetRuntimeSlots()),
 		zap.Int("node-remaining-slots", m.slotManager.availableSlots()),
 	)
 	m.executorWG.RunWithLog(func() {

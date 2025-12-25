@@ -464,7 +464,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 		zap.Int("required-slots", task.RequiredSlots),
-		zap.Int("effective-slots", task.GetEffectiveSlots()),
+		zap.Int("runtime-slots", task.GetRuntimeSlots()),
 	)
 
 	if nextStep == proto.StepDone {
