@@ -1906,8 +1906,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			} else {
 				err = e.AlterCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
-	case ast.AlterTableDropCheck:
-		err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
+		case ast.AlterTableDropCheck:
+			err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
