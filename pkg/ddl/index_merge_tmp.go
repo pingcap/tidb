@@ -231,7 +231,7 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 					return err
 				}
 
-				failpoint.Call(_curpkg_("mockDMLExecutionMergingInTxn"))
+				failpoint.InjectCall("mockDMLExecutionMergingInTxn")
 
 				taskCtx.addedCount++
 			}
@@ -262,12 +262,12 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 	}
 
 	metrics.DDLSetTempIndexScanAndMerge(w.table.Meta().ID, uint64(taskCtx.scanCount), uint64(taskCtx.addedCount))
-	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionMerging")); _err_ == nil {
+	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionMerging != nil {
 			MockDMLExecutionMerging()
 		}
-	}
+	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexMergeDataInTxn", 3000)
 	return
 }

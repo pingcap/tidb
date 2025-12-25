@@ -736,7 +736,7 @@ func buildBatchCopTasksConsistentHash(
 }
 
 func failpointCheckForConsistentHash(tasks []*batchCopTask) {
-	if val, _err_ := failpoint.Eval(_curpkg_("checkOnlyDispatchToTiFlashComputeNodes")); _err_ == nil {
+	failpoint.Inject("checkOnlyDispatchToTiFlashComputeNodes", func(val failpoint.Value) {
 		logutil.BgLogger().Debug("in checkOnlyDispatchToTiFlashComputeNodes")
 
 		// This failpoint will be tested in test-infra case, because we needs setup a cluster.
@@ -757,18 +757,18 @@ func failpointCheckForConsistentHash(tasks []*batchCopTask) {
 				panic(err)
 			}
 		}
-	}
+	})
 }
 
 func failpointCheckWhichPolicy(act tiflashcompute.DispatchPolicy) {
-	if exp, _err_ := failpoint.Eval(_curpkg_("testWhichDispatchPolicy")); _err_ == nil {
+	failpoint.Inject("testWhichDispatchPolicy", func(exp failpoint.Value) {
 		expStr := exp.(string)
 		actStr := tiflashcompute.GetDispatchPolicy(act)
 		if actStr != expStr {
 			err := errors.Errorf("tiflash_compute dispatch should be %v, but got %v", expStr, actStr)
 			panic(err)
 		}
-	}
+	})
 }
 
 func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStores *aliveStoresBundle, policy tiflash.ReplicaRead) (storesMatchedPolicy []uint64, needsCrossZoneAccess bool) {
@@ -1168,13 +1168,13 @@ func canSkipCheckAliveStores(aliveStores *aliveStoresBundle, usedTiFlashStores [
 	retryNum int, minReplicaNum uint64) bool {
 	// Skip check because there is no real tiflash in most testcases.
 	skipCheck := intest.InTest
-	if val, _err_ := failpoint.Eval(_curpkg_("mockNoAliveTiFlash")); _err_ == nil {
+	failpoint.Inject("mockNoAliveTiFlash", func(val failpoint.Value) {
 		// This test will setup tiflash store properly, so detecting alive will success.
 		skipCheck = false
 		if val.(bool) && retryNum <= 1 {
 			aliveStores.storesInAllZones = []*tikv.Store{}
 		}
-	}
+	})
 	if skipCheck {
 		return true
 	}
@@ -1303,11 +1303,11 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	for _, task := range b.tasks {
 		b.wg.Add(1)
 		boMaxSleep := CopNextMaxBackoff
-		if value, _err_ := failpoint.Eval(_curpkg_("ReduceCopNextMaxBackoff")); _err_ == nil {
+		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
 			if value.(bool) {
 				boMaxSleep = 2
 			}
-		}
+		})
 		bo := backoff.NewBackofferWithVars(ctx, boMaxSleep, b.vars)
 		go b.handleTask(ctx, bo, task)
 	}

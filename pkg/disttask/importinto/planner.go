@@ -401,12 +401,12 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 }
 
 func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat, concurrency int) bool {
-	if val, _err_ := failpoint.Eval(_curpkg_("forceMergeSort")); _err_ == nil {
+	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
 		in := val.(string)
 		if in == kvGroup || in == "*" {
-			return false
+			failpoint.Return(false)
 		}
-	}
+	})
 	return external.GetMaxOverlappingTotal(stats) <= external.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
@@ -472,8 +472,8 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	if err != nil {
 		return nil, err
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockWriteIngestSpecs")); _err_ == nil {
-		return []planner.PipelineSpec{
+	failpoint.Inject("mockWriteIngestSpecs", func() {
+		failpoint.Return([]planner.PipelineSpec{
 			&WriteIngestSpec{
 				WriteIngestStepMeta: &WriteIngestStepMeta{
 					KVGroup: external.DataKVGroup,
@@ -484,8 +484,8 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					KVGroup: "1",
 				},
 			},
-		}, nil
-	}
+		}, nil)
+	})
 
 	ver, err := planCtx.Store.CurrentVersion(tidbkv.GlobalTxnScope)
 	if err != nil {

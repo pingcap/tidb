@@ -333,7 +333,7 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	failpoint.Eval(_curpkg_("ConsumeVolcanoOptimizePanic"))
+	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
 	physical, cost, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, nil, 0, err
@@ -625,14 +625,14 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.B
 }
 
 func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockTiFlashStreamCountUsingMinLogicalCores")); _err_ == nil {
+	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
 		if err == nil {
-			return true, uint64(intVal)
+			failpoint.Return(true, uint64(intVal))
 		} else {
-			return false, 0
+			failpoint.Return(false, 0)
 		}
-	}
+	})
 	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
 	if err != nil {
 		return false, 0

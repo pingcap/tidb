@@ -292,11 +292,11 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	if conf.AllowCleartextPasswords {
 		driverCfg.AllowCleartextPasswords = true
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("SetWaitTimeout")); _err_ == nil {
+	failpoint.Inject("SetWaitTimeout", func(val failpoint.Value) {
 		driverCfg.Params = map[string]string{
 			"wait_timeout": strconv.Itoa(val.(int)),
 		}
-	}
+	})
 	return driverCfg
 }
 

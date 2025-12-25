@@ -100,7 +100,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		}
 	}
 	slices.SortStableFunc(sorted, func(i, j dataCnt) int { return -cmp.Compare(i.cnt, j.cnt) })
-	if val, _err_ := failpoint.Eval(_curpkg_("StabilizeV1AnalyzeTopN")); _err_ == nil {
+	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
 		if val.(bool) {
 			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.
 			// So we need to make the order here fully deterministic to make the stats from analyze ver1 stable.
@@ -110,7 +110,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 					(sorted[i].cnt == sorted[j].cnt && string(sorted[i].data) < string(sorted[j].data))
 			})
 		}
-	}
+	})
 
 	var (
 		sumTopN   uint64
@@ -249,9 +249,9 @@ func QueryValue(sctx planctx.PlanContext, c *CMSketch, t *TopN, val types.Datum)
 
 // QueryBytes is used to query the count of specified bytes.
 func (c *CMSketch) QueryBytes(d []byte) uint64 {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockQueryBytesMaxUint64")); _err_ == nil {
-		return uint64(val.(int))
-	}
+	failpoint.Inject("mockQueryBytesMaxUint64", func(val failpoint.Value) {
+		failpoint.Return(uint64(val.(int)))
+	})
 	h1, h2 := murmur3.Sum128(d)
 	return c.queryHashValue(nil, h1, h2)
 }

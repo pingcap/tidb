@@ -394,11 +394,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		if len(partitionIDs) == 0 {
 			return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, tableID, indexIDs, ea, "drop index: table ID"))
 		}
-		if val, _err_ := failpoint.Eval(_curpkg_("checkDropGlobalIndex")); _err_ == nil {
+		failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
 			if val.(bool) {
 				panic("drop global index must not delete partition index range")
 			}
-		}
+		})
 		for _, pid := range partitionIDs {
 			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "drop index: partition table ID"); err != nil {
 				return errors.Trace(err)

@@ -136,12 +136,12 @@ func (o *RangeController) handleRegionError(ctx context.Context, result RPCResul
 		if strings.Contains(result.StoreError.GetMessage(), "memory is limited") {
 			sleepDuration := 15 * time.Second
 
-			if val, _err_ := failpoint.Eval(_curpkg_("hint-memory-is-limited")); _err_ == nil {
+			failpoint.Inject("hint-memory-is-limited", func(val failpoint.Value) {
 				if val.(bool) {
 					logutil.CL(ctx).Debug("failpoint hint-memory-is-limited injected.")
 					sleepDuration = 100 * time.Microsecond
 				}
-			}
+			})
 			time.Sleep(sleepDuration)
 			return true
 		}

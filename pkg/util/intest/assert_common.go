@@ -90,10 +90,10 @@ func init() {
 	}
 	// Use `export GO_FAILPOINTS="/enableInternalCheck=return(true)"` to enable internal check.
 	// The path is "/" instead of "pingcap/tidb/pkg/intest/enableInternalCheck" because of the init().
-	if val, _err_ := failpoint.Eval(_curpkg_("enableInternalCheck")); _err_ == nil {
+	failpoint.Inject("enableInternalCheck", func(val failpoint.Value) {
 		if val.(bool) {
 			EnableInternalCheck = true
 			EnableAssert = true
 		}
-	}
+	})
 }

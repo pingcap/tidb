@@ -108,7 +108,7 @@ func AttachAndRegisterSQLInfo(ctx context.Context, normalizedSQL string, sqlDige
 
 	linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForEachSQL")); _err_ == nil {
+	failpoint.Inject("mockHighLoadForEachSQL", func(val failpoint.Value) {
 		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
 		// So need mock some high cpu load to make sure pprof profile successfully samples the data of those SQL.
 		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
@@ -120,7 +120,7 @@ func AttachAndRegisterSQLInfo(ctx context.Context, normalizedSQL string, sqlDige
 				logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL))
 			}
 		}
-	}
+	})
 	return ctx
 }
 
@@ -137,14 +137,14 @@ func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDig
 	ctx = collector.CtxWithSQLAndPlanDigest(ctx, sqlDigestStr, planDigestStr)
 	pprof.SetGoroutineLabels(ctx)
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForEachPlan")); _err_ == nil {
+	failpoint.Inject("mockHighLoadForEachPlan", func(val failpoint.Value) {
 		// Work like mockHighLoadForEachSQL failpoint.
 		if val.(bool) {
 			if MockHighCPULoad("", []string{""}, 1) {
 				logutil.BgLogger().Info("attach SQL info")
 			}
 		}
-	}
+	})
 	return ctx
 }
 

@@ -234,7 +234,7 @@ func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
 	if pdCli == nil {
 		cli = NewMockResourceManagerClient(constants.NullKeyspaceID)
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("managerAlreadyCreateSomeGroups")); _err_ == nil {
+	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
 		if val.(bool) {
 			_, err := cli.AddResourceGroup(context.TODO(),
 				&rmpb.ResourceGroup{
@@ -263,7 +263,7 @@ func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
 				log.Warn("fail to create default group", zap.Error(err))
 			}
 		}
-	}
+	})
 	is.resourceManagerClient = cli
 }
 
@@ -313,11 +313,11 @@ func SetMockTiFlash(tiflash *MockTiFlash) {
 
 // GetServerInfo gets self server static information.
 func GetServerInfo() (*serverinfo.ServerInfo, error) {
-	if v, _err_ := failpoint.Eval(_curpkg_("mockGetServerInfo")); _err_ == nil {
+	failpoint.Inject("mockGetServerInfo", func(v failpoint.Value) {
 		var res serverinfo.ServerInfo
 		err := json.Unmarshal([]byte(v.(string)), &res)
-		return &res, err
-	}
+		failpoint.Return(&res, err)
+	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
@@ -454,15 +454,15 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 // PutRuleBundles is used to post specific rule bundles to PD.
 // an "empty" bundle means delete bundle if a bundle with such ID exists.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
-	if isServiceError, _err_ := failpoint.Eval(_curpkg_("putRuleBundlesError")); _err_ == nil {
+	failpoint.Inject("putRuleBundlesError", func(isServiceError failpoint.Value) {
 		var err error
 		if isServiceError.(bool) {
 			err = ErrHTTPServiceError.FastGen("mock service error")
 		} else {
 			err = errors.New("mock other error")
 		}
-		return err
-	}
+		failpoint.Return(err)
+	})
 
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -1087,11 +1087,11 @@ type TiProxyServerInfo struct {
 
 // GetTiProxyServerInfo gets all TiProxy servers information from etcd.
 func GetTiProxyServerInfo(ctx context.Context) (map[string]*TiProxyServerInfo, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockGetTiProxyServerInfo")); _err_ == nil {
+	failpoint.Inject("mockGetTiProxyServerInfo", func(val failpoint.Value) {
 		res := make(map[string]*TiProxyServerInfo)
 		err := json.Unmarshal([]byte(val.(string)), &res)
-		return res, err
-	}
+		failpoint.Return(res, err)
+	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err

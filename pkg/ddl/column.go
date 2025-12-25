@@ -172,7 +172,7 @@ func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateWriteOnly:
 		// write only -> delete only
-		failpoint.Call(_curpkg_("onDropColumnStateWriteOnly"))
+		failpoint.InjectCall("onDropColumnStateWriteOnly")
 		colInfo.State = model.StateDeleteOnly
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		if len(idxInfos) > 0 {
@@ -589,12 +589,12 @@ func (w *worker) modifyTableColumn(
 	reorgInfo *reorgInfo,
 ) error {
 	ctx := jobCtx.stepCtx
-	if _, _err_ := failpoint.Eval(_curpkg_("mockInfiniteReorgLogic")); _err_ == nil {
+	failpoint.Inject("mockInfiniteReorgLogic", func() {
 		TestReorgGoroutineRunning <- struct{}{}
 		<-ctx.Done()
 		// Job is cancelled. So it can't be done.
-		return dbterror.ErrCancelledDDLJob
-	}
+		failpoint.Return(dbterror.ErrCancelledDDLJob)
+	})
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		err := w.updatePhysicalTableRow(ctx, t, reorgInfo)
 		if err != nil {
@@ -646,11 +646,11 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	}
 	oldCol, newCol := getOldAndNewColumnsForUpdateColumn(t, reorgInfo.currElement.ID)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
-	if _, _err_ := failpoint.Eval(_curpkg_("forceRowLevelChecksumOnUpdateColumnBackfill")); _err_ == nil {
+	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
 		orig := vardef.EnableRowLevelChecksum.Load()
 		defer vardef.EnableRowLevelChecksum.Store(orig)
 		vardef.EnableRowLevelChecksum.Store(true)
-	}
+	})
 	return &updateColumnWorker{
 		backfillCtx:    bCtx,
 		oldColInfo:     oldCol,
@@ -777,14 +777,14 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockReorgTimeoutInOneRegion")); _err_ == nil {
+	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&testCheckReorgTimeout, 0, 1) {
-				return errors.Trace(dbterror.ErrWaitReorgTimeout)
+				failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
 			}
 		}
-	}
+	})
 
 	w.rowMap[w.newColInfo.ID] = newColVal
 	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.exprCtx, w.rowMap)
@@ -904,7 +904,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
-	failpoint.Call(_curpkg_("mockUpdateColumnWorkerStuck"))
+	failpoint.InjectCall("mockUpdateColumnWorkerStuck")
 	return
 }
 

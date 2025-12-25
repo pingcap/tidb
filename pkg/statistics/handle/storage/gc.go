@@ -91,9 +91,9 @@ func GCStats(
 		return nil
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("injectGCStatsLastTSOffset")); _err_ == nil {
+	failpoint.Inject("injectGCStatsLastTSOffset", func(val failpoint.Value) {
 		offset = uint64(val.(int))
-	}
+	})
 
 	// Get the last gc time.
 	gcVer := now - offset

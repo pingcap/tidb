@@ -554,13 +554,13 @@ func (s *session) doCommit(ctx context.Context) error {
 		return err
 	}
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
-	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitError")); _err_ == nil {
+	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
 		if val.(bool) {
 			if _, err := failpoint.Eval("tikvclient/mockCommitErrorOpt"); err == nil {
-				return kv.ErrTxnRetryable
+				failpoint.Return(kv.ErrTxnRetryable)
 			}
 		}
-	}
+	})
 
 	sessVars := s.GetSessionVars()
 
@@ -696,10 +696,10 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessVars := s.sessionVars
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
-		if v, _err_ := failpoint.Eval(_curpkg_("mockSleepBeforeTxnCommit")); _err_ == nil {
+		failpoint.Inject("mockSleepBeforeTxnCommit", func(v failpoint.Value) {
 			ms := v.(int)
 			time.Sleep(time.Millisecond * time.Duration(ms))
-		}
+		})
 		return txn.Commit(ctx)
 	}
 
@@ -1006,11 +1006,11 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	metrics.TTLInsertRowsCount.Add(float64(s.sessionVars.TxnCtx.InsertTTLRowsCount))
 	metrics.DDLCommitTempIndexWrite(s.sessionVars.ConnectionID)
 
-	if val, _err_ := failpoint.Eval(_curpkg_("keepHistory")); _err_ == nil {
+	failpoint.Inject("keepHistory", func(val failpoint.Value) {
 		if val.(bool) {
-			return err
+			failpoint.Return(err)
 		}
-	}
+	})
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	return err
@@ -1230,12 +1230,12 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
 			zap.Uint64("original txnStartTS", orgStartTS))
-		if _, _err_ := failpoint.Eval(_curpkg_("preCommitHook")); _err_ == nil {
+		failpoint.Inject("preCommitHook", func() {
 			hook, ok := ctx.Value("__preCommitHook").(func())
 			if ok {
 				hook()
 			}
-		}
+		})
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {
@@ -2465,12 +2465,12 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		return nil, err
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockStmtSlow")); _err_ == nil {
+	failpoint.Inject("mockStmtSlow", func(val failpoint.Value) {
 		if strings.Contains(stmtNode.Text(), "/* sleep */") {
 			v, _ := val.(int)
 			time.Sleep(time.Duration(v) * time.Millisecond)
 		}
-	}
+	})
 
 	var stmtLabel string
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
@@ -2821,12 +2821,12 @@ func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInRunStmt")); _err_ == nil {
+	failpoint.Inject("assertTxnManagerInRunStmt", func() {
 		sessiontxn.RecordAssert(se, "assertTxnManagerInRunStmt", true)
 		if stmt, ok := s.(*executor.ExecStmt); ok {
 			sessiontxn.AssertTxnManagerInfoSchema(se, stmt.InfoSchema)
 		}
-	}
+	})
 
 	r, ctx := tracing.StartRegionEx(ctx, "session.runStmt")
 	defer r.End()
@@ -4758,15 +4758,15 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		return errors.New("cannot prepare ts future when txn is valid")
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("assertTSONotRequest")); _err_ == nil {
+	failpoint.Inject("assertTSONotRequest", func() {
 		if _, ok := future.(sessiontxn.ConstantFuture); !ok && !s.isInternal() {
 			panic("tso shouldn't be requested")
 		}
-	}
+	})
 
-	if _, _err_ := failpoint.EvalContext(ctx, _curpkg_("mockGetTSFail")); _err_ == nil {
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
 		future = txnFailFuture{}
-	}
+	})
 
 	s.txn.changeToPending(&txnFuture{
 		future:                          future,

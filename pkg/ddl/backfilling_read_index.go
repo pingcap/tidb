@@ -201,7 +201,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	})
 	r.summary.Reset()
 	var err error
-	failpoint.Call(_curpkg_("beforeReadIndexStepExecRunSubtask"), &err)
+	failpoint.InjectCall("beforeReadIndexStepExecRunSubtask", &err)
 	if err != nil {
 		return err
 	}
@@ -296,7 +296,7 @@ func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource 
 }
 
 func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storage.ExternalStorage) error {
-	failpoint.Call(_curpkg_("mockDMLExecutionAddIndexSubTaskFinish"), r.backend)
+	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish", r.backend)
 	if !r.isGlobalSort() {
 		return nil
 	}

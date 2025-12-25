@@ -318,9 +318,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	store := tidbCfg.Store
-	if v, _err_ := failpoint.Eval(_curpkg_("modifyStore")); _err_ == nil {
+	failpoint.Inject("modifyStore", func(v failpoint.Value) {
 		store = config.StoreType(v.(string))
-	}
+	})
 	if store != config.StoreTypeTiKV {
 		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, store)
 		return nil
@@ -589,13 +589,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
 	taskCtx, taskID := bq.registerTask(ctx, e.info)
 	defer bq.cancelTask(taskID)
-	if _, _err_ := failpoint.Eval(_curpkg_("block-on-brie")); _err_ == nil {
+	failpoint.Inject("block-on-brie", func() {
 		log.Warn("You shall not pass, nya. :3")
 		<-taskCtx.Done()
 		if taskCtx.Err() != nil {
-			return taskCtx.Err()
+			failpoint.Return(taskCtx.Err())
 		}
-	}
+	})
 	// manually monitor the Killed status...
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)

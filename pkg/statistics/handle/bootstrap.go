@@ -780,7 +780,7 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 	if err != nil {
 		return err
 	}
-	failpoint.Eval(_curpkg_("beforeInitStatsLite"))
+	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
 	cache, _, err := h.initStatsMeta(ctx, sctx, tableIDs...)
 	if err != nil {
@@ -843,7 +843,7 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 	if err != nil {
 		return err
 	}
-	failpoint.Eval(_curpkg_("beforeInitStats"))
+	failpoint.Inject("beforeInitStats", func() {})
 
 	start := time.Now()
 	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, tableIDs...)

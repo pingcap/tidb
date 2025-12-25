@@ -87,7 +87,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 // GCSubtasks deletes the history subtask which is older than the given days.
 func (mgr *TaskManager) GCSubtasks(ctx context.Context) error {
 	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
-	failpoint.Call(_curpkg_("subtaskHistoryKeepSeconds"), &subtaskHistoryKeepSeconds)
+	failpoint.InjectCall("subtaskHistoryKeepSeconds", &subtaskHistoryKeepSeconds)
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}

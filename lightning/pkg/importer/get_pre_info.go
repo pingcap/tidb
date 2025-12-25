@@ -192,9 +192,9 @@ func (g *TargetInfoGetterImpl) CheckVersionRequirements(ctx context.Context) err
 // It tries to select the row count from the target DB.
 func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
 	var result bool
-	if _, _err_ := failpoint.Eval(_curpkg_("CheckTableEmptyFailed")); _err_ == nil {
-		return nil, errors.New("mock error")
-	}
+	failpoint.Inject("CheckTableEmptyFailed", func() {
+		failpoint.Return(nil, errors.New("mock error"))
+	})
 	exec := common.SQLWithRetry{
 		DB:     g.db,
 		Logger: log.Wrap(logutil.Logger(ctx)),
@@ -374,18 +374,19 @@ func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Conte
 	for _, tableFileMeta := range dbSrcFileMeta.Tables {
 		tableNames = append(tableNames, tableFileMeta.Name)
 	}
-	if v, _err_ := failpoint.Eval(_curpkg_("getTableStructuresByFileMeta_BeforeFetchRemoteTableModels")); _err_ == nil {
-
-		fmt.Println("failpoint: getTableStructuresByFileMeta_BeforeFetchRemoteTableModels")
-		const defaultMilliSeconds int = 5000
-		sleepMilliSeconds, ok := v.(int)
-		if !ok || sleepMilliSeconds <= 0 || sleepMilliSeconds > 30000 {
-			sleepMilliSeconds = defaultMilliSeconds
-		}
-		//nolint: errcheck
-		failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
-
-	}
+	failpoint.Inject(
+		"getTableStructuresByFileMeta_BeforeFetchRemoteTableModels",
+		func(v failpoint.Value) {
+			fmt.Println("failpoint: getTableStructuresByFileMeta_BeforeFetchRemoteTableModels")
+			const defaultMilliSeconds int = 5000
+			sleepMilliSeconds, ok := v.(int)
+			if !ok || sleepMilliSeconds <= 0 || sleepMilliSeconds > 30000 {
+				sleepMilliSeconds = defaultMilliSeconds
+			}
+			//nolint: errcheck
+			failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
+		},
+	)
 	currentTableInfosMap, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName, tableNames)
 	if err != nil {
 		if getPreInfoCfg != nil && getPreInfoCfg.IgnoreDBNotExist {
@@ -771,9 +772,9 @@ outloop:
 		rowSize += uint64(lastRow.Length)
 		parser.RecycleRow(lastRow)
 
-		if val, _err_ := failpoint.Eval(_curpkg_("mock-kv-size")); _err_ == nil {
+		failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 			kvSize += uint64(val.(int))
-		}
+		})
 		if rowSize > maxSampleDataSize || rowCount > maxSampleRowCount {
 			break
 		}

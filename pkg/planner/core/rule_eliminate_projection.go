@@ -127,11 +127,11 @@ func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 // eliminatePhysicalProjection should be called after physical optimization to
 // eliminate the redundant projection left after logical projection elimination.
 func eliminatePhysicalProjection(p base.PhysicalPlan) base.PhysicalPlan {
-	if val, _err_ := failpoint.Eval(_curpkg_("DisableProjectionPostOptimization")); _err_ == nil {
+	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
 		if val.(bool) {
-			return p
+			failpoint.Return(p)
 		}
-	}
+	})
 
 	newRoot := doPhysicalProjectionElimination(p)
 	return newRoot

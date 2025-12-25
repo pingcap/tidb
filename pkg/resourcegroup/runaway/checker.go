@@ -330,7 +330,7 @@ func (r *Checker) CheckThresholds(ruDetail *util.RUDetails, processKeys int64, e
 	if r == nil {
 		return err
 	}
-	if v, _err_ := failpoint.Eval(_curpkg_("checkThresholds")); _err_ == nil {
+	failpoint.Inject("checkThresholds", func(v failpoint.Value) {
 		// the pass value format is `Time is int` or `processKeys is bool` to reduce redundant failpoint code.
 		switch val := v.(type) {
 		case int:
@@ -343,7 +343,7 @@ func (r *Checker) CheckThresholds(ruDetail *util.RUDetails, processKeys int64, e
 			// default processKeys is 100
 			processKeys = int64(100)
 		}
-	}
+	})
 	if r.settings == nil {
 		return err
 	}

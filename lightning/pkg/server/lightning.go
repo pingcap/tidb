@@ -235,12 +235,12 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// Enable failpoint http API for testing.
-	if _, _err_ := failpoint.Eval(_curpkg_("EnableTestAPI")); _err_ == nil {
+	failpoint.Inject("EnableTestAPI", func() {
 		mux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
-	}
+	})
 
 	handleTasks := http.StripPrefix("/tasks", http.HandlerFunc(l.handleTask))
 	mux.Handle("/tasks", httpHandleWrapper(handleTasks.ServeHTTP))
@@ -327,7 +327,7 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 		opt(o)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("setExtStorage")); _err_ == nil {
+	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
 		b, err := storage.ParseBackend(path, nil)
 		if err != nil {
@@ -339,11 +339,11 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 		}
 		o.dumpFileStorage = s
 		o.checkpointStorage = s
-	}
-	if val, _err_ := failpoint.Eval(_curpkg_("setCheckpointName")); _err_ == nil {
+	})
+	failpoint.Inject("setCheckpointName", func(val failpoint.Value) {
 		file := val.(string)
 		o.checkpointName = file
-	}
+	})
 
 	if o.dumpFileStorage != nil {
 		// we don't use it, set a value to pass Adjust
@@ -359,11 +359,11 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	}
 	taskCfg.TaskID = r.Int64()
 
-	if val, _err_ := failpoint.Eval(_curpkg_("SetTaskID")); _err_ == nil {
+	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
-	}
+	})
 
-	if _, _err_ := failpoint.Eval(_curpkg_("SetIOTotalBytes")); _err_ == nil {
+	failpoint.Inject("SetIOTotalBytes", func(_ failpoint.Value) {
 		o.logger.Info("set io total bytes")
 		taskCfg.TiDB.IOTotalBytes = atomic.NewUint64(0)
 		taskCfg.TiDB.UUID = uuid.New().String()
@@ -373,7 +373,7 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 				log.L().Info("IOTotalBytes", zap.Uint64("IOTotalBytes", taskCfg.TiDB.IOTotalBytes.Load()))
 			}
 		}()
-	}
+	})
 	if taskCfg.TiDB.IOTotalBytes != nil {
 		o.logger.Info("found IO total bytes counter")
 		mysql.RegisterDialContext(taskCfg.TiDB.UUID, func(ctx context.Context, addr string) (net.Conn, error) {
@@ -465,7 +465,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		web.BroadcastEndTask(err)
 	}()
 
-	if _, _err_ := failpoint.Eval(_curpkg_("SkipRunTask")); _err_ == nil {
+	failpoint.Inject("SkipRunTask", func() {
 		if notifyCh, ok := l.ctx.Value(taskRunNotifyKey).(chan struct{}); ok {
 			select {
 			case notifyCh <- struct{}{}:
@@ -476,13 +476,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 			select {
 			case recorder <- taskCfg:
 			case <-ctx.Done():
-				return ctx.Err()
+				failpoint.Return(ctx.Err())
 			}
 		}
-		return nil
-	}
+		failpoint.Return(nil)
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("SetCertExpiredSoon")); _err_ == nil {
+	failpoint.Inject("SetCertExpiredSoon", func(val failpoint.Value) {
 		rootKeyPath := val.(string)
 		rootCaPath := taskCfg.Security.CAPath
 		keyPath := taskCfg.Security.KeyPath
@@ -490,9 +490,9 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
 			panic(err)
 		}
-	}
+	})
 
-	if _, _err_ := failpoint.Eval(_curpkg_("PrintStatus")); _err_ == nil {
+	failpoint.Inject("PrintStatus", func() {
 		defer func() {
 			finished, total := l.Status()
 			o.logger.Warn("PrintStatus Failpoint",
@@ -500,7 +500,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 				zap.Int64("total", total),
 				zap.Bool("equal", finished == total))
 		}()
-	}
+	})
 
 	if err := taskCfg.TiDB.Security.BuildTLSConfig(); err != nil {
 		return common.ErrInvalidTLSConfig.Wrap(err)
@@ -607,10 +607,10 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		return errors.Trace(err)
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("orphanWriterGoRoutine")); _err_ == nil {
+	failpoint.Inject("orphanWriterGoRoutine", func() {
 		// don't exit too quickly to expose panic
 		defer time.Sleep(time.Second * 10)
-	}
+	})
 	defer procedure.Close()
 
 	err = procedure.Run(ctx)

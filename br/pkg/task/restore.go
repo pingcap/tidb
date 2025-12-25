@@ -1011,11 +1011,11 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// unregister restore task
-	if _, _err_ := failpoint.Eval(_curpkg_("fail-at-end-of-restore")); _err_ == nil {
+	failpoint.Inject("fail-at-end-of-restore", func() {
 		log.Info("failpoint fail-at-end-of-restore injected, failing at the end of restore task",
 			zap.Error(restoreErr))
 		restoreErr = errors.New("failpoint: fail-at-end-of-restore")
-	}
+	})
 
 	if restoreErr != nil {
 		// if err happens at register phase no restoreID will be generated and default is 0, or this is an old TiDB
@@ -1634,7 +1634,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	/* failpoint */
-	if val, _err_ := failpoint.Eval(_curpkg_("sleep_for_check_scheduler_status")); _err_ == nil {
+	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
 		fileName, ok := val.(string)
 		func() {
 			if !ok {
@@ -1656,7 +1656,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 			time.Sleep(300 * time.Millisecond)
 		}
-	}
+	})
 	/* failpoint */
 
 	// update table mapping manager with new table ids if PiTR
@@ -1771,7 +1771,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	failpoint.Call(_curpkg_("run-snapshot-restore-about-to-finish"), &err)
+	failpoint.InjectCall("run-snapshot-restore-about-to-finish", &err)
 	if err != nil {
 		return err
 	}

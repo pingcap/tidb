@@ -1390,9 +1390,9 @@ func (is *infoschemaV2) GetTableReferredForeignKeys(schema, table string) []*mod
 
 func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
-	if _, _err_ := failpoint.Eval(_curpkg_("mockLoadTableInfoError")); _err_ == nil {
-		return nil, errors.New("mockLoadTableInfoError")
-	}
+	failpoint.Inject("mockLoadTableInfoError", func(_ failpoint.Value) {
+		failpoint.Return(nil, errors.New("mockLoadTableInfoError"))
+	})
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 	retry:

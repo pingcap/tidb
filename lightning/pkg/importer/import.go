@@ -134,9 +134,9 @@ var DeliverPauser = common.NewPauser()
 
 // nolint:gochecknoinits // TODO: refactor
 func init() {
-	if v, _err_ := failpoint.Eval(_curpkg_("SetMinDeliverBytes")); _err_ == nil {
+	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
 		minDeliverBytes = uint64(v.(int))
-	}
+	})
 }
 
 type saveCp struct {
@@ -544,7 +544,7 @@ func (rc *Controller) Close() {
 
 // Run starts the restore task.
 func (rc *Controller) Run(ctx context.Context) error {
-	failpoint.Eval(_curpkg_("beforeRun"))
+	failpoint.Inject("beforeRun", func() {})
 
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
@@ -641,10 +641,10 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 	if err != nil {
 		return common.ErrInitCheckpoint.Wrap(err).GenWithStackByArgs()
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("InitializeCheckpointExit")); _err_ == nil {
+	failpoint.Inject("InitializeCheckpointExit", func() {
 		logutil.Logger(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
-	}
+	})
 	if rc.cfg.TikvImporter.AddIndexBySQL {
 		if err := rc.loadDesiredTableInfos(ctx); err != nil {
 			return err
@@ -871,7 +871,7 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 			lock.Unlock()
 
 			//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-			failpoint.Eval(_curpkg_("SlowDownCheckpointUpdate"))
+			failpoint.Inject("SlowDownCheckpointUpdate", func() {})
 
 			if len(cpd) > 0 {
 				err := rc.checkpointsDB.Update(rc.taskCtx, cpd)
@@ -904,25 +904,25 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 		lock.Unlock()
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		if _, _err_ := failpoint.Eval(_curpkg_("FailIfImportedChunk")); _err_ == nil {
+		failpoint.Inject("FailIfImportedChunk", func() {
 			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Pos >= merger.EndOffset {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
 				panic("forcing failure due to FailIfImportedChunk")
 			}
-		}
+		})
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		if val, _err_ := failpoint.Eval(_curpkg_("FailIfStatusBecomes")); _err_ == nil {
+		failpoint.Inject("FailIfStatusBecomes", func(val failpoint.Value) {
 			if merger, ok := scp.merger.(*checkpoints.StatusCheckpointMerger); ok && merger.EngineID >= 0 && int(merger.Status) == val.(int) {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
 				panic("forcing failure due to FailIfStatusBecomes")
 			}
-		}
+		})
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		if val, _err_ := failpoint.Eval(_curpkg_("FailIfIndexEngineImported")); _err_ == nil {
+		failpoint.Inject("FailIfIndexEngineImported", func(val failpoint.Value) {
 			if merger, ok := scp.merger.(*checkpoints.StatusCheckpointMerger); ok &&
 				merger.EngineID == checkpoints.WholeTableEngineID &&
 				merger.Status == checkpoints.CheckpointStatusIndexImported && val.(int) > 0 {
@@ -930,10 +930,10 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 				rc.checkpointsWg.Wait()
 				panic("forcing failure due to FailIfIndexEngineImported")
 			}
-		}
+		})
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		if _, _err_ := failpoint.Eval(_curpkg_("KillIfImportedChunk")); _err_ == nil {
+		failpoint.Inject("KillIfImportedChunk", func() {
 			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Pos >= merger.EndOffset {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
@@ -945,9 +945,9 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 						scp.waitCh <- context.Canceled
 					}
 				}
-				return
+				failpoint.Return()
 			}
-		}
+		})
 	}
 	// Don't put this statement in defer function at the beginning. failpoint function may call it manually.
 	rc.checkpointsWg.Done()

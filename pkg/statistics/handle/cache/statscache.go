@@ -321,9 +321,9 @@ func (s *StatsCacheImpl) MemConsumed() (size int64) {
 
 // Get returns the specified table's stats.
 func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
-	if _, _err_ := failpoint.Eval(_curpkg_("StatsCacheGetNil")); _err_ == nil {
-		return nil, false
-	}
+	failpoint.Inject("StatsCacheGetNil", func() {
+		failpoint.Return(nil, false)
+	})
 	return s.Load().Get(tableID)
 }
 

@@ -232,10 +232,10 @@ func (e *TableReaderExecutor) memUsage() int64 {
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	r, ctx := tracing.StartRegionEx(ctx, "TableReaderExecutor.Open")
 	defer r.End()
-	if v, _err_ := failpoint.Eval(_curpkg_("mockSleepInTableReaderNext")); _err_ == nil {
+	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
 		ms := v.(int)
 		time.Sleep(time.Millisecond * time.Duration(ms))
-	}
+	})
 
 	if e.memTracker != nil {
 		e.memTracker.Reset()

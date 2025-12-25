@@ -133,9 +133,9 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	if err := p.basePessimisticTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("CallOnStmtRetry")); _err_ == nil {
+	failpoint.Inject("CallOnStmtRetry", func() {
 		sessiontxn.OnStmtRetryCountInc(p.sctx)
-	}
+	})
 	p.latestOracleTSValid = false
 	p.checkTSInWriteStmt = false
 	return p.prepareStmt(false)
@@ -166,9 +166,9 @@ func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 		if ts, err = future.Wait(); err != nil {
 			return
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("waitTsoOfOracleFuture")); _err_ == nil {
+		failpoint.Inject("waitTsoOfOracleFuture", func() {
 			sessiontxn.TsoWaitCountInc(p.sctx)
-		}
+		})
 		txnCtx.SetForUpdateTS(ts)
 		ts = txnCtx.GetForUpdateTS()
 		p.latestOracleTS = ts
@@ -325,9 +325,9 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val any) (err e
 	}
 
 	if useLastOracleTS {
-		if _, _err_ := failpoint.Eval(_curpkg_("tsoUseConstantFuture")); _err_ == nil {
+		failpoint.Inject("tsoUseConstantFuture", func() {
 			sessiontxn.TsoUseConstantCountInc(p.sctx)
-		}
+		})
 		p.checkTSInWriteStmt = true
 		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	}

@@ -122,11 +122,11 @@ func (m *mockManager) GetOwnerID(_ context.Context) (string, error) {
 }
 
 func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
-	if val, _err_ := failpoint.Eval(_curpkg_("MockNotSetOwnerOp")); _err_ == nil {
+	failpoint.Inject("MockNotSetOwnerOp", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 	mockOwnerOpValue.Store(&op)
 	return nil
 }

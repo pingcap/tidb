@@ -329,15 +329,15 @@ func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst
 }
 
 func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWriteResult, err error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("fakeRegionJobs")); _err_ == nil {
+	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
 		err := front.write.err
 		if err == nil {
 			j.convertStageTo(wrote)
 		}
-		return front.write.result, err
-	}
+		failpoint.Return(front.write.result, err)
+	})
 
 	var cancel context.CancelFunc
 	// set a timeout for the write operation, if it takes too long, we will return with common.ErrWriteTooSlow and let caller retry the whole job instead of being stuck forever.
@@ -404,7 +404,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		ApiVersion: apiVersion,
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("changeEpochVersion")); _err_ == nil {
+	failpoint.Inject("changeEpochVersion", func(val failpoint.Value) {
 		cloned := *meta.RegionEpoch
 		meta.RegionEpoch = &cloned
 		i := val.(int)
@@ -413,7 +413,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		} else {
 			meta.RegionEpoch.ConfVer -= uint64(-i)
 		}
-	}
+	})
 
 	annotateErr := func(in error, peer *metapb.Peer, msg string) error {
 		// annotate the error with peer/store/region info to help debug.
@@ -440,10 +440,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 			return nil, annotateErr(err, peer, "when open write stream")
 		}
 
-		if _, _err_ := failpoint.Eval(_curpkg_("mockWritePeerErr")); _err_ == nil {
+		failpoint.Inject("mockWritePeerErr", func() {
 			err = errors.Errorf("mock write peer error")
-			return nil, annotateErr(err, peer, "when open write stream")
-		}
+			failpoint.Return(nil, annotateErr(err, peer, "when open write stream"))
+		})
 
 		// Bind uuid for this write request
 		if err = wstream.Send(req); err != nil {
@@ -487,7 +487,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 
 	// preparation work for the write timeout fault injection, only enabled if the following failpoint is enabled
 	wcancel := func() {}
-	if val, _err_ := failpoint.Eval(_curpkg_("shortWaitNTimeout")); _err_ == nil {
+	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
 		var innerTimeout time.Duration
 		// GO_FAILPOINTS action supplies the duration in
 		ms, _ := val.(int)
@@ -495,7 +495,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		tidblogutil.Logger(ctx).Info("Injecting a timeout to write context.")
 		wctx, wcancel = context.WithTimeoutCause(
 			ctx, innerTimeout, common.ErrWriteTooSlow)
-	}
+	})
 	defer wcancel()
 
 	flushKVs := func() error {
@@ -543,9 +543,9 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 			local.collector.Processed(size, int64(count))
 		}
 
-		if _, _err_ := failpoint.Eval(_curpkg_("afterFlushKVs")); _err_ == nil {
+		failpoint.Inject("afterFlushKVs", func() {
 			tidblogutil.Logger(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
-		}
+		})
 		return nil
 	}
 
@@ -627,10 +627,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		}
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("NoLeader")); _err_ == nil {
+	failpoint.Inject("NoLeader", func() {
 		tidblogutil.Logger(ctx).Warn("enter failpoint NoLeader")
 		leaderPeerMetas = nil
-	}
+	})
 
 	// if there is no leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
@@ -664,11 +664,11 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
 func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("fakeRegionJobs")); _err_ == nil {
+	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
-		return front.ingest.err
-	}
+		failpoint.Return(front.ingest.err)
+	})
 
 	if len(j.writeResult.sstMeta) == 0 {
 		return nil
@@ -735,19 +735,19 @@ func (local *Backend) checkWriteStall(
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
 func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("diskFullOnIngest")); _err_ == nil {
-		return &sst.IngestResponse{
+	failpoint.Inject("diskFullOnIngest", func() {
+		failpoint.Return(&sst.IngestResponse{
 			Error: &errorpb.Error{
 				Message: "propose failed: tikv disk full, cmd diskFullOpt={:?}, leader diskUsage={:?}",
 				DiskFull: &errorpb.DiskFull{
 					StoreId: []uint64{1},
 				},
 			},
-		}, nil
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("doIngestFailed")); _err_ == nil {
-		return nil, errors.New("injected error")
-	}
+		}, nil)
+	})
+	failpoint.Inject("doIngestFailed", func() {
+		failpoint.Return(nil, errors.New("injected error"))
+	})
 	clientFactory := local.importClientFactory
 	supportMultiIngest := local.supportMultiIngest
 	shouldCheckWriteStall := local.ShouldCheckWriteStall
@@ -783,7 +783,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 		tidblogutil.Logger(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 
-		if val, _err_ := failpoint.Eval(_curpkg_("FailIngestMeta")); _err_ == nil {
+		failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
 			// only inject the error once
 			var resp *sst.IngestResponse
 
@@ -806,8 +806,8 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 					},
 				}
 			}
-			return resp, nil
-		}
+			failpoint.Return(resp, nil)
+		})
 
 		leader := j.region.Leader
 		if leader == nil {

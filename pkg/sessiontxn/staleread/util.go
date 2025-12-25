@@ -35,9 +35,9 @@ import (
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
 func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr ast.ExprNode) (uint64, error) {
 	sctx.GetSessionVars().StmtCtx.SetStaleTSOProviderIfNotExist(func() (uint64, error) {
-		if val, _err_ := failpoint.Eval(_curpkg_("mockStaleReadTSO")); _err_ == nil {
+		failpoint.Inject("mockStaleReadTSO", func(val failpoint.Value) (uint64, error) {
 			return uint64(val.(int)), nil
-		}
+		})
 		// this function accepts a context, but we don't need it when there is a valid cached ts.
 		// in most cases, the stale read ts can be calculated from `cached ts + time since cache - staleness`,
 		// this can be more accurate than `time.Now() - staleness`, because TiDB's local time can drift.

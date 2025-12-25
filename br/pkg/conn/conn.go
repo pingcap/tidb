@@ -90,29 +90,29 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 		ctx,
 		func() error {
 			stores, err = util.GetAllTiKVStores(ctx, pdClient, storeBehavior)
-			if val, _err_ := failpoint.Eval(_curpkg_("hint-GetAllTiKVStores-error")); _err_ == nil {
+			failpoint.Inject("hint-GetAllTiKVStores-error", func(val failpoint.Value) {
 				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 				if val.(bool) {
 					err = status.Error(codes.Unknown, "Retryable error")
-					return err
+					failpoint.Return(err)
 				}
-			}
+			})
 
-			if val, _err_ := failpoint.Eval(_curpkg_("hint-GetAllTiKVStores-grpc-cancel")); _err_ == nil {
+			failpoint.Inject("hint-GetAllTiKVStores-grpc-cancel", func(val failpoint.Value) {
 				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-grpc-cancel injected.")
 				if val.(bool) {
 					err = status.Error(codes.Canceled, "Cancel Retry")
-					return err
+					failpoint.Return(err)
 				}
-			}
+			})
 
-			if val, _err_ := failpoint.Eval(_curpkg_("hint-GetAllTiKVStores-ctx-cancel")); _err_ == nil {
+			failpoint.Inject("hint-GetAllTiKVStores-ctx-cancel", func(val failpoint.Value) {
 				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-ctx-cancel injected.")
 				if val.(bool) {
 					err = context.Canceled
-					return err
+					failpoint.Return(err)
 				}
-			}
+			})
 
 			return errors.Trace(err)
 		},

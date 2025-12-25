@@ -103,7 +103,7 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 	// it later.
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
 		err = e.resolveConflictsOfKVGroup(ctx, objStore, e.task.RequiredSlots, kvGroup, ci)
-		failpoint.Call(_curpkg_("afterResolveOneKVGroup"), &err)
+		failpoint.InjectCall("afterResolveOneKVGroup", &err)
 		if err != nil {
 			return err
 		}
@@ -118,9 +118,9 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	kvGroup string,
 	ci *engineapi.ConflictInfo,
 ) (err error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("forceHandleConflictsBySingleThread")); _err_ == nil {
+	failpoint.Inject("forceHandleConflictsBySingleThread", func() {
 		concurrency = 1
-	}
+	})
 	task := log.BeginTask(e.logger.With(
 		zap.String("kvGroup", kvGroup), zap.Uint64("duplicates", ci.Count),
 		zap.Int("fileCount", len(ci.Files)), zap.Int("concurrency", concurrency),

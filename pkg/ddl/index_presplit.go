@@ -74,7 +74,7 @@ func preSplitIndexRegions(
 				tablecodec.IndexKey2TempIndexKey(splitKeys[i])
 			}
 		}
-		failpoint.Call(_curpkg_("beforePresplitIndex"), splitKeys)
+		failpoint.InjectCall("beforePresplitIndex", splitKeys)
 		err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
@@ -276,9 +276,9 @@ func splitIndexRegionAndWait(
 			zap.Error(err))
 		return err
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockSplitIndexRegionAndWaitErr")); _err_ == nil {
-		return context.DeadlineExceeded
-	}
+	failpoint.Inject("mockSplitIndexRegionAndWaitErr", func(_ failpoint.Value) {
+		failpoint.Return(context.DeadlineExceeded)
+	})
 	finishScatterRegions := waitScatterRegionFinish(ctxWithTimeout, sctx, start, s, regionIDs, tblInfo.Name.L, idxInfo.Name.L)
 	logutil.DDLLogger().Info("split table index region finished",
 		zap.String("table", tblInfo.Name.L),

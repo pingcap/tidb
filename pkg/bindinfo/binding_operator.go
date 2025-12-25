@@ -134,12 +134,12 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 				sqlDigest,
 				planDigest,
 			)
-			if val, _err_ := failpoint.Eval(_curpkg_("CreateGlobalBindingNthFail")); _err_ == nil {
+			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
 				n := val.(int)
 				if n == i {
 					err = errors.NewNoStackError("An injected error")
 				}
-			}
+			})
 			if err != nil {
 				return err
 			}

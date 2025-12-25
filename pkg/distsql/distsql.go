@@ -87,7 +87,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 	}
 
 	// Force the CopLiteWorker to be used or not used for testing purposes
-	if val, _err_ := failpoint.Eval(_curpkg_("TryCopLiteWorker")); _err_ == nil {
+	failpoint.Inject("TryCopLiteWorker", func(val failpoint.Value) {
 		n, ok := val.(int)
 		if !ok {
 			panic(fmt.Sprintf("TryCopLiteWorker: expected int, got %T (%v)", val, val))
@@ -98,7 +98,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		logutil.Logger(ctx).Info("setting TryCopLiteWorker for test",
 			zap.String("value", option.TryCopLiteWorker.String()),
 		)
-	}
+	})
 
 	if kvReq.StoreType == kv.TiFlash {
 		ctx = SetTiFlashConfVarsInContext(ctx, dctx)

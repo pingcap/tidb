@@ -229,17 +229,17 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	}
 	batchSize := runawayRecordGCSelectBatchSize
 	deleteSize := runawayRecordGCBatchSize
-	if _, _err_ := failpoint.Eval(_curpkg_("FastRunawayGC")); _err_ == nil {
+	failpoint.Inject("FastRunawayGC", func() {
 		expiredDuration = time.Millisecond * 1
 		deleteSize = 2
 		batchSize = 5 * deleteSize
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("deleteExpiredRows")); _err_ == nil {
+	failpoint.Inject("deleteExpiredRows", func(val failpoint.Value) {
 		if val.(bool) {
-			return
+			failpoint.Return()
 		}
-	}
+	})
 	if hasDeletedExpiredRows.Load() {
 		return
 	}
@@ -286,9 +286,9 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		for i, row := range rows {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("deleteExpiredRows")); _err_ == nil {
+		failpoint.Inject("deleteExpiredRows", func() {
 			hasDeletedExpiredRows.Store(true)
-		}
+		})
 		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
 			endIndex := startIndex + deleteSize
 			if endIndex > len(leftRows) {

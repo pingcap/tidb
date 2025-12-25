@@ -588,15 +588,15 @@ func (importer *SnapFileImporter) download(
 			downloadMetas, e = importer.downloadSST(ctx, regionInfo, filesGroup, cipher, apiVersion)
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("restore-storage-error")); _err_ == nil {
+		failpoint.Inject("restore-storage-error", func(val failpoint.Value) {
 			msg := val.(string)
 			logutil.CL(ctx).Debug("failpoint restore-storage-error injected.", zap.String("msg", msg))
 			e = errors.Annotate(e, msg)
-		}
-		if _, _err_ := failpoint.Eval(_curpkg_("restore-gRPC-error")); _err_ == nil {
+		})
+		failpoint.Inject("restore-gRPC-error", func(_ failpoint.Value) {
 			logutil.CL(ctx).Warn("the connection to TiKV has been cut by a neko, meow :3")
 			e = status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
-		}
+		})
 		if isDecryptSstErr(e) {
 			logutil.CL(ctx).Info("fail to decrypt when download sst, try again with no-crypt")
 			if importer.kvMode == Raw || importer.kvMode == Txn {

@@ -276,21 +276,21 @@ func mergeOverlappingFilesInternal(
 	onDup engineapi.OnDuplicateKey,
 	fileGroupNum int,
 ) (err error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mergeOverlappingFilesInternal")); _err_ == nil {
+	failpoint.Inject("mergeOverlappingFilesInternal", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
 			switch v {
 			case 1:
-				return errors.Errorf("mock error in mergeOverlappingFilesInternal")
+				failpoint.Return(errors.Errorf("mock error in mergeOverlappingFilesInternal"))
 			case 2:
 				panic("mock panic in mergeOverlappingFilesInternal")
 			case 3:
 				time.Sleep(time.Second * 5)
-				return ctx.Err()
+				failpoint.Return(ctx.Err())
 			default:
-				return nil
+				failpoint.Return(nil)
 			}
 		}
-	}
+	})
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
 		zap.Int("file-count", len(paths)),

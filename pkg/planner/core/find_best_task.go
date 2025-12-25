@@ -1953,13 +1953,13 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	if !prop.IsSortItemEmpty() && candidate.path.IndexMergeIsIntersection {
 		return base.InvalidTask, nil
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("forceIndexMergeKeepOrder")); _err_ == nil {
+	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {
 		if len(candidate.path.PartialIndexPaths) > 0 && !candidate.path.IndexMergeIsIntersection {
 			if prop.IsSortItemEmpty() {
-				return base.InvalidTask, nil
+				failpoint.Return(base.InvalidTask, nil)
 			}
 		}
-	}
+	})
 	path := candidate.path
 	scans := make([]base.PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &physicalop.CopTask{

@@ -239,10 +239,10 @@ func WriteInsert(
 			}
 			counter++
 			wp.AddFileSize(uint64(bf.Len()-lastBfSize) + 2) // 2 is for ",\n" and ";\n"
-			if _, _err_ := failpoint.Eval(_curpkg_("ChaosBrokenWriterConn")); _err_ == nil {
-				return 0, errors.New("connection is closed")
-			}
-			failpoint.Eval(_curpkg_("AtEveryRow"))
+			failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
+				failpoint.Return(0, errors.New("connection is closed"))
+			})
+			failpoint.Inject("AtEveryRow", nil)
 
 			fileRowIter.Next()
 			shouldSwitch := wp.ShouldSwitchStatement()
@@ -457,9 +457,9 @@ func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName
 	tctx.L().Debug("opened file", zap.String("path", fullPath))
 	tearDownRoutine := func(ctx context.Context) error {
 		err := writer.Close(ctx)
-		if _, _err_ := failpoint.Eval(_curpkg_("FailToCloseMetaFile")); _err_ == nil {
+		failpoint.Inject("FailToCloseMetaFile", func(_ failpoint.Value) {
 			err = errors.New("injected error: fail to close meta file")
-		}
+		})
 		if err == nil {
 			return nil
 		}
@@ -500,9 +500,9 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 		}
 		pCtx.L().Debug("tear down lazy file writer...", zap.String("path", fullPath))
 		err := writer.Close(ctx)
-		if _, _err_ := failpoint.Eval(_curpkg_("FailToCloseDataFile")); _err_ == nil {
+		failpoint.Inject("FailToCloseDataFile", func(_ failpoint.Value) {
 			err = errors.New("injected error: fail to close data file")
-		}
+		})
 		if err != nil {
 			pCtx.L().Warn("fail to close file",
 				zap.String("path", fullPath),

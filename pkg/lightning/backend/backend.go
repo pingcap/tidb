@@ -280,7 +280,7 @@ func (be EngineManager) OpenEngine(
 
 	logger.Info("open engine")
 
-	if val, _err_ := failpoint.Eval(_curpkg_("FailIfEngineCountExceeds")); _err_ == nil {
+	failpoint.Inject("FailIfEngineCountExceeds", func(val failpoint.Value) {
 		if m, ok := metric.FromContext(ctx); ok {
 			closedCounter := m.ImporterEngineCounter.WithLabelValues("closed")
 			openCounter := m.ImporterEngineCounter.WithLabelValues("open")
@@ -293,7 +293,7 @@ func (be EngineManager) OpenEngine(
 					openCount, closedCount, injectValue))
 			}
 		}
-	}
+	})
 
 	return &OpenedEngine{
 		engine: engine{

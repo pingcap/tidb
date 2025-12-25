@@ -1333,7 +1333,7 @@ func LoadIngestedSSTs(
 	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedIngestedSSTs, error) {
 		// name is the absolute path in external storage.
 		bkup, err := readIngestedSSTs(ctx, name, s)
-		failpoint.Call(_curpkg_("load-ingested-ssts-err"), &err)
+		failpoint.InjectCall("load-ingested-ssts-err", &err)
 		if err != nil {
 			return PathedIngestedSSTs{}, errors.Annotatef(err, "failed to read backup at %s", name)
 		}

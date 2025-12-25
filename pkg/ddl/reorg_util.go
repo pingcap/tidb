@@ -96,11 +96,11 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	}
 
-	if v, _err_ := failpoint.Eval(_curpkg_("MockTableSize")); _err_ == nil {
+	failpoint.Inject("MockTableSize", func(v failpoint.Value) {
 		if size, ok := v.(int); ok && size > 0 {
 			tableSizeInBytes = int64(size)
 		}
-	}
+	})
 
 	var (
 		autoConc, autoMaxNode int
@@ -152,15 +152,15 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			}
 			m.IsDistReorg = false
 			m.IsFastReorg = false
-			if _, _err_ := failpoint.Eval(_curpkg_("reorgMetaRecordFastReorgDisabled")); _err_ == nil {
+			failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
 				LastReorgMetaFastReorgDisabled = true
-			}
+			})
 		}
 		if m.IsDistReorg && !m.IsFastReorg {
 			return dbterror.ErrUnsupportedDistTask
 		}
 	}
-	failpoint.Call(_curpkg_("beforeInitReorgMeta"), m)
+	failpoint.InjectCall("beforeInitReorgMeta", m)
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
 		zap.Int64("jobID", job.ID),

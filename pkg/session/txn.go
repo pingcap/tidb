@@ -411,38 +411,38 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 	txn.updateState(txninfo.TxnCommitting)
 	txn.mu.Unlock()
 
-	failpoint.Eval(_curpkg_("mockSlowCommit"))
+	failpoint.Inject("mockSlowCommit", func(_ failpoint.Value) {})
 
 	// mockCommitError8942 is used for PR #8942.
-	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitError8942")); _err_ == nil {
+	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
 		if val.(bool) {
-			return kv.ErrTxnRetryable
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
-	}
+	})
 
 	// mockCommitRetryForAutoIncID is used to mock an commit retry for adjustAutoIncrementDatum.
-	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitRetryForAutoIncID")); _err_ == nil {
+	failpoint.Inject("mockCommitRetryForAutoIncID", func(val failpoint.Value) {
 		if val.(bool) && !mockAutoIncIDRetry() {
 			enableMockAutoIncIDRetry()
-			return kv.ErrTxnRetryable
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitRetryForAutoRandID")); _err_ == nil {
+	failpoint.Inject("mockCommitRetryForAutoRandID", func(val failpoint.Value) {
 		if val.(bool) && needMockAutoRandIDRetry() {
 			decreaseMockAutoRandIDRetryCount()
-			return kv.ErrTxnRetryable
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
-	}
+	})
 
 	err := txn.Transaction.Commit(ctx)
 	if err == nil {
 		txn.lastCommitTS = txn.Transaction.CommitTS()
-		if val, _err_ := failpoint.Eval(_curpkg_("mockFutureCommitTS")); _err_ == nil {
+		failpoint.Inject("mockFutureCommitTS", func(val failpoint.Value) {
 			if ts, ok := val.(int); ok {
 				txn.lastCommitTS = uint64(ts)
 			}
-		}
+		})
 	}
 	return err
 }
@@ -454,7 +454,7 @@ func (txn *LazyTxn) Rollback() error {
 	txn.updateState(txninfo.TxnRollingBack)
 	txn.mu.Unlock()
 	// mockSlowRollback is used to mock a rollback which takes a long time
-	failpoint.Eval(_curpkg_("mockSlowRollback"))
+	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
 	// When rolling back a txn, swap with a dummy hook to avoid operations on an invalid memory tracker.
 	txn.SetMemoryFootprintChangeHook(func(uint64) {})
 	return txn.Transaction.Rollback()
@@ -474,7 +474,7 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 
 // LockKeysFunc Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keys ...kv.Key) error {
-	failpoint.Eval(_curpkg_("beforeLockKeys"))
+	failpoint.Inject("beforeLockKeys", func() {})
 	t := time.Now()
 
 	var originState txninfo.TxnRunningState
@@ -702,7 +702,7 @@ type txnFuture struct {
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	options := []tikv.TxnOption{tikv.WithTxnScope(tf.txnScope)}
 	startTS, err := tf.future.Wait()
-	failpoint.Eval(_curpkg_("txnFutureWait"))
+	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
 		options = append(options, tikv.WithStartTS(startTS))
 	} else {

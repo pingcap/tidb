@@ -354,11 +354,11 @@ func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 		// it needs more time to wait splitting the regions that contains data in PITR.
 		// 2s * 150
 		delayTime := b.Stat.ExponentialBackoff()
-		if val, _err_ := failpoint.Eval(_curpkg_("hint-scan-region-backoff")); _err_ == nil {
+		failpoint.Inject("hint-scan-region-backoff", func(val failpoint.Value) {
 			if val.(bool) {
 				delayTime = time.Microsecond
 			}
-		}
+		})
 		return delayTime
 	}
 	b.Stat.GiveUp()

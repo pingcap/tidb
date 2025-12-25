@@ -376,12 +376,12 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 			}
 			leaseNotFoundCh = make(chan struct{})
 		case <-campaignContext.Done():
-			if v, _err_ := failpoint.Eval(_curpkg_("MockDelOwnerKey")); _err_ == nil {
+			failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
 				if v.(string) == "delOwnerKeyAndNotOwner" {
 					m.logger.Info("mock break campaign and don't clear related info")
 					return
 				}
-			}
+			})
 			m.logger.Info("break campaign loop, context is done")
 			return
 		default:
@@ -403,7 +403,7 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 
 func (m *ownerManager) campaignAndWatch(ctx context.Context) error {
 	elec := concurrency.NewElection(m.etcdSes, m.key)
-	failpoint.Call(_curpkg_("beforeElectionCampaign"), m.etcdSes)
+	failpoint.InjectCall("beforeElectionCampaign", m.etcdSes)
 	err := elec.Campaign(ctx, m.id)
 	if err != nil {
 		return err
@@ -538,13 +538,13 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 	}
 	newOwnerVal := joinOwnerValues(ownerID, []byte{byte(op)})
 
-	if v, _err_ := failpoint.Eval(_curpkg_("MockDelOwnerKey")); _err_ == nil {
+	failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
 		if valStr, ok := v.(string); ok {
 			if err := mockDelOwnerKey(valStr, ownerKey, m); err != nil {
-				return err
+				failpoint.Return(err)
 			}
 		}
-	}
+	})
 
 	leaseOp := clientv3.WithLease(clientv3.LeaseID(m.sessionLease.Load()))
 	resp, err := m.etcdCli.Txn(ctx).
@@ -646,7 +646,7 @@ func AcquireDistributedLock(
 		}
 		return false, nil
 	})
-	failpoint.Call(_curpkg_("mockAcquireDistLockFailed"), &err)
+	failpoint.InjectCall("mockAcquireDistLockFailed", &err)
 	if err != nil {
 		err1 := se.Close()
 		if err1 != nil {

@@ -533,7 +533,7 @@ func (c *hashRowContainer) Len() uint64 {
 }
 
 func (c *hashRowContainer) Close() error {
-	failpoint.Eval(_curpkg_("issue60926"))
+	failpoint.Inject("issue60926", nil)
 
 	defer c.memTracker.Detach()
 	c.chkBuf = nil

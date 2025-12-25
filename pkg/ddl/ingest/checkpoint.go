@@ -377,14 +377,14 @@ func (s *CheckpointManager) AdvanceWatermark(imported bool) error {
 		return nil
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("resignAfterFlush")); _err_ == nil {
+	failpoint.Inject("resignAfterFlush", func() {
 		// used in a manual test
 		ResignOwnerForTest.Store(true)
 		// wait until ResignOwnerForTest is processed
 		for ResignOwnerForTest.Load() {
 			time.Sleep(100 * time.Millisecond)
 		}
-	}
+	})
 
 	s.afterFlush()
 
@@ -421,9 +421,9 @@ func (s *CheckpointManager) afterFlush() {
 
 func (s *CheckpointManager) afterImport() error {
 	p, l, err := s.pdCli.GetTS(s.ctx)
-	if _, _err_ := failpoint.Eval(_curpkg_("mockAfterImportAllocTSFailed")); _err_ == nil {
+	failpoint.Inject("mockAfterImportAllocTSFailed", func(_ failpoint.Value) {
 		err = errors.Errorf("mock err")
-	}
+	})
 	if err != nil {
 		s.logger.Warn("advance watermark get ts failed", zap.Error(err))
 		return err
@@ -589,10 +589,10 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 }
 
 func (s *CheckpointManager) updateCheckpointLoop() {
-	if _, _err_ := failpoint.Eval(_curpkg_("checkpointLoopExit")); _err_ == nil {
+	failpoint.Inject("checkpointLoopExit", func() {
 		// used in a manual test
-		return
-	}
+		failpoint.Return()
+	})
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -621,10 +621,10 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 }
 
 func (s *CheckpointManager) updateCheckpoint() error {
-	if _, _err_ := failpoint.Eval(_curpkg_("checkpointLoopExit")); _err_ == nil {
+	failpoint.Inject("checkpointLoopExit", func() {
 		// used in a manual test
-		return errors.New("failpoint triggered so can't update checkpoint")
-	}
+		failpoint.Return(errors.New("failpoint triggered so can't update checkpoint"))
+	})
 	finishCh := make(chan struct{})
 	select {
 	case s.updaterCh <- finishCh:

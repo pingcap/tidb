@@ -126,7 +126,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	m.mergeOp.Store(op)
 	defer m.mergeOp.Store(nil)
 
-	failpoint.Call(_curpkg_("mergeOverlappingFiles"), op)
+	failpoint.InjectCall("mergeOverlappingFiles", op)
 
 	err = external.MergeOverlappingFiles(
 		wctx,
@@ -135,9 +135,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		op,
 	)
 
-	if _, _err_ := failpoint.Eval(_curpkg_("mockMergeSortRunSubtaskError")); _err_ == nil {
+	failpoint.Inject("mockMergeSortRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
-	}
+	})
 	if err != nil {
 		currentIdx, _, err2 := getIndexInfoAndID(sm.EleIDs, m.indexes)
 		if err2 == nil {

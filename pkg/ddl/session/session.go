@@ -123,7 +123,7 @@ func (s *Session) RunInTxn(f func(*Session) error) (err error) {
 	if err != nil {
 		return err
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("NotifyBeginTxnCh")); _err_ == nil {
+	failpoint.Inject("NotifyBeginTxnCh", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		v := val.(int)
 		if v == 1 {
@@ -133,7 +133,7 @@ func (s *Session) RunInTxn(f func(*Session) error) (err error) {
 			<-TestNotifyBeginTxnCh
 			MockDDLOnce = 0
 		}
-	}
+	})
 
 	err = f(s)
 	if err != nil {

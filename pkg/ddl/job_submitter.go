@@ -84,7 +84,7 @@ func (s *JobSubmitter) submitLoop() {
 		// the channel is never closed
 		case jobW := <-ch:
 			jobWs = jobWs[:0]
-			failpoint.Call(_curpkg_("afterGetJobFromLimitCh"), ch)
+			failpoint.InjectCall("afterGetJobFromLimitCh", ch)
 			jobLen := len(ch)
 			jobWs = append(jobWs, jobW)
 			for range jobLen {
@@ -350,11 +350,11 @@ func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *
 	savedJobIDs := make([]int64, len(jobWs))
 	count := getRequiredGIDCount(jobWs)
 	return genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
-		if val, _err_ := failpoint.Eval(_curpkg_("mockGenGlobalIDFail")); _err_ == nil {
+		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
-				return errors.New("gofail genGlobalIDs error")
+				failpoint.Return(errors.New("gofail genGlobalIDs error"))
 			}
-		}
+		})
 		assignGIDsForJobs(jobWs, ids)
 		// job scheduler will start run them after txn commit, we want to make sure
 		// the channel exists before the jobs are submitted.
@@ -366,9 +366,9 @@ func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *
 			s.ddlJobDoneChMap.Store(jobW.ID, make(chan struct{}, 1))
 			savedJobIDs[i] = jobW.ID
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("mockGenGIDRetryableError")); _err_ == nil {
-			return kv.ErrTxnRetryable
-		}
+		failpoint.Inject("mockGenGIDRetryableError", func() {
+			failpoint.Return(kv.ErrTxnRetryable)
+		})
 		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
 	})
 }
@@ -548,7 +548,7 @@ func genGIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int,
 		if resErr != nil && kv.IsTxnRetryableError(resErr) {
 			logutil.DDLLogger().Warn("insert job meet retryable error", zap.Error(resErr))
 			kv.BackOff(i)
-			failpoint.Call(_curpkg_("onGenGIDRetry"))
+			failpoint.InjectCall("onGenGIDRetry")
 			continue
 		}
 		break
@@ -600,11 +600,11 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 }
 
 func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWrapper) error {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockAddBatchDDLJobsErr")); _err_ == nil {
+	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.Errorf("mockAddBatchDDLJobsErr")
+			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
 		}
-	}
+	})
 	if len(jobWs) == 0 {
 		return nil
 	}

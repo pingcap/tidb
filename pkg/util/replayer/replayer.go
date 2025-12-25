@@ -64,9 +64,9 @@ func GeneratePlanReplayerFileName(isCapture, isContinuesCapture, enableHistorica
 func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
-	if val, _err_ := failpoint.Eval(_curpkg_("InjectPlanReplayerFileNameTimeField")); _err_ == nil {
+	failpoint.Inject("InjectPlanReplayerFileNameTimeField", func(val failpoint.Value) {
 		time = int64(val.(int))
-	}
+	})
 	b := make([]byte, 16)
 	//nolint: gosec
 	_, err := rand.Read(b)

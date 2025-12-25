@@ -402,7 +402,7 @@ func (s *statsSyncLoad) handleOneItemTaskWithSCtx(sctx sessionctx.Context, task 
 			return nil
 		}
 	}
-	failpoint.Eval(_curpkg_("handleOneItemTaskPanic"))
+	failpoint.Inject("handleOneItemTaskPanic", nil)
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, isPkIsHandle, task.Item.FullLoad)
@@ -432,12 +432,12 @@ var errGetHistMeta = errors.New("fail to get hist meta")
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
 func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper, isPkIsHandle bool, fullLoad bool) (*statsWrapper, error) {
-	failpoint.Eval(_curpkg_("mockReadStatsForOnePanic"))
-	if val, _err_ := failpoint.Eval(_curpkg_("mockReadStatsForOneFail")); _err_ == nil {
+	failpoint.Inject("mockReadStatsForOnePanic", nil)
+	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, errors.New("gofail ReadStatsForOne error")
+			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
 		}
-	}
+	})
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)

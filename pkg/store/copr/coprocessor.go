@@ -117,9 +117,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 // BuildCopIterator builds the iterator without calling `open`.
 func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption) (*copIterator, kv.Response) {
 	eventCb := option.EventCb
-	if _, _err_ := failpoint.Eval(_curpkg_("DisablePaging")); _err_ == nil {
+	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
 		req.Paging.Enable = false
-	}
+	})
 	if req.StoreType == kv.TiDB {
 		// coprocessor on TiDB doesn't support paging
 		req.Paging.Enable = false
@@ -128,13 +128,13 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// coprocessor request but type is not DAG
 		req.Paging.Enable = false
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("checkKeyRangeSortedForPaging")); _err_ == nil {
+	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
 			if !req.KeyRanges.IsFullySorted() {
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
 		}
-	}
+	})
 	if !checkStoreBatchCopr(req) {
 		req.StoreBatchSize = 0
 	}
@@ -235,10 +235,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 
 	// issue56916 is about the cooldown of the runaway checker may block the SQL execution.
-	if _, _err_ := failpoint.Eval(_curpkg_("issue56916")); _err_ == nil {
+	failpoint.Inject("issue56916", func(_ failpoint.Value) {
 		it.concurrency = 1
 		it.smallTaskConcurrency = 0
-	}
+	})
 
 	// if the request is triggered cool down by the runaway checker, we need to adjust the concurrency, let the sql run slowly.
 	if req.RunawayChecker != nil && req.RunawayChecker.CheckAction() == rmpb.RunawayAction_CoolDown {
@@ -512,11 +512,11 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 
 	rangesPerTaskLimit := rangesPerTask
-	if val, _err_ := failpoint.Eval(_curpkg_("setRangesPerTask")); _err_ == nil {
+	failpoint.Inject("setRangesPerTask", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
 			rangesPerTaskLimit = v
 		}
-	}
+	})
 
 	// TODO(youjiali1995): is there any request type that needn't be split by buckets?
 	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
@@ -1016,12 +1016,12 @@ func triggerLiteWorkerFallbackHook() {
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
-		if val, _err_ := failpoint.Eval(_curpkg_("ticase-4169")); _err_ == nil {
+		failpoint.Inject("ticase-4169", func(val failpoint.Value) {
 			if val.(bool) {
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
 			}
-		}
+		})
 		worker.wg.Done()
 	}()
 	// 16KB ballast helps grow the stack to the requirement of copIteratorWorker.
@@ -1085,12 +1085,12 @@ func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint3
 		sendRate:    it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	if val, _err_ := failpoint.Eval(_curpkg_("ticase-4171")); _err_ == nil {
+	failpoint.Inject("ticase-4171", func(val failpoint.Value) {
 		if val.(bool) {
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
-	}
+	})
 	go taskSender.run(it.req.ConnID, it.req.RunawayChecker)
 }
 
@@ -1136,7 +1136,7 @@ func (sender *copIteratorTaskSender) run(connID uint64, checker resourcegroup.Ru
 			break
 		}
 		if connID > 0 {
-			failpoint.Eval(_curpkg_("pauseCopIterTaskSender"))
+			failpoint.Inject("pauseCopIterTaskSender", func() {})
 		}
 	}
 	close(sender.taskCh)
@@ -1178,13 +1178,13 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 func memTrackerConsumeResp(memTracker *memory.Tracker, resp *copResponse) {
 	if memTracker != nil && resp != nil {
 		consumed := resp.MemSize()
-		if val, _err_ := failpoint.Eval(_curpkg_("testRateLimitActionMockConsumeAndAssert")); _err_ == nil {
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
 				if resp != finCopResp {
 					consumed = MockResponseSizeForTest
 				}
 			}
-		}
+		})
 		memTracker.Consume(-consumed)
 	}
 }
@@ -1235,14 +1235,14 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 func (worker *copIteratorWorker) checkRespOOM(resp *copResponse) {
 	if worker.memTracker != nil {
 		consumed := resp.MemSize()
-		if val, _err_ := failpoint.Eval(_curpkg_("testRateLimitActionMockConsumeAndAssert")); _err_ == nil {
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
 				if resp != finCopResp {
 					consumed = MockResponseSizeForTest
 				}
 			}
-		}
-		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
+		})
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		worker.memTracker.Consume(consumed)
 	}
 }
@@ -1260,16 +1260,16 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	)
 	defer func() {
 		if resp == nil {
-			if val, _err_ := failpoint.Eval(_curpkg_("ticase-4170")); _err_ == nil {
+			failpoint.Inject("ticase-4170", func(val failpoint.Value) {
 				if val.(bool) {
 					it.memTracker.Consume(10 * MockResponseSizeForTest)
 					it.memTracker.Consume(10 * MockResponseSizeForTest)
 				}
-			}
+			})
 		}
 	}()
 	// wait unit at least 5 copResponse received.
-	if val, _err_ := failpoint.Eval(_curpkg_("testRateLimitActionMockWaitMax")); _err_ == nil {
+	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
 			// we only need to trigger oom at least once.
 			if len(it.tasks) > 9 {
@@ -1278,11 +1278,11 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				}
 			}
 		}
-	}
+	})
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 
-	failpoint.Call(_curpkg_("CtxCancelBeforeReceive"), ctx)
+	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	if it.liteWorker != nil {
 		resp = it.liteWorker.liteSendReq(ctx, it)
 		// after lite handle 1 task, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
@@ -1460,11 +1460,11 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 		return bo, nil
 	}
 	boMaxSleep := CopNextMaxBackoff
-	if value, _err_ := failpoint.Eval(_curpkg_("ReduceCopNextMaxBackoff")); _err_ == nil {
+	failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
 		if value.(bool) {
 			boMaxSleep = 2
 		}
-	}
+	})
 	var cancel context.CancelFunc
 	boCtx := ctx
 	if worker.req.MaxExecutionTime > 0 {
@@ -1531,11 +1531,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*copTaskResult, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("handleTaskOnceError")); _err_ == nil {
+	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, errors.New("mock handleTaskOnce error")
+			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
 		}
-	}
+	})
 
 	if task.paging {
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
@@ -1588,10 +1588,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	if task.tikvClientReadTimeout > 0 {
 		timeout = time.Duration(task.tikvClientReadTimeout) * time.Millisecond
 	}
-	if v, _err_ := failpoint.Eval(_curpkg_("sleepCoprRequest")); _err_ == nil {
+	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
 		//nolint:durationcheck
 		time.Sleep(time.Millisecond * time.Duration(v.(int)))
-	}
+	})
 
 	if worker.req.RunawayChecker != nil {
 		if runawayErr := worker.req.RunawayChecker.BeforeCopRequest(req); runawayErr != nil {
@@ -1621,7 +1621,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
 
-	failpoint.Call(_curpkg_("onBeforeSendReqCtx"), req)
+	failpoint.InjectCall("onBeforeSendReqCtx", req)
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
 		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
@@ -1921,9 +1921,9 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			},
 		}
 		task := batchedTask.task
-		if _, _err_ := failpoint.Eval(_curpkg_("batchCopRegionError")); _err_ == nil {
+		failpoint.Inject("batchCopRegionError", func() {
 			batchResp.RegionError = &errorpb.Error{}
-		}
+		})
 		if regionErr := getRegionError(bo.GetCtx(), batchResp); regionErr != nil {
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
@@ -2153,11 +2153,11 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 	if worker.stats == nil {
 		return nil
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("disable-collect-execution")); _err_ == nil {
+	failpoint.Inject("disable-collect-execution", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("shouldn't reachable")
 		}
-	}
+	})
 	if resp.detail == nil {
 		resp.detail = new(CopRuntimeStats)
 		resp.detail.ScanDetail = &util.ScanDetail{}
@@ -2418,13 +2418,13 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
-		if val, _err_ := failpoint.Eval(_curpkg_("testRateLimitActionMockConsumeAndAssert")); _err_ == nil {
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
 				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
 					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
 				}
 			}
-		}
+		})
 		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
@@ -2538,9 +2538,9 @@ func optRowHint(req *kv.Request) bool {
 		// disable extra concurrency for internal tasks.
 		return false
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("disableFixedRowCountHint")); _err_ == nil {
+	failpoint.Inject("disableFixedRowCountHint", func(_ failpoint.Value) {
 		opt = false
-	}
+	})
 	return opt
 }
 

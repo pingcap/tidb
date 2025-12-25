@@ -183,12 +183,12 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 			continue
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("mockAlterDDLJobCommitFailed")); _err_ == nil {
+		failpoint.Inject("mockAlterDDLJobCommitFailed", func(val failpoint.Value) {
 			if val.(bool) {
 				ns.Rollback()
-				return errors.New("mock commit failed on admin alter ddl jobs")
+				failpoint.Return(errors.New("mock commit failed on admin alter ddl jobs"))
 			}
-		}
+		})
 
 		if err = ns.Commit(ctx); err != nil {
 			ns.Rollback()

@@ -393,12 +393,12 @@ func (exec *Executor) Execute(
 				vars.BackOffWeight = exec.backoffWeight
 			}
 			resp, err = sendChecksumRequest(ctx, client, req, vars)
-			if val, _err_ := failpoint.Eval(_curpkg_("checksumRetryErr")); _err_ == nil {
+			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
 				// first time reach here. return error
 				if val.(bool) {
 					err = errors.New("inject checksum error")
 				}
-			}
+			})
 			if err != nil {
 				return errors.Trace(err)
 			}

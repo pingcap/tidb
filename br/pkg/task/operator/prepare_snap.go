@@ -166,9 +166,9 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	})
 	cx.run(func() error { return pauseAdminAndWaitApply(cx, initChan) })
 	go func() {
-		if _, _err_ := failpoint.Eval(_curpkg_("SkipReadyHint")); _err_ == nil {
-			return
-		}
+		failpoint.Inject("SkipReadyHint", func() {
+			failpoint.Return()
+		})
 		cx.rdGrp.Wait()
 		if cfg.OnAllReady != nil {
 			cfg.OnAllReady()

@@ -128,7 +128,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 		return 0, err
 	}
 	version := txn.StartTS()
-	failpoint.Call(_curpkg_("saveAnalyzeResultToStorage"))
+	failpoint.InjectCall("saveAnalyzeResultToStorage")
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.

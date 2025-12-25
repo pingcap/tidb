@@ -53,9 +53,9 @@ func (p *OptimisticTxnContextProvider) onTxnActive(
 ) {
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp, txn.IsPipelined())
-	if val, _err_ := failpoint.Eval(_curpkg_("injectOptimisticTxnRetryable")); _err_ == nil {
+	failpoint.Inject("injectOptimisticTxnRetryable", func(val failpoint.Value) {
 		sessVars.TxnCtx.CouldRetry = val.(bool)
-	}
+	})
 }
 
 // isOptimisticTxnRetryable (if returns true) means the transaction could retry.

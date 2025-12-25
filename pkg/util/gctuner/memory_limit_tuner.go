@@ -114,17 +114,17 @@ func (t *memoryLimitTuner) tuning() {
 				if intest.InTest {
 					resetInterval = 3 * time.Second
 				}
-				if val, _err_ := failpoint.Eval(_curpkg_("mockUpdateGlobalVarDuringAdjustPercentage")); _err_ == nil {
+				failpoint.Inject("mockUpdateGlobalVarDuringAdjustPercentage", func(val failpoint.Value) {
 					if val, ok := val.(bool); val && ok {
 						time.Sleep(300 * time.Millisecond)
 						t.UpdateMemoryLimit()
 					}
-				}
-				if val, _err_ := failpoint.Eval(_curpkg_("testMemoryLimitTuner")); _err_ == nil {
+				})
+				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {
 					if val, ok := val.(bool); val && ok {
 						resetInterval = 1 * time.Second
 					}
-				}
+				})
 				time.Sleep(resetInterval)
 				debug.SetMemoryLimit(t.calcMemoryLimit(t.GetPercentage()))
 				for !t.adjustPercentageInProgress.CompareAndSwap(true, false) {

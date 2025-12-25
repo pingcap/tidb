@@ -406,7 +406,7 @@ func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...kv.FlagsOp) {
 
 func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {
 	if lockCtx.MaxLockedWithConflictTS != 0 {
-		failpoint.Eval(_curpkg_("lockedWithConflictOccurs"))
+		failpoint.Inject("lockedWithConflictOccurs", func() {})
 		var bufTableID, bufRest bytes.Buffer
 		foundKey := false
 		for k, v := range lockCtx.Values {

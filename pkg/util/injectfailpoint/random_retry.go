@@ -30,9 +30,9 @@ func getFunctionName() string {
 
 // DXFRandomErrorWithOnePercent returns an error with probability 0.01. It controls the DXF's failpoint.
 func DXFRandomErrorWithOnePercent() error {
-	if _, _err_ := failpoint.Eval(_curpkg_("DXFRandomError")); _err_ == nil {
-		return RandomError(0.01, errors.Errorf("injected random error, caller: %s", getFunctionName()))
-	}
+	failpoint.Inject("DXFRandomError", func() {
+		failpoint.Return(RandomError(0.01, errors.Errorf("injected random error, caller: %s", getFunctionName())))
+	})
 	return nil
 }
 
@@ -41,31 +41,31 @@ func DXFRandomErrorWithOnePercentWrapper(err error) error {
 	if err != nil {
 		return err
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("DXFRandomError")); _err_ == nil {
-		return RandomError(0.01, errors.Errorf("injected random error, caller: %s", getFunctionName()))
-	}
+	failpoint.Inject("DXFRandomError", func() {
+		failpoint.Return(RandomError(0.01, errors.Errorf("injected random error, caller: %s", getFunctionName())))
+	})
 	return nil
 }
 
 // DXFRandomErrorWithOnePerThousand returns an error with probability 0.001. It controls the DXF's failpoint.
 func DXFRandomErrorWithOnePerThousand() error {
-	if _, _err_ := failpoint.Eval(_curpkg_("DXFRandomError")); _err_ == nil {
-		return RandomError(0.001, errors.Errorf("injected random error, caller: %s", getFunctionName()))
-	}
+	failpoint.Inject("DXFRandomError", func() {
+		failpoint.Return(RandomError(0.001, errors.Errorf("injected random error, caller: %s", getFunctionName())))
+	})
 	return nil
 }
 
 // RandomErrorForReadWithOnePerPercent returns a read error with probability 0.01. It controls the DXF's failpoint.
 func RandomErrorForReadWithOnePerPercent(n int, err error) (int, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("DXFRandomError")); _err_ == nil {
+	failpoint.Inject("DXFRandomError", func() {
 		if n == 0 || err != nil || rand.Float64() > 0.01 {
-			return n, err
+			failpoint.Return(n, err)
 		}
 		if rand.Float64() < 0.2 {
-			return 0, io.ErrUnexpectedEOF
+			failpoint.Return(0, io.ErrUnexpectedEOF)
 		}
-		return rand.Intn(n), io.ErrUnexpectedEOF
-	}
+		failpoint.Return(rand.Intn(n), io.ErrUnexpectedEOF)
+	})
 	return n, err
 }
 

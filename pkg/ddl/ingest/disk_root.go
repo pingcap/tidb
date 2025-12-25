@@ -155,9 +155,9 @@ func (d *diskRootImpl) usageInfo() string {
 
 // PreCheckUsage implements DiskRoot interface.
 func (d *diskRootImpl) PreCheckUsage() error {
-	if _, _err_ := failpoint.Eval(_curpkg_("mockIngestCheckEnvFailed")); _err_ == nil {
-		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock error")
-	}
+	failpoint.Inject("mockIngestCheckEnvFailed", func(_ failpoint.Value) {
+		failpoint.Return(dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock error"))
+	})
 	err := os.MkdirAll(d.path, 0700)
 	if err != nil {
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())

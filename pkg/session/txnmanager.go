@@ -109,12 +109,12 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 		return 0, err
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerForUpdateTSEqual")); _err_ == nil {
+	failpoint.Inject("assertTxnManagerForUpdateTSEqual", func() {
 		sessVars := m.sctx.GetSessionVars()
 		if txnCtxForUpdateTS := sessVars.TxnCtx.GetForUpdateTS(); sessVars.SnapshotTS == 0 && ts != txnCtxForUpdateTS {
 			panic(fmt.Sprintf("forUpdateTS not equal %d != %d", ts, txnCtxForUpdateTS))
 		}
-	}
+	})
 
 	return ts, nil
 }

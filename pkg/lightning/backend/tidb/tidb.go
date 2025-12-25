@@ -264,11 +264,12 @@ func (b *targetInfoGetter) FetchRemoteTableModels(
 						return err
 					}
 
-					if _, _err_ := failpoint.Eval(_curpkg_("FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")); _err_ == nil {
-
-						fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
-
-					}
+					failpoint.Inject(
+						"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
+						func() {
+							fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
+						},
+					)
 
 					// init auto id column for each table
 					for idx := start; idx <= tableIdx; idx++ {
@@ -949,9 +950,9 @@ stmtLoop:
 		}
 		// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("FailIfImportedSomeRows")); _err_ == nil {
+	failpoint.Inject("FailIfImportedSomeRows", func() {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
-	}
+	})
 	return nil
 }
 

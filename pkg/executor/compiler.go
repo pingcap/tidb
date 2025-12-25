@@ -83,14 +83,14 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		return nil, err
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInCompile")); _err_ == nil {
+	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(c.Ctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(c.Ctx, ret.InfoSchema)
 		if ret.LastSnapshotTS != 0 {
 			staleread.AssertStmtStaleness(c.Ctx, true)
 			sessiontxn.AssertTxnManagerReadTS(c.Ctx, ret.LastSnapshotTS)
 		}
-	}
+	})
 
 	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
 	sessVars := c.Ctx.GetSessionVars()
@@ -109,9 +109,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		return nil, err
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("assertStmtCtxIsStaleness")); _err_ == nil {
+	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {
 		staleread.AssertStmtStaleness(c.Ctx, val.(bool))
-	}
+	})
 
 	if preparedObj != nil {
 		CountStmtNode(ctx, preparedObj.PreparedAst.Stmt, preparedObj.ResolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)

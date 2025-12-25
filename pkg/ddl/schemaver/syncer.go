@@ -257,12 +257,12 @@ func (s *etcdSyncer) storeSession(session *concurrency.Session) {
 
 // Done implements Syncer.Done interface.
 func (s *etcdSyncer) Done() <-chan struct{} {
-	if val, _err_ := failpoint.Eval(_curpkg_("ErrorMockSessionDone")); _err_ == nil {
+	failpoint.Inject("ErrorMockSessionDone", func(val failpoint.Value) {
 		if val.(bool) {
 			err := s.loadSession().Close()
 			logutil.DDLLogger().Error("close session failed", zap.Error(err))
 		}
-	}
+	})
 
 	return s.loadSession().Done()
 }
@@ -533,9 +533,9 @@ func (s *etcdSyncer) syncJobSchemaVer(ctx context.Context) {
 				return
 			}
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("mockCompaction")); _err_ == nil {
+		failpoint.Inject("mockCompaction", func() {
 			wresp.CompactRevision = 123
-		}
+		})
 		if err := wresp.Err(); err != nil {
 			logutil.DDLLogger().Warn("watch job version failed", zap.Error(err))
 			return

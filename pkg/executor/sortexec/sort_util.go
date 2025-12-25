@@ -66,34 +66,34 @@ type rowWithError struct {
 }
 
 func injectParallelSortRandomFail(triggerFactor int32) {
-	if val, _err_ := failpoint.Eval(_curpkg_("ParallelSortRandomFail")); _err_ == nil {
+	failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
 		if val.(bool) {
 			randNum := rand.Int31n(10000)
 			if randNum < triggerFactor {
 				panic("panic is triggered by random fail")
 			}
 		}
-	}
+	})
 }
 
 func injectErrorForIssue59655(triggerFactor int32) (err error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("Issue59655")); _err_ == nil {
+	failpoint.Inject("Issue59655", func(val failpoint.Value) {
 		if val.(bool) {
 			randNum := rand.Int31n(1000)
 			if randNum < triggerFactor {
 				err = errors.Errorf("issue 59655 error")
 			}
 		}
-	}
+	})
 	return
 }
 
 func injectPanicForIssue63216() {
-	if val, _err_ := failpoint.Eval(_curpkg_("Issue63216")); _err_ == nil {
+	failpoint.Inject("Issue63216", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("issue 63216 panic")
 		}
-	}
+	})
 }
 
 // It's used only when spill is triggered

@@ -66,9 +66,9 @@ func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	if p.Extractor != nil {
-		if _, _err_ := failpoint.Eval(_curpkg_("skipExtractor")); _err_ == nil {
-			return predicates, p.Self(), nil
-		}
+		failpoint.Inject("skipExtractor", func(_ failpoint.Value) {
+			failpoint.Return(predicates, p.Self(), nil)
+		})
 		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
 	}
 	return predicates, p.Self(), nil

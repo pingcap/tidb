@@ -111,7 +111,7 @@ func (m *Manager) GetOrCreate(
 
 	startTime := time.Now()
 	getStoreFn := getOrCreateStore
-	failpoint.Call(_curpkg_("beforeGetStore"), &getStoreFn)
+	failpoint.InjectCall("beforeGetStore", &getStoreFn)
 	var store kv.Storage
 	store, err = getStoreFn(ks)
 	if err != nil {
@@ -155,7 +155,7 @@ func (m *Manager) GetOrCreate(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	failpoint.Call(_curpkg_("injectETCDCli"), &etcdCli, ks)
+	failpoint.InjectCall("injectETCDCli", &etcdCli, ks)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
 		if err != nil {
@@ -318,7 +318,7 @@ func (m *SessionManager) close() {
 	}
 	// lifecycle of SYSTEM store is managed outside, skip close.
 	needCloseStore := ks != keyspace.System
-	failpoint.Call(_curpkg_("skipCloseStore"), &needCloseStore)
+	failpoint.InjectCall("skipCloseStore", &needCloseStore)
 	if needCloseStore {
 		if err := m.store.Close(); err != nil {
 			logger.Warn("failed to close store", zap.Error(err))

@@ -705,11 +705,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutorV2.Open(ctx); err != nil {
 		return err
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("mockSelectionExecBaseExecutorOpenReturnedError")); _err_ == nil {
+	failpoint.Inject("mockSelectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.New("mock SelectionExec.baseExecutor.Open returned error")
+			failpoint.Return(errors.New("mock SelectionExec.baseExecutor.Open returned error"))
 		}
-	}
+	})
 	return e.open(ctx)
 }
 

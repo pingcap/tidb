@@ -212,10 +212,10 @@ func (manager *onlinePlacementRuleManager) checkRange(ctx context.Context, start
 func (manager *onlinePlacementRuleManager) waitPlacementSchedule(ctx context.Context) error {
 	log.Info("start waiting placement schedule")
 	ticker := time.NewTicker(time.Second * 10)
-	if _, _err_ := failpoint.Eval(_curpkg_("wait-placement-schedule-quicker-ticker")); _err_ == nil {
+	failpoint.Inject("wait-placement-schedule-quicker-ticker", func() {
 		ticker.Stop()
 		ticker = time.NewTicker(time.Millisecond * 500)
-	}
+	})
 	defer ticker.Stop()
 	for {
 		select {

@@ -361,11 +361,11 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 
 	err := utils.WithRetry(ctx, func() error {
 		startTS, getTSErr = GetTS(ctx, pdClient)
-		if val, _err_ := failpoint.Eval(_curpkg_("get-ts-error")); _err_ == nil {
+		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
 			if val.(bool) && retry < 3 {
 				getTSErr = errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
 			}
-		}
+		})
 
 		retry++
 		if getTSErr != nil {

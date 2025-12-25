@@ -666,9 +666,9 @@ func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 	r, ctx := tracing.StartRegionEx(ctx, "isolation.newOracleFuture")
 	defer r.End()
 
-	if _, _err_ := failpoint.Eval(_curpkg_("requestTsoFromPD")); _err_ == nil {
+	failpoint.Inject("requestTsoFromPD", func() {
 		sessiontxn.TsoRequestCountInc(sctx)
-	}
+	})
 
 	oracleStore := sctx.GetStore().GetOracle()
 	option := &oracle.Option{TxnScope: scope}

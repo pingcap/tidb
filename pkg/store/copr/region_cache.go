@@ -689,11 +689,11 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 
 	res := make([]*LocationKeyRanges, 0, len(locs))
 	for ; locIdx < len(locs); locIdx++ {
-		if val, _err_ := failpoint.Eval(_curpkg_("panicInSplitKeyRangesByBuckets")); _err_ == nil {
+		failpoint.Inject("panicInSplitKeyRangesByBuckets", func(val failpoint.Value) {
 			if val.(int) == locIdx {
 				panic("failpoint triggered panic in bucket splitting")
 			}
-		}
+		})
 		res = append(res, locs[locIdx].splitKeyRangesByBuckets(ctx)...)
 	}
 	return res, nil

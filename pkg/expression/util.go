@@ -1654,9 +1654,9 @@ func jsonUnquoteFunctionBenefitsFromPushedDown(sf *ScalarFunction) bool {
 // Note: virtual column is not considered here, since this function cares performance instead of functionality
 func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bool {
 	// In debug usage, we need to force push down projections to tikv to check tikv expression behavior.
-	if _, _err_ := failpoint.Eval(_curpkg_("forcePushDownTiKV")); _err_ == nil {
-		return true
-	}
+	failpoint.Inject("forcePushDownTiKV", func() {
+		failpoint.Return(true)
+	})
 	allColRef := true
 	colRefCount := 0
 	for _, expr := range exprs {
@@ -1982,9 +1982,9 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec exprop
 	// In some unit test environments it's unable to retrieve global info, and this function blocks it for tens of
 	// seconds, which wastes much time during unit test. In this case, enable this failpoint to bypass retrieving
 	// globally.
-	if _, _err_ := failpoint.Eval(_curpkg_("sqlDigestRetrieverSkipRetrieveGlobal")); _err_ == nil {
-		return nil
-	}
+	failpoint.Inject("sqlDigestRetrieverSkipRetrieveGlobal", func() {
+		failpoint.Return(nil)
+	})
 
 	var unknownDigests []any
 	for k, v := range r.SQLDigestsMap {

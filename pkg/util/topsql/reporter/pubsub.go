@@ -142,7 +142,7 @@ func (ds *pubSubDataSink) run() error {
 				return ctx.Err()
 			}
 
-			failpoint.Eval(_curpkg_("mockGrpcLogPanic"))
+			failpoint.Inject("mockGrpcLogPanic", nil)
 			if err := context.Cause(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				logutil.BgLogger().Warn(
 					"[top-sql] pubsub datasink failed to send data to subscriber",

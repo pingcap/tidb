@@ -125,7 +125,7 @@ func doSendBackup(
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
-	if v, _err_ := failpoint.Eval(_curpkg_("hint-backup-start")); _err_ == nil {
+	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
 		if sigFile, ok := v.(string); ok {
@@ -138,7 +138,7 @@ func doSendBackup(
 			}
 		}
 		time.Sleep(3 * time.Second)
-	}
+	})
 	reqStartKey, reqEndKey := req.StartKey, req.EndKey
 	// Note: BR can set ranges into req.StartKey/req.EndKey, req.SubRanges or req.SortedSubRangesGroups.
 	// TODO: reqRangeSize += len(req.SortedSubRangesGroups) if the feature merged SST files is implemented.
@@ -149,7 +149,7 @@ func doSendBackup(
 	// Note: derefer req here to let req.SubRanges be released as soon as possible.
 	// That's because in the backup main loop, the sub ranges is generated every about 15 seconds,
 	// which may accumulate a large number of incomplete ranges.
-	if val, _err_ := failpoint.Eval(_curpkg_("reset-retryable-error")); _err_ == nil {
+	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
 		switch val.(string) {
 		case "Unavailable":
 			{
@@ -162,13 +162,13 @@ func doSendBackup(
 				err = status.Error(codes.Internal, "Internal error")
 			}
 		}
-	}
-	if val, _err_ := failpoint.Eval(_curpkg_("reset-not-retryable-error")); _err_ == nil {
+	})
+	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.CL(ctx).Debug("failpoint reset-not-retryable-error injected.")
 			err = status.Error(codes.Unknown, "Your server was haunted hence doesn't work, meow :3")
 		}
-	}
+	})
 	if err != nil {
 		return err
 	}
@@ -240,28 +240,28 @@ func startBackup(
 					}
 					return doSendBackup(ectx, backupCli, limiter, bkReq, func(resp *backuppb.BackupResponse) error {
 						// Forward all responses (including error).
-						if val, _err_ := failpoint.Eval(_curpkg_("backup-timeout-error")); _err_ == nil {
+						failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
 							msg := val.(string)
 							logutil.CL(ectx).Info("failpoint backup-timeout-error injected.", zap.String("msg", msg))
 							resp.Error = &backuppb.Error{
 								Msg: msg,
 							}
-						}
-						if val, _err_ := failpoint.Eval(_curpkg_("backup-storage-error")); _err_ == nil {
+						})
+						failpoint.Inject("backup-storage-error", func(val failpoint.Value) {
 							msg := val.(string)
 							logutil.CL(ectx).Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))
 							resp.Error = &backuppb.Error{
 								Msg: msg,
 							}
-						}
-						if val, _err_ := failpoint.Eval(_curpkg_("tikv-rw-error")); _err_ == nil {
+						})
+						failpoint.Inject("tikv-rw-error", func(val failpoint.Value) {
 							msg := val.(string)
 							logutil.CL(ectx).Debug("failpoint tikv-rw-error injected.", zap.String("msg", msg))
 							resp.Error = &backuppb.Error{
 								Msg: msg,
 							}
-						}
-						if val, _err_ := failpoint.Eval(_curpkg_("tikv-region-error")); _err_ == nil {
+						})
+						failpoint.Inject("tikv-region-error", func(val failpoint.Value) {
 							msg := val.(string)
 							logutil.CL(ectx).Debug("failpoint tikv-region-error injected.", zap.String("msg", msg))
 							resp.Error = &backuppb.Error{
@@ -272,7 +272,7 @@ func startBackup(
 									},
 								},
 							}
-						}
+						})
 						select {
 						case <-ectx.Done():
 							return ectx.Err()
@@ -319,12 +319,12 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 			logutil.CL(ctx).Warn("failed to watch store changes at beginning, ignore it", zap.Error(err))
 		}
 		tickInterval := 30 * time.Second
-		if val, _err_ := failpoint.Eval(_curpkg_("backup-store-change-tick")); _err_ == nil {
+		failpoint.Inject("backup-store-change-tick", func(val failpoint.Value) {
 			if val.(bool) {
 				tickInterval = 100 * time.Millisecond
 			}
 			logutil.CL(ctx).Info("failpoint backup-store-change-tick injected.", zap.Duration("interval", tickInterval))
-		}
+		})
 		tick := time.NewTicker(tickInterval)
 		for {
 			select {

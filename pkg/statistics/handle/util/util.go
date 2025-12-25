@@ -226,9 +226,9 @@ func ExecWithCtx(
 
 // ExecRows is a helper function to execute sql and return rows and fields.
 func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("ExecRowsTimeout")); _err_ == nil {
-		return nil, nil, errors.New("inject timeout error")
-	}
+	failpoint.Inject("ExecRowsTimeout", func() {
+		failpoint.Return(nil, nil, errors.New("inject timeout error"))
+	})
 	return ExecRowsWithCtx(StatsCtx, sctx, sql, args...)
 }
 

@@ -94,11 +94,11 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 	// the duration validation would always evaluate to true, which is not the intended behavior.
 	isLoadIntervalExceeded := s.statsHandler.Lease() > 0 && dur >= cache.LeaseOffset*s.statsHandler.Lease()
 	// Use failpoint to simulate slow saving.
-	if val, _err_ := failpoint.Eval(_curpkg_("slowStatsSaving")); _err_ == nil {
+	failpoint.Inject("slowStatsSaving", func(val failpoint.Value) {
 		if val.(bool) {
 			isLoadIntervalExceeded = true
 		}
-	}
+	})
 
 	if !isLoadIntervalExceeded {
 		return 0, nil
@@ -113,11 +113,11 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 	statsVer := uint64(0)
 	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, tableID)
-		if val, _err_ := failpoint.Eval(_curpkg_("failToSaveStats")); _err_ == nil {
+		failpoint.Inject("failToSaveStats", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("mock update stats meta version failed")
 			}
-		}
+		})
 		if err != nil {
 			return errors.Trace(err)
 		}

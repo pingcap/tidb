@@ -64,11 +64,11 @@ func (e *importMinimalTaskExecutor) Run(
 	collector execute.Collector,
 ) error {
 	logger := e.mTtask.logger
-	failpoint.Eval(_curpkg_("beforeSortChunk"))
-	if _, _err_ := failpoint.Eval(_curpkg_("errorWhenSortChunk")); _err_ == nil {
-		return errors.New("occur an error when sort chunk")
-	}
-	failpoint.Call(_curpkg_("syncBeforeSortChunk"))
+	failpoint.Inject("beforeSortChunk", func() {})
+	failpoint.Inject("errorWhenSortChunk", func() {
+		failpoint.Return(errors.New("occur an error when sort chunk"))
+	})
+	failpoint.InjectCall("syncBeforeSortChunk")
 	sharedVars := e.mTtask.SharedVars
 
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
@@ -113,7 +113,7 @@ func (e *importMinimalTaskExecutor) Run(
 
 // postProcess does the post-processing for the task.
 func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.Call(_curpkg_("syncBeforePostProcess"), p.taskMeta.JobID)
+	failpoint.InjectCall("syncBeforePostProcess", p.taskMeta.JobID)
 
 	callLog := log.BeginTask(logger, "post process")
 	defer func() {
@@ -173,9 +173,9 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 			},
 		)
 		if kerneltype.IsClassic() {
-			if _, _err_ := failpoint.Eval(_curpkg_("skipPostProcessAlterTableMode")); _err_ == nil {
-				return err
-			}
+			failpoint.Inject("skipPostProcessAlterTableMode", func() {
+				failpoint.Return(err)
+			})
 			// log error instead of raise error to avoid user rerun task,
 			// clean up will alter table mode to normal finally.
 			err2 := ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)

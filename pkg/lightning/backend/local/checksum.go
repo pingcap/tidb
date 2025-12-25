@@ -249,7 +249,7 @@ func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql
 		}
 	}
 
-	failpoint.Eval(_curpkg_("IncreaseGCUpdateDuration"))
+	failpoint.Inject("IncreaseGCUpdateDuration", nil)
 
 	return nil
 }

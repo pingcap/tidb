@@ -565,8 +565,8 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 }
 
 func injectMutationError(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle) error {
-	if commands, _err_ := failpoint.Eval(_curpkg_("corruptMutations")); _err_ == nil {
-		return corruptMutations(t, txn, sh, commands.(string))
-	}
+	failpoint.Inject("corruptMutations", func(commands failpoint.Value) {
+		failpoint.Return(corruptMutations(t, txn, sh, commands.(string)))
+	})
 	return nil
 }
