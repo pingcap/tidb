@@ -75,11 +75,8 @@ var (
 	// GetRowCountByIndexRanges is a function type to get row count by index ranges.
 	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range, idxCol []*expression.Column) (result RowEstimate, err error)
 
-	// GetRowCountByIntColumnRanges is a function type to get row count by int column ranges.
-	GetRowCountByIntColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result RowEstimate, err error)
-
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
-	GetRowCountByColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, colRanges []*ranger.Range) (result RowEstimate, err error)
+	GetRowCountByColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, colRanges []*ranger.Range, pkIsHandle bool) (result RowEstimate, err error)
 )
 
 // Table represents statistics for a table.
@@ -1131,7 +1128,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 // If not, it will return false and set the version to the tbl's.
 // We use this check to make sure all the statistics of the table are in the same version.
 func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
-	if tbl.StatsVer != Version0 && tbl.StatsVer != *version {
+	if IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != *version {
 		*version = tbl.StatsVer
 		return false
 	}

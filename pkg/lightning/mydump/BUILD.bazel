@@ -37,6 +37,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/filter",
         "//pkg/util/logutil",
+        "//pkg/util/mathutil",
         "//pkg/util/regexpr-router",
         "//pkg/util/set",
         "//pkg/util/sqlescape",

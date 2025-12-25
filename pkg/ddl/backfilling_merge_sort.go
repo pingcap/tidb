@@ -41,6 +41,7 @@ import (
 
 type mergeSortExecutor struct {
 	taskexecutor.BaseStepExecutor
+	task          *proto.TaskBase
 	store         kv.Storage
 	jobID         int64
 	indexes       []*model.IndexInfo
@@ -55,6 +56,7 @@ type mergeSortExecutor struct {
 }
 
 func newMergeSortExecutor(
+	task *proto.TaskBase,
 	store kv.Storage,
 	jobID int64,
 	indexes []*model.IndexInfo,
@@ -62,6 +64,7 @@ func newMergeSortExecutor(
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
+		task:          task,
 		store:         store,
 		jobID:         jobID,
 		indexes:       indexes,
@@ -128,7 +131,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	err = external.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		subtask.Concurrency, // the concurrency used to split subtask
+		m.task.RequiredSlots, // the concurrency used to split subtask
 		op,
 	)
 

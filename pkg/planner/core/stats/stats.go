@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -64,24 +63,8 @@ func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	if dom != nil {
 		statsHandle = dom.StatsHandle()
 	}
-	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
+	var pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
-	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ctx)
-		defer func() {
-			debugTraceGetStatsTbl(ctx,
-				tblInfo,
-				pid,
-				statsHandle == nil,
-				usePartitionStats,
-				countIs0,
-				pseudoStatsForUninitialized,
-				pseudoStatsForOutdated,
-				statsTbl,
-			)
-			debugtrace.LeaveContextCommon(ctx)
-		}()
-	}
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
 		return statistics.PseudoTable(tblInfo, false, true)
@@ -90,7 +73,6 @@ func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
-		usePartitionStats = true
 		statsTbl = statsHandle.GetPhysicalTableStats(pid, tblInfo)
 	}
 	intest.Assert(statsTbl.ColAndIdxExistenceMap != nil, "The existence checking map must not be nil.")
@@ -121,7 +103,6 @@ func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.RealtimeCount == 0 {
-		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
 		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading, true)
 	}

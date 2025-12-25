@@ -36,7 +36,7 @@ func TestSlotManagerReserveNextGen(t *testing.T) {
 	// no node
 	// this case will return false in classic kernel, but in nextgen kernel, we
 	// will not reserve slots, and always return true.
-	nodeID, ok := sm.canReserve(&proto.TaskBase{Concurrency: 1})
+	nodeID, ok := sm.canReserve(&proto.TaskBase{RequiredSlots: 1})
 	require.True(t, ok)
 	require.Equal(t, "", nodeID)
 }
@@ -48,7 +48,7 @@ func TestSlotManagerReserve(t *testing.T) {
 	sm := newSlotManager()
 	sm.updateCapacity(16)
 	// no node
-	_, ok := sm.canReserve(&proto.TaskBase{Concurrency: 1})
+	_, ok := sm.canReserve(&proto.TaskBase{RequiredSlots: 1})
 	require.False(t, ok)
 
 	// reserve by stripes
@@ -56,13 +56,13 @@ func TestSlotManagerReserve(t *testing.T) {
 		"tidb-1": 16,
 	})
 	task := proto.TaskBase{
-		Priority:    proto.NormalPriority,
-		Concurrency: 16,
-		CreateTime:  time.Now(),
+		Priority:      proto.NormalPriority,
+		RequiredSlots: 16,
+		CreateTime:    time.Now(),
 	}
 	task10 := task
 	task10.ID = 10
-	task10.Concurrency = 4
+	task10.RequiredSlots = 4
 	execID10, ok := sm.canReserve(&task10)
 	require.Equal(t, "", execID10)
 	require.True(t, ok)
@@ -70,7 +70,7 @@ func TestSlotManagerReserve(t *testing.T) {
 
 	task20 := task
 	task20.ID = 20
-	task20.Concurrency = 8
+	task20.RequiredSlots = 8
 	execID20, ok := sm.canReserve(&task20)
 	require.Equal(t, "", execID20)
 	require.True(t, ok)
@@ -78,7 +78,7 @@ func TestSlotManagerReserve(t *testing.T) {
 
 	task30 := task
 	task30.ID = 30
-	task30.Concurrency = 8
+	task30.RequiredSlots = 8
 	execID30, ok := sm.canReserve(&task30)
 	require.Equal(t, "", execID30)
 	require.False(t, ok)
@@ -90,7 +90,7 @@ func TestSlotManagerReserve(t *testing.T) {
 	// high ranking task can preempt lower rank task
 	task9 := task
 	task9.ID = 9
-	task9.Concurrency = 16
+	task9.RequiredSlots = 16
 	_, ok = sm.canReserve(&task9)
 	require.True(t, ok)
 	// 4 slots are reserved for high ranking tasks, so cannot reserve.
@@ -98,8 +98,8 @@ func TestSlotManagerReserve(t *testing.T) {
 	task11.ID = 11
 	_, ok = sm.canReserve(&task11)
 	require.False(t, ok)
-	// lower concurrency
-	task11.Concurrency = 12
+	// lower required slots
+	task11.RequiredSlots = 12
 	_, ok = sm.canReserve(&task11)
 	require.True(t, ok)
 
@@ -110,11 +110,11 @@ func TestSlotManagerReserve(t *testing.T) {
 	})
 	task40 := task
 	task40.ID = 40
-	task40.Concurrency = 16
+	task40.RequiredSlots = 16
 	execID40, ok := sm.canReserve(&task40)
 	require.Equal(t, "", execID40)
 	require.False(t, ok)
-	task40.Concurrency = 8
+	task40.RequiredSlots = 8
 	execID40, ok = sm.canReserve(&task40)
 	require.Equal(t, "tidb-2", execID40)
 	require.True(t, ok)
@@ -128,7 +128,7 @@ func TestSlotManagerReserve(t *testing.T) {
 	// high ranking task stop task 15 to run
 	task15 := task
 	task15.ID = 15
-	task15.Concurrency = 16
+	task15.RequiredSlots = 16
 	execID15, ok := sm.canReserve(&task15)
 	require.Equal(t, "", execID15)
 	require.False(t, ok)
@@ -153,7 +153,7 @@ func TestSlotManagerReserve(t *testing.T) {
 	// task 50 cannot run
 	task50 := task
 	task50.ID = 50
-	task50.Concurrency = 8
+	task50.RequiredSlots = 8
 	_, ok = sm.canReserve(&task50)
 	require.False(t, ok)
 	// finish task 40
@@ -171,7 +171,7 @@ func TestSlotManagerReserve(t *testing.T) {
 	// task 60 can run too
 	task60 := task
 	task60.ID = 60
-	task60.Concurrency = 4
+	task60.RequiredSlots = 4
 	execID60, ok := sm.canReserve(&task60)
 	require.Equal(t, "tidb-1", execID60)
 	require.True(t, ok)
