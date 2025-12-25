@@ -23,11 +23,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -164,6 +164,7 @@ func (*NoopCheckpointManager) Close() error { return nil }
 // FileCheckpointManager implements CheckpointManager using a local file.
 type FileCheckpointManager struct {
 	filePath    string
+	storage     *storage.LocalStorage
 	checkpoints map[string]*TableCheckpoint
 	mu          sync.RWMutex
 }
@@ -177,15 +178,19 @@ func NewFileCheckpointManager(filePath string) *FileCheckpointManager {
 }
 
 // Initialize loads checkpoints from the backing file.
-func (m *FileCheckpointManager) Initialize(_ context.Context) error {
+func (m *FileCheckpointManager) Initialize(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if err := EnsureCheckpointDir(m.filePath); err != nil {
+	dir := filepath.Dir(m.filePath)
+	st, err := storage.NewLocalStorage(dir)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	m.storage = st
+	m.storage.IgnoreEnoentForDelete = true
 
-	content, err := os.ReadFile(m.filePath)
+	content, err := m.storage.ReadFile(ctx, filepath.Base(m.filePath))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -217,25 +222,25 @@ func (m *FileCheckpointManager) Get(dbName, tableName string) (*TableCheckpoint,
 }
 
 // Update upserts a checkpoint entry in memory before persisting it to disk.
-func (m *FileCheckpointManager) Update(_ context.Context, cp *TableCheckpoint) error {
+func (m *FileCheckpointManager) Update(ctx context.Context, cp *TableCheckpoint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	key := common.UniqueTable(cp.DBName, cp.TableName)
 	m.checkpoints[key] = cp
 
-	return m.save()
+	return m.save(ctx)
 }
 
 // Remove deletes checkpoints for specific tables or all tables.
-func (m *FileCheckpointManager) Remove(_ context.Context, dbName, tableName string) error {
+func (m *FileCheckpointManager) Remove(ctx context.Context, dbName, tableName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if tableName == "all" {
+	if tableName == common.AllTables {
 		m.checkpoints = make(map[string]*TableCheckpoint)
 		// remove file
-		if err := os.Remove(m.filePath); err != nil && !os.IsNotExist(err) {
+		if err := m.storage.DeleteFile(ctx, filepath.Base(m.filePath)); err != nil {
 			return errors.Trace(err)
 		}
 		return nil
@@ -243,15 +248,15 @@ func (m *FileCheckpointManager) Remove(_ context.Context, dbName, tableName stri
 
 	key := common.UniqueTable(dbName, tableName)
 	delete(m.checkpoints, key)
-	return m.save()
+	return m.save(ctx)
 }
 
 // IgnoreError resets failed checkpoints back to the pending state.
-func (m *FileCheckpointManager) IgnoreError(_ context.Context, dbName, tableName string) error {
+func (m *FileCheckpointManager) IgnoreError(ctx context.Context, dbName, tableName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if tableName == "all" {
+	if tableName == common.AllTables {
 		for _, cp := range m.checkpoints {
 			if cp.Status == CheckpointStatusFailed {
 				cp.Status = CheckpointStatusPending
@@ -267,16 +272,16 @@ func (m *FileCheckpointManager) IgnoreError(_ context.Context, dbName, tableName
 			cp.JobID = 0
 		}
 	}
-	return m.save()
+	return m.save(ctx)
 }
 
 // DestroyError removes failed checkpoints entirely.
-func (m *FileCheckpointManager) DestroyError(_ context.Context, dbName, tableName string) ([]*TableCheckpoint, error) {
+func (m *FileCheckpointManager) DestroyError(ctx context.Context, dbName, tableName string) ([]*TableCheckpoint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var destroyed []*TableCheckpoint
-	if tableName == "all" {
+	if tableName == common.AllTables {
 		for key, cp := range m.checkpoints {
 			if cp.Status == CheckpointStatusFailed {
 				destroyed = append(destroyed, cp)
@@ -290,7 +295,7 @@ func (m *FileCheckpointManager) DestroyError(_ context.Context, dbName, tableNam
 			delete(m.checkpoints, key)
 		}
 	}
-	if err := m.save(); err != nil {
+	if err := m.save(ctx); err != nil {
 		return nil, err
 	}
 	return destroyed, nil
@@ -302,7 +307,6 @@ func (m *FileCheckpointManager) DumpTables(_ context.Context, writer io.Writer) 
 	defer m.mu.RUnlock()
 
 	w := csv.NewWriter(writer)
-	defer w.Flush()
 
 	// Write header
 	if err := w.Write([]string{"db_name", "table_name", "job_id", "status", "message", "group_key"}); err != nil {
@@ -322,7 +326,8 @@ func (m *FileCheckpointManager) DumpTables(_ context.Context, writer io.Writer) 
 			return errors.Trace(err)
 		}
 	}
-	return nil
+	w.Flush()
+	return errors.Trace(w.Error())
 }
 
 // DumpEngines is a stub implementation for interface compatibility.
@@ -347,18 +352,13 @@ func (m *FileCheckpointManager) GetCheckpoints(_ context.Context) ([]*TableCheck
 	return cps, nil
 }
 
-func (m *FileCheckpointManager) save() error {
+func (m *FileCheckpointManager) save(ctx context.Context) error {
 	content, err := json.MarshalIndent(m.checkpoints, "", "  ")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// Atomic write
-	tempFile := m.filePath + ".tmp"
-	if err := os.WriteFile(tempFile, content, 0644); err != nil {
-		return errors.Trace(err)
-	}
-	return os.Rename(tempFile, m.filePath)
+	return m.storage.WriteFile(ctx, filepath.Base(m.filePath), content)
 }
 
 // Close closes the checkpoint manager; it is a no-op for file checkpoints.
@@ -452,7 +452,7 @@ func (m *MySQLCheckpointManager) Update(ctx context.Context, cp *TableCheckpoint
 
 // Remove deletes checkpoints for one table or all tables.
 func (m *MySQLCheckpointManager) Remove(ctx context.Context, dbName, tableName string) error {
-	if tableName == "all" {
+	if tableName == common.AllTables {
 		query := fmt.Sprintf("DELETE FROM %s.%s", common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 		_, err := m.db.ExecContext(ctx, query)
 		return errors.Trace(err)
@@ -465,7 +465,7 @@ func (m *MySQLCheckpointManager) Remove(ctx context.Context, dbName, tableName s
 
 // IgnoreError resets failed checkpoints back to pending.
 func (m *MySQLCheckpointManager) IgnoreError(ctx context.Context, dbName, tableName string) error {
-	if tableName == "all" {
+	if tableName == common.AllTables {
 		query := fmt.Sprintf("UPDATE %s.%s SET status = ?, message = '', job_id = 0 WHERE status = ?",
 			common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 		_, err := m.db.ExecContext(ctx, query, CheckpointStatusPending, CheckpointStatusFailed)
@@ -484,7 +484,7 @@ func (m *MySQLCheckpointManager) DestroyError(ctx context.Context, dbName, table
 		deleteQuery string
 		args        []any
 	)
-	if tableName == "all" {
+	if tableName == common.AllTables {
 		selectQuery = fmt.Sprintf("SELECT db_name, table_name, job_id, status, message, group_key FROM %s.%s WHERE status = ?",
 			common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 		deleteQuery = fmt.Sprintf("DELETE FROM %s.%s WHERE status = ?",
@@ -588,35 +588,4 @@ func (m *MySQLCheckpointManager) GetCheckpoints(ctx context.Context) ([]*TableCh
 // Close releases the underlying MySQL connection.
 func (m *MySQLCheckpointManager) Close() error {
 	return m.db.Close()
-}
-
-// EnsureCheckpointDir creates the parent directory for a checkpoint file if needed.
-func EnsureCheckpointDir(filePath string) error {
-	dir := filepath.Dir(filePath)
-	return os.MkdirAll(dir, 0o750)
-}
-
-// ParseTable parses a table name in the format of "db.table" or "`db`.`table`".
-func ParseTable(tableName string) (dbName, tbl string, err error) {
-	if tableName == "all" {
-		return "", "all", nil
-	}
-
-	// Handle `db`.`table`
-	if strings.HasPrefix(tableName, "`") && strings.HasSuffix(tableName, "`") {
-		idx := strings.Index(tableName, "`.`")
-		if idx != -1 {
-			db := tableName[1:idx]
-			tbl := tableName[idx+3 : len(tableName)-1]
-			return db, tbl, nil
-		}
-	}
-
-	// Handle db.table
-	parts := strings.Split(tableName, ".")
-	if len(parts) == 2 {
-		return parts[0], parts[1], nil
-	}
-
-	return "", "", errors.Errorf("invalid table name %s, must be in format 'db.table' or '`db`.`table`'", tableName)
 }
