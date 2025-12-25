@@ -248,4 +248,4 @@ insert into t_fallback values (1, 'test ');
 alter table t_fallback modify column b char(100);
 admin show ddl jobs 1 where table_name='t_fallback' and job_type='modify column';
 JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS
-<job_id>	executor__admin	t_fallback	modify column	public	<schema_id>	<table_id>	1	<create_time>	<start_time>	<end_time>	synced	need reorg, max_node_count=3
+<job_id>	executor__admin	t_fallback	modify column	public	<schema_id>	<table_id>	1	<create_time>	<start_time>	<end_time>	synced	need reorg
