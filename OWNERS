@@ -1,5 +1,6 @@
 # See the OWNERS docs at https://go.k8s.io/owners
 approvers:
+  - 0xPoe
   - 3AceShowHand
   - 3pointer
   - 5kbpers
@@ -72,7 +73,6 @@ approvers:
   - qw4990
   - rebelice
   - Reminiscent
-  - Rustin170506
   - sdojjy
   - shenli
   - siddontang

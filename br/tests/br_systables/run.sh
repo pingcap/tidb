@@ -42,7 +42,7 @@ add_test_data() {
 }
 
 delete_test_data() {
-    run_sql "DROP TABLE usertest.test;"
+    run_sql "DROP DATABASE usertest;"
 }
 
 rollback_modify() {

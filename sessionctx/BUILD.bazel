@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//extension",
         "//kv",
-        "//metrics",
         "//parser/model",
         "//sessionctx/sessionstates",
         "//sessionctx/variable",
@@ -17,7 +16,6 @@ go_library(
         "//util/kvcache",
         "//util/sli",
         "//util/topsql/stmtstats",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_tikv_client_go_v2//oracle",

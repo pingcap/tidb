@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -1289,6 +1290,7 @@ func TestSingleConsumerCTE(t *testing.T) {
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2));")
 	tk.MustExec("create table t2 (c1 int unique, c2 int);")
 	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
+	tk.MustExec("create table test(a int);")
 
 	var (
 		input  []string
@@ -1305,7 +1307,7 @@ func TestSingleConsumerCTE(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
 		})
-		if strings.HasPrefix(ts, "set") {
+		if strings.HasPrefix(ts, "set") || strings.HasPrefix(ts, "create") {
 			tk.MustExec(ts)
 			continue
 		}
@@ -2613,4 +2615,37 @@ func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
 		})
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func TestExchangeSenderResolveIndices(t *testing.T) {
+	schemaCols1 := make([]*expression.Column, 0, 4)
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 1})
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 2})
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 3})
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 4})
+	schema1 := expression.NewSchema(schemaCols1...)
+
+	schemaCols2 := make([]*expression.Column, 0, 2)
+	schemaCols2 = append(schemaCols2, &expression.Column{UniqueID: 3})
+	schemaCols2 = append(schemaCols2, &expression.Column{UniqueID: 4})
+	schema2 := expression.NewSchema(schemaCols2...)
+
+	partitionCol1 := &property.MPPPartitionColumn{Col: &expression.Column{UniqueID: 4}}
+
+	// two exchange sender share the same MPPPartitionColumn
+	exchangeSender1 := &core.PhysicalExchangeSender{
+		HashCols: []*property.MPPPartitionColumn{partitionCol1},
+	}
+	exchangeSender2 := &core.PhysicalExchangeSender{
+		HashCols: []*property.MPPPartitionColumn{partitionCol1},
+	}
+
+	err := exchangeSender1.ResolveIndicesItselfWithSchema(schema1)
+	require.NoError(t, err)
+
+	err = exchangeSender2.ResolveIndicesItselfWithSchema(schema2)
+	require.NoError(t, err)
+
+	// after resolving, the partition col in two different exchange sender should have different index
+	require.NotEqual(t, exchangeSender1.HashCols[0].Col.Index, exchangeSender2.HashCols[0].Col.Index)
 }

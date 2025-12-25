@@ -105,6 +105,19 @@ func (partitionCol *MPPPartitionColumn) hashCode(ctx *stmtctx.StatementContext) 
 	return hashcode
 }
 
+// ResolveIndices resolve index for MPPPartitionColumn
+func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
+	newColExpr, err := partitionCol.Col.ResolveIndices(schema)
+	if err != nil {
+		return nil, err
+	}
+	newCol, _ := newColExpr.(*expression.Column)
+	return &MPPPartitionColumn{
+		Col:       newCol,
+		CollateID: partitionCol.CollateID,
+	}, nil
+}
+
 // Equal returns true if partitionCol == other
 func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
 	if partitionCol.CollateID < 0 {

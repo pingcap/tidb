@@ -3,5 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "issue_test_test",
     srcs = ["executor_issue_test.go"],
-    deps = ["//testkit"],
+    deps = [
+        "//executor",
+        "//testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
 )

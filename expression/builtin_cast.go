@@ -270,21 +270,32 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 type castAsStringFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp                *types.FieldType
+	isExplicitCharset bool
 }
 
 func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinCastFunc4String(ctx, c.funcName, args, c.tp, c.isExplicitCharset)
 	if err != nil {
 		return nil, err
 	}
-	if args[0].GetType().Hybrid() {
-		sig = &builtinCastStringAsStringSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
-		return sig, nil
+	if ft := args[0].GetType(); ft.Hybrid() {
+		castBitAsUnBinary := ft.GetType() == mysql.TypeBit && c.tp.GetCharset() != charset.CharsetBin
+		if !castBitAsUnBinary {
+			sig = &builtinCastStringAsStringSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
+			return sig, nil
+		}
+		// for type BIT, it maybe an invalid value for the specified charset, we need to convert it to binary first,
+		// and then convert it to the specified charset with `HandleBinaryLiteral` in the following code.
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		args[0] = BuildCastFunction(ctx, args[0], tp)
 	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -1924,6 +1935,13 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false)
+	terror.Log(err)
+	return
+}
+
+// BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
+func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *types.FieldType, isExplicitCharset bool) (res Expression, err error) {
 	argType := expr.GetType()
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
@@ -1945,13 +1963,12 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 	case types.ETJson:
 		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETString:
-		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, isExplicitCharset}
 		if expr.GetType().GetType() == mysql.TypeBit {
 			tp.SetFlen((expr.GetType().GetFlen() + 7) / 8)
 		}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
-	terror.Log(err)
 	res = &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
@@ -1963,7 +1980,7 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 	if tp.EvalType() != types.ETJson {
 		res = FoldConstant(res)
 	}
-	return res
+	return res, err
 }
 
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type of expr is not

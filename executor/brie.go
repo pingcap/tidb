@@ -222,7 +222,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		Key:  tidbCfg.Security.ClusterSSLKey,
 	}
 	pds := strings.Split(tidbCfg.Path, ",")
+
+	// build common config and override for specific task if needed
 	cfg := task.DefaultConfig()
+	switch s.Kind {
+	case ast.BRIEKindBackup:
+		cfg.OverrideDefaultForBackup()
+	default:
+	}
+
 	cfg.PD = pds
 	cfg.TLS = tlsCfg
 
@@ -292,8 +300,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
-		bcfg := task.DefaultBackupConfig()
-		bcfg.Config = cfg
+		bcfg := task.DefaultBackupConfig(cfg)
 		e.backupCfg = &bcfg
 
 		for _, opt := range s.Options {
@@ -322,8 +329,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 
 	case ast.BRIEKindRestore:
-		rcfg := task.DefaultRestoreConfig()
-		rcfg.Config = cfg
+		rcfg := task.DefaultRestoreConfig(cfg)
 		e.restoreCfg = &rcfg
 		for _, opt := range s.Options {
 			switch opt.Tp {
@@ -526,6 +532,10 @@ func (gs *tidbGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Sess
 		log.Info("one shot session from brie closed")
 	}()
 	return fn(glueSession)
+}
+
+func (*tidbGlue) GetClient() glue.GlueClient {
+	return glue.ClientSql
 }
 
 type tidbGlueSession struct {

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -108,16 +107,12 @@ func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
 
 // ValidateFlashbackTS validates that flashBackTS in range [gcSafePoint, currentTS).
 func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBackTS uint64) error {
-	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
-	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD.
+	currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate flashback timestamp: %v", err)
-		}
-		currentTS = currentVer.Ver
+		return errors.Errorf("fail to validate flashback timestamp: %v", err)
 	}
+	currentTS := currentVer.Ver
+
 	oracleFlashbackTS := oracle.GetTimeFromTS(flashBackTS)
 	if oracleFlashbackTS.After(oracle.GetTimeFromTS(currentTS)) {
 		return errors.Errorf("cannot set flashback timestamp to future time")

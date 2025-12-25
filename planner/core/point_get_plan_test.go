@@ -993,3 +993,14 @@ func TestIssue23511(t *testing.T) {
 	tk.MustQuery("select * from t2 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
 	tk.MustExec("drop table t1, t2;")
 }
+
+func TestIssue56832(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, c enum('0', '1', '2'));")
+	tk.MustExec("insert into t values (0,'0'), (1,'1'), (2,'2');")
+	tk.MustExec("update t set c = 2 where id = 0;")
+	tk.MustQuery("select c from t where id = 0").Check(testkit.Rows("1"))
+}

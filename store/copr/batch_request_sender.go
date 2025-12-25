@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"google.golang.org/grpc/codes"
@@ -55,9 +56,9 @@ type RegionBatchRequestSender struct {
 }
 
 // NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
-func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, enableCollectExecutionInfo bool) *RegionBatchRequestSender {
+func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, oracle oracle.Oracle, enableCollectExecutionInfo bool) *RegionBatchRequestSender {
 	return &RegionBatchRequestSender{
-		RegionRequestSender:        tikv.NewRegionRequestSender(cache.RegionCache, client),
+		RegionRequestSender:        tikv.NewRegionRequestSender(cache.RegionCache, client, oracle),
 		enableCollectExecutionInfo: enableCollectExecutionInfo,
 	}
 }

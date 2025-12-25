@@ -1145,8 +1145,8 @@ func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col model.Table
 		return errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ID))
-		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", col.TableID, col.ID))
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", col.TableID), zap.Int64("column_id", col.ID))
+		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, column_id:%v", col.TableID, col.ID))
 	}
 	statsVer := rows[0].GetInt64(0)
 	colHist := &statistics.Column{
@@ -1183,8 +1183,17 @@ func (h *Handle) loadNeededIndexHistograms(reader *statsReader, idx model.TableI
 	if !ok {
 		return nil
 	}
+	// Double check if the index is really needed to load.
 	index, ok := tbl.Indices[idx.ID]
-	if !ok {
+	// If we don't do this it might cause a memory leak.
+	// See: https://github.com/pingcap/tidb/issues/54022
+	if !ok || !index.IsLoadNeeded() {
+		if !index.IsLoadNeeded() {
+			logutil.BgLogger().Warn(
+				"Although the index stats is not required to load, an attempt is still made to load it, skip it",
+				zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID),
+			)
+		}
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}
@@ -1208,8 +1217,8 @@ func (h *Handle) loadNeededIndexHistograms(reader *statsReader, idx model.TableI
 		return errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID))
-		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", idx.TableID, idx.ID))
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", idx.TableID), zap.Int64("index_id", idx.ID))
+		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, index_id:%v", idx.TableID, idx.ID))
 	}
 	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
 		Info: index.Info, ErrorRate: index.ErrorRate, StatsVer: rows[0].GetInt64(0),

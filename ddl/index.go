@@ -831,7 +831,24 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				job.RowCount = 0
 				return false, ver, nil
 			}
-			bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
+			var pdLeaderAddr string
+			if d != nil {
+				store, ok2 := d.store.(tikv.Storage)
+				if ok2 {
+					pdLeaderAddr = store.GetRegionCache().PDClient().GetLeaderAddr()
+				}
+				// happens in unit tests
+				if !ok2 || pdLeaderAddr == "mockpd" {
+					pdLeaderAddr = config.GetGlobalConfig().Path
+				}
+			}
+			bc, err = ingest.LitBackCtxMgr.Register(
+				w.ctx,
+				indexInfo.Unique,
+				job.ID,
+				job.ReorgMeta.SQLMode,
+				pdLeaderAddr,
+			)
 			if err != nil {
 				err = tryFallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)

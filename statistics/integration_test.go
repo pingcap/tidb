@@ -808,3 +808,18 @@ func TestIssue49986(t *testing.T) {
 			"        └─Selection 10.00 cop[tikv]  eq(\"astp2019121731703151\", test.acc.m)",
 			"          └─TableFullScan 10000.00 cop[tikv] table:b keep order:false, stats:pseudo"))
 }
+
+func TestIssue56116(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t2(id bigint(20) DEFAULT NULL, UNIQUE KEY index_on_id (id))")
+	tk.MustExec("insert into t2 values (), (), ()")
+	tk.MustExec("analyze table t2")
+	tk.MustQuery("explain select count(*) from t2 where id is null;").Check(testkit.Rows(
+		"StreamAgg_17 1.00 root  funcs:count(Column#5)->Column#3",
+		"└─IndexReader_18 1.00 root  index:StreamAgg_9",
+		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#5",
+		"    └─IndexRangeScan_16 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
+}

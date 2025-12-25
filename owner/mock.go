@@ -31,6 +31,7 @@ type mockManager struct {
 	id          string // id is the ID of manager.
 	cancel      context.CancelFunc
 	beOwnerHook func()
+	retireHook  func()
 }
 
 // NewMockManager creates a new mock Manager.
@@ -96,6 +97,7 @@ func (*mockManager) RequireOwner(context.Context) error {
 	return nil
 }
 
+// SetBeOwnerHook implements Manager.SetBeOwnerHook interface.
 func (m *mockManager) SetBeOwnerHook(hook func()) {
 	m.beOwnerHook = hook
 }

@@ -344,7 +344,7 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
-		if len(buf) > LargestEntryLimit {
+		if parser.checkRowLen && parser.pos-parser.rowStartPos+int64(len(buf)) > int64(LargestEntryLimit) {
 			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
 		}
 		parser.buf = nil
@@ -513,6 +513,8 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	row := &parser.lastRow
 	row.Length = 0
 	row.RowID++
@@ -563,6 +565,8 @@ func (parser *CSVParser) ReadRow() error {
 
 // ReadColumns reads the columns of this CSV file.
 func (parser *CSVParser) ReadColumns() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	columns, err := parser.readRecord(nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -582,6 +586,8 @@ func (parser *CSVParser) ReadColumns() error {
 // returns the file offset beyond the terminator.
 // This function is used in strict-format dividing a CSV file.
 func (parser *CSVParser) ReadUntilTerminator() (int64, error) {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	for {
 		_, firstByte, err := parser.readUntil(&parser.newLineByteSet)
 		if err != nil {

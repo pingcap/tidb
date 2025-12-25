@@ -302,3 +302,45 @@ func TestDisableReuseChunk(t *testing.T) {
 	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
 	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
 }
+
+func TestIssue58476(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t3 (id int PRIMARY KEY,c1 varchar(256),c2 varchar(256) GENERATED ALWAYS AS (concat(c1, c1)) VIRTUAL,KEY (id));")
+	tk.MustExec("insert into t3(id, c1) values (50, 'c');")
+	tk.MustQuery("SELECT /*+ USE_INDEX_MERGE(`t3`)*/ id FROM `t3` WHERE c2 BETWEEN 'a' AND 'b' GROUP BY id HAVING id < 100 or id > 0;").Check(testkit.Rows())
+	tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(`t3`)*/ id FROM `t3` WHERE c2 BETWEEN 'a' AND 'b' GROUP BY id HAVING id < 100 or id > 0;").
+		Check(testkit.Rows(
+			`Projection 249.75 root  test.t3.id`,
+			`└─Selection 249.75 root  ge(test.t3.c2, "a"), le(test.t3.c2, "b")`,
+			`  └─Projection 9990.00 root  test.t3.id, test.t3.c2`,
+			`    └─IndexMerge 9990.00 root  type: union`,
+			`      ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t3, index:id(id) range:[-inf,100), keep order:false, stats:pseudo`,
+			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
+			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
+}
+
+func TestIssue53766(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0, t1;")
+	tk.MustExec("CREATE TABLE t0(c0 int);")
+	tk.MustExec("CREATE TABLE t1(c0 int);")
+	tk.MustQuery("SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));").Check(testkit.Rows())
+}
+
+func TestIssue59762(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("create table t1(a int primary key, b int, index idx(b));")
+	tk.MustExec("insert into t values(1), (2), (123);")
+	tk.MustExec("insert into t1 values(2, 123), (123, 2);")
+	tk.MustExec("set tidb_opt_fix_control='44855:on';")
+	tk.MustExec("explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;")
+	tk.MustQuery("select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;").Check(testkit.Rows("2 2 123"))
+}

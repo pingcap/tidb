@@ -281,6 +281,11 @@ error = '''
 failed to write and ingest
 '''
 
+["BR:Restore:ErrTablesAlreadyExisted"]
+error = '''
+tables already existed in restored cluster
+'''
+
 ["BR:Restore:ErrUnsupportedSysTable"]
 error = '''
 the system table isn't supported for restoring yet
@@ -854,6 +859,11 @@ error = '''
 ["ddl:1350"]
 error = '''
 View's SELECT contains a '%s' clause
+'''
+
+["ddl:1351"]
+error = '''
+View's SELECT contains a variable or parameter
 '''
 
 ["ddl:1353"]
@@ -2844,6 +2854,11 @@ invalid year format
 ["types:8033"]
 error = '''
 invalid year
+'''
+
+["types:8034"]
+error = '''
+Incorrect datetime value: '%s'
 '''
 
 ["types:8037"]

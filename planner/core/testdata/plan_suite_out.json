@@ -2391,6 +2391,144 @@
           "    └─CTETable 1.00 root  Scan on CTE_4"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select bb as res from b union all select res+1 from tmp where res +1 < 10) select * from tmp) select * from c; -- inline a, b, cannot be inline tmp, c",
+        "Plan": [
+          "CTEFullScan 1.80 root CTE:tmp data:CTE_4",
+          "CTE_4 1.80 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  2->Column#37",
+          "│ └─HashAgg 1.00 root  funcs:count(Column#46)->Column#44",
+          "│   └─TableReader 1.00 root  data:HashAgg",
+          "│     └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#46",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#38, 1), bigint(1) BINARY)->Column#40",
+          "  └─Selection 0.80 root  lt(plus(Column#38, 1), 10)",
+          "    └─CTETable 1.00 root  Scan on CTE_4"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test), CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain distinct and ref by CET1 recursive part cannot be inlined;",
+        "Plan": [
+          "CTEFullScan 14401.80 root CTE:cte1 data:CTE_1",
+          "CTE_1 14401.80 root  Recursive CTE",
+          "├─CTEFullScan(Seed Part) 8001.00 root CTE:cte data:CTE_0",
+          "└─HashJoin(Recursive Part) 6400.80 root  inner join, equal:[eq(Column#11, Column#12)]",
+          "  ├─Selection(Build) 6400.80 root  not(isnull(Column#12))",
+          "  │ └─CTETable 8001.00 root  Scan on CTE_1",
+          "  └─Selection(Probe) 6400.80 root  not(isnull(Column#11))",
+          "    └─CTEFullScan 8001.00 root CTE:cte data:CTE_0",
+          "CTE_0 8001.00 root  Non-Recursive CTE",
+          "└─Union(Seed Part) 8001.00 root  ",
+          "  ├─Projection 1.00 root  1->Column#7",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─Projection 8000.00 root  cast(test.test.a, bigint(11) BINARY)->Column#7",
+          "    └─HashAgg 8000.00 root  group by:test.test.a, funcs:firstrow(test.test.a)->test.test.a",
+          "      └─TableReader 8000.00 root  data:HashAgg",
+          "        └─HashAgg 8000.00 cop[tikv]  group by:test.test.a, ",
+          "          └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "create view test_cte(a) as WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test) , CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from test_cte;  -- CTE (inside of view) cannot be inlined by default;",
+        "Plan": [
+          "CTEFullScan 14401.80 root CTE:cte1 data:CTE_1",
+          "CTE_1 14401.80 root  Recursive CTE",
+          "├─CTEFullScan(Seed Part) 8001.00 root CTE:cte data:CTE_0",
+          "└─HashJoin(Recursive Part) 6400.80 root  inner join, equal:[eq(Column#11, Column#12)]",
+          "  ├─Selection(Build) 6400.80 root  not(isnull(Column#12))",
+          "  │ └─CTETable 8001.00 root  Scan on CTE_1",
+          "  └─Selection(Probe) 6400.80 root  not(isnull(Column#11))",
+          "    └─CTEFullScan 8001.00 root CTE:cte data:CTE_0",
+          "CTE_0 8001.00 root  Non-Recursive CTE",
+          "└─Union(Seed Part) 8001.00 root  ",
+          "  ├─Projection 1.00 root  1->Column#7",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─Projection 8000.00 root  cast(test.test.a, bigint(11) BINARY)->Column#7",
+          "    └─HashAgg 8000.00 root  group by:test.test.a, funcs:firstrow(test.test.a)->test.test.a",
+          "      └─TableReader 8000.00 root  data:HashAgg",
+          "        └─HashAgg 8000.00 cop[tikv]  group by:test.test.a, ",
+          "          └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "create view test_inline_cte(a) as with CTE (x) as (select distinct a from test) select * from CTE;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from test_inline_cte; -- CTE (inside of view) cannot be inlined by default;",
+        "Plan": [
+          "CTEFullScan 8000.00 root CTE:cte data:CTE_0",
+          "CTE_0 8000.00 root  Non-Recursive CTE",
+          "└─HashAgg(Seed Part) 8000.00 root  group by:test.test.a, funcs:firstrow(test.test.a)->test.test.a",
+          "  └─TableReader 8000.00 root  data:HashAgg",
+          "    └─HashAgg 8000.00 cop[tikv]  group by:test.test.a, ",
+          "      └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "create view test_force_inline_cte(a) as with CTE (x) as (select /*+ merge() */ distinct a from test) select * from CTE;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from test_force_inline_cte; -- CTE (inside of view) can be inlined by force;",
+        "Plan": [
+          "HashAgg 8000.00 root  group by:test.test.a, funcs:firstrow(test.test.a)->test.test.a",
+          "└─TableReader 8000.00 root  data:HashAgg",
+          "  └─HashAgg 8000.00 cop[tikv]  group by:test.test.a, ",
+          "    └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "WITH RECURSIVE CTE (x) AS (SELECT a FROM test limit 1) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain limit and ref by CET1 recursive part cannot be inlined;",
+        "Plan": [
+          "CTEFullScan 16400.00 root CTE:cte1 data:CTE_1",
+          "CTE_1 16400.00 root  Recursive CTE",
+          "├─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+          "└─HashJoin(Recursive Part) 6400.00 root  inner join, equal:[eq(test.test.a, test.test.a)]",
+          "  ├─Selection(Build) 0.80 root  not(isnull(test.test.a))",
+          "  │ └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "  └─Selection(Probe) 8000.00 root  not(isnull(test.test.a))",
+          "    └─CTETable 10000.00 root  Scan on CTE_1",
+          "CTE_0 1.00 root  Non-Recursive CTE",
+          "└─Limit(Seed Part) 1.00 root  offset:0, count:1",
+          "  └─TableReader 1.00 root  data:Limit",
+          "    └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "      └─TableFullScan 1.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "WITH RECURSIVE CTE (x) AS (SELECT a FROM test order by a) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain order by and ref by CET1 recursive part cannot be inlined;",
+        "Plan": [
+          "CTEFullScan 20000.00 root CTE:cte1 data:CTE_1",
+          "CTE_1 20000.00 root  Recursive CTE",
+          "├─TableReader(Seed Part) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+          "└─HashJoin(Recursive Part) 10000.00 root  inner join, equal:[eq(test.test.a, test.test.a)]",
+          "  ├─Selection(Build) 8000.00 root  not(isnull(test.test.a))",
+          "  │ └─CTEFullScan 10000.00 root CTE:cte data:CTE_0",
+          "  └─Selection(Probe) 8000.00 root  not(isnull(test.test.a))",
+          "    └─CTETable 10000.00 root  Scan on CTE_1",
+          "CTE_0 10000.00 root  Non-Recursive CTE",
+          "└─Sort(Seed Part) 10000.00 root  test.test.a",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Warning": null
       }
     ]
   },

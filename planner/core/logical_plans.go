@@ -1536,6 +1536,8 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			}
 			// Don't add one column twice to the index. May cause unexpected errors.
 			if !alreadyHandle {
+				path.FullIdxCols = append(path.FullIdxCols, handleCol)
+				path.FullIdxColLens = append(path.FullIdxColLens, types.UnspecifiedLength)
 				path.IdxCols = append(path.IdxCols, handleCol)
 				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
 				// Also updates the map that maps the index id to its prefix column ids.

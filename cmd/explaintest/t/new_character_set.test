@@ -67,3 +67,14 @@ set names utf8mb4;
 set @@character_set_client=gbk;
 set @@character_set_connection=gbk;
 select hex('一a'), '一a';
+
+-- Bug#61085: https://github.com/pingcap/tidb/issues/61085 should replace instead of truncation for result charset
+set character_set_results = "gbk";
+select cast(0x414141E280A9424242 as char charset utf8mb4);
+SET character_set_results = @undefined_var;
+create table t61085 (a char(255) charset gbk);
+insert into t61085 values ('AAA');
+set SESSION sql_mode = '';
+--error 1105
+select * from t61085 where a = cast(0x41414180424242 as char charset gbk);
+DROP TABLE t61085;

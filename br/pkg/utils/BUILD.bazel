@@ -22,6 +22,7 @@ go_library(
         "schema.go",
         "store_manager.go",
         "suspend_importing.go",
+        "wait.go",
         "worker.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/utils",

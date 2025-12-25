@@ -17,7 +17,10 @@ package explain
 import (
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIssue53867(t *testing.T) {
@@ -35,4 +38,25 @@ func TestIssue53867(t *testing.T) {
 
 	// Need no panic
 	tk.MustQuery("select /*+ STREAM_AGG() */ (ref_4.c_k3kss19 / ref_4.c_k3kss19) as c2 from t_bhze93f as ref_4 where (EXISTS (select ref_5.c_wp7o_0sstj as c0 from t_bhze93f as ref_5 where (207007502 < (select distinct ref_6.c_weg as c0 from t_xf1at0 as ref_6 union all (select ref_7.c_xb as c0 from t_b0t as ref_7 where (-16090 != ref_4.c_x393ej_)) limit 1)) limit 1));")
+}
+
+func TestIssue60926(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (col0 int, col1 int);")
+	tk.MustExec("create table t2 (col0 int, col1 int);")
+	tk.MustExec("insert into t1 values (0, 10), (1, 10), (2, 10), (3, 10), (4, 10), (5, 10), (6, 10), (7, 10), (8, 10), (9, 10), (10, 10);")
+	tk.MustExec("insert into t2 values (0, 5), (0, 5), (1, 5), (2, 5), (2, 5), (3, 5), (4, 5), (5, 5), (5, 5), (6, 5), (7, 5), (8, 5), (8, 5), (9, 5), (9, 5), (10, 5);")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/issue60926", "panic"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/issue60926"))
+	}()
+	executor.IsChildCloseCalledForTest.Store(false)
+	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
+	require.True(t, executor.IsChildCloseCalledForTest.Load())
 }

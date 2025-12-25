@@ -38,7 +38,7 @@ import (
 )
 
 // RetryCount is the max retry count for a sync load task.
-const RetryCount = 3
+const RetryCount = 2
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
 
@@ -95,8 +95,12 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 			}
 			select {
 			case h.StatsLoad.NeededItemsCh <- task:
-				result := <-task.ResultCh
-				return result, nil
+				select {
+				case <-timer.C:
+					return nil, errors.New("sync load took too long to return")
+				case result := <-task.ResultCh:
+					return result, nil
+				}
 			case <-timer.C:
 				return nil, errors.New("sync load stats channel is full and timeout sending task to channel")
 			}
@@ -395,9 +399,9 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
+		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
 	}
 	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {

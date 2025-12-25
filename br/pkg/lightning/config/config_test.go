@@ -1019,3 +1019,30 @@ func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
 	))
 	require.True(t, common.StringSliceEqual(config.GetDefaultFilter(), originalDefaultCfg))
 }
+
+func TestRedactConfig(t *testing.T) {
+	tests := []struct {
+		origin string
+		redact string
+	}{
+		{"", ""},
+		{":", ":"},
+		{"~/file", "~/file"},
+		{"gs://bucket/file", "gs://bucket/file"},
+		{"gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"},
+		{"gs://bucket/file?secret-access-key=123", "gs://bucket/file?secret-access-key=123"},
+		{"s3://bucket/file", "s3://bucket/file"},
+		{"s3://bucket/file?other-key=123", "s3://bucket/file?other-key=123"},
+		{"s3://bucket/file?access-key=123", "s3://bucket/file?access-key=xxxxxx"},
+		{"s3://bucket/file?secret-access-key=123", "s3://bucket/file?secret-access-key=xxxxxx"},
+		{"s3://bucket/file?access_key=123", "s3://bucket/file?access_key=xxxxxx"},
+		{"s3://bucket/file?secret_access_key=123", "s3://bucket/file?secret_access_key=xxxxxx"},
+	}
+	for _, tt := range tests {
+		cfg := config.NewConfig()
+		cfg.Mydumper.SourceDir = tt.origin
+
+		require.Contains(t, cfg.Redact(), tt.redact)
+		require.Contains(t, cfg.String(), tt.origin)
+	}
+}

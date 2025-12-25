@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
@@ -137,6 +139,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagPDConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
+	_ = flags.MarkHidden(flagUseFSR)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -273,16 +276,21 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
-func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
 	var err error
 	cfg.NoSchema, err = flags.GetBool(flagNoSchema)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = cfg.Config.ParseFromFlags(flags)
-	if err != nil {
-		return errors.Trace(err)
+
+	// parse common config if needed
+	if !skipCommonConfig {
+		err = cfg.Config.ParseFromFlags(flags)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	err = cfg.RestoreCommonConfig.ParseFromFlags(flags)
 	if err != nil {
 		return errors.Trace(err)
@@ -501,20 +509,16 @@ func IsStreamRestore(cmdName string) bool {
 	return cmdName == PointRestoreCmd
 }
 
-func DefaultRestoreConfig() RestoreConfig {
+func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineRestoreFlags(fs)
 	cfg := RestoreConfig{}
-	err := multierr.Combine(
-		cfg.ParseFromFlags(fs),
-		cfg.RestoreCommonConfig.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
-	)
+	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {
-		log.Panic("infallible failed.", zap.Error(err))
+		log.Panic("failed to parse restore flags to config", zap.Error(err))
 	}
 
+	cfg.Config = commonConfig
 	return cfg
 }
 
@@ -589,7 +593,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -603,8 +607,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if len(dbs) == 0 && len(tables) != 0 {
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
-
-	archiveSize := reader.ArchiveSize(ctx, files)
+	archiveSize := metautil.ArchiveSize(files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
@@ -613,18 +616,27 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
-	// to avoid import cycle problem which we won't do it in this pr, then refactor this
-	//
-	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
-	if cmdName == FullRestoreCmd && cfg.WithSysTable {
-		client.InitFullClusterRestore(cfg.ExplicitFilter)
+	if isFullRestore(cmdName) {
+		if client.NeedCheckFreshCluster(cfg.ExplicitFilter) {
+			if err = client.CheckTargetClusterFresh(ctx); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+		// to avoid import cycle problem which we won't do it in this pr, then refactor this
+		//
+		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+		if cfg.WithSysTable {
+			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		}
 	}
+
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = client.CheckTargetClusterFresh(ctx); err != nil {
+		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
 			return errors.Trace(err)
 		}
-		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+	} else if !client.IsIncremental() && cfg.CheckRequirements {
+		if err = checkTableExistence(ctx, mgr, tables, g); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -792,12 +804,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var finish <-chan struct{}
 	postHandleCh := afterTableRestoredCh
 
-	// pipeline checksum and load stats
-	if cfg.Checksum {
+	// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
+	// enough information in backup meta to validate checksum
+	if cfg.Checksum && !client.IsIncremental() {
 		afterTableCheckesumedCh := client.GoValidateChecksum(
 			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
-		postHandleCh = afterTableLoadStatsCh
+		postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
 	}
 
 	// pipeline wait Tiflash synced
@@ -807,7 +819,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	finish = dropToBlackhole(ctx, postHandleCh, errCh)
 
-	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
+	// Reset speed limit. ResetSpeedLimit must be called after client.LoadSchemaIfNeededAndInitClient has been called.
 	defer func() {
 		var resetErr error
 		// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
@@ -843,6 +855,24 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
+	return nil
+}
+
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+	message := "table already exists: "
+	allUnique := true
+	for _, table := range tables {
+		_, err := mgr.GetDomain().InfoSchema().TableByName(table.DB.Name, table.Info.Name)
+		if err == nil {
+			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
+			allUnique = false
+		} else if !infoschema.ErrTableNotExists.Equal(err) {
+			return errors.Trace(err)
+		}
+	}
+	if !allUnique {
+		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
+	}
 	return nil
 }
 

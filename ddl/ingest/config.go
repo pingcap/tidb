@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidbconf "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -36,6 +37,7 @@ func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config
 	cfg.TikvImporter.Backend = config.BackendLocal
 	// Each backend will build a single dir in lightning dir.
 	cfg.TikvImporter.SortedKVDir = filepath.Join(LitSortPath, encodeBackendTag(jobID))
+	cfg.TikvImporter.StoreWriteBWLimit = config.ByteSize(variable.DDLReorgMaxWriteSpeed.Load())
 	if ImporterRangeConcurrencyForTest != nil {
 		cfg.TikvImporter.RangeConcurrency = int(ImporterRangeConcurrencyForTest.Load())
 	}
@@ -51,7 +53,6 @@ func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config
 	} else {
 		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 	}
-	cfg.TiDB.PdAddr = tidbCfg.Path
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
 	// Set TLS related information

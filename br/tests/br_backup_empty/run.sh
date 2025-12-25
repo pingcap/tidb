@@ -48,6 +48,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+i=1
 while [ $i -le $DB_COUNT ]; do
     run_sql "DROP DATABASE $DB$i;"
     i=$(($i+1))
@@ -71,6 +72,7 @@ run_sql "CREATE TABLE ${DB}1.usertable1 ( \
 echo "backup empty table start..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_table"
 
+i=1
 while [ $i -le $DB_COUNT ]; do
     run_sql "DROP DATABASE $DB$i;"
     i=$(($i+1))
@@ -83,6 +85,7 @@ run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/empty_table"
 # insert one row to make sure table is restored.
 run_sql "INSERT INTO ${DB}1.usertable1 VALUES (\"a\", \"b\");"
 
+i=1
 while [ $i -le $DB_COUNT ]; do
     run_sql "DROP DATABASE $DB$i;"
     i=$(($i+1))

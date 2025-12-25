@@ -808,8 +808,8 @@ func newBatchPointGetPlan(
 					if dval == nil {
 						return nil
 					}
-					values[permIndex] = innerX.Datum
-					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
+					values[permIndex] = *dval
+					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: *dval})
 				case *driver.ParamMarkerExpr:
 					con, err := expression.ParamMarkerExpression(ctx, innerX, true)
 					if err != nil {
@@ -823,12 +823,12 @@ func newBatchPointGetPlan(
 					if dval == nil {
 						return nil
 					}
-					values[permIndex] = innerX.Datum
+					values[permIndex] = *dval
 					valuesParams[permIndex] = con
 					if initTypes {
 						indexTypes[permIndex] = &colInfos[index].FieldType
 					}
-					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
+					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: *dval})
 				default:
 					return nil
 				}
@@ -1670,7 +1670,11 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 		if err != nil {
 			return nil, true
 		}
-		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
+		castToTP := col.GetType()
+		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
+			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
+		}
+		expr = expression.BuildCastFunction(ctx, expr, castToTP)
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst

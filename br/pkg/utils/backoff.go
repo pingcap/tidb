@@ -41,6 +41,10 @@ const (
 	flashbackRetryTime       = 3
 	flashbackWaitInterval    = 3000 * time.Millisecond
 	flashbackMaxWaitInterval = 15 * time.Second
+
+	rawClientMaxAttempts  = 5
+	rawClientDelayTime    = 500 * time.Millisecond
+	rawClientMaxDelayTime = 5 * time.Second
 )
 
 // ConstantBackoff is a backoffer that retry forever until success.
@@ -185,6 +189,11 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			}
 		}
 	}
+	failpoint.Inject("set-import-attempt-to-one", func(_ failpoint.Value) {
+		if bo.attempt > 1 {
+			bo.attempt = 1
+		}
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}
@@ -288,4 +297,36 @@ func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
 
 func (bo *flashbackBackoffer) Attempt() int {
 	return bo.attempt
+}
+
+type RawClientBackoffStrategy struct {
+	Attempts    int
+	BaseBackoff time.Duration
+	MaxBackoff  time.Duration
+}
+
+func NewRawClientBackoffStrategy() Backoffer {
+	return &RawClientBackoffStrategy{
+		Attempts:    rawClientMaxAttempts,
+		BaseBackoff: rawClientDelayTime,
+		MaxBackoff:  rawClientMaxDelayTime,
+	}
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *RawClientBackoffStrategy) NextBackoff(error) time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
+		return 0
+	}
+	b.BaseBackoff *= 2
+	if b.BaseBackoff > b.MaxBackoff {
+		b.BaseBackoff = b.MaxBackoff
+	}
+	return bo
+}
+
+func (b *RawClientBackoffStrategy) Attempt() int {
+	return b.Attempts
 }

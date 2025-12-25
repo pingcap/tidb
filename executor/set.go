@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/tikv/client-go/v2/oracle/oracles"
 	"go.uber.org/zap"
 )
 
@@ -197,10 +198,15 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
-		if name == variable.TiDBTxnReadTS {
-			err = sessionctx.ValidateStaleReadTS(ctx, e.ctx, newSnapshotTS)
+		isStaleRead := name == variable.TiDBTxnReadTS
+		var ctxForReadTsValidator context.Context
+		if !isStaleRead {
+			ctxForReadTsValidator = context.WithValue(ctx, oracles.ValidateReadTSForTidbSnapshot{}, struct{}{})
 		} else {
-			err = sessionctx.ValidateSnapshotReadTS(ctx, e.ctx, newSnapshotTS)
+			ctxForReadTsValidator = ctx
+		}
+		err = sessionctx.ValidateSnapshotReadTS(ctxForReadTsValidator, e.ctx.GetStore(), newSnapshotTS, isStaleRead)
+		if name != variable.TiDBTxnReadTS {
 			// Also check gc safe point for snapshot read.
 			// We don't check snapshot with gc safe point for read_ts
 			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.

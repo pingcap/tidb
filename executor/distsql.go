@@ -455,6 +455,12 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 	}
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	err = e.buildTableKeyRanges()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -491,7 +497,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			if e.index.ID == -1 {
 				kvRange, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
 			} else {
-				kvRange, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
+				kvRange, err = distsql.IndexRangesToKVRangesWithInterruptSignal(sc, physicalID, e.index.ID, ranges, e.feedback, e.memTracker, nil)
 			}
 			if err != nil {
 				return err
@@ -504,7 +510,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 		if e.index.ID == -1 {
 			kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
 		} else {
-			kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+			kvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(sc, physicalID, e.index.ID, e.ranges, e.feedback, e.memTracker, nil)
 		}
 		e.kvRanges = kvRanges.FirstPartitionRange()
 	}

@@ -49,6 +49,7 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_spf13_pflag//:pflag",
         "@com_google_cloud_go_storage//:storage",
+        "@org_golang_google_api//googleapi",
         "@org_golang_google_api//iterator",
         "@org_golang_google_api//option",
         "@org_golang_x_oauth2//google",

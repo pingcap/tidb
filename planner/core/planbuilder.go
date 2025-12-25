@@ -492,8 +492,8 @@ type cteInfo struct {
 	isInline bool
 	// forceInlineByHintOrVar will be true when CTE is hint by merge() or session variable "tidb_opt_force_inline_cte=true"
 	forceInlineByHintOrVar bool
-	// If CTE contain aggregation or window function in query (Indirect references to other cte containing agg or window in the query are also counted.)
-	containAggOrWindow bool
+	// If CTE contain aggregation, window function, order by, distinct and limit in query (Indirect references to other cte containing those operator in the query are also counted.)
+	containRecursiveForbiddenOperator bool
 	// Compute in preprocess phase. Record how many consumers the current CTE has
 	consumerCount int
 }
@@ -3399,7 +3399,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3413,7 +3413,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -4443,6 +4443,32 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 	return data, nil
 }
 
+type userVariableChecker struct {
+	hasUserVariables bool
+}
+
+func (e *userVariableChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*ast.VariableExpr); ok {
+		e.hasUserVariables = true
+		return in, true
+	}
+	return in, false
+}
+
+func (*userVariableChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+// Check for UserVariables
+func checkForUserVariables(in ast.Node) error {
+	v := &userVariableChecker{hasUserVariables: false}
+	_, ok := in.Accept(v)
+	if !ok || v.hasUserVariables {
+		return dbterror.ErrViewSelectVariable
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, error) {
 	var authErr error
 	switch v := node.(type) {
@@ -4582,6 +4608,10 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		err := checkForUserVariables(v.Select)
+		if err != nil {
+			return nil, err
+		}
 		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L

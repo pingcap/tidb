@@ -83,8 +83,9 @@ type ownerManager struct {
 	cancel         context.CancelFunc
 	elec           unsafe.Pointer
 	wg             sync.WaitGroup
-	beOwnerHook    func()
 	campaignCancel context.CancelFunc
+
+	beOwnerHook func()
 }
 
 // NewOwnerManager creates a new Manager.
@@ -154,7 +155,9 @@ func (m *ownerManager) CampaignOwner() error {
 		return errors.Trace(err)
 	}
 	m.wg.Add(1)
-	go m.campaignLoop(session)
+	var campaignContext context.Context
+	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
+	go m.campaignLoop(campaignContext, session)
 	return nil
 }
 
@@ -194,9 +197,7 @@ func (m *ownerManager) CampaignCancel() {
 	m.wg.Wait()
 }
 
-func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
-	var campaignContext context.Context
-	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
+func (m *ownerManager) campaignLoop(campaignContext context.Context, etcdSession *concurrency.Session) {
 	defer func() {
 		m.campaignCancel()
 		if r := recover(); r != nil {
@@ -248,13 +249,14 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 			continue
 		}
 
-		ownerKey, err := GetOwnerInfo(campaignContext, logCtx, elec, m.id)
+		ownerKey, currRev, err := GetOwnerKeyInfo(campaignContext, logCtx, elec, m.id)
 		if err != nil {
 			continue
 		}
 
 		m.toBeOwner(elec)
-		m.watchOwner(campaignContext, etcdSession, ownerKey)
+		err = m.watchOwner(campaignContext, etcdSession, ownerKey, currRev)
+		logutil.Logger(logCtx).Info("watch owner finished", zap.Error(err))
 		m.RetireOwner()
 
 		metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, metrics.NoLongerOwner).Inc()
@@ -284,56 +286,66 @@ func (m *ownerManager) GetOwnerID(ctx context.Context) (string, error) {
 	return string(resp.Kvs[0].Value), nil
 }
 
-// GetOwnerInfo gets the owner information.
-func GetOwnerInfo(ctx, logCtx context.Context, elec *concurrency.Election, id string) (string, error) {
+// GetOwnerKeyInfo gets the owner information.
+func GetOwnerKeyInfo(ctx, logCtx context.Context, elec *concurrency.Election, id string) (string, int64, error) {
 	resp, err := elec.Leader(ctx)
 	if err != nil {
 		// If no leader elected currently, it returns ErrElectionNoLeader.
 		logutil.Logger(logCtx).Info("failed to get leader", zap.Error(err))
-		return "", errors.Trace(err)
+		return "", 0, errors.Trace(err)
 	}
 	ownerID := string(resp.Kvs[0].Value)
 	logutil.Logger(logCtx).Info("get owner", zap.String("ownerID", ownerID))
 	if ownerID != id {
 		logutil.Logger(logCtx).Warn("is not the owner")
-		return "", errors.New("ownerInfoNotMatch")
+		return "", 0, errors.New("ownerInfoNotMatch")
 	}
 
-	return string(resp.Kvs[0].Key), nil
+	return string(resp.Kvs[0].Key), resp.Header.Revision, nil
 }
 
-func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.Session, key string) {
+// WatchOwnerForTest watches the ownerKey.
+// This function is used to test watchOwner().
+func WatchOwnerForTest(ctx context.Context, m Manager, etcdSession *concurrency.Session, key string, createRevison int64) error {
+	if ownerManager, ok := m.(*ownerManager); ok {
+		return ownerManager.watchOwner(ctx, etcdSession, key, createRevison)
+	}
+	return nil
+}
+
+func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.Session, key string, currRev int64) error {
 	logPrefix := fmt.Sprintf("[%s] ownerManager %s watch owner key %v", m.prompt, m.id, key)
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
 	logutil.BgLogger().Debug(logPrefix)
-	watchCh := m.etcdCli.Watch(ctx, key)
+	// we need to watch the ownerKey since currRev + 1.
+	watchCh := m.etcdCli.Watch(ctx, key, clientv3.WithRev(currRev+1))
 	for {
 		select {
 		case resp, ok := <-watchCh:
 			if !ok {
 				metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.WatcherClosed).Inc()
 				logutil.Logger(logCtx).Info("watcher is closed, no owner")
-				return
+				return errors.Errorf("watcher is closed, key: %v", key)
 			}
 			if resp.Canceled {
 				metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.Cancelled).Inc()
 				logutil.Logger(logCtx).Info("watch canceled, no owner")
-				return
+				return errors.Errorf("watch canceled, key: %v", key)
 			}
 
 			for _, ev := range resp.Events {
 				if ev.Type == mvccpb.DELETE {
 					metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.Deleted).Inc()
 					logutil.Logger(logCtx).Info("watch failed, owner is deleted")
-					return
+					return nil
 				}
 			}
 		case <-etcdSession.Done():
 			metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.SessionDone).Inc()
-			return
+			return nil
 		case <-ctx.Done():
 			metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.CtxDone).Inc()
-			return
+			return nil
 		}
 	}
 }

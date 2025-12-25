@@ -1,0 +1,8 @@
+create view sql_mode_view as select @@sql_mode;
+Error 1351: View's SELECT contains a variable or parameter
+create view sql_mode_view as select @@global.sql_mode;
+Error 1351: View's SELECT contains a variable or parameter
+create view sql_mode_view as select @a;
+Error 1351: View's SELECT contains a variable or parameter
+create view sql_mode_view as select 1 where @a = 4;
+Error 1351: View's SELECT contains a variable or parameter

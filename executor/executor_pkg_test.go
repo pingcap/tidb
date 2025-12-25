@@ -133,7 +133,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 	}
 
 	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
-	require.Equal(t, int64(20760), bytesConsumed1)
+	require.Equal(t, int64(25570), bytesConsumed1)
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {

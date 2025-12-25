@@ -429,8 +429,12 @@ select 7;`
 		{
 			startTime: "",
 			endTime:   "",
-			files:     []string{fileName3},
+			files:     []string{fileName1, fileName2, fileName3},
 			querys: []string{
+				"select 1;",
+				"select 2;",
+				"select 3;",
+				"select 4;",
 				"select 5;",
 				"select 6;",
 				"select 7;",
@@ -499,7 +503,7 @@ func TestSplitbyColon(t *testing.T) {
 		{
 			"123a",
 			[]string{"123a"},
-			[]string{},
+			[]string{""},
 		},
 		{
 			"1a: 2b",
@@ -552,9 +556,16 @@ func TestSplitbyColon(t *testing.T) {
 			[]string{"Time"},
 			[]string{"2021-09-08T14:39:54.506967433+08:00"},
 		},
+		{
+
+			"Cop_proc_avg: 0 Cop_proc_addr: Cop_proc_max: Cop_proc_min: ",
+			[]string{"Cop_proc_avg", "Cop_proc_addr", "Cop_proc_max", "Cop_proc_min"},
+			[]string{"0", "", "", ""},
+		},
 	}
 	for _, c := range cases {
 		resFields, resValues := splitByColon(c.line)
+		logutil.BgLogger().Info(c.line)
 		require.Equal(t, c.fields, resFields)
 		require.Equal(t, c.values, resValues)
 	}

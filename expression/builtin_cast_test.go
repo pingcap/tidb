@@ -646,7 +646,7 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetCharset(charset.CharsetBin)
 		args := []Expression{c.before}
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
+		stringFunc, err := newBaseBuiltinCastFunc4String(ctx, "", args, tp, false)
 		require.NoError(t, err)
 		switch i {
 		case 0:
@@ -725,7 +725,7 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetFlen(c.flen)
 		tp.SetCharset(charset.CharsetBin)
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
+		stringFunc, err := newBaseBuiltinCastFunc4String(ctx, "", args, tp, false)
 		require.NoError(t, err)
 		switch i {
 		case 0:
@@ -1074,7 +1074,7 @@ func TestCastFuncSig(t *testing.T) {
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)})
-	bf, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeVarString))
+	bf, err := newBaseBuiltinCastFunc4String(ctx, "", args, types.NewFieldType(mysql.TypeVarString), false)
 	require.NoError(t, err)
 	sig = &builtinCastRealAsStringSig{bf}
 	sRes, isNull, err := sig.evalString(row.ToRow())

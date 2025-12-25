@@ -460,7 +460,8 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			}
 			if substituted {
 				flag := v.RetType.GetFlag()
-				e := BuildCastFunction(v.GetCtx(), newArg, v.RetType)
+				e, err := BuildCastFunctionWithCheck(v.GetCtx(), newArg, v.RetType, v.Function.IsExplicitCharset())
+				terror.Log(err)
 				e.SetCoercibility(v.Coercibility())
 				e.GetType().SetFlag(flag)
 				return true, false, e

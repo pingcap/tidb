@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/keepalive"
@@ -1863,5 +1864,71 @@ func TestCheckNewCollationEnable(t *testing.T) {
 			require.NoError(t, err)
 		}
 		require.Equal(t, ca.newCollationEnableInCluster == "True", enabled)
+	}
+}
+
+type mockRawKVClient struct {
+	restore.RawkvClient
+	putCount     int
+	errThreshold int
+}
+
+func (m *mockRawKVClient) BatchPut(ctx context.Context, keys, values [][]byte, options ...rawkv.RawOption) error {
+	m.putCount += 1
+	if m.errThreshold >= m.putCount {
+		return errors.New("rpcClient is idle")
+	}
+	return nil
+}
+
+func TestPutRawKvWithRetry(t *testing.T) {
+	tests := []struct {
+		name         string
+		errThreshold int
+		cancelAfter  time.Duration
+		wantErr      string
+		wantPuts     int
+	}{
+		{
+			name:         "success on first try",
+			errThreshold: 0,
+			wantPuts:     1,
+		},
+		{
+			name:         "success on after failure",
+			errThreshold: 2,
+			wantPuts:     3,
+		},
+		{
+			name:         "fails all retries",
+			errThreshold: 5,
+			wantErr:      "failed to put raw kv after retry",
+			wantPuts:     5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRawClient := &mockRawKVClient{
+				errThreshold: tt.errThreshold,
+			}
+			client := restore.NewRawKVBatchClient(mockRawClient, 1)
+
+			ctx := context.Background()
+			if tt.cancelAfter > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.cancelAfter)
+				defer cancel()
+			}
+
+			err := restore.PutRawKvWithRetry(ctx, client, []byte("key"), []byte("value"), 1)
+
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tt.wantPuts, mockRawClient.putCount)
+		})
 	}
 }
