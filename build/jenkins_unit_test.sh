@@ -26,4 +26,18 @@ EXIT_STATUS=$?
 bazel_collect
 mkdir -p test_coverage
 mv bazel.xml test_coverage/bazel.xml
+
+# Debug-only: re-run a single target with cache disabled to compare coverage.
+echo "=== nocache single-target coverage: //br/pkg/rtree:rtree_test ==="
+bazel --nohome_rc coverage --config=ci --repository_cache=/share/.cache/bazel-repository-cache \
+	--instrument_test_targets --instrumentation_filter=//br/... \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
+	--nocache_test_results --noremote_accept_cached \
+	-- //br/pkg/rtree:rtree_test || true
+output_path="$(bazel info output_path || true)"
+echo "nocache output_path: ${output_path}"
+for root in ${output_path}/k8-fastbuild*/testlogs; do
+	grep -nH "github.com/pingcap/tidb/br/pkg/rtree/logging.go" \
+		"$root/br/pkg/rtree/rtree_test/shard_*_of_8/coverage.dat" 2>/dev/null || true
+done
 exit ${EXIT_STATUS}
