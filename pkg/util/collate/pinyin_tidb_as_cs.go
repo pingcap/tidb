@@ -43,13 +43,8 @@ func (*zhPinyinTiDBASCSCollator) MaxBytesOneCharacter() int {
 	panic("implement me")
 }
 
-// GetCharacterNumForString returns number of character for string type
-func (*zhPinyinTiDBASCSCollator) GetCharacterNumForString(string) int {
-	panic("implement me")
-}
-
-// GetCharacterNumForBytes returns number of character for []byte type
-func (*zhPinyinTiDBASCSCollator) GetCharacterNumForBytes([]byte) int {
+// GetCharacterNum returns number of character for string type
+func (*zhPinyinTiDBASCSCollator) GetCharacterNum(string) int {
 	panic("implement me")
 }
 

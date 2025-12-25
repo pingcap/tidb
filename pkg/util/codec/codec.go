@@ -469,7 +469,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				if canSkip(physicalRowIndex) {
 					continue
 				}
-				strLen := collator.GetCharacterNumForBytes(column.GetBytes(physicalRowIndex)) * collator.MaxBytesOneCharacter()
+				strLen := collator.GetCharacterNum(string(hack.String(column.GetBytes(physicalRowIndex)))) * collator.MaxBytesOneCharacter()
 				serializedKeyLens[j] += sizeByteNum + strLen
 			}
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
@@ -528,7 +528,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 						str = enum.Name
 					}
 
-					serializedKeyLens[j] += int(sizeByteNum) + collator.GetCharacterNumForString(str)*collator.MaxBytesOneCharacter()
+					serializedKeyLens[j] += int(sizeByteNum) + collator.GetCharacterNum(str)*collator.MaxBytesOneCharacter()
 				}
 			}
 		case mysql.TypeSet:
@@ -548,7 +548,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 					return serializedKeyLens, continuousMem, err
 				}
 
-				serializedKeyLens[j] += int(sizeByteNum) + collator.GetCharacterNumForString(s.Name)*collator.MaxBytesOneCharacter()
+				serializedKeyLens[j] += int(sizeByteNum) + collator.GetCharacterNum(s.Name)*collator.MaxBytesOneCharacter()
 			}
 		case mysql.TypeBit:
 			signFlagLen := 0

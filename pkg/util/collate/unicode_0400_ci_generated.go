@@ -153,12 +153,7 @@ func (uc *unicodeCICollator) MaxBytesOneCharacter() int {
 	return 16
 }
 
-// GetCharacterNumForString returns number of character for string type
-func (uc *unicodeCICollator) GetCharacterNumForString(s string) int {
+// GetCharacterNum returns number of character for string type
+func (uc *unicodeCICollator) GetCharacterNum(s string) int {
 	return utf8.RuneCountInString(s)
-}
-
-// GetCharacterNumForBytes returns number of character for []byte type
-func (uc *unicodeCICollator) GetCharacterNumForBytes(b []byte) int {
-	return utf8.RuneCount(b)
 }

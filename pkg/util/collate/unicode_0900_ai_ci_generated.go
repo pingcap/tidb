@@ -153,12 +153,7 @@ func (uc *unicode0900AICICollator) MaxBytesOneCharacter() int {
 	return 16
 }
 
-// GetCharacterNumForString returns number of character for string type
-func (uc *unicode0900AICICollator) GetCharacterNumForString(s string) int {
+// GetCharacterNum returns number of character for string type
+func (uc *unicode0900AICICollator) GetCharacterNum(s string) int {
 	return utf8.RuneCountInString(s)
-}
-
-// GetCharacterNumForBytes returns number of character for []byte type
-func (uc *unicode0900AICICollator) GetCharacterNumForBytes(b []byte) int {
-	return utf8.RuneCount(b)
 }

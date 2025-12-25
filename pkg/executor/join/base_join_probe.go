@@ -150,8 +150,8 @@ type baseJoinProbe struct {
 
 	probeCollision uint64
 
-	serializedKeysBuffer []int
-	continuousMem        []byte
+	serializedKeysLens   []int
+	serializedKeysBuffer []byte
 }
 
 func (j *baseJoinProbe) GetProbeCollision() uint64 {
@@ -251,7 +251,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 
-	j.serializedKeysBuffer, j.continuousMem, err = codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.serializedKeysBuffer, j.continuousMem)
+	j.serializedKeysLens, j.serializedKeysBuffer, err = codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.serializedKeysLens, j.serializedKeysBuffer)
 	if err != nil {
 		return err
 	}
@@ -337,11 +337,11 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 
-	if cap(j.serializedKeysBuffer) < logicalRowCount {
-		j.serializedKeysBuffer = make([]int, logicalRowCount)
+	if cap(j.serializedKeysLens) < logicalRowCount {
+		j.serializedKeysLens = make([]int, logicalRowCount)
 	} else {
-		clear(j.serializedKeysBuffer)
-		j.serializedKeysBuffer = j.serializedKeysBuffer[:logicalRowCount]
+		clear(j.serializedKeysLens)
+		j.serializedKeysLens = j.serializedKeysLens[:logicalRowCount]
 	}
 
 	if cap(j.serializedKeys) >= logicalRowCount {
@@ -361,21 +361,21 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		if !j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
 			keyLen := serializedKeysCol.GetRawLength(idx)
-			j.serializedKeysBuffer[idx] = keyLen
+			j.serializedKeysLens[idx] = keyLen
 			totalMemUsage += keyLen
 		}
 	}
 
-	if cap(j.continuousMem) < totalMemUsage {
-		j.continuousMem = make([]byte, totalMemUsage)
+	if cap(j.serializedKeysBuffer) < totalMemUsage {
+		j.serializedKeysBuffer = make([]byte, totalMemUsage)
 	} else {
-		j.continuousMem = j.continuousMem[:totalMemUsage]
+		j.serializedKeysBuffer = j.serializedKeysBuffer[:totalMemUsage]
 	}
 
 	start := 0
 	for _, idx := range j.usedRows {
-		keyLen := j.serializedKeysBuffer[idx]
-		j.serializedKeys[idx] = j.continuousMem[start : start : start+keyLen]
+		keyLen := j.serializedKeysLens[idx]
+		j.serializedKeys[idx] = j.serializedKeysBuffer[start : start : start+keyLen]
 		start += keyLen
 	}
 }

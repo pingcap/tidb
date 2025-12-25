@@ -94,14 +94,9 @@ func (*gbkBinCollator) MaxBytesOneCharacter() int {
 	return 4
 }
 
-// GetCharacterNumForString returns number of character for string type
-func (*gbkBinCollator) GetCharacterNumForString(s string) int {
+// GetCharacterNum returns number of character for string type
+func (*gbkBinCollator) GetCharacterNum(s string) int {
 	return len(s)
-}
-
-// GetCharacterNumForBytes returns number of character for []byte type
-func (*gbkBinCollator) GetCharacterNumForBytes(b []byte) int {
-	return len(b)
 }
 
 // Pattern implements Collator interface.
