@@ -125,7 +125,7 @@ var (
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
 
-	// ForcePartitionRegionThreshold is the threshold of regions to force split table range.
+	// ForcePartitionRegionThreshold is the threshold of regions to force partition range.
 	// It is exported for testing.
 	ForcePartitionRegionThreshold = 100
 )
@@ -1389,10 +1389,10 @@ func (local *Backend) ImportEngine(
 
 	forceSplitThreshold := ForcePartitionRegionThreshold
 	failpoint.InjectCall("ForcePartitionRegionThreshold", &forceSplitThreshold)
-	// We only force table split range when the table is large enough (>= 100 regions).
+	// We only force partition range when the table is large enough (>= 100 regions).
 	// This is to avoid unnecessary RPC calls for small tables.
 	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 && len(splitKeys)-1 >= forceSplitThreshold {
-		tidblogutil.Logger(ctx).Info("force table split range",
+		tidblogutil.Logger(ctx).Info("force partition range",
 			zap.String("startKey", redact.Key(startKey)),
 			zap.String("endKey", redact.Key(endKey)))
 		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
