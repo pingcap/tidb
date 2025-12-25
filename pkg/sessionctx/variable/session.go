@@ -2248,7 +2248,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
 		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
 		CartesianJoinOrderThreshold:   vardef.DefOptCartesianJoinOrderThreshold,
-		OrderPreservingJoinDiscount: vardef.DefOptOrderPreservingJoinDiscount,
+		OrderPreservingJoinDiscount:   vardef.DefOptOrderPreservingJoinDiscount,
 		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
 		EnableSemiJoinRewrite:         vardef.DefOptEnableSemiJoinRewrite,
