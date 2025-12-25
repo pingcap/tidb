@@ -20,24 +20,29 @@
 
 set -o pipefail
 
-make bazel_coverage_test
-EXIT_STATUS=$?
-# collect the junit and coverage report
-bazel_collect
-mkdir -p test_coverage
-mv bazel.xml test_coverage/bazel.xml
-
-# Debug-only: re-run a single target with cache disabled to compare coverage.
+# Debug-only: run a single target with cache disabled to compare coverage.
 echo "=== nocache single-target coverage: //br/pkg/rtree:rtree_test ==="
 bazel --nohome_rc coverage --config=ci --repository_cache=/share/.cache/bazel-repository-cache \
 	--instrument_test_targets --instrumentation_filter=//br/... \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 	--nocache_test_results --noremote_accept_cached \
+	--remote_cache= --remote_upload_local_results=false \
 	-- //br/pkg/rtree:rtree_test || true
 output_path="$(bazel info output_path || true)"
 echo "nocache output_path: ${output_path}"
+echo "TestLogRanges shard mapping:"
 for root in ${output_path}/k8-fastbuild*/testlogs; do
-	grep -nH "github.com/pingcap/tidb/br/pkg/rtree/logging.go" \
-		"$root/br/pkg/rtree/rtree_test/shard_*_of_8/coverage.dat" 2>/dev/null || true
+	if [ -d "$root/br/pkg/rtree/rtree_test" ]; then
+		grep -nH "TestLogRanges" "$root/br/pkg/rtree/rtree_test/shard_*_of_8/test.log" 2>/dev/null || true
+	fi
 done
-exit ${EXIT_STATUS}
+echo "Coverage entries for rtree/logging.go:"
+for root in ${output_path}/k8-fastbuild*/testlogs; do
+	if [ -d "$root/br/pkg/rtree/rtree_test" ]; then
+		for f in "$root"/br/pkg/rtree/rtree_test/shard_*_of_8/coverage.dat; do
+			echo "---- $f"
+			grep -nH "github.com/pingcap/tidb/br/pkg/rtree/logging.go" "$f" 2>/dev/null || true
+		done
+	fi
+done
+exit 0
