@@ -772,8 +772,8 @@ func (*LogicalAggregation) getGroupNDVs(childProfile *property.StatsInfo, gbyCol
 }
 
 // CheckAggCanPushMPP is to check whether this agg can be pushed down into tiflash.
-func (a *LogicalAggregation) CheckAggCanPushMPP() (result bool) {
-	return checkAggCanPushMPP(a)
+func (la *LogicalAggregation) CheckAggCanPushMPP() (result bool) {
+	return checkAggCanPushMPP(la)
 }
 
 func checkAggCanPushMPP(s base.LogicalPlan) bool {
