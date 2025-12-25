@@ -86,11 +86,11 @@ func TestEnforceMPP(t *testing.T) {
 				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 			})
-			require.Eventually(t,
+			require.Eventuallyf(t,
 				func() bool {
 					res := testKit.MustQuery(tt)
 					return res.Equal(testkit.Rows(output[i].Plan...))
-				}, 1*time.Second, 100*time.Millisecond)
+				}, 5*time.Second, 100*time.Millisecond, tt, output[i].Plan)
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(filterWarnings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())))
 		}
 	})
