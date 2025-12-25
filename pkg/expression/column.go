@@ -297,8 +297,9 @@ type Column struct {
 	UniqueID int64
 
 	// Index is used for execution, to tell the column's position in the given row.
-	Index         int
-	indexResolved atomic.Bool
+	Index int
+	// 0: unresolved, 1: resolving, 2: resolved
+	indexResolved atomic.Int32
 
 	hashcode []byte
 
@@ -664,7 +665,7 @@ func (col *Column) CloneAndClearIndexResolvedFlag() Expression {
 
 // ClearIndexResolvedFlag implements Expression interface.
 func (col *Column) ClearIndexResolvedFlag() {
-	col.indexResolved.Store(false)
+	col.indexResolved.Store(0)
 }
 
 // IsCorrelated implements Expression interface.
@@ -703,21 +704,35 @@ func (col *Column) CleanHashCode() {
 	col.hashcode = make([]byte, 0, 9)
 }
 
+func (col *Column) getIndex(schema *Schema) int {
+	return schema.ColumnIndex(col)
+}
+
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema, allowLazyCopy bool) (Expression, bool, error) {
-	if allowLazyCopy && col.indexResolved.CompareAndSwap(false, true) {
+	if allowLazyCopy && col.indexResolved.CompareAndSwap(0, 1) {
 		err := col.resolveIndices(schema, allowLazyCopy)
+		col.indexResolved.Store(2)
 		return col, false, err
 	}
+	index := col.getIndex(schema)
+	// index is not changed, no need to clone a new column
+	if index != -1 && col.indexResolved.Load() == 2 && col.Index == index {
+		return col, false, nil
+	}
+	// else, clone a new column and resolve its index
 	newCol := col.CloneAndClearIndexResolvedFlag()
-	err := newCol.resolveIndices(schema, allowLazyCopy)
+	newCol.(*Column).Index = index
+	newCol.(*Column).indexResolved.Store(2)
+	if index == -1 {
+		return newCol, true, errors.Errorf("Can't find column %s in schema %s", col, schema)
+	}
 	// no datarace here because newCol is a local variable
-	newCol.(*Column).indexResolved.Store(true)
-	return newCol, true, err
+	return newCol, true, nil
 }
 
 func (col *Column) resolveIndices(schema *Schema, _ bool) error {
-	col.Index = schema.ColumnIndex(col)
+	col.Index = col.getIndex(schema)
 	if col.Index == -1 {
 		return errors.Errorf("Can't find column %s in schema %s", col, schema)
 	}
