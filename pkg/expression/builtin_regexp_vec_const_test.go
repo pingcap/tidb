@@ -88,6 +88,9 @@ func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
 func BenchmarkVectorizedBuiltinRegexpForConstants(b *testing.B) {
 	ctx := mock.NewContext()
 	bf, _, input, output := genVecBuiltinRegexpBenchCaseForConstants(ctx)
+	if !bf.vectorized() || !bf.isChildrenVectorized() {
+		panic("builtinRegexpUTF8Sig is not vectorized")
+	}
 	b.Run("builtinRegexpUTF8Sig-Constants-VecBuiltinFunc", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
