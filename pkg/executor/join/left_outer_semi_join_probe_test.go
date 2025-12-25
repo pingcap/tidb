@@ -15,7 +15,6 @@
 package join
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -303,9 +302,6 @@ func testLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T, isLeftOuter bool, isAnt
 		lKeyTypes := []*types.FieldType{lTypes[i]}
 		rKeyTypes := []*types.FieldType{rTypes[i]}
 		for _, rightAsBuild := range rightAsBuildSide {
-			if i == 17 {
-				fmt.Println("") // TODOxzx
-			}
 			testJoinProbe(t, false, []int{i}, []int{i}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, joinType, 100)
 			testJoinProbe(t, false, []int{i}, []int{i}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, joinType, 100)
 		}
