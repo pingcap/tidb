@@ -171,7 +171,7 @@ func TestFileCheckpointManager(t *testing.T) {
 				require.NoError(t, mgr.Update(ctx, cp1))
 			},
 			operation: func(t *testing.T, mgr *FileCheckpointManager, ctx context.Context, filePath string) {
-				require.NoError(t, mgr.Remove(ctx, "all", "all"))
+				require.NoError(t, mgr.Remove(ctx, common.AllTables, common.AllTables))
 				_, err := os.Stat(filePath)
 				require.True(t, os.IsNotExist(err))
 			},
@@ -328,7 +328,7 @@ func TestMySQLCheckpointManager(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			operation: func(t *testing.T, mgr *MySQLCheckpointManager, ctx context.Context) {
-				require.NoError(t, mgr.Remove(ctx, "all", "all"))
+				require.NoError(t, mgr.Remove(ctx, common.AllTables, common.AllTables))
 			},
 		},
 		{
@@ -350,7 +350,7 @@ func TestMySQLCheckpointManager(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			operation: func(t *testing.T, mgr *MySQLCheckpointManager, ctx context.Context) {
-				require.NoError(t, mgr.IgnoreError(ctx, "all", "all"))
+				require.NoError(t, mgr.IgnoreError(ctx, common.AllTables, common.AllTables))
 			},
 		},
 		{
@@ -388,7 +388,7 @@ func TestMySQLCheckpointManager(t *testing.T) {
 				mock.ExpectCommit()
 			},
 			operation: func(t *testing.T, mgr *MySQLCheckpointManager, ctx context.Context) {
-				destroyed, err := mgr.DestroyError(ctx, "all", "all")
+				destroyed, err := mgr.DestroyError(ctx, common.AllTables, common.AllTables)
 				require.NoError(t, err)
 				require.Len(t, destroyed, 1)
 			},
@@ -451,34 +451,6 @@ func TestMySQLCheckpointManager(t *testing.T) {
 	}
 }
 
-func TestParseTable(t *testing.T) {
-	tests := []struct {
-		input     string
-		wantDB    string
-		wantTable string
-		wantErr   bool
-	}{
-		{"db.table", "db", "table", false},
-		{"`db`.`table`", "db", "table", false},
-		{"all", "", "all", false},
-		{"invalid", "", "", true},
-		{"db.table.extra", "", "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			db, tbl, err := ParseTable(tt.input)
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				require.Equal(t, tt.wantDB, db)
-				require.Equal(t, tt.wantTable, tbl)
-			}
-		})
-	}
-}
-
 func TestCheckpointStatus_String(t *testing.T) {
 	tests := []struct {
 		status CheckpointStatus
@@ -496,14 +468,4 @@ func TestCheckpointStatus_String(t *testing.T) {
 			require.Equal(t, tt.want, tt.status.String())
 		})
 	}
-}
-
-func TestEnsureCheckpointDir(t *testing.T) {
-	tempDir := t.TempDir()
-	filePath := filepath.Join(tempDir, "subdir", "checkpoints.json")
-	err := EnsureCheckpointDir(filePath)
-	require.NoError(t, err)
-	info, err := os.Stat(filepath.Dir(filePath))
-	require.NoError(t, err)
-	require.True(t, info.IsDir())
 }

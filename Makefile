@@ -547,7 +547,7 @@ mock_import: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/storage Manager > pkg/disttask/framework/mock/storage_manager_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ingestor/ingestcli Client,WriteClient > pkg/ingestor/ingestcli/mock/client_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/importsdk FileScanner,JobManager,SQLGenerator,SDK > pkg/importsdk/mock/sdk_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/importinto CheckpointManager > pkg/lightning/importinto/mock/import_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/lightning/pkg/importinto CheckpointManager > lightning/pkg/importinto/mock/import_mock.go
 
 .PHONY: gen_mock
 gen_mock: mockgen
