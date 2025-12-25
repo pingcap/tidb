@@ -18,6 +18,12 @@ select * from t where _tidb_softdelete_time is null;
 Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
 select id from t order by _tidb_softdelete_time;
 Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+select * from t where _tidb_softdelete_time is null union all select id from t where _tidb_softdelete_time is not null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+select * from t where _tidb_softdelete_time is null except select id from t where _tidb_softdelete_time is not null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+prepare stmt from 'select id from t where _tidb_softdelete_time > ?';
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
 update t set _tidb_softdelete_time = now() where id = 2;
 Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
 update t set name = 'updated' where _tidb_softdelete_time is null;

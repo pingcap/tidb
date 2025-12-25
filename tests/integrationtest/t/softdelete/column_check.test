@@ -22,6 +22,15 @@ select * from t where _tidb_softdelete_time is null;
 -- error 1815
 select id from t order by _tidb_softdelete_time;
 
+-- error 1815
+select * from t where _tidb_softdelete_time is null union all select id from t where _tidb_softdelete_time is not null;
+
+-- error 1815
+select * from t where _tidb_softdelete_time is null except select id from t where _tidb_softdelete_time is not null;
+
+-- error 1815
+prepare stmt from 'select id from t where _tidb_softdelete_time > ?';
+
 # UPDATE with _tidb_softdelete_time should fail
 -- error 1815
 update t set _tidb_softdelete_time = now() where id = 2;
