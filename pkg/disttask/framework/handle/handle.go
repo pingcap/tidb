@@ -89,6 +89,13 @@ func GetCPUCountOfNode(ctx context.Context) (int, error) {
 
 // SubmitTask submits a task.
 func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, keyspace string, requiredSlots int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
+	return SubmitTaskWithExtraParams(ctx, taskKey, taskType, keyspace, requiredSlots, targetScope, maxNodeCnt, taskMeta, proto.ExtraParams{})
+}
+
+// SubmitTaskWithExtraParams submits a task with extra params.
+func SubmitTaskWithExtraParams(ctx context.Context, taskKey string, taskType proto.TaskType,
+	keyspace string, requiredSlots int, targetScope string, maxNodeCnt int,
+	taskMeta []byte, extraParams proto.ExtraParams) (*proto.Task, error) {
 	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
@@ -101,7 +108,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, ke
 		return nil, storage.ErrTaskAlreadyExists
 	}
 
-	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, keyspace, requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, keyspace, requiredSlots, targetScope, maxNodeCnt, extraParams, taskMeta)
 	if err != nil {
 		return nil, err
 	}
