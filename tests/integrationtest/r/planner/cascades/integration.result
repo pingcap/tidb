@@ -234,7 +234,7 @@ b	sum(a)
 44	4
 explain format="plan_tree" select b, avg(a) from t group by b having sum(a) > 1 order by b;
 id	task	access object	operator info
-Projection	root		planner__cascades__integration.t.b, Column->Column
+Projection	root		planner__cascades__integration.t.b, Column
 └─Sort	root		planner__cascades__integration.t.b
   └─Selection	root		gt(Column, 1)
     └─HashAgg	root		group by:Column, funcs:avg(Column)->Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__cascades__integration.t.b
@@ -262,7 +262,7 @@ max(a+b)
 48
 explain format="plan_tree" select sum(a) from t group by a, a+b order by a;
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─Projection	root		cast(planner__cascades__integration.t.a, decimal(32,0) BINARY)->Column, planner__cascades__integration.t.a
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:true, stats:pseudo
@@ -443,7 +443,7 @@ approx_count_distinct(case when a > 0 and a <= 1000 then b end)
 4
 explain format="plan_tree" select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b;
 id	task	access object	operator info
-Projection	root		Column->Column, Column->Column, Column->Column, planner__cascades__integration.t.b, Column->Column, Column->Column, Column->Column, Column->Column, Column->Column
+Projection	root		Column, Column, Column, planner__cascades__integration.t.b, Column, Column, Column, Column, Column
 └─Sort	root		planner__cascades__integration.t.b
   └─Projection	root		if(isnull(planner__cascades__integration.t.b), 0, 1)->Column, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column, cast(planner__cascades__integration.t.b, decimal(15,4) BINARY)->Column, planner__cascades__integration.t.b, planner__cascades__integration.t.b->Column, planner__cascades__integration.t.b->Column, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 18446744073709551615)->Column, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column, ifnull(cast(planner__cascades__integration.t.b, bigint UNSIGNED BINARY), 0)->Column, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column, if(isnull(planner__cascades__integration.t.b), 0, 1)->Column
     └─TableReader	root		data:Selection
@@ -470,7 +470,7 @@ group_concat(a, b)	min(b)	avg(a / b)	a
 444	44	0.09090909	4
 explain format="plan_tree" select approx_percentile(a, 50) from t order by b;
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─Sort	root		planner__cascades__integration.t.b
   └─HashAgg	root		funcs:approx_percentile(planner__cascades__integration.t.a, 50)->Column, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
     └─TableReader	root		data:TableFullScan
@@ -703,7 +703,7 @@ aa
 44
 explain format="plan_tree" select a, b, lag(a,1) over (order by b) from t order by b;
 id	task	access object	operator info
-Window	root		lag(planner__cascades__integration.t.a, 1)->Column over(order by planner__cascades__integration.t.b)
+Window	root		lag(planner__cascades__integration.t.a, 1)->Column#4 over(order by planner__cascades__integration.t.b)
 └─Sort	root		planner__cascades__integration.t.b
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo

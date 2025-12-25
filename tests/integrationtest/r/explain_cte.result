@@ -362,19 +362,19 @@ limit 100;
 id	task	access object	operator info
 TopN	root		Column, Column, Column, Column, offset:0, count:100
 └─HashJoin	root		inner join, equal:[eq(Column, Column)], other cond:gt(case(gt(Column, 0), div(Column, Column), 0.000000), case(gt(Column, 0), div(Column, Column), 0.000000))
-  ├─Selection(Build)	root		eq(Column, 2002), eq(Column, "w"), not(isnull(Column))
+  ├─Selection(Build)	root		eq(Column, "w"), eq(Column, 2002), not(isnull(Column))
   │ └─CTEFullScan	root	CTE:year_total AS t_w_secyear	data:CTE_0
   └─HashJoin(Probe)	root		inner join, equal:[eq(Column, Column)]
-    ├─Selection(Build)	root		eq(Column, 2001), eq(Column, "w"), gt(Column, 0), not(isnull(Column))
+    ├─Selection(Build)	root		eq(Column, "w"), eq(Column, 2001), gt(Column, 0), not(isnull(Column))
     │ └─CTEFullScan	root	CTE:year_total AS t_w_firstyear	data:CTE_0
     └─HashJoin(Probe)	root		inner join, equal:[eq(Column, Column)]
-      ├─Selection(Build)	root		eq(Column, 2002), eq(Column, "s"), not(isnull(Column))
+      ├─Selection(Build)	root		eq(Column, "s"), eq(Column, 2002), not(isnull(Column))
       │ └─CTEFullScan	root	CTE:year_total AS t_s_secyear	data:CTE_0
-      └─Selection(Probe)	root		eq(Column, 2001), eq(Column, "s"), gt(Column, 0), not(isnull(Column))
+      └─Selection(Probe)	root		eq(Column, "s"), eq(Column, 2001), gt(Column, 0), not(isnull(Column))
         └─CTEFullScan	root	CTE:year_total AS t_s_firstyear	data:CTE_0
 CTE_0	root		Non-Recursive CTE
 └─Union(Seed Part)	root		
-  ├─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column->Column, s->Column
+  ├─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column, s->Column
   │ └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column, 0)), eq(explain_cte.date_dim.d_year, 2002))
   │   └─HashAgg	root		group by:Column, Column, Column, Column, Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->explain_cte.customer.c_customer_id, funcs:firstrow(Column)->explain_cte.customer.c_first_name, funcs:firstrow(Column)->explain_cte.customer.c_last_name, funcs:firstrow(Column)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column)->explain_cte.customer.c_birth_country, funcs:firstrow(Column)->explain_cte.customer.c_login, funcs:firstrow(Column)->explain_cte.customer.c_email_address, funcs:firstrow(Column)->explain_cte.date_dim.d_year
   │     └─Projection	root		minus(explain_cte.store_sales.ss_ext_list_price, explain_cte.store_sales.ss_ext_discount_amt)->Column, explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column
@@ -390,7 +390,7 @@ CTE_0	root		Non-Recursive CTE
   │           └─IndexLookUp(Probe)	root		
   │             ├─IndexRangeScan(Build)	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(explain_cte.customer.c_customer_sk, explain_cte.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
   │             └─TableRowIDScan(Probe)	cop[tikv]	table:customer	keep order:false, stats:pseudo
-  └─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column->Column, w->Column
+  └─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column, w->Column
     └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column, 0)), eq(explain_cte.date_dim.d_year, 2002))
       └─HashAgg	root		group by:Column, Column, Column, Column, Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->explain_cte.customer.c_customer_id, funcs:firstrow(Column)->explain_cte.customer.c_first_name, funcs:firstrow(Column)->explain_cte.customer.c_last_name, funcs:firstrow(Column)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column)->explain_cte.customer.c_birth_country, funcs:firstrow(Column)->explain_cte.customer.c_login, funcs:firstrow(Column)->explain_cte.customer.c_email_address, funcs:firstrow(Column)->explain_cte.date_dim.d_year
         └─Projection	root		minus(explain_cte.web_sales.ws_ext_list_price, explain_cte.web_sales.ws_ext_discount_amt)->Column, explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column

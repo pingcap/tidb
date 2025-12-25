@@ -506,7 +506,7 @@ explain format = 'plan_tree' SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name
 id	task	access object	operator info
 StreamAgg	root		funcs:count(1)->Column
 └─HashAgg	root		group by:Column, Column, Column, funcs:count(1)->Column
-  └─Projection	root		Column->Column, Column->Column, coalesce(explain_easy.test02.region_name, 不详)->Column
+  └─Projection	root		Column, Column, coalesce(explain_easy.test02.region_name, 不详)->Column
     └─IndexJoin	root		left outer join, inner:TableReader, left side:HashAgg, outer key:Column, inner key:explain_easy.test02.id, equal cond:eq(Column, explain_easy.test02.id)
       ├─HashAgg(Build)	root		group by:Column, Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:count(1)->Column
       │ └─Union	root		
@@ -763,7 +763,7 @@ explain format = 'plan_tree' select a, b from (select a, b, avg(b) over (partiti
 id	task	access object	operator info
 Projection	root		explain_easy.t.a, explain_easy.t.b
 └─Selection	root		gt(cast(explain_easy.t.a, decimal(10,0) BINARY), Column), lt(explain_easy.t.b, 10)
-  └─Window	root		avg(cast(explain_easy.t.b, decimal(10,0) BINARY))->Column over(partition by explain_easy.t.a)
+  └─Window	root		avg(cast(explain_easy.t.b, decimal(10,0) BINARY))->Column#5 over(partition by explain_easy.t.a)
     └─Sort	root		explain_easy.t.a
       └─TableReader	root		data:Selection
         └─Selection	cop[tikv]		gt(explain_easy.t.a, 10)
@@ -807,18 +807,18 @@ create table t(a int, b int);
 analyze table t;
 explain format = 'plan_tree' select (select count(n.a) from t) from t n;
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:count(explain_easy.t.a)->Column
   │ └─TableReader	root		data:TableFullScan
   │   └─TableFullScan	cop[tikv]	table:n	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
-    └─Projection	root		Column->Column
+    └─Projection	root		Column
       └─TableReader	root		data:TableFullScan
         └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select (select sum((select count(a)))) from t;
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:count(explain_easy.t.a)->Column
   │ └─TableReader	root		data:TableFullScan
@@ -828,22 +828,22 @@ Projection	root		Column->Column
       ├─HashAgg(Build)	root		group by:1, funcs:sum(Column)->Column
       │ └─Projection	root		cast(Column, decimal(20,0) BINARY)->Column
       │   └─MaxOneRow	root		
-      │     └─Projection	root		Column->Column
+      │     └─Projection	root		Column
       │       └─TableDual	root		rows:1
       └─TableDual(Probe)	root		rows:1
 explain format = 'plan_tree' select count(a) from t group by b order by (select count(a));
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─Sort	root		Column
   └─Apply	root		CARTESIAN left outer join, left side:HashAgg
     ├─HashAgg(Build)	root		group by:explain_easy.t.b, funcs:count(explain_easy.t.a)->Column
     │ └─TableReader	root		data:TableFullScan
     │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─Projection(Probe)	root		Column->Column
+    └─Projection(Probe)	root		Column
       └─TableDual	root		rows:1
 explain format = 'plan_tree' select (select sum(count(a))) from t;
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:count(explain_easy.t.a)->Column
   │ └─TableReader	root		data:TableFullScan
@@ -853,7 +853,7 @@ Projection	root		Column->Column
       └─TableDual	root		rows:1
 explain format = 'plan_tree' select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 id	task	access object	operator info
-Projection	root		Column->Column, Column->Column, Column->Column
+Projection	root		Column, Column, Column
 └─Sort	root		Column
   └─Apply	root		CARTESIAN left outer join, left side:Apply
     ├─Apply(Build)	root		CARTESIAN left outer join, left side:HashAgg
@@ -861,9 +861,9 @@ Projection	root		Column->Column, Column->Column, Column->Column
     │ │ └─Projection	root		cast(explain_easy.t.a, decimal(10,0) BINARY)->Column, explain_easy.t.a->Column, explain_easy.t.b->Column
     │ │   └─TableReader	root		data:TableFullScan
     │ │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-    │ └─Projection(Probe)	root		Column->Column
+    │ └─Projection(Probe)	root		Column
     │   └─TableDual	root		rows:1
-    └─Projection(Probe)	root		Column->Column
+    └─Projection(Probe)	root		Column
       └─TableDual	root		rows:1
 drop table if exists t;
 create table t(a tinyint, b smallint, c mediumint, d int, e bigint);

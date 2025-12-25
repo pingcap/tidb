@@ -658,7 +658,7 @@ Sort	root		Column, Column, Column
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─Projection	root		cast(Column, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column, test.t1.cc2->Column, test.t1.cc1->Column
     └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
-      └─Window	root		count(1)->Column over(partition by test.t1.cc1)
+      └─Window	root		count(1)->Column#7 over(partition by test.t1.cc1)
         └─Sort	root		test.t1.cc1
           └─ShuffleReceiver	root		
             └─TableReader	root		data:TableFullScan
@@ -929,7 +929,7 @@ HashJoin	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
 └─HashJoin(Probe)	root		left outer join, left side:HashJoin, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
   ├─Selection(Build)	root		not(isnull(test.t4.c))
   │ └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
-  │   └─Window	root		row_number()->Column over(partition by test.t4.b order by test.t4.e rows between current row and current row)
+  │   └─Window	root		row_number()->Column#26 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
   │     └─Sort	root		test.t4.b, test.t4.e
   │       └─ShuffleReceiver	root		
   │         └─TableReader	root		data:Selection

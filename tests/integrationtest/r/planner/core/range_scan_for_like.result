@@ -2,7 +2,7 @@ create table t(a varchar(20) collate utf8mb4_general_ci, index ia(a));
 insert into t value('测试'),('测试Abc'),('测试     '),('你好'),('aABBccdd'),('Aa'),(''),(' '),('  '),(' 语言'),('  语 言 '),('测测试 '),('测测试    '),(NULL);
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试%", 92)
@@ -14,7 +14,7 @@ a	length(a)
 测试Abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测%%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%", 92)
@@ -28,7 +28,7 @@ a	length(a)
 测试Abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测%%试' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%试", 92)
@@ -38,7 +38,7 @@ a	length(a)
 测试	6
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测试%%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试%%", 92)
@@ -50,7 +50,7 @@ a	length(a)
 测试Abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测试_' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试_", 92)
@@ -59,7 +59,7 @@ select *, length(a) from t use index (ia) where a like '测试_' order by a,_tid
 a	length(a)
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '你好%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "你好%", 92)
@@ -69,7 +69,7 @@ a	length(a)
 你好	6
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa", 92)
@@ -79,7 +79,7 @@ a	length(a)
 Aa	2
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%", 92)
@@ -90,7 +90,7 @@ Aa	2
 aABBccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%cc", 92)
@@ -99,7 +99,7 @@ select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_
 a	length(a)
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "", 92)
@@ -109,7 +109,7 @@ a	length(a)
 	0
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like ' ' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " ", 92)
@@ -119,7 +119,7 @@ a	length(a)
  	1
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%dd' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%dd", 92)
@@ -129,7 +129,7 @@ a	length(a)
 aABBccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%%dd' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%%dd", 92)
@@ -139,7 +139,7 @@ a	length(a)
 aABBccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa_bccdd' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa_bccdd", 92)
@@ -149,7 +149,7 @@ a	length(a)
 aABBccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '%%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "%%", 92)
@@ -171,7 +171,7 @@ aABBccdd	8
 测试Abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like ' %%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%", 92)
@@ -184,7 +184,7 @@ a	length(a)
  语言	7
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like ' %%语言' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%语言", 92)
@@ -194,7 +194,7 @@ a	length(a)
  语言	7
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '  语 %' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  语 %", 92)
@@ -204,7 +204,7 @@ a	length(a)
   语 言 	10
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '  语  _' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  语  _", 92)
@@ -216,7 +216,7 @@ create table t(a varchar(20) collate utf8mb4_unicode_ci, unique index ia(a));
 insert into t value(''),('测试'),('测试abc'),('你好'),('aabbccdd'),(' 语言'),('  语 言 '),('测测试    ');
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -228,7 +228,7 @@ a	length(a)
 测试abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测%%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -241,7 +241,7 @@ a	length(a)
 测试abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测%%试' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -252,7 +252,7 @@ a	length(a)
 测试	6
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测试%%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -264,7 +264,7 @@ a	length(a)
 测试abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测试_' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -274,7 +274,7 @@ select *, length(a) from t use index (ia) where a like '测试_' order by a,_tid
 a	length(a)
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '你好%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -285,7 +285,7 @@ a	length(a)
 你好	6
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─Selection	root		like(planner__core__range_scan_for_like.t.a, "aa", 92)
@@ -294,7 +294,7 @@ select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_row
 a	length(a)
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -305,7 +305,7 @@ a	length(a)
 aabbccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -315,7 +315,7 @@ select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_
 a	length(a)
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─Selection	root		like(planner__core__range_scan_for_like.t.a, "", 92)
@@ -325,7 +325,7 @@ a	length(a)
 	0
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%dd' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -336,7 +336,7 @@ a	length(a)
 aabbccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%%dd' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -347,7 +347,7 @@ a	length(a)
 aabbccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa_bccdd' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -358,7 +358,7 @@ a	length(a)
 aabbccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '%%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -376,7 +376,7 @@ aabbccdd	8
 测试abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like ' %%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -388,7 +388,7 @@ a	length(a)
  语言	7
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like ' %%语言' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -399,7 +399,7 @@ a	length(a)
  语言	7
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '  语 %' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -410,7 +410,7 @@ a	length(a)
   语 言 	10
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '  语  _' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	root		index:Selection
@@ -1040,7 +1040,7 @@ insert into t value('测试'),('测试Abc'),('测试     '),('你好'),('aABBccd
 insert into t2 value('测试'),('测试Abc'),('测试     '),('你好'),('aABBccdd'),('Aa'),(''),(' '),('  '),(' 语言'),('  语 言 '),('测测试 '),('测测试    '),(NULL);
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:IndexRangeScan
     └─IndexRangeScan	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:true, stats:pseudo
@@ -1051,7 +1051,7 @@ a	length(a)
 测试Abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测%%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%", 92)
@@ -1065,7 +1065,7 @@ a	length(a)
 测试Abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测%%试' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%试", 92)
@@ -1075,7 +1075,7 @@ a	length(a)
 测试	6
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测试%%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试%%", 92)
@@ -1087,7 +1087,7 @@ a	length(a)
 测试Abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '测试_' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试_", 92)
@@ -1096,7 +1096,7 @@ select *, length(a) from t use index (ia) where a like '测试_' order by a,_tid
 a	length(a)
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '你好%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:IndexRangeScan
     └─IndexRangeScan	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xcf`\xfb@\xd9}","\xfb@\xcf`\xfb@\xd9~"), keep order:true, stats:pseudo
@@ -1105,7 +1105,7 @@ a	length(a)
 你好	6
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:IndexRangeScan
     └─IndexRangeScan	cop[tikv]	table:t, index:ia(a)	range:["\x1cG\x1cG","\x1cG\x1cG"], keep order:true, stats:pseudo
@@ -1114,7 +1114,7 @@ a	length(a)
 Aa	2
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:IndexRangeScan
     └─IndexRangeScan	cop[tikv]	table:t, index:ia(a)	range:["\x1cG\x1cG","\x1cG\x1cH"), keep order:true, stats:pseudo
@@ -1124,7 +1124,7 @@ Aa	2
 aABBccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%cc", 92)
@@ -1133,7 +1133,7 @@ select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_
 a	length(a)
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:IndexRangeScan
     └─IndexRangeScan	cop[tikv]	table:t, index:ia(a)	range:["",""], keep order:true, stats:pseudo
@@ -1142,7 +1142,7 @@ a	length(a)
 	0
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like ' ' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:IndexRangeScan
     └─IndexRangeScan	cop[tikv]	table:t, index:ia(a)	range:["\x02\t","\x02\t"], keep order:true, stats:pseudo
@@ -1151,7 +1151,7 @@ a	length(a)
  	1
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%dd' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%dd", 92)
@@ -1161,7 +1161,7 @@ a	length(a)
 aABBccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa%%dd' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%%dd", 92)
@@ -1171,7 +1171,7 @@ a	length(a)
 aABBccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like 'aa_bccdd' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa_bccdd", 92)
@@ -1181,7 +1181,7 @@ a	length(a)
 aABBccdd	8
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '%%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "%%", 92)
@@ -1203,7 +1203,7 @@ aABBccdd	8
 测试Abc	9
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like ' %%' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%", 92)
@@ -1216,7 +1216,7 @@ a	length(a)
  语言	7
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like ' %%语言' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%语言", 92)
@@ -1226,7 +1226,7 @@ a	length(a)
  语言	7
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '  语 %' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:IndexRangeScan
     └─IndexRangeScan	cop[tikv]	table:t, index:ia(a)	range:["\x02\t\x02\t\xfbA\x8b\xed\x02\t","\x02\t\x02\t\xfbA\x8b\xed\x02\n"), keep order:true, stats:pseudo
@@ -1235,7 +1235,7 @@ a	length(a)
   语 言 	10
 explain format='plan_tree' select *, length(a) from t use index (ia) where a like '  语  _' order by a,_tidb_rowid;
 id	task	access object	operator info
-Projection	root		planner__core__range_scan_for_like.t.a, Column->Column
+Projection	root		planner__core__range_scan_for_like.t.a, Column
 └─Projection	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  语  _", 92)

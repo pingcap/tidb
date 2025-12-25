@@ -710,7 +710,7 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	task	access object	operator info
-Projection	root		tpch50.partsupp.ps_partkey, Column->Column
+Projection	root		tpch50.partsupp.ps_partkey, Column
 └─TableDual	root		rows:0
 ScalarSubQuery	root		Output: ScalarQueryCol#57
 └─MaxOneRow	root		

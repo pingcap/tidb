@@ -239,7 +239,7 @@ approx_percentile(a, 10*10)
 5
 explain format='plan_tree' select approx_percentile(a, 50) from t group by b order by b;
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─Sort	root		planner__core__casetest__integration.t.b
   └─HashAgg	root		group by:planner__core__casetest__integration.t.b, funcs:approx_percentile(planner__core__casetest__integration.t.a, 50)->Column, funcs:firstrow(planner__core__casetest__integration.t.b)->planner__core__casetest__integration.t.b
     └─TableReader	root		data:TableFullScan
@@ -284,7 +284,7 @@ c
 2
 explain format='plan_tree' select /*+ stream_agg() */ count(*) c from t group by a order by a;
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─StreamAgg	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
   └─Sort	root		planner__core__casetest__integration.t.a
     └─TableReader	root		data:TableFullScan
@@ -1210,7 +1210,7 @@ id	task	access object	operator info
 Sort	root		Column
 └─Projection	root		floor(div(cast(Column, decimal(20,0) BINARY), 2))->Column, Column
   └─HashAgg	root		group by:Column, funcs:count(Column)->Column, funcs:firstrow(Column)->Column
-    └─Projection	root		planner__core__casetest__integration.t1.c1->Column, Column->Column, floor(div(cast(Column, decimal(20,0) BINARY), 2))->Column
+    └─Projection	root		planner__core__casetest__integration.t1.c1->Column, Column, floor(div(cast(Column, decimal(20,0) BINARY), 2))->Column
       └─Projection	root		setvar(rownum, plus(getvar(rownum), 1))->Column, planner__core__casetest__integration.t1.c1
         └─HashJoin	root		CARTESIAN inner join
           ├─Projection(Build)	root		setvar(rownum, -1)->Column
@@ -1836,7 +1836,7 @@ Update	root		N/A
   │   └─TableDual	root		rows:1
   └─TableReader(Probe)	root		data:Selection
     └─Selection	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444))))
-      └─TableRangeScan	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column) eq(test.tt.d, Column)], keep order:false, stats:pseudo
+      └─TableRangeScan	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo
 CREATE TABLE test_62564(c0 DECIMAL);
 INSERT INTO test_62564 VALUES (0);
 SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);

@@ -302,7 +302,7 @@ count(a)
 1
 explain format = 'plan_tree' select count(a) from t where b>0 group by a, b order by a;
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─StreamAgg	root		group by:select.t.a, select.t.b, funcs:count(Column)->Column, funcs:firstrow(select.t.a)->select.t.a
   └─IndexReader	root		index:StreamAgg
     └─StreamAgg	cop[tikv]		group by:select.t.a, select.t.b, funcs:count(select.t.a)->Column
@@ -495,7 +495,7 @@ explain format = 'plan_tree' select row_number() over( partition by i ) - x as r
 id	task	access object	operator info
 Projection	root		minus(Column, select.t.x)->Column
 └─Shuffle	root		execution info: concurrency:5, data sources:[TableReader]
-  └─Window	root		row_number()->Column over(partition by select.t.i rows between current row and current row)
+  └─Window	root		row_number()->Column#5 over(partition by select.t.i rows between current row and current row)
     └─Sort	root		select.t.i
       └─ShuffleReceiver	root		
         └─TableReader	root		data:TableFullScan

@@ -1322,7 +1322,7 @@ explain format='plan_tree' select date_format(d,'%Y') as df, sum(a), count(b), c
 id	task	access object	operator info
 Projection	root		date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column, Column, cast(Column, bigint BINARY)->Column, Column
 └─HashAgg	root		group by:Column, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:count(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.t.d
-  └─Projection	root		Column->Column, cast(Column, decimal(20,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.t.c->Column, planner__core__casetest__physicalplantest__physical_plan.t.d->Column, date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column
+  └─Projection	root		Column, cast(Column, decimal(20,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.t.c->Column, planner__core__casetest__physicalplantest__physical_plan.t.d->Column, date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column
     └─HashAgg	root		group by:Column, planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:sum(Column)->Column, funcs:count(Column)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.t.d
       └─TableReader	root		data:HashAgg
         └─HashAgg	cop[tikv]		group by:date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, "%Y"), planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:sum(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.b)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.d)->Column
@@ -1340,7 +1340,7 @@ explain format='plan_tree' select d, sum(a), count(b), avg(distinct c) from t gr
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.d, Column, cast(Column, bigint BINARY)->Column, Column
 └─HashAgg	root		group by:Column, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:avg(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.t.d
-  └─Projection	root		Column->Column, cast(Column, decimal(20,0) BINARY)->Column, cast(planner__core__casetest__physicalplantest__physical_plan.t.c, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.t.d->Column
+  └─Projection	root		Column, cast(Column, decimal(20,0) BINARY)->Column, cast(planner__core__casetest__physicalplantest__physical_plan.t.c, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.t.d->Column
     └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:sum(Column)->Column, funcs:count(Column)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.d)->planner__core__casetest__physicalplantest__physical_plan.t.d
       └─TableReader	root		data:HashAgg
         └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:sum(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.b)->Column
@@ -3329,13 +3329,13 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select t1.a, (select sum(t1.a) from t2 where t2.a = 10) from t1;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column->Column
+Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:HashAgg
   ├─HashAgg(Build)	root		funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.t1.a
   │ └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.t1.a, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.t1.a->Column
   │   └─TableReader	root		data:TableFullScan
   │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection(Probe)	root		Column->Column
+  └─Projection(Probe)	root		Column
     └─Point_Get	root	table:t2	handle:10
 select t1.a, (select sum(t1.a) from t2 where t2.a = 10) from t1;
 a	(select sum(t1.a) from t2 where t2.a = 10)
@@ -3344,14 +3344,14 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select t1.a, (select /*+ no_decorrelate() */ sum(t1.a) from t2 where t2.a = 10) from t1;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column->Column
+Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:HashAgg
   ├─HashAgg(Build)	root		funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.t1.a
   │ └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.t1.a, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.t1.a->Column
   │   └─TableReader	root		data:TableFullScan
   │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
-    └─Projection	root		Column->Column
+    └─Projection	root		Column
       └─Point_Get	root	table:t2	handle:10
 select t1.a, (select /*+ no_decorrelate() */ sum(t1.a) from t2 where t2.a = 10) from t1;
 a	(select /*+ no_decorrelate()  sum(t1.a) from t2 where t2.a = 10)
