@@ -4949,10 +4949,10 @@ func TestExchangeTiDBRowID(t *testing.T) {
 		"2 2 1",
 		"4 4 2",
 		"6 6 3",
-		"8 8 30001"))
+		"8 8 5001"))
 	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
 		"2 2 1",
 		"4 4 2",
 		"6 6 3",
-		"8 8 30001"))
+		"8 8 5001"))
 }
