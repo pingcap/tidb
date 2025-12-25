@@ -598,15 +598,14 @@ func TestDropTableBeforeCleanup(t *testing.T) {
 	t.Cleanup(func() {
 		s.TearDownSuite()
 	})
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	srcDirURI := realtikvtest.GetNextGenObjStoreURI("drop-test")
-	srcStore, err2 := handle.NewObjStore(ctx, srcDirURI)
-	s.NoError(err2)
-	s.NoError(srcStore.WriteFile(ctx, "data.csv", []byte("1,1\n2,2\n")))
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "drop-test", Name: "data.csv"},
+		Content:     []byte("1,1\n2,2\n"),
+	})
 	s.prepareAndUseDB("drop_test")
-	glSortURI := realtikvtest.GetNextGenObjStoreURI("drop-sort")
-	s.tk.MustExec("create table table_mode (id int primary key, fk int)")
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "drop-sort"})
+	sortStorageURI := fmt.Sprintf("gs://drop-sort?endpoint=%s", gcsEndpoint)
 
 	dropCh := make(chan struct{})
 	waitDropCh := make(chan struct{})
@@ -621,9 +620,9 @@ func TestDropTableBeforeCleanup(t *testing.T) {
 		}
 	})
 
-	importSQL := fmt.Sprintf(`import into table_mode FROM '%s'
-		with cloud_storage_uri='%s'`, realtikvtest.GetNextGenObjStoreURI("drop-test/*.csv"), glSortURI)
-	s.tk.MustExec(importSQL)
+	s.tk.MustExec("create table table_mode (id int primary key, fk int)")
+	importSQL := fmt.Sprintf(`import into table_mode FROM 'gs://drop-test/data.csv?endpoint=%s'
+		with cloud_storage_uri='%s', thread=8`, gcsEndpoint, sortStorageURI)
 	query := "SELECT * FROM table_mode"
 
 	// Wait import finish without altering table mode back, then drop table
