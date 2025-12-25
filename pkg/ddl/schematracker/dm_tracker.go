@@ -387,6 +387,20 @@ func (d *SchemaTracker) createIndex(
 	ifNotExists bool,
 ) (err error) {
 	unique := keyType == ast.IndexKeyTypeUnique
+
+	columnarIndexType := model.ColumnarIndexTypeNA
+	if keyType == ast.IndexKeyTypeColumnar && indexOption != nil {
+		switch indexOption.Tp {
+		case ast.IndexTypeVector:
+			columnarIndexType = model.ColumnarIndexTypeVector
+		case ast.IndexTypeInverted:
+			columnarIndexType = model.ColumnarIndexTypeInverted
+		case ast.IndexTypeFulltext:
+			columnarIndexType = model.ColumnarIndexTypeFulltext
+		case ast.IndexTypeHybrid:
+			columnarIndexType = model.ColumnarIndexTypeHybrid
+		}
+	}
 	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return err
@@ -426,7 +440,7 @@ func (d *SchemaTracker) createIndex(
 		indexName,
 		false,
 		unique,
-		model.ColumnarIndexTypeNA,
+		columnarIndexType,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
@@ -925,6 +939,9 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, ast.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+			case ast.ConstraintColumnar:
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeColumnar, ast.NewCIStr(constr.Name),
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintPrimaryKey:
 				err = d.createPrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintForeignKey,
