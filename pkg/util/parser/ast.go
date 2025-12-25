@@ -145,7 +145,7 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 // This function is customized for universal SQL binding.
 func RestoreWithoutDB(node ast.StmtNode) string {
 	var sb strings.Builder
-	ctx := format.NewRestoreCtx(defaultRestoreFlag|format.RestoreWithoutSchemaName, &sb)
+	ctx := format.NewRestoreCtx(defaultRestoreFlag|format.RestoreWithoutSchemaName|format.RestoreWithoutTableName, &sb)
 	if err := node.Restore(ctx); err != nil {
 		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
 		return ""
