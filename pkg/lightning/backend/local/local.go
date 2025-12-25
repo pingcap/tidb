@@ -899,37 +899,32 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 			mu            sync.Mutex
 			successStores = make([]string, 0, len(clients))
 			failedStores  = make([]string, 0, len(clients))
-			rpcWg         util.WaitGroupWrapper
 		)
 		concurrency := int(local.WorkerConcurrency.Load())
 		if concurrency <= 0 {
 			concurrency = 1
 		}
-		sem := make(chan struct{}, concurrency)
+		eg, _ := util.NewErrorGroupWithRecoverWithCtx(subctx)
+		eg.SetLimit(concurrency)
 		for i, c := range clients {
-			rpcWg.Run(func() {
-				select {
-				case sem <- struct{}{}:
-				case <-subctx.Done():
-					return
-				}
-				defer func() { <-sem }()
-
+			client, addr := c, storeAddrs[i]
+			eg.Go(func() error {
 				failpoint.InjectCall("AddPartitionRangeForTable")
-				_, err := c.AddForcePartitionRange(subctx, addReq)
+				_, err := client.AddForcePartitionRange(subctx, addReq)
 				mu.Lock()
 				defer mu.Unlock()
 				if err == nil {
-					successStores = append(successStores, storeAddrs[i])
+					successStores = append(successStores, addr)
 				} else {
-					failedStores = append(failedStores, storeAddrs[i])
+					failedStores = append(failedStores, addr)
 					if firstErr == nil {
 						firstErr = err
 					}
 				}
+				return nil
 			})
 		}
-		rpcWg.Wait()
+		_ = eg.Wait()
 		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
 			zap.Strings("success stores", successStores),
 			zap.Strings("failed stores", failedStores),
@@ -961,37 +956,32 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 			mu            sync.Mutex
 			successStores = make([]string, 0, len(clients))
 			failedStores  = make([]string, 0, len(clients))
-			rpcWg         util.WaitGroupWrapper
 		)
 		concurrency := int(local.WorkerConcurrency.Load())
 		if concurrency <= 0 {
 			concurrency = 1
 		}
-		sem := make(chan struct{}, concurrency)
+		eg, _ := util.NewErrorGroupWithRecoverWithCtx(ctx)
+		eg.SetLimit(concurrency)
 		for i, c := range clients {
-			rpcWg.Run(func() {
-				select {
-				case sem <- struct{}{}:
-				case <-ctx.Done():
-					return
-				}
-				defer func() { <-sem }()
-
+			client, addr := c, storeAddrs[i]
+			eg.Go(func() error {
 				failpoint.InjectCall("RemovePartitionRangeRequest")
-				_, err := c.RemoveForcePartitionRange(ctx, removeReq)
+				_, err := client.RemoveForcePartitionRange(ctx, removeReq)
 				mu.Lock()
 				defer mu.Unlock()
 				if err == nil {
-					successStores = append(successStores, storeAddrs[i])
+					successStores = append(successStores, addr)
 				} else {
-					failedStores = append(failedStores, storeAddrs[i])
+					failedStores = append(failedStores, addr)
 					if firstErr == nil {
 						firstErr = err
 					}
 				}
+				return nil
 			})
 		}
-		rpcWg.Wait()
+		_ = eg.Wait()
 		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
 			zap.Strings("success stores", successStores),
 			zap.Strings("failed stores", failedStores),
