@@ -16,6 +16,7 @@ package importintotest
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -23,11 +24,39 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
+
+//go:embed memorycheck.parquet
+var parquetCheckContent []byte
+
+func (s *mockGCSSuite) TestPrecheckParquetMemory() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "precheck-parquet",
+			Name:       "check.parquet",
+		},
+		Content: parquetCheckContent,
+	})
+
+	// The file size is about 1KiB, so setting limit to 512 bytes.
+	bak := mydump.ParquetParserMemoryLimit
+	mydump.ParquetParserMemoryLimit = 512
+	s.T().Cleanup(func() {
+		mydump.ParquetParserMemoryLimit = bak
+	})
+
+	s.prepareAndUseDB("check_parquet")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t (a char(16))")
+	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://precheck-parquet/*.parquet?endpoint=%s'`, gcsEndpoint)
+	err := s.tk.QueryToErr(sql)
+	require.ErrorIs(s.T(), err, exeerrors.ErrLoadDataPreCheckFailed)
+}
 
 func (s *mockGCSSuite) TestPreCheckTotalFileSize0() {
 	s.server.CreateObject(fakestorage.Object{

@@ -290,7 +290,7 @@ func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
+func (pf *parquetFileWrapper) Open() (*parquetFileWrapper, error) {
 	reader, err := pf.store.Open(pf.ctx, pf.path, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -572,12 +572,6 @@ func NewParquetParser(
 		}
 	}
 
-	defer func() {
-		if err != nil {
-			_ = wrapper.Close()
-		}
-	}()
-
 	allocator := meta.allocator
 	if allocator == nil {
 		allocator = memory.NewGoAllocator()
@@ -588,12 +582,23 @@ func NewParquetParser(
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
+		_ = r.Close()
 		return nil, errors.Trace(err)
 	}
 
 	fileSchema := reader.MetaData().Schema
 	colTypes := make([]convertedType, fileSchema.NumColumns())
 	colNames := make([]string, 0, fileSchema.NumColumns())
+	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
+	subreaders = append(subreaders, reader)
+
+	defer func() {
+		if err != nil {
+			for _, subreader := range subreaders {
+				_ = subreader.Close()
+			}
+		}
+	}()
 
 	for i := range colTypes {
 		desc := reader.MetaData().Schema.Column(i)
@@ -629,10 +634,8 @@ func NewParquetParser(
 		return make([]types.Datum, numColumns)
 	})
 
-	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
-	subreaders = append(subreaders, reader)
 	for i := 1; i < fileSchema.NumColumns(); i++ {
-		var newWrapper parquet.ReaderAtSeeker
+		var newWrapper *parquetFileWrapper
 		// Open file for each column.
 		newWrapper, err = wrapper.Open()
 		if err != nil {
@@ -644,6 +647,7 @@ func NewParquetParser(
 			file.WithMetadata(reader.MetaData()),
 		)
 		if err != nil {
+			_ = newWrapper.Close()
 			return nil, errors.Trace(err)
 		}
 		subreaders = append(subreaders, reader)
