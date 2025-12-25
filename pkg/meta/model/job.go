@@ -781,6 +781,9 @@ func (job *Job) MayNeedReorg() bool {
 		if job.NeedReorg {
 			return true
 		}
+		if job.Version != JobVersion1 && job.Version != JobVersion2 {
+			return false
+		}
 		if args, err := GetModifyColumnArgs(job); err == nil {
 			return args.ModifyColumnType == ModifyTypeReorg ||
 				args.ModifyColumnType == ModifyTypeIndexReorg

@@ -286,7 +286,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			}
 			req.AppendString(11, subJob.State.String())
 			if inShowStmt {
-				req.AppendString(12, showCommentsFromSubjob(subJob, useDXF, isCloud))
+				req.AppendString(12, showCommentsFromSubjob(job, subJob, useDXF, isCloud))
 			} else {
 				req.AppendString(12, job.Query)
 			}
@@ -379,8 +379,8 @@ func getReorgAndVerifyLabels(jobType model.ActionType, mayNeedReorg bool, isVali
 }
 
 // showCommentsFromSubjob generates the comments for a sub-job in a multi-schema change.
-func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
-	proxy := sub.ToProxyJob(&model.Job{Type: model.ActionMultiSchemaChange}, 0)
+func showCommentsFromSubjob(job *model.Job, sub *model.SubJob, useDXF, useCloud bool) string {
+	proxy := sub.ToProxyJob(job, 0)
 	labels := getReorgAndVerifyLabels(sub.Type, proxy.MayNeedReorg(), sub.IsValidating)
 
 	if kerneltype.IsNextGen() {

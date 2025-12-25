@@ -164,33 +164,34 @@ func TestShowCommentsFromSubJob(t *testing.T) {
 	subJob := &model.SubJob{
 		Type: model.ActionAddPrimaryKey,
 	}
+	parentJob := &model.Job{Type: model.ActionMultiSchemaChange, Version: model.JobVersion2}
 	subJob.ReorgTp = model.ReorgTypeNone
-	res := showCommentsFromSubjob(subJob, false, false)
+	res := showCommentsFromSubjob(parentJob, subJob, false, false)
 	require.Equal(t, "", res)
 
 	subJob.ReorgTp = model.ReorgTypeIngest
-	res = showCommentsFromSubjob(subJob, false, false)
+	res = showCommentsFromSubjob(parentJob, subJob, false, false)
 	require.Equal(t, "ingest", res)
 
-	res = showCommentsFromSubjob(subJob, true, false)
+	res = showCommentsFromSubjob(parentJob, subJob, true, false)
 	require.Equal(t, "ingest, DXF", res)
 
-	res = showCommentsFromSubjob(subJob, true, true)
+	res = showCommentsFromSubjob(parentJob, subJob, true, true)
 	require.Equal(t, "ingest, DXF, cloud", res)
 
-	res = showCommentsFromSubjob(subJob, false, true)
+	res = showCommentsFromSubjob(parentJob, subJob, false, true)
 	require.Equal(t, "ingest", res)
 
 	subJob.Type = model.ActionModifyColumn
 	subJob.ReorgTp = model.ReorgTypeNone
-	res = showCommentsFromSubjob(subJob, false, false)
+	res = showCommentsFromSubjob(parentJob, subJob, false, false)
 	require.Equal(t, "", res)
 
 	subJob.NeedReorg = true
-	res = showCommentsFromSubjob(subJob, false, false)
+	res = showCommentsFromSubjob(parentJob, subJob, false, false)
 	require.Equal(t, "need reorg", res)
 
 	subJob.IsValidating = true
-	res = showCommentsFromSubjob(subJob, false, false)
+	res = showCommentsFromSubjob(parentJob, subJob, false, false)
 	require.Equal(t, "need reorg, validating", res)
 }
