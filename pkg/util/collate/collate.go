@@ -377,9 +377,9 @@ func compareCommon(a, b string, keyFunc func(rune) uint32) int {
 	for ai < len(a) && bi < len(b) {
 		r1, r1Len = utf8.DecodeRuneInString(a[ai:])
 		r2, r2Len = utf8.DecodeRuneInString(b[bi:])
-		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('閿燂拷') and size 1.
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
 		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
-		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '閿燂拷'.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
 		invalid1 := r1 == utf8.RuneError && r1Len == 1
 		invalid2 := r2 == utf8.RuneError && r2Len == 1
 		if invalid1 || invalid2 {

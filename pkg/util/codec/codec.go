@@ -425,7 +425,7 @@ const (
 )
 
 // PreAllocForSerializedKeyBuffer estimates key length
-func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte, serializedKeyLens []int, continuousMem []byte) ([]int, []byte, error) {
+func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte, serializedKeyLens []int, serializedKeysBuffer []byte) ([]int, []byte, error) {
 	rowNum := len(usedRows)
 	if cap(serializedKeyLens) < rowNum {
 		serializedKeyLens = make([]int, rowNum)
@@ -494,7 +494,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 
 				size, err := ds[physicalRowindex].HashKeySize()
 				if err != nil {
-					return serializedKeyLens, continuousMem, err
+					return serializedKeyLens, serializedKeysBuffer, err
 				}
 
 				serializedKeyLens[j] += size + sizeByteNum
@@ -545,7 +545,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 
 				s, err := types.ParseSetValue(tps[i].GetElems(), column.GetSet(physicalRowindex).Value)
 				if err != nil {
-					return serializedKeyLens, continuousMem, err
+					return serializedKeyLens, serializedKeysBuffer, err
 				}
 
 				serializedKeyLens[j] += int(sizeByteNum) + collator.GetCharacterNum(s.Name)*collator.MaxBytesOneCharacter()
@@ -577,7 +577,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 			}
 		case mysql.TypeNull:
 		default:
-			return serializedKeyLens, continuousMem, errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
+			return serializedKeyLens, serializedKeysBuffer, errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
 		}
 	}
 
@@ -586,19 +586,19 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 		totalMemUsage += usage
 	}
 
-	if cap(continuousMem) < totalMemUsage {
-		continuousMem = make([]byte, totalMemUsage)
+	if cap(serializedKeysBuffer) < totalMemUsage {
+		serializedKeysBuffer = make([]byte, totalMemUsage)
 	} else {
-		continuousMem = continuousMem[:totalMemUsage]
+		serializedKeysBuffer = serializedKeysBuffer[:totalMemUsage]
 	}
 
 	start := 0
 	for i := range serializedKeysVectorBuffer {
 		rowLen := serializedKeyLens[i]
-		serializedKeysVectorBuffer[i] = continuousMem[start : start : start+rowLen]
+		serializedKeysVectorBuffer[i] = serializedKeysBuffer[start : start : start+rowLen]
 		start += rowLen
 	}
-	return serializedKeyLens, continuousMem, nil
+	return serializedKeyLens, serializedKeysBuffer, nil
 }
 
 // SerializeKeys is used in join

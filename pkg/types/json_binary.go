@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -718,13 +719,8 @@ func CreateBinaryJSONWithCheck(in any) (BinaryJSON, error) {
 // CalculateBinaryJSONSize calculates the size of binary JSON
 func CalculateBinaryJSONSize(in any) int64 {
 	switch x := in.(type) {
-	case nil:
-		return int64(unsafe.Sizeof(JSONLiteralNil))
-	case bool:
-		if x {
-			return int64(unsafe.Sizeof(JSONLiteralTrue))
-		}
-		return int64(unsafe.Sizeof(JSONLiteralFalse))
+	case nil, bool:
+		return int64(size.SizeOfByte)
 	case int64, uint64, float64:
 		return 8
 	case json.Number:

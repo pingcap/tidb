@@ -73,8 +73,8 @@ type rowTableBuilder struct {
 	filterVector  []bool // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector []bool // nullKeyVector[i] = true if any of the key is null
 
-	serializedKeyLens []int
-	continuousMem     []byte
+	serializedKeyLens    []int
+	serializedKeysBuffer []byte
 
 	// When respilling a row, we need to recalculate the row's hash value.
 	// These are auxiliary utility for rehash.
@@ -162,7 +162,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 
-	b.serializedKeyLens, b.continuousMem, err = codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer, b.serializedKeyLens, b.continuousMem)
+	b.serializedKeyLens, b.serializedKeysBuffer, err = codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer, b.serializedKeyLens, b.serializedKeysBuffer)
 	if err != nil {
 		return err
 	}
