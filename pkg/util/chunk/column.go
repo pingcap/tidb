@@ -289,12 +289,12 @@ func (c *Column) CalculateLenDeltaForAppendCellNTimesForNullBitMap(times int) in
 }
 
 // CalculateLenDeltaForAppendCellNTimesForFixedElem calculates the memory usage of fixed elem for `AppendCellNTimes` function
-func (c *Column) CalculateLenDeltaForAppendCellNTimesForFixedElem(src *Column, times int) int64 {
+func (*Column) CalculateLenDeltaForAppendCellNTimesForFixedElem(src *Column, times int) int64 {
 	return int64(len(src.elemBuf) * times)
 }
 
 // CalculateLenDeltaForAppendCellNTimesForVarElem calculates the memory usage of variable length elem for `AppendCellNTimes` function
-func (c *Column) CalculateLenDeltaForAppendCellNTimesForVarElem(src *Column, pos, times int) int64 {
+func (*Column) CalculateLenDeltaForAppendCellNTimesForVarElem(src *Column, pos, times int) int64 {
 	return (src.offsets[pos+1] - src.offsets[pos]) * int64(times)
 }
 
