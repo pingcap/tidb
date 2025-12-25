@@ -52,9 +52,7 @@ type LogicalAggregation struct {
 	// Deprecated: NoCopPushDown is substituted by prop.NoCopPushDown.
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
-	NoCopPushDown      bool
-	aggCanPushMPPPOnce sync.Once
-	aggCanPushMPP      bool
+	NoCopPushDown bool
 }
 
 // Init initializes LogicalAggregation.
@@ -776,10 +774,7 @@ func (*LogicalAggregation) getGroupNDVs(childProfile *property.StatsInfo, gbyCol
 
 // CheckAggCanPushMPP is to check whether this agg can be pushed down into tiflash.
 func (a *LogicalAggregation) CheckAggCanPushMPP() (result bool) {
-	a.aggCanPushMPPPOnce.Do(func() {
-		a.aggCanPushMPP = checkAggCanPushMPP(a)
-	})
-	return a.aggCanPushMPP
+	return checkAggCanPushMPP(a)
 }
 
 func checkAggCanPushMPP(s base.LogicalPlan) bool {
