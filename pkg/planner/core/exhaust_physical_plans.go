@@ -2218,7 +2218,7 @@ func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferre
 	preferShuffle := (p.PreferJoinType & h.PreferShuffleJoin) > 0
 	preferBCJ := (p.PreferJoinType & h.PreferBCJoin) > 0
 	if preferShuffle {
-		if physicalHashJoin.StoreTp == kv.TiFlash && physicalHashJoin.MppShuffleJoin {
+		if physicalHashJoin.StoreTp == kv.TiFlash && physicalHashJoin.MppShuffleJoin && p.SCtx().GetSessionVars().HasTiflash() {
 			// first: respect the shuffle join hint.
 			// BCJ build side hint are handled in the enumeration phase.
 			return true
@@ -2226,7 +2226,7 @@ func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferre
 		return false
 	}
 	if preferBCJ {
-		if physicalHashJoin.StoreTp == kv.TiFlash && !physicalHashJoin.MppShuffleJoin {
+		if physicalHashJoin.StoreTp == kv.TiFlash && !physicalHashJoin.MppShuffleJoin && p.SCtx().GetSessionVars().HasTiflash() {
 			// first: respect the broadcast join hint.
 			// BCJ build side hint are handled in the enumeration phase.
 			return true
@@ -2731,7 +2731,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+	if p.SCtx().GetSessionVars().HasTiflash() && p.SCtx().GetSessionVars().IsMPPAllowed() {
 		// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
 		if hasMPPJoinHints(p.PreferJoinType) {
 			// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.

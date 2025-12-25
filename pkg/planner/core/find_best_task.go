@@ -1925,7 +1925,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			// prefer tiflash, while current table path is tikv, skip it.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+			if ds.PreferStoreType&h.PreferTiFlash != 0 && (path.StoreType == kv.TiKV || super.SCtx().GetSessionVars().IsMPPAllowed()) {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
@@ -2553,13 +2553,16 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
 		return base.InvalidTask, nil
 	}
+	hasTiflash := ds.TableInfo.TiFlashReplica != nil &&
+		ds.TableInfo.TiFlashReplica.Available && ds.TableInfo.TiFlashReplica.Count > 0 ||
+		logicalop.UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)
 	ts, _ := physicalop.GetOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.matchPropResult.Matched())
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
-	isTiFlashPath := ts.StoreType == kv.TiFlash
-	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
-	canMppConvertToRootForDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
-	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
+	isTiFlashPath := hasTiflash && ts.StoreType == kv.TiFlash
+	canMppConvertToRoot := hasTiflash && prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
+	canMppConvertToRootForDisaggregatedTiFlash := hasTiflash && config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
+	canMppConvertToRootForWhenTiFlashCopIsBanned := hasTiflash && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
 
 	// Fast checks
 	if isTiFlashPath && ts.KeepOrder && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {

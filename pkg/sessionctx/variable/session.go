@@ -3804,6 +3804,11 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 	return false
 }
 
+// HasTiflash is to get whether this query will be with the tilfash replication.
+func (s *SessionVars) HasTiflash() bool {
+	return (len(s.HypoTiFlashReplicas) > 1 && s.StmtCtx.InExplainStmt) || s.StmtCtx.HasTiflash
+}
+
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
 func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog bool) {
 	if sv.InRestrictedSQL {
