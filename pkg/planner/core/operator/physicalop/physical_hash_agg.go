@@ -54,7 +54,10 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
-	canPushDownToMPP := checkCanPushDownToMPP(la)
+	var canPushDownToMPP bool
+	if lp.SCtx().GetSessionVars().StmtCtx.HasTiflash {
+		canPushDownToMPP = checkCanPushDownToMPP(la)
+	}
 	if prop.TaskTp == property.MppTaskType && !canPushDownToMPP {
 		return nil
 	}
@@ -65,7 +68,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	// lift the recursive check of canPushToCop(tiFlash)
-	canPushDownToMPP = la.SCtx().GetSessionVars().IsMPPAllowed() && canPushDownToMPP
+	canPushDownToMPP = canPushDownToMPP && la.SCtx().GetSessionVars().IsMPPAllowed()
 	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)
 	} else {

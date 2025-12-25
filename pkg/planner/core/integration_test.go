@@ -273,12 +273,12 @@ func TestBitColumnPushDown(t *testing.T) {
 			{"  │ └─Selection_21", "cop[tikv]", "not(isnull(test.t1.b))"},
 			{"  │   └─TableFullScan_20", "cop[tikv]", "keep order:false, stats:pseudo"},
 			{"  └─Selection_23(Probe)", "root", "not(isnull(Column#7))"},
-			{"    └─StreamAgg_30", "root", "funcs:min(test.t2.b)->Column#7"},
-			{"      └─TopN_31", "root", "test.t2.b, offset:0, count:1"},
-			{"        └─TableReader_41", "root", "data:TopN_40"},
-			{"          └─TopN_40", "cop[tikv]", "test.t2.b, offset:0, count:1"},
-			{"            └─Selection_39", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
-			{"              └─TableFullScan_38", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"    └─StreamAgg_29", "root", "funcs:min(test.t2.b)->Column#7"},
+			{"      └─TopN_30", "root", "test.t2.b, offset:0, count:1"},
+			{"        └─TableReader_40", "root", "data:TopN_39"},
+			{"          └─TopN_39", "cop[tikv]", "test.t2.b, offset:0, count:1"},
+			{"            └─Selection_38", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
+			{"              └─TableFullScan_37", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
 		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 		testKit.MustExec("insert t1 values ('A', 1);")
