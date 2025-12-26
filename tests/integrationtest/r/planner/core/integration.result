@@ -3596,9 +3596,9 @@ Projection	root		planner__core__integration.t1.a
           └─TableFullScan	cop[tikv]	table:two	keep order:false, stats:pseudo
 explain format='plan_tree' select rank() over (partition by table_name) from information_schema.tables;
 id	task	access object	operator info
-Projection	root		Column->Column
+Projection	root		Column
 └─Shuffle	root		execution info: concurrency:5, data sources:[MemTableScan]
-  └─Window	root		rank()->Column over(partition by Column)
+  └─Window	root		rank()->Column#29 over(partition by Column)
     └─Sort	root		Column
       └─ShuffleReceiver	root		
         └─MemTableScan	root	table:TABLES	
@@ -4269,8 +4269,8 @@ KEY k (k)
 );
 explain format='plan_tree'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
 id	task	access object	operator info
-Projection	root		Column->Column
-└─Window	root		row_number()->Column over(order by planner__core__integration.sbtest.k rows between current row and current row)
+Projection	root		Column
+└─Window	root		row_number()->Column#6 over(order by planner__core__integration.sbtest.k rows between current row and current row)
   └─Sort	root		planner__core__integration.sbtest.k
     └─TableReader	root		data:TableRangeScan
       └─TableRangeScan	cop[tikv]	table:sbtest	range:[0,10), keep order:false, stats:pseudo

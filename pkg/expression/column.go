@@ -449,19 +449,23 @@ func (col *Column) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, res
 
 const columnPrefix = "Column#"
 
-// StringWithCtx implements Expression interface.
-func (col *Column) StringWithCtx(ctx ParamValues, redact string) string {
-	// Check if we're in plan_tree format and need to remove column numbers
-	removeColumnNumbers := false
+// shouldRemoveColumnNumbers checks if column numbers should be removed based on the explain format.
+// This is used for plan_tree format to show "Column" instead of "Column#<number>".
+func shouldRemoveColumnNumbers(ctx ParamValues) bool {
 	if evalCtx, ok := ctx.(EvalContext); ok {
 		if sessionCtx, ok := evalCtx.(*sessionexpr.EvalContext); ok {
 			format := sessionCtx.Sctx().GetSessionVars().StmtCtx.ExplainFormat
 			if strings.ToLower(format) == types.ExplainFormatPlanTree {
-				removeColumnNumbers = true
+				return true
 			}
 		}
 	}
-	return col.string(redact, removeColumnNumbers)
+	return false
+}
+
+// StringWithCtx implements Expression interface.
+func (col *Column) StringWithCtx(ctx ParamValues, redact string) string {
+	return col.string(redact, shouldRemoveColumnNumbers(ctx))
 }
 
 // StringWithCtxForExplain implements Expression interface with option to remove column numbers for plan_tree format.
