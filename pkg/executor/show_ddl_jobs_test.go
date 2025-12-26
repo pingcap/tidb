@@ -110,6 +110,51 @@ func TestShowCommentsFromJob(t *testing.T) {
 	job.ReorgMeta.MaxWriteSpeed.Store(vardef.DefTiDBDDLReorgMaxWriteSpeed)
 	res = showCommentsFromJob(job)
 	require.Equal(t, "ingest, DXF, cloud, service_scope=background", res)
+
+	job.Type = model.ActionModifyColumn
+	job.Version = model.JobVersion2
+	job.ReorgMeta = &model.DDLReorgMeta{
+		IsValidating: true,
+	}
+	res = showCommentsFromJob(job)
+	require.Equal(t, "validating", res)
+
+	job.ReorgMeta.IsValidating = true
+	res = showCommentsFromJob(job)
+	require.Equal(t, "validating", res)
+
+	job.ReorgMeta.IsValidating = false
+	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+	job.NeedReorg = true
+	res = showCommentsFromJob(job)
+	require.Equal(t, "need reorg", res)
+
+	// Test fallback case: was validating, now reorging
+	job.ReorgMeta.IsValidating = true
+	job.ReorgMeta.ReorgTp = model.ReorgTypeNone
+	res = showCommentsFromJob(job)
+	require.Equal(t, "need reorg, validating", res)
+
+	job.ReorgMeta.IsValidating = false
+	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+	res = showCommentsFromJob(job)
+	require.Equal(t, "need reorg", res)
+
+	// Test MultiSchemaChange parent job labels summary
+	job.Type = model.ActionMultiSchemaChange
+	job.MultiSchemaInfo = &model.MultiSchemaInfo{
+		SubJobs: []*model.SubJob{
+			{
+				Type: model.ActionModifyColumn,
+			},
+			{
+				Type:      model.ActionAddIndex,
+				NeedReorg: true,
+			},
+		},
+	}
+	res = showCommentsFromJob(job)
+	require.Equal(t, "", res)
 }
 
 func TestShowCommentsFromSubJob(t *testing.T) {
@@ -119,20 +164,34 @@ func TestShowCommentsFromSubJob(t *testing.T) {
 	subJob := &model.SubJob{
 		Type: model.ActionAddPrimaryKey,
 	}
+	parentJob := &model.Job{Type: model.ActionMultiSchemaChange, Version: model.JobVersion2}
 	subJob.ReorgTp = model.ReorgTypeNone
-	res := showCommentsFromSubjob(subJob, false, false)
+	res := showCommentsFromSubjob(parentJob, subJob, false, false)
 	require.Equal(t, "", res)
 
 	subJob.ReorgTp = model.ReorgTypeIngest
-	res = showCommentsFromSubjob(subJob, false, false)
+	res = showCommentsFromSubjob(parentJob, subJob, false, false)
 	require.Equal(t, "ingest", res)
 
-	res = showCommentsFromSubjob(subJob, true, false)
+	res = showCommentsFromSubjob(parentJob, subJob, true, false)
 	require.Equal(t, "ingest, DXF", res)
 
-	res = showCommentsFromSubjob(subJob, true, true)
+	res = showCommentsFromSubjob(parentJob, subJob, true, true)
 	require.Equal(t, "ingest, DXF, cloud", res)
 
-	res = showCommentsFromSubjob(subJob, false, true)
+	res = showCommentsFromSubjob(parentJob, subJob, false, true)
 	require.Equal(t, "ingest", res)
+
+	subJob.Type = model.ActionModifyColumn
+	subJob.ReorgTp = model.ReorgTypeNone
+	res = showCommentsFromSubjob(parentJob, subJob, false, false)
+	require.Equal(t, "", res)
+
+	subJob.NeedReorg = true
+	res = showCommentsFromSubjob(parentJob, subJob, false, false)
+	require.Equal(t, "need reorg", res)
+
+	subJob.IsValidating = true
+	res = showCommentsFromSubjob(parentJob, subJob, false, false)
+	require.Equal(t, "need reorg, validating", res)
 }

@@ -231,3 +231,21 @@ Error 8273 (HY000): Validation of partial indexes requires tidb_enable_fast_tabl
 set tidb_enable_fast_table_check = 'ON';
 admin check index t idx;
 admin check table t;
+drop table if exists t_label;
+create table t_label (a int, b varchar(100));
+insert into t_label values (1, 'test_label_data');
+alter table t_label modify column b varchar(50);
+admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
+JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS
+<job_id>	executor__admin	t_label	modify column	public	<schema_id>	<table_id>	0	<create_time>	<start_time>	<end_time>	synced	validating
+alter table t_label modify column b varchar(200);
+admin show ddl jobs 1 where table_name='t_label' and job_type='modify column';
+JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS
+<job_id>	executor__admin	t_label	modify column	public	<schema_id>	<table_id>	0	<create_time>	<start_time>	<end_time>	synced	
+drop table if exists t_fallback;
+create table t_fallback (a int, b varchar(100));
+insert into t_fallback values (1, 'test ');
+alter table t_fallback modify column b char(100);
+admin show ddl jobs 1 where table_name='t_fallback' and job_type='modify column';
+JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS
+<job_id>	executor__admin	t_fallback	modify column	public	<schema_id>	<table_id>	1	<create_time>	<start_time>	<end_time>	synced	need reorg
