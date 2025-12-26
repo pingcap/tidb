@@ -320,7 +320,8 @@ func TestMPPHintsScope(t *testing.T) {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 		testKit.MustExec("select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-		testKit.MustQuery("show warnings").Check(testkit.Rows())
+		testKit.MustQuery("show warnings").Check(testkit.Rows(
+			`Warning 1815 The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid`))
 		testKit.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
 		testKit.MustQuery("show warnings").Check(testkit.Rows())
 		testKit.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
