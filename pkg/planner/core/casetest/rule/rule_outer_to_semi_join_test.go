@@ -21,6 +21,31 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
 
+// TestOuterToSemiJoin tests the optimizer rule that converts Outer Join to Semi Join.
+// This rule is a crucial optimization that simplifies the query plan and improves performance.
+//
+// The core idea is to identify when an Outer Join (LEFT or RIGHT) behaves like an Inner Join
+// or an Anti Join due to "null-rejecting" conditions in the WHERE clause.
+//
+// 1.  LEFT JOIN to SEMI JOIN:
+//     When a WHERE clause condition rejects NULL values from the inner table (the right table
+//     in a LEFT JOIN), it effectively filters out all rows where the join condition failed.
+//     This makes the LEFT JOIN behave like an INNER JOIN. If the query only selects columns
+//     from the outer table, this can be further simplified to a more efficient SEMI JOIN,
+//     which only checks for the existence of matching rows without producing duplicates.
+//     Example: `SELECT a.* FROM a LEFT JOIN b ON a.id=b.id WHERE b.val > 0`
+//     can be converted to `SELECT a.* FROM a SEMI JOIN b ON a.id=b.id WHERE b.val > 0`.
+//
+// 2.  LEFT JOIN to ANTI SEMI JOIN:
+//     When a WHERE clause condition specifically checks for `IS NULL` on a NOT NULL column
+//     of the inner table, it means the query is looking for rows in the outer table that
+//     have NO match in the inner table. This is the exact definition of an ANTI SEMI JOIN.
+//     Example: `SELECT a.* FROM a LEFT JOIN b ON a.id=b.id WHERE b.id IS NULL`
+//     can be converted to `SELECT a.* FROM a ANTI SEMI JOIN b ON a.id=b.id`.
+//
+// This test suite covers a wide range of scenarios, including equi-joins, non-equi-joins,
+// null-safe joins (`<=>`), and various null-rejecting conditions to ensure the rule's
+// correctness and robustness.
 func TestOuterToSemiJoin(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
