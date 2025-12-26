@@ -19,6 +19,8 @@ go_test(
         "part0.parquet",
         "part1.parquet",
         "memorycheck.parquet",
+        "list.parquet",
+        "map.parquet",
     ],
     flaky = True,
     race = "on",

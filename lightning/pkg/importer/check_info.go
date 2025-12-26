@@ -132,10 +132,6 @@ func (rc *Controller) checkCSVHeader(ctx context.Context) error {
 	return rc.doPreCheckOnItem(ctx, precheck.CheckCSVHeader)
 }
 
-func (rc *Controller) checkParquetImport(ctx context.Context) error {
-	return rc.doPreCheckOnItem(ctx, precheck.CheckParquetImport)
-}
-
 func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.TikvImporter.ParallelImport {
 		return nil

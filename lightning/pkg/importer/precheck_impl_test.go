@@ -17,14 +17,9 @@ package importer
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/apache/arrow-go/v18/parquet"
-	"github.com/apache/arrow-go/v18/parquet/compress"
-	"github.com/apache/arrow-go/v18/parquet/file"
-	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -34,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -735,157 +729,4 @@ func (s *precheckImplSuite) TestPDTiDBFromSameCluster() {
 	s.Require().True(result.Passed)
 
 	s.Require().NoError(mock.ExpectationsWereMet())
-}
-
-func (s *precheckImplSuite) TestParquetImportCheckItem() {
-	ctx := context.Background()
-	store := s.preInfoGetter.GetStorage()
-
-	orig := mydump.ParquetParserMemoryLimit
-	mydump.ParquetParserMemoryLimit = 16 << 10
-	defer func() {
-		mydump.ParquetParserMemoryLimit = orig
-	}()
-
-	// Write file with list type
-	// Note: we will support list type in the future, but not now.
-	err := writeParquetFileWithList(ctx, store, "list.parquet")
-	s.Require().NoError(err)
-
-	// Write file with map type
-	err = writeParquetFileWithMap(ctx, store, "map.parquet")
-	s.Require().NoError(err)
-
-	err = writeParquetFilePlain(ctx, store, "plain.parquet")
-	s.Require().NoError(err)
-
-	type testCase struct {
-		fileName  string
-		expectMsg string
-	}
-	testCases := []testCase{
-		{
-			fileName:  "list.parquet",
-			expectMsg: "parquet files contain unsupported data types",
-		},
-		{
-			fileName:  "map.parquet",
-			expectMsg: "parquet files contain unsupported data types",
-		},
-		{
-			fileName:  "plain.parquet",
-			expectMsg: "parquet files are too large and may cause OOM",
-		},
-	}
-
-	for _, tc := range testCases {
-		dbMetas := []*mydump.MDDatabaseMeta{
-			{
-				Name: "db1",
-				Tables: []*mydump.MDTableMeta{
-					{
-						DB:   "db1",
-						Name: "tbl2",
-						DataFiles: []mydump.FileInfo{
-							{
-								FileMeta: mydump.SourceFileMeta{
-									Path: tc.fileName,
-									Type: mydump.SourceTypeParquet,
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-
-		checker := NewParquetImportCheckItem(s.cfg, s.preInfoGetter, dbMetas)
-		result, err := checker.Check(ctx)
-		s.Require().NoError(err)
-		s.Require().False(result.Passed)
-		s.Require().Contains(result.Message, tc.expectMsg)
-	}
-}
-
-func writeParquetFileWithList(ctx context.Context, s storage.ExternalStorage, fileName string) error {
-	writer, err := s.Create(ctx, fileName, nil)
-	if err != nil {
-		return err
-	}
-	wrapper := &mydump.WriteCloserWrapper{Writer: writer}
-
-	// List<Int32>
-	element, _ := schema.NewPrimitiveNode("element", parquet.Repetitions.Optional, parquet.Types.Int32, -1, -1)
-	list, _ := schema.NewGroupNode("list", parquet.Repetitions.Repeated, []schema.Node{element}, -1)
-	col, _ := schema.NewGroupNodeConverted("col", parquet.Repetitions.Optional, []schema.Node{list}, schema.ConvertedTypes.List, -1)
-
-	fields := []schema.Node{col}
-	root, _ := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
-
-	pw := file.NewParquetWriter(wrapper, root)
-	return pw.Close()
-}
-
-func writeParquetFileWithMap(ctx context.Context, s storage.ExternalStorage, fileName string) error {
-	writer, err := s.Create(ctx, fileName, nil)
-	if err != nil {
-		return err
-	}
-	wrapper := &mydump.WriteCloserWrapper{Writer: writer}
-
-	// Map<Int32, Int32>
-	key, _ := schema.NewPrimitiveNode("key", parquet.Repetitions.Required, parquet.Types.Int32, -1, -1)
-	value, _ := schema.NewPrimitiveNode("value", parquet.Repetitions.Optional, parquet.Types.Int32, -1, -1)
-	kv, _ := schema.NewGroupNode("key_value", parquet.Repetitions.Repeated, []schema.Node{key, value}, -1)
-	col, _ := schema.NewGroupNodeConverted("col", parquet.Repetitions.Optional, []schema.Node{kv}, schema.ConvertedTypes.Map, -1)
-
-	fields := []schema.Node{col}
-	root, _ := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
-
-	pw := file.NewParquetWriter(wrapper, root)
-	return pw.Close()
-}
-
-func writeParquetFilePlain(_ context.Context, s storage.ExternalStorage, fileName string) error {
-	totalRows := 10000
-	pc := []mydump.ParquetColumn{
-		{
-			Name:      "decimal1",
-			Type:      parquet.Types.Int32,
-			Converted: schema.ConvertedTypes.Decimal,
-			Precision: 5,
-			Scale:     3,
-			Gen: func(numRows int) (any, []int16) {
-				data := make([]int32, numRows)
-				defLevel := make([]int16, numRows)
-				for i := range numRows {
-					data[i] = 1000
-					defLevel[i] = 1
-				}
-				return data, defLevel
-			},
-		},
-		{
-			Name:      "string1",
-			Type:      parquet.Types.ByteArray,
-			Converted: schema.ConvertedTypes.UTF8,
-			Gen: func(numRows int) (any, []int16) {
-				data := make([]parquet.ByteArray, numRows)
-				defLevels := make([]int16, numRows)
-				for i := range numRows {
-					data[i] = parquet.ByteArray(strconv.Itoa(10000 + i))
-					defLevels[i] = 1
-				}
-				return data, defLevels
-			},
-		},
-	}
-
-	return mydump.WriteParquetFileWithStore(
-		s, fileName, pc, 1, totalRows,
-		parquet.WithDataPageSize(1024),
-		parquet.WithBatchSize(16),
-		parquet.WithCompressionFor("decimal1", compress.Codecs.Uncompressed),
-		parquet.WithCompressionFor("string1", compress.Codecs.Uncompressed),
-	)
 }

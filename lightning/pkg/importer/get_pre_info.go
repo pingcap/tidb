@@ -75,8 +75,6 @@ type EstimateSourceDataSizeResult struct {
 // These information are used in the preparation of the import ( like precheck ).
 type PreImportInfoGetter interface {
 	TargetInfoGetter
-	// GetStorage gets the storage of the source.
-	GetStorage() storage.ExternalStorage
 	// GetAllTableStructures gets all the table structures with the information from both the source and the target.
 	GetAllTableStructures(ctx context.Context, opts ...ropts.GetPreInfoOption) (map[string]*checkpoints.TidbDBInfo, error)
 	// ReadFirstNRowsByTableName reads the first N rows of data of an importing source table.
@@ -321,11 +319,6 @@ func NewPreImportInfoGetter(
 	}
 	result.Init()
 	return result, nil
-}
-
-// GetStorage implements the PreImportInfoGetter interface.
-func (p *PreImportInfoGetterImpl) GetStorage() storage.ExternalStorage {
-	return p.srcStorage
 }
 
 // Init initializes some internal data and states for PreImportInfoGetterImpl.

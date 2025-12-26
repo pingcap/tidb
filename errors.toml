@@ -566,11 +566,6 @@ error = '''
 check PD and TiDB in the same cluster error
 '''
 
-["Lightning:PreCheck:ErrCheckParquetImport"]
-error = '''
-check parquet import error
-'''
-
 ["Lightning:PreCheck:ErrCheckTableEmpty"]
 error = '''
 check table empty error
