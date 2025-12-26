@@ -607,6 +607,14 @@ const (
 	// TiDBDDLReorgMaxWriteSpeed defines the max write limitation for the lightning local backend
 	TiDBDDLReorgMaxWriteSpeed = "tidb_ddl_reorg_max_write_speed"
 
+	// TiDBDDLReorgReaderCount defines the reader count for DDL reorg ingest pipeline.
+	// 0 means calculate automatically based on concurrency.
+	TiDBDDLReorgReaderCount = "tidb_ddl_reorg_reader_cnt"
+
+	// TiDBDDLReorgWriterCount defines the writer count for DDL reorg ingest pipeline.
+	// 0 means calculate automatically based on concurrency.
+	TiDBDDLReorgWriterCount = "tidb_ddl_reorg_writer_cnt"
+
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
@@ -1492,6 +1500,8 @@ const (
 	DefTiDBDDLFlashbackConcurrency          = 64
 	DefTiDBDDLErrorCountLimit               = 512
 	DefTiDBDDLReorgMaxWriteSpeed            = 0
+	DefTiDBDDLReorgReaderCount              = 0 // 0 means calculate automatically
+	DefTiDBDDLReorgWriterCount              = 0 // 0 means calculate automatically
 	DefTiDBMaxDeltaSchemaCount              = 1024
 	DefTiDBPlacementMode                    = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated   = false

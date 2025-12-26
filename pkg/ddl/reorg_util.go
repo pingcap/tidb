@@ -128,21 +128,33 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			m.SetBatchSize(variable.TidbOptInt(sv, 0))
 		}
 		m.SetMaxWriteSpeed(int(vardef.DDLReorgMaxWriteSpeed.Load()))
+		// Set reader/writer count from session variables.
+		if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgReaderCount); ok {
+			m.ReaderCount = variable.TidbOptInt(sv, 0)
+		}
+		if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWriterCount); ok {
+			m.WriterCount = variable.TidbOptInt(sv, 0)
+		}
 	}
 
 	if setDistTaskParam {
 		m.IsDistReorg = vardef.EnableDistTask.Load()
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = dxfhandle.GetTargetScope()
-		if shouldCalResource {
+		// Check if user explicitly set max_dist_task_nodes to a positive value.
+		var userSetMaxNode int
+		if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+			userSetMaxNode = variable.TidbOptInt(sv, 0)
+		}
+		if userSetMaxNode > 0 {
+			// User explicitly set a positive value, use it.
+			m.MaxNodeCount = userSetMaxNode
+		} else if shouldCalResource {
+			// Use auto-calculated value on next-gen.
 			m.MaxNodeCount = autoMaxNode
-		} else {
-			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
-				m.MaxNodeCount = variable.TidbOptInt(sv, 0)
-				if m.MaxNodeCount == -1 { // -1 means calculate automatically
-					m.MaxNodeCount = scheduler.CalcMaxNodeCountByStoresNum(ctx, sctx.GetStore())
-				}
-			}
+		} else if userSetMaxNode == -1 {
+			// -1 means calculate based on stores number.
+			m.MaxNodeCount = scheduler.CalcMaxNodeCountByStoresNum(ctx, sctx.GetStore())
 		}
 
 		if hasSysDB(job) {
@@ -174,6 +186,8 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.String("tableSizeInBytes", units.BytesSize(float64(tableSizeInBytes))),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
+		zap.Int("readerCount", m.ReaderCount),
+		zap.Int("writerCount", m.WriterCount),
 		factorField,
 	)
 	return nil

@@ -101,6 +101,10 @@ type DDLReorgMeta struct {
 	Concurrency   atomic.Int64 `json:"concurrency"`
 	BatchSize     atomic.Int64 `json:"batch_size"`
 	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
+	// ReaderCount and WriterCount are used to control the reader/writer count for the ingest pipeline.
+	// 0 means calculate automatically based on concurrency.
+	ReaderCount int `json:"reader_count"`
+	WriterCount int `json:"writer_count"`
 }
 
 // ShallowCopy creates a shallow copy of DDLReorgMeta.

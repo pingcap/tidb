@@ -361,6 +361,22 @@ func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt 
 	return readerCnt, writerCnt
 }
 
+// expectedIngestWorkerCntWithMeta calculates the expected reader and writer count.
+// If reorgMeta has non-zero ReaderCount or WriterCount, they will be used directly;
+// otherwise, it falls back to expectedIngestWorkerCnt calculation.
+func expectedIngestWorkerCntWithMeta(concurrency, avgRowSize int, reorgMeta *model.DDLReorgMeta) (readerCnt, writerCnt int) {
+	readerCnt, writerCnt = expectedIngestWorkerCnt(concurrency, avgRowSize)
+	if reorgMeta != nil {
+		if reorgMeta.ReaderCount > 0 {
+			readerCnt = reorgMeta.ReaderCount
+		}
+		if reorgMeta.WriterCount > 0 {
+			writerCnt = reorgMeta.WriterCount
+		}
+	}
+	return readerCnt, writerCnt
+}
+
 type taskIDAllocator struct {
 	id int
 }
