@@ -123,6 +123,9 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	// when creating the table importer, it's using plan.ThreadCnt, not the resource
+	// CPU, we should refactor it later, that requires refactors the local backend.
+	tableImporter.Backend().SetWorkerConcurrency(int(s.GetResource().CPU.Capacity()))
 	s.tableImporter = tableImporter
 	defer func() {
 		if err == nil {
@@ -467,7 +470,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err = external.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		m.task.RequiredSlots, // the concurrency used to split subtask
+		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
 		op,
 	); err != nil {
 		return errors.Trace(err)
@@ -582,6 +585,7 @@ func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	tableImporter.Backend().SetWorkerConcurrency(int(e.GetResource().CPU.Capacity()))
 	e.tableImporter = tableImporter
 	return nil
 }
