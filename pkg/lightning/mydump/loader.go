@@ -626,7 +626,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		if !loaded {
 			checkRes, err := PrecheckParquet(ctx, s.loader.GetStore(), path)
 			if err != nil {
-				logger.Error("fail to sample parquet file", zap.String("category", "loader"),
+				logger.Error("check parquet file meets error", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
 					zap.Stringer("type", res.Type), zap.Error(err))
 				return nil, errors.Trace(err)

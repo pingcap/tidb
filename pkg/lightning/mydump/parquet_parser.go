@@ -156,8 +156,8 @@ func (it *columnIterator[T, R]) Close() error {
 }
 
 func (it *columnIterator[T, R]) readNextBatch() error {
-	// ReadBatchInPage reads a batch of values from the current page. And the
-	// values returned may be shallow copies from the internal page buffer.
+	// ReadBatchInPage reads a batch of values from the current page.
+	// And the values returned may be shallow copies from the internal page buffer.
 	var err error
 	it.levelsBuffered, it.valuesBuffered, err = it.reader.ReadBatchInPage(
 		it.batchSize,
@@ -514,7 +514,7 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 	pp.lastRow.RowID = rowID
 }
 
-// OpenParquetReader opens a parquet file and returns a ReadSeekCloser.
+// OpenParquetReader opens a parquet file and returns a handle that can at least read the file.
 func OpenParquetReader(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -535,7 +535,7 @@ func OpenParquetReader(
 	return pf, nil
 }
 
-// ReadParquetFileRowCountByFile reads the parquet file row count.
+// ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
 func ReadParquetFileRowCountByFile(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -561,7 +561,7 @@ func NewParquetParser(
 	r storage.ReadSeekCloser,
 	path string,
 	meta ParquetFileMeta,
-) (p *ParquetParser, err error) {
+) (*ParquetParser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
 	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
