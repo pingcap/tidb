@@ -68,7 +68,7 @@ func TestParquetParser(t *testing.T) {
 
 	dir := t.TempDir()
 	name := "test123.parquet"
-	WriteParquetFile(dir, name, pc, 100)
+	WriteParquetFile(dir, name, pc, 1, 100)
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	dir := t.TempDir()
 	// prepare data
 	name := "test123.parquet"
-	WriteParquetFile(dir, name, pc, 1)
+	WriteParquetFile(dir, name, pc, 1, 1)
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
@@ -282,7 +282,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	}
 
 	fileName := "test.02.parquet"
-	WriteParquetFile(dir, fileName, pc, 7)
+	WriteParquetFile(dir, fileName, pc, 1, 7)
 
 	r, err = store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
@@ -321,7 +321,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	}
 
 	fileName = "test.bool.parquet"
-	WriteParquetFile(dir, fileName, pc, 2)
+	WriteParquetFile(dir, fileName, pc, 1, 2)
 
 	r, err = store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
@@ -473,7 +473,7 @@ func TestBasicReadFile(t *testing.T) {
 	fileName := "test123.parquet"
 	// Genearte small file with multiple pages.
 	// The number of rows in each page is not multiple of batch size.
-	WriteParquetFile(dir, fileName, pc, rowCnt,
+	WriteParquetFile(dir, fileName, pc, 1, rowCnt,
 		parquet.WithDataPageSize(512),
 		parquet.WithBatchSize(20),
 		parquet.WithCompressionFor("s", compress.Codecs.Uncompressed),

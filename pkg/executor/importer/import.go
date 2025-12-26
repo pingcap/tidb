@@ -522,7 +522,7 @@ func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
 	return plannercore.LineFieldsInfo{
 		FieldsTerminatedBy: `,`,
 		FieldsEnclosedBy:   `"`,
-		FieldsEscapedBy:    `\`,
+		FieldsEscapedBy:    `\\`,
 		LinesStartingBy:    ``,
 		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
 		// But user cannot set this to empty explicitly.
@@ -1210,34 +1210,6 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.
 	return s, nil
 }
 
-func estimateCompressionRatio(
-	ctx context.Context,
-	filePath string,
-	fileSize int64,
-	tp mydump.SourceType,
-	store storage.ExternalStorage,
-) (float64, error) {
-	if tp != mydump.SourceTypeParquet {
-		return 1.0, nil
-	}
-	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			failpoint.Return(2.0, nil)
-		}
-	})
-	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
-	if err != nil {
-		return 1.0, err
-	}
-	// No row in the file, use 2.0 as default compression ratio.
-	if rowSize == 0 || rows == 0 {
-		return 2.0, nil
-	}
-
-	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
-	return compressionRatio, nil
-}
-
 // maxSampledCompressedFiles indicates the max number of files we used to sample
 // compression ratio for each compression type. Consider the extreme case that
 // user data contains all 3 compression types. Then we need to sample about 1,500
@@ -1385,7 +1357,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	checkFirstFile := func(s storage.ExternalStorage, path string, size int64) error {
 		var (
 			err      error
-			checkRes mydump.ParquetCheckResult
+			checkRes mydump.ParquetPrecheckResult
 		)
 
 		e.detectAndUpdateFormat(path)
@@ -1394,23 +1366,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return nil
 		}
 
-		sizeExpansionRatio, err = estimateCompressionRatio(ctx, path, size, sourceType, s)
+		checkRes, err = mydump.PrecheckParquet(ctx, s, path, true)
 		if err != nil {
 			return err
 		}
-
-		checkRes, err = mydump.CheckParquetImport(ctx, s, path, true)
-		if err != nil {
+		if err = checkRes.Error(); err != nil {
 			return err
 		}
-		if !checkRes.SchemaValid {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
-				"parquet file schema invalid")
-		}
-		if !checkRes.MemoryValid {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
-				"parquet files are too large and may cause OOM, consider changing to CSV format")
-		}
+		sizeExpansionRatio = checkRes.SizeExpansionRatio
 		return nil
 	}
 

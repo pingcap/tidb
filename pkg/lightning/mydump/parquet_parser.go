@@ -30,10 +30,12 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
@@ -668,72 +670,41 @@ func NewParquetParser(
 	return parser, nil
 }
 
-// SampleStatisticsFromParquet samples row size of the parquet file.
-func SampleStatisticsFromParquet(
-	ctx context.Context,
-	path string,
-	store storage.ExternalStorage,
-) (
-	rowCount int64,
-	avgRowSize float64,
-	err error,
-) {
-	r, err := store.Open(ctx, path, nil)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
-	if err != nil {
-		return 0, 0, err
-	}
-
-	//nolint: errcheck
-	defer parser.Close()
-
-	var rowSize int64
-
-	reader := parser.readers[0]
-	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
-		return 0, 0, nil
-	}
-
-	totalReadRows := reader.MetaData().NumRows
-	readRows := min(totalReadRows, int64(1024))
-	for range readRows {
-		err = parser.ReadRow()
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				break
-			}
-			return 0, 0, err
-		}
-		lastRow := parser.LastRow()
-		rowSize += int64(lastRow.Length)
-		parser.RecycleRow(lastRow)
-		rowCount++
-	}
-
-	avgRowSize = float64(rowSize) / float64(rowCount)
-	return totalReadRows, avgRowSize, err
+// ParquetPrecheckResult is the result of parquet import check.
+type ParquetPrecheckResult struct {
+	SchemaValid        bool
+	MemoryValid        bool
+	AvgRowSize         float64
+	SizeExpansionRatio float64
 }
 
-// ParquetCheckResult is the result of parquet import check.
-type ParquetCheckResult struct {
-	SchemaValid bool
-	MemoryValid bool
+// Error returns the error if the parquet import check failed.
+func (p *ParquetPrecheckResult) Error() error {
+	if !p.SchemaValid {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
+			"parquet file schema invalid")
+	}
+	if !p.MemoryValid {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
+			"parquet files are too large and may cause OOM, consider changing to CSV format")
+	}
+	return nil
 }
 
-// CheckParquetImport checks whether the parquet import is valid.
-func CheckParquetImport(
+// PrecheckParquet checks whether the import file is valid to import.
+func PrecheckParquet(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	path string,
 	checkMemoryConsumption bool,
-) (ParquetCheckResult, error) {
+) (ParquetPrecheckResult, error) {
+	failpoint.Inject("skipCheckForParquet", func() {
+		failpoint.Return(ParquetPrecheckResult{true, true, 1.0, 1.0}, nil)
+	})
+
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
-		return ParquetCheckResult{false, false}, err
+		return ParquetPrecheckResult{false, false, 1.0, 1.0}, err
 	}
 
 	allocator := &trackingAllocator{}
@@ -741,38 +712,50 @@ func CheckParquetImport(
 
 	if err != nil {
 		if goerrors.Is(err, common.ErrParquetSchemaInvalid) {
-			return ParquetCheckResult{false, true}, nil
+			return ParquetPrecheckResult{false, true, 1.0, 1.0}, nil
 		}
-		return ParquetCheckResult{false, false}, err
+		return ParquetPrecheckResult{false, false, 1.0, 1.0}, err
 	}
 
 	//nolint: errcheck
 	defer parser.Close()
 
 	if !checkMemoryConsumption {
-		return ParquetCheckResult{true, true}, nil
+		return ParquetPrecheckResult{true, true, 1.0, 1.0}, nil
 	}
 
 	reader := parser.readers[0]
-	if len(reader.MetaData().RowGroups) == 0 {
-		return ParquetCheckResult{true, true}, nil
+	if len(reader.MetaData().RowGroups) == 0 ||
+		reader.MetaData().RowGroups[0].NumRows == 0 {
+		return ParquetPrecheckResult{true, true, 1.0, 1.0}, nil
 	}
 
+	var (
+		totalRowSize int64
+		rowCount     int64
+	)
 	for range reader.MetaData().RowGroups[0].NumRows {
 		err = parser.ReadRow()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				break
 			}
-			return ParquetCheckResult{false, false}, err
+			return ParquetPrecheckResult{false, false, 1.0, 1.0}, err
 		}
-		parser.RecycleRow(parser.LastRow())
+		lastRow := parser.LastRow()
+		totalRowSize += int64(lastRow.Length)
+		rowCount++
+		parser.RecycleRow(lastRow)
 		if allocator.peakAllocation.Load() >= ParquetParserMemoryLimit {
-			return ParquetCheckResult{true, false}, nil
+			return ParquetPrecheckResult{true, false, 1.0, 1.0}, nil
 		}
 	}
 
-	return ParquetCheckResult{true, true}, nil
+	fileSize := reader.MetaData().GetSourceFileSize()
+	avgRowSize := float64(totalRowSize) / float64(rowCount)
+	sizeExpansionRatio := (float64)(totalRowSize) / float64(fileSize)
+
+	return ParquetPrecheckResult{true, true, avgRowSize, sizeExpansionRatio}, nil
 }
 
 // addressOf returns the address of a buffer, return 0 if the buffer is nil or

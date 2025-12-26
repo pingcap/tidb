@@ -35,6 +35,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/filter",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",

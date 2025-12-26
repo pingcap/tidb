@@ -882,7 +882,7 @@ func writeParquetFilePlain(_ context.Context, s storage.ExternalStorage, fileNam
 	}
 
 	return mydump.WriteParquetFileWithStore(
-		s, fileName, pc, totalRows,
+		s, fileName, pc, 1, totalRows,
 		parquet.WithDataPageSize(1024),
 		parquet.WithBatchSize(16),
 		parquet.WithCompressionFor("decimal1", compress.Codecs.Uncompressed),

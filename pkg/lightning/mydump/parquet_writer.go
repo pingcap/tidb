@@ -23,6 +23,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // ParquetColumn defines the properties of a column in a Parquet file.
@@ -71,7 +72,7 @@ func getStore(path string) (storage.ExternalStorage, error) {
 // to generate large Parquet files.
 func WriteParquetFileWithStore(
 	s storage.ExternalStorage, fileName string,
-	pcolumns []ParquetColumn, rows int,
+	pcolumns []ParquetColumn, groups, rows int,
 	addOpts ...parquet.WriterProperty,
 ) error {
 	writer, err := s.Create(context.Background(), fileName, nil)
@@ -107,46 +108,48 @@ func WriteParquetFileWithStore(
 	//nolint: errcheck
 	defer pw.Close()
 
-	// Only one row group for simplicity
-	rgw := pw.AppendRowGroup()
-	//nolint: errcheck
-	defer rgw.Close()
+	rowsPerGroup := mathutil.Divide2Batches(rows, groups)
+	for _, groupRows := range rowsPerGroup {
+		rgw := pw.AppendRowGroup()
+		//nolint: errcheck
+		defer rgw.Close()
 
-	for _, pc := range pcolumns {
-		cw, err := rgw.NextColumn()
-		if err != nil {
-			return err
-		}
-		vals, defLevel := pc.Gen(rows)
+		for _, pc := range pcolumns {
+			cw, err := rgw.NextColumn()
+			if err != nil {
+				return err
+			}
+			vals, defLevel := pc.Gen(groupRows)
 
-		switch w := cw.(type) {
-		case *file.Int96ColumnChunkWriter:
-			buf, _ := vals.([]parquet.Int96)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.Int64ColumnChunkWriter:
-			buf, _ := vals.([]int64)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.Float64ColumnChunkWriter:
-			buf, _ := vals.([]float64)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.ByteArrayColumnChunkWriter:
-			buf, _ := vals.([]parquet.ByteArray)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.Int32ColumnChunkWriter:
-			buf, _ := vals.([]int32)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		case *file.BooleanColumnChunkWriter:
-			buf, _ := vals.([]bool)
-			_, err = w.WriteBatch(buf, defLevel, nil)
-		default:
-			return fmt.Errorf("unsupported column type %T", cw)
-		}
+			switch w := cw.(type) {
+			case *file.Int96ColumnChunkWriter:
+				buf, _ := vals.([]parquet.Int96)
+				_, err = w.WriteBatch(buf, defLevel, nil)
+			case *file.Int64ColumnChunkWriter:
+				buf, _ := vals.([]int64)
+				_, err = w.WriteBatch(buf, defLevel, nil)
+			case *file.Float64ColumnChunkWriter:
+				buf, _ := vals.([]float64)
+				_, err = w.WriteBatch(buf, defLevel, nil)
+			case *file.ByteArrayColumnChunkWriter:
+				buf, _ := vals.([]parquet.ByteArray)
+				_, err = w.WriteBatch(buf, defLevel, nil)
+			case *file.Int32ColumnChunkWriter:
+				buf, _ := vals.([]int32)
+				_, err = w.WriteBatch(buf, defLevel, nil)
+			case *file.BooleanColumnChunkWriter:
+				buf, _ := vals.([]bool)
+				_, err = w.WriteBatch(buf, defLevel, nil)
+			default:
+				return fmt.Errorf("unsupported column type %T", cw)
+			}
 
-		if err != nil {
-			return err
-		}
-		if err := cw.Close(); err != nil {
-			return err
+			if err != nil {
+				return err
+			}
+			if err := cw.Close(); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -155,11 +158,11 @@ func WriteParquetFileWithStore(
 
 // WriteParquetFile is a helper function that writes a simple Parquet file
 // to the specified local path. It's used for test.
-func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...parquet.WriterProperty) error {
+func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, groups, rows int, addOpts ...parquet.WriterProperty) error {
 	s, err := getStore(path)
 	if err != nil {
 		return err
 	}
 
-	return WriteParquetFileWithStore(s, fileName, pcolumns, rows, addOpts...)
+	return WriteParquetFileWithStore(s, fileName, pcolumns, groups, rows, addOpts...)
 }

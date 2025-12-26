@@ -1148,9 +1148,9 @@ func (ci *parquetImportCheckItem) Check(ctx context.Context) (*precheck.CheckRes
 	for _, dbMeta := range ci.dbMetas {
 		for _, tblMeta := range dbMeta.Tables {
 			var firstCheck atomic.Bool
-			checkFn := func(ctx context.Context, file mydump.SourceFileMeta) (mydump.ParquetCheckResult, error) {
+			checkFn := func(ctx context.Context, file mydump.SourceFileMeta) (mydump.ParquetPrecheckResult, error) {
 				checkMemoryConsumption := firstCheck.CompareAndSwap(false, true)
-				return mydump.CheckParquetImport(ctx, store, file.Path, checkMemoryConsumption)
+				return mydump.PrecheckParquet(ctx, store, file.Path, checkMemoryConsumption)
 			}
 
 			checkFiles := make([]mydump.SourceFileMeta, 0, 32)
