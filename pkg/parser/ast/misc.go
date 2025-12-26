@@ -3821,6 +3821,7 @@ func RedactURL(str string) string {
 				values[k] = []string{"xxxxxx"}
 			}
 		}
+		// In go1.25.5, url.Values.Encode() will sort the keys.
 		u.RawQuery = values.Encode()
 	}
 	return u.String()
