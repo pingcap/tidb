@@ -1113,6 +1113,8 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 		}
 		operatorInfo = p.ExplainInfo()
 	}
+
+	// Column numbers are now removed in column.ExplainInfo() when format is plan_tree
 	return estRows, estCost, costFormula, accessObject, operatorInfo
 }
 

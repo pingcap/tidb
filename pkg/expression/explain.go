@@ -111,7 +111,7 @@ func (col *Column) ColumnExplainInfo(ctx ParamValues, normalized bool) string {
 	if normalized {
 		return col.ColumnExplainInfoNormalized()
 	}
-	return col.StringWithCtx(ctx, errors.RedactLogDisable)
+	return col.StringWithCtxForExplain(ctx, errors.RedactLogDisable, shouldRemoveColumnNumbers(ctx))
 }
 
 // ColumnExplainInfoNormalized returns the normalized explained info for column.

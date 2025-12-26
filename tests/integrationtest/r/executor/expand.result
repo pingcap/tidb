@@ -102,11 +102,11 @@ ANALYZE TABLE t1;
 EXPLAIN FORMAT='plan_tree' SELECT product, country_id , year, SUM(profit)
 FROM t1 GROUP BY product, country_id, year WITH ROLLUP;
 id	task	access object	operator info
-Projection	root		Column#6->Column#11, Column#7->Column#12, Column#8->Column#13, Column#10
-└─HashAgg	root		group by:Column#16, Column#17, Column#18, Column#19, funcs:sum(Column#15)->Column#10, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#7, funcs:firstrow(Column#18)->Column#8
-  └─Projection	root		cast(executor__expand.t1.profit, decimal(10,0) BINARY)->Column#15, Column#6->Column#16, Column#7->Column#17, Column#8->Column#18, gid->Column#19
-    └─Expand	root		level-projection:[executor__expand.t1.profit, <nil>->Column#6, <nil>->Column#7, <nil>->Column#8, 0->gid],[executor__expand.t1.profit, Column#6, <nil>->Column#7, <nil>->Column#8, 1->gid],[executor__expand.t1.profit, Column#6, Column#7, <nil>->Column#8, 3->gid],[executor__expand.t1.profit, Column#6, Column#7, Column#8, 7->gid]; schema: [executor__expand.t1.profit,Column#6,Column#7,Column#8,gid]
-      └─Projection	root		executor__expand.t1.profit, executor__expand.t1.product->Column#6, executor__expand.t1.country_id->Column#7, executor__expand.t1.year->Column#8
+Projection	root		Column, Column, Column, Column
+└─HashAgg	root		group by:Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column
+  └─Projection	root		cast(executor__expand.t1.profit, decimal(10,0) BINARY)->Column, Column, Column, Column, gid->Column
+    └─Expand	root		level-projection:[executor__expand.t1.profit, <nil>->Column, <nil>->Column, <nil>->Column, 0->gid],[executor__expand.t1.profit, Column, <nil>->Column, <nil>->Column, 1->gid],[executor__expand.t1.profit, Column, Column, <nil>->Column, 3->gid],[executor__expand.t1.profit, Column, Column, Column, 7->gid]; schema: [executor__expand.t1.profit,Column,Column,Column,gid]
+      └─Projection	root		executor__expand.t1.profit, executor__expand.t1.product->Column, executor__expand.t1.country_id->Column, executor__expand.t1.year->Column
         └─TableReader	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:t1	keep order:false
 
