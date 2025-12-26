@@ -32,10 +32,10 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t3",
         "Plan": [
-          "StreamAgg_22 1.00 102.69 root  funcs:count(Column#9)->Column#4",
-          "└─IndexReader_23 1.00 52.79 root  index:StreamAgg_10",
-          "  └─StreamAgg_10 1.00 760.20 cop[tikv]  funcs:count(1)->Column#9",
-          "    └─IndexFullScan_21 3.00 610.50 cop[tikv] table:t3, index:c(b) keep order:false"
+          "StreamAgg_21 1.00 102.69 root  funcs:count(Column#9)->Column#4",
+          "└─IndexReader_22 1.00 52.79 root  index:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 760.20 cop[tikv]  funcs:count(1)->Column#9",
+          "    └─IndexFullScan_20 3.00 610.50 cop[tikv] table:t3, index:c(b) keep order:false"
         ]
       },
       {
@@ -92,18 +92,18 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t3 where b = 0",
         "Plan": [
-          "StreamAgg_12 1.00 64.98 root  funcs:count(1)->Column#4",
-          "└─IndexReader_17 1.00 15.08 root  index:IndexRangeScan_16",
-          "  └─IndexRangeScan_16 1.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
+          "StreamAgg_11 1.00 64.98 root  funcs:count(1)->Column#4",
+          "└─IndexReader_16 1.00 15.08 root  index:IndexRangeScan_15",
+          "  └─IndexRangeScan_15 1.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
         "Plan": [
-          "StreamAgg_12 1.00 2001.63 root  funcs:count(test.t3.a)->Column#4",
-          "└─IndexLookUp_19 1.00 1951.73 root  ",
-          "  ├─IndexRangeScan_17(Build) 1.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
-          "  └─TableRowIDScan_18(Probe) 1.00 227.31 cop[tikv] table:t3 keep order:false"
+          "StreamAgg_11 1.00 2001.63 root  funcs:count(test.t3.a)->Column#4",
+          "└─IndexLookUp_18 1.00 1951.73 root  ",
+          "  ├─IndexRangeScan_16(Build) 1.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
+          "  └─TableRowIDScan_17(Probe) 1.00 227.31 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
@@ -118,13 +118,13 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
         "Plan": [
-          "StreamAgg_15 1.00 2128.93 root  funcs:count(1)->Column#7",
-          "└─HashJoin_53 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
-          "  ├─IndexReader_38(Build) 3.00 45.23 root  index:IndexFullScan_37",
-          "  │ └─IndexFullScan_37 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
-          "  └─TableReader_33(Probe) 3.00 68.11 root  data:Selection_32",
-          "    └─Selection_32 3.00 831.62 cop[tikv]  not(isnull(test.t3.a))",
-          "      └─TableFullScan_31 3.00 681.92 cop[tikv] table:t keep order:false"
+          "StreamAgg_14 1.00 2128.93 root  funcs:count(1)->Column#7",
+          "└─HashJoin_51 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
+          "  ├─IndexReader_37(Build) 3.00 45.23 root  index:IndexFullScan_36",
+          "  │ └─IndexFullScan_36 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
+          "  └─TableReader_32(Probe) 3.00 68.11 root  data:Selection_31",
+          "    └─Selection_31 3.00 831.62 cop[tikv]  not(isnull(test.t3.a))",
+          "      └─TableFullScan_30 3.00 681.92 cop[tikv] table:t keep order:false"
         ]
       },
       {
@@ -146,20 +146,20 @@
       {
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
-          "StreamAgg_20 1.00 71701.80 root  funcs:count(1)->Column#10",
-          "└─HashJoin_92 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
-          "  ├─TableReader_63(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_62",
-          "  │ └─ExchangeSender_62 3.00 1044634.01 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │   └─Projection_61 3.00 1044634.01 mpp[tiflash]  test.t1.b",
-          "  │     └─HashJoin_46 3.00 1044634.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  │       ├─ExchangeReceiver_40(Build) 3.00 580476.40 mpp[tiflash]  ",
-          "  │       │ └─ExchangeSender_39 3.00 580188.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "  │       │   └─Selection_38 3.00 580188.40 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │       │     └─TableFullScan_37 3.00 580174.00 mpp[tiflash] table:t1 keep order:false",
-          "  │       └─Selection_42(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "  │         └─TableFullScan_41 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
-          "  └─IndexReader_76(Probe) 3.00 45.23 root  index:IndexFullScan_75",
-          "    └─IndexFullScan_75 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
+          "StreamAgg_19 1.00 71701.80 root  funcs:count(1)->Column#10",
+          "└─HashJoin_90 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "  ├─TableReader_62(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_61",
+          "  │ └─ExchangeSender_61 3.00 1044634.01 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Projection_60 3.00 1044634.01 mpp[tiflash]  test.t1.b",
+          "  │     └─HashJoin_45 3.00 1044634.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  │       ├─ExchangeReceiver_39(Build) 3.00 580476.40 mpp[tiflash]  ",
+          "  │       │ └─ExchangeSender_38 3.00 580188.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "  │       │   └─Selection_37 3.00 580188.40 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │       │     └─TableFullScan_36 3.00 580174.00 mpp[tiflash] table:t1 keep order:false",
+          "  │       └─Selection_41(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
+          "  │         └─TableFullScan_40 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
+          "  └─IndexReader_75(Probe) 3.00 45.23 root  index:IndexFullScan_74",
+          "    └─IndexFullScan_74 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
         ]
       },
       {

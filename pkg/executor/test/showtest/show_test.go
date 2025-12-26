@@ -296,8 +296,10 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	}
 	tk.MustExec("set tidb_allow_mpp=0")
 	tk.MustExec("explain select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
+	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
+		"Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
+		"Warning 1105 Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
 	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(md5(value)) from show_warnings_expr_pushdown group by a")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))

@@ -273,12 +273,12 @@ func TestBitColumnPushDown(t *testing.T) {
 			{"  │ └─Selection_21", "cop[tikv]", "not(isnull(test.t1.b))"},
 			{"  │   └─TableFullScan_20", "cop[tikv]", "keep order:false, stats:pseudo"},
 			{"  └─Selection_23(Probe)", "root", "not(isnull(Column#7))"},
-			{"    └─StreamAgg_30", "root", "funcs:min(test.t2.b)->Column#7"},
-			{"      └─TopN_31", "root", "test.t2.b, offset:0, count:1"},
-			{"        └─TableReader_41", "root", "data:TopN_40"},
-			{"          └─TopN_40", "cop[tikv]", "test.t2.b, offset:0, count:1"},
-			{"            └─Selection_39", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
-			{"              └─TableFullScan_38", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"    └─StreamAgg_29", "root", "funcs:min(test.t2.b)->Column#7"},
+			{"      └─TopN_30", "root", "test.t2.b, offset:0, count:1"},
+			{"        └─TableReader_40", "root", "data:TopN_39"},
+			{"          └─TopN_39", "cop[tikv]", "test.t2.b, offset:0, count:1"},
+			{"            └─Selection_38", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
+			{"              └─TableFullScan_37", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
 		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 		testKit.MustExec("insert t1 values ('A', 1);")
@@ -1257,37 +1257,22 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 		testKit.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 		// Create virtual tiflash replica info.
-		is := dom.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-		require.NoError(t, err)
-		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:     1,
-			Available: true,
-		}
-
-		rows := [][]any{
-			{"HashAgg_6", "root", "funcs:avg(Column#4)->Column#3"},
-			{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
-			{"  └─TableReader_12", "root", "data:TableFullScan_11"},
-			{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
-		}
-		testKit.MustQuery("explain select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
-
-		rows = [][]any{
-			{"HashAgg_6", "root", "funcs:sum(Column#4)->Column#3"},
-			{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
-			{"  └─TableReader_12", "root", "data:TableFullScan_11"},
-			{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
-		}
-		testKit.MustQuery("explain select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
-
-		rows = [][]any{
-			{"HashAgg_6", "root", "funcs:group_concat(Column#4 separator \",\")->Column#3"},
-			{"└─Projection_13", "root", "cast(test.t.a, var_string(4294967295))->Column#4"},
-			{"  └─TableReader_10", "root", "data:TableFullScan_9"},
-			{"    └─TableFullScan_9", "cop[tiflash]", "keep order:false, stats:pseudo"},
-		}
-		testKit.MustQuery("explain select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
+		testKit.MustQuery("explain format='plan_tree' select avg(a) from t;").Check(testkit.Rows(
+			`HashAgg root  funcs:avg(Column#4)->Column#3`,
+			`└─Projection root  cast(test.t.a, double BINARY)->Column#4`,
+			`  └─TableReader root  data:TableFullScan`,
+			`    └─TableFullScan cop[tiflash] table:t keep order:false, stats:pseudo`))
+		testKit.MustQuery("explain format='plan_tree' select sum(a) from t;").Check(testkit.Rows(
+			`HashAgg root  funcs:sum(Column#4)->Column#3`,
+			`└─Projection root  cast(test.t.a, double BINARY)->Column#4`,
+			`  └─TableReader root  data:TableFullScan`,
+			`    └─TableFullScan cop[tiflash] table:t keep order:false, stats:pseudo`))
+		testKit.MustQuery("explain format='plan_tree' select /*+ hash_agg() */  group_concat(a) from t;").Check(testkit.Rows(
+			`HashAgg root  funcs:group_concat(Column#4 separator ",")->Column#3`,
+			`└─Projection root  cast(test.t.a, var_string(4294967295))->Column#4`,
+			`  └─TableReader root  data:TableFullScan`,
+			`    └─TableFullScan cop[tiflash] table:t keep order:false, stats:pseudo`))
 	})
 }
 

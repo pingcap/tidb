@@ -4150,29 +4150,29 @@ insert into t values(1);
 set tidb_track_aggregate_memory_usage = off;
 explain analyze select /*+ HASH_AGG() */ sum(a) from t;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashAgg_11	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	N/A	N/A
-└─TableReader_12	1.00	1	root	<execution_info>	<operator_info>	data:HashAgg_6	<num> Bytes	N/A
+HashAgg_10	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	N/A	N/A
+└─TableReader_11	1.00	1	root	<execution_info>	<operator_info>	data:HashAgg_6	<num> Bytes	N/A
   └─HashAgg_6	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
-    └─TableFullScan_10	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
+    └─TableFullScan_9	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
 explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-StreamAgg_16	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	N/A	N/A
-└─TableReader_17	1.00	1	root	<execution_info>	<operator_info>	data:StreamAgg_10	<num> Bytes	N/A
-  └─StreamAgg_10	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
-    └─TableFullScan_15	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
+StreamAgg_15	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	N/A	N/A
+└─TableReader_16	1.00	1	root	<execution_info>	<operator_info>	data:StreamAgg_9	<num> Bytes	N/A
+  └─StreamAgg_9	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+    └─TableFullScan_14	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
 set tidb_track_aggregate_memory_usage = on;
 explain analyze select /*+ HASH_AGG() */ sum(a) from t;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashAgg_11	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	<num> Bytes
-└─TableReader_12	1.00	1	root	<execution_info>	<operator_info>	data:HashAgg_6	<num> Bytes	N/A
+HashAgg_10	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	<num> Bytes
+└─TableReader_11	1.00	1	root	<execution_info>	<operator_info>	data:HashAgg_6	<num> Bytes	N/A
   └─HashAgg_6	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
-    └─TableFullScan_10	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
+    └─TableFullScan_9	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
 explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-StreamAgg_16	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	N/A
-└─TableReader_17	1.00	1	root	<execution_info>	<operator_info>	data:StreamAgg_10	<num> Bytes	N/A
-  └─StreamAgg_10	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
-    └─TableFullScan_15	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
+StreamAgg_15	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	N/A
+└─TableReader_16	1.00	1	root	<execution_info>	<operator_info>	data:StreamAgg_9	<num> Bytes	N/A
+  └─StreamAgg_9	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+    └─TableFullScan_14	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
 set tidb_track_aggregate_memory_usage = default;
 drop table if exists testbind;
 create table testbind(i int, s varchar(20));
@@ -4215,11 +4215,11 @@ create table t1 (a int, b int);
 insert into t1 values (1,2),(2,3),(3,4);
 explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashAgg_13	1.00	1	root	NULL	.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*	funcs:count(Column#5)->Column#4	<num> KB	<num> Bytes
-└─TableReader_14	1.00	1	root	NULL	time.*loops.*cop_task.*	data:HashAgg_7	<num> Bytes	N/A
+HashAgg_12	1.00	1	root	NULL	.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*	funcs:count(Column#5)->Column#4	<num> KB	<num> Bytes
+└─TableReader_13	1.00	1	root	NULL	time.*loops.*cop_task.*	data:HashAgg_7	<num> Bytes	N/A
   └─HashAgg_7	1.00	1	cop[tikv]	NULL	tikv_task:.*	funcs:count(1)->Column#5	N/A	N/A
-    └─Selection_12	3323.33	3	cop[tikv]	NULL	tikv_task:.*	lt(executor__executor.t1.a, 10)	N/A	N/A
-      └─TableFullScan_11	10000.00	3	cop[tikv]	table:t1	tikv_task:.*	keep order:false, stats:pseudo	N/A	N/A
+    └─Selection_11	3323.33	3	cop[tikv]	NULL	tikv_task:.*	lt(executor__executor.t1.a, 10)	N/A	N/A
+      └─TableFullScan_10	10000.00	3	cop[tikv]	table:t1	tikv_task:.*	keep order:false, stats:pseudo	N/A	N/A
 set global tidb_txn_mode='';
 drop table if exists t, t1;
 create table t (c1 int, c2 int, c3 int);

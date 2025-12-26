@@ -49,3 +49,17 @@ func DeepClone[T interface{ Clone() T }](s []T) []T {
 	}
 	return cloned
 }
+
+// Filter is to filter the s slices by p function, p raise the True, this element will be put into the new slices
+func Filter[T any](s []T, p func(T) bool) []T {
+	if s == nil {
+		return nil
+	}
+	filtered := make([]T, 0, len(s))
+	for _, item := range s {
+		if p(item) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}

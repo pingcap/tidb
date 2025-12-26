@@ -1840,7 +1840,6 @@ Level	Code	Message
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t1) */ sum(t1.a in (select a from t2)) from t1;
 id	task	access object	operator info
@@ -1891,7 +1890,6 @@ Level	Code	Message
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_build(t1) */ sum(t1.a not in (select a from t2)) from t1;
 id	task	access object	operator info
@@ -1909,7 +1907,6 @@ show warnings;
 Level	Code	Message
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t1) */ sum(t1.a not in (select a from t2)) from t1;
@@ -1960,7 +1957,6 @@ show warnings;
 Level	Code	Message
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t2, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;

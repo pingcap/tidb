@@ -437,23 +437,16 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 //
 //	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: EXPLAIN select count(distinct a), count(distinct b), sum(c) from t.
 func TestMPPMultiDistinct3Stage(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test;")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("create table t(a int, b int, c int, d int);")
-		testKit.MustExec("alter table t set tiflash replica 1")
-		tb := external.GetTableByName(t, testKit, "test", "t")
-		err := domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
 		testKit.MustExec("set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=1")
 		defer testKit.MustExec("set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=0")
 		testKit.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
 		testKit.MustExec("set @@session.tidb_enforce_mpp=1")
 		testKit.MustExec("set @@session.tidb_allow_mpp=ON;")
-		// todo: current mock regionCache won't scale the regions among tiFlash nodes. The under layer still collect data from only one of the nodes.
-		testKit.MustExec("split table t BETWEEN (0) AND (5000) REGIONS 5;")
-		testKit.MustExec("insert into t values(1000, 1000, 1000, 1),(1000, 1000, 1000, 1),(2000, 2000, 2000, 1),(2000, 2000, 2000, 1),(3000, 3000, 3000, 1),(3000, 3000, 3000, 1),(4000, 4000, 4000, 1),(4000, 4000, 4000, 1),(5000, 5000, 5000, 1),(5000, 5000, 5000, 1)")
-
 		var input []string
 		var output []struct {
 			SQL  string
@@ -479,29 +472,20 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 			res.Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
-	}, mockstore.WithMockTiFlash(1))
+	})
 }
 
 // Test null-aware semi join push down for MPP mode
 func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		// test table
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("drop table if exists s")
 		testKit.MustExec("create table t(a int, b int, c int)")
 		testKit.MustExec("create table s(a int, b int, c int)")
-		testKit.MustExec("alter table t set tiflash replica 1")
-		testKit.MustExec("alter table s set tiflash replica 1")
-
-		tb := external.GetTableByName(t, testKit, "test", "t")
-		err := domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
-
-		tb = external.GetTableByName(t, testKit, "test", "s")
-		err = domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
-
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
+		testkit.SetTiFlashReplica(t, dom, "test", "s")
 		var input []string
 		var output []struct {
 			SQL  string
@@ -527,7 +511,7 @@ func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
 			res.Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
-	}, mockstore.WithMockTiFlash(2))
+	})
 }
 
 func TestMPPSharedCTEScan(t *testing.T) {
