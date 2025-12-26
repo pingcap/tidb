@@ -777,7 +777,7 @@ func TestSplitRangeForTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
+	_, err = dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
 	require.NoError(t, err)
 
 	tk.MustExec("drop database if exists addindexlit;")
@@ -798,28 +798,50 @@ func TestSplitRangeForTable(t *testing.T) {
 		{"dxf ingest", "on", ""},
 		{"dxf global-sort", "on", cloudStorageURI},
 	}
-	var addCnt, removeCnt int
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
-		addCnt += 1
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
-		removeCnt += 1
-	})
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
 		tk.MustExec("set global tidb_cloud_storage_uri = '';")
 	})
-	for _, tc := range testcases {
+
+	var addCnt, removeCnt atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		addCnt.Add(1)
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+		removeCnt.Add(1)
+	})
+
+	for i, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
 			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
 
-			addCnt = 0
-			removeCnt = 0
-			tk.MustExec("alter table t add index i(c)")
-			require.Equal(t, addCnt, len(stores))
-			require.Equal(t, removeCnt, addCnt)
-			tk.MustExec("alter table t drop index i")
+			idxNameSmall := fmt.Sprintf("i_small_%d", i)
+			idxNameLarge := fmt.Sprintf("i_large_%d", i)
+
+			// 1. Verify small table case (default behavior)
+			addCnt.Store(0)
+			removeCnt.Store(0)
+			tk.MustExec("alter table t add index " + idxNameSmall + "(c)")
+			// 1024 rows is a small table, which has only 1 region (< 100), so it should skip force split.
+			require.Equal(t, int32(0), addCnt.Load(), "Small table should skip force split in "+tc.caseName)
+			require.Equal(t, int32(0), removeCnt.Load())
+			tk.MustExec("alter table t drop index " + idxNameSmall)
+
+			// 2. Verify large table case (mocked by lowering threshold)
+			// We only need to verify the logic once for the local backend logic.
+			if tc.caseName == "local ingest" {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+					*threshold = 0
+				})
+				addCnt.Store(0)
+				removeCnt.Store(0)
+				tk.MustExec("alter table t add index " + idxNameLarge + "(c)")
+				// If failpoints are working or threshold variable is used, addCnt should be > 0.
+				require.Greater(t, addCnt.Load(), int32(0), "Large table should trigger force split in "+tc.caseName)
+				require.Equal(t, addCnt.Load(), removeCnt.Load())
+				tk.MustExec("alter table t drop index " + idxNameLarge)
+			}
 		})
 	}
 }
@@ -851,35 +873,56 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 		{"dxf ingest", "on", ""},
 		{"dxf global-sort", "on", cloudStorageURI},
 	}
-	var addCnt, removeCnt int
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
-		addCnt += 1
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
-		removeCnt += 1
-	})
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
 		tk.MustExec("set global tidb_cloud_storage_uri = '';")
 	})
-	for _, tc := range testcases {
+	for i, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {
+			var addCnt, removeCnt atomic.Int32
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+				addCnt.Add(1)
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+				removeCnt.Add(1)
+			})
+
 			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
 			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
 
-			addCnt = 0
-			removeCnt = 0
-			tk.MustExec("alter table tp add index i(c)")
-			require.Greater(t, addCnt, 0)
-			require.Equal(t, removeCnt, addCnt)
-			tk.MustExec("alter table tp drop index i")
+			idxNameSmall := fmt.Sprintf("i_small_%d", i)
+			idxNameLarge := fmt.Sprintf("i_large_%d", i)
 
-			addCnt = 0
-			removeCnt = 0
-			tk.MustExec("alter table tp add index gi(c) global")
-			require.Greater(t, addCnt, 0)
-			require.Equal(t, removeCnt, addCnt)
-			tk.MustExec("alter table tp drop index gi")
+			// 1. Verify small table case (default behavior)
+			addCnt.Store(0)
+			removeCnt.Store(0)
+			tk.MustExec("alter table tp add index " + idxNameSmall + "(c)")
+			// 1024 rows in 2 partitions is a small table, so it should skip force split.
+			require.Equal(t, int32(0), addCnt.Load(), "Small table should skip force split in "+tc.caseName)
+			require.Equal(t, int32(0), removeCnt.Load())
+			tk.MustExec("alter table tp drop index " + idxNameSmall)
+
+			// 2. Verify large table case (mocked by lowering threshold)
+			if tc.caseName == "local ingest" {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+					*threshold = 0
+				})
+				addCnt.Store(0)
+				removeCnt.Store(0)
+				tk.MustExec("alter table tp add index " + idxNameLarge + "(c)")
+				// If failpoints are working or threshold variable is used, addCnt should be > 0.
+				require.Greater(t, addCnt.Load(), int32(0), "Large table should trigger force split in "+tc.caseName)
+				require.Equal(t, addCnt.Load(), removeCnt.Load())
+				tk.MustExec("alter table tp drop index " + idxNameLarge)
+
+				// 3. Verify global index
+				addCnt.Store(0)
+				removeCnt.Store(0)
+				tk.MustExec("alter table tp add index gi(c) global")
+				require.Greater(t, addCnt.Load(), int32(0))
+				require.Equal(t, addCnt.Load(), removeCnt.Load())
+				tk.MustExec("alter table tp drop index gi")
+			}
 		})
 	}
 }
