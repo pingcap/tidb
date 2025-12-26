@@ -681,28 +681,26 @@ func (pq *AnalysisPriorityQueue) run() {
 	})
 
 	for {
+		// NOTE: We check the context error here to handle the case where the context has been canceled,
+		// allowing us to exit the goroutine as soon as possible.
+		if ctxErr := pq.ctx.Err(); ctxErr != nil {
+			statslogutil.StatsLogger().Info("Priority queue stopped", zap.Error(ctxErr))
+			return
+		}
+
 		select {
-		// NOTE: Use a nested select to give pq.ctx.Done() higher priority to make sure we can exit the goroutine as soon as possible.
 		case <-pq.ctx.Done():
 			statslogutil.StatsLogger().Info("Priority queue stopped")
 			return
-		default:
-			select {
-			// NOTE: This is necessary to check for context cancellation in the inner select.
-			// Otherwise, it may block for a while until one of the tickers fires.
-			case <-pq.ctx.Done():
-				statslogutil.StatsLogger().Info("Priority queue stopped")
-				return
-			case <-dmlChangesFetchInterval.C:
-				queueSamplerLogger().Info("Start to fetch DML changes of tables")
-				pq.ProcessDMLChanges()
-			case <-timeRefreshInterval.C:
-				queueSamplerLogger().Info("Start to refresh last analysis durations of jobs")
-				pq.RefreshLastAnalysisDuration()
-			case <-mustRetryJobRequeueInterval.C:
-				queueSamplerLogger().Info("Start to requeue must retry jobs")
-				pq.RequeueMustRetryJobs()
-			}
+		case <-dmlChangesFetchInterval.C:
+			queueSamplerLogger().Info("Start to fetch DML changes of tables")
+			pq.ProcessDMLChanges()
+		case <-timeRefreshInterval.C:
+			queueSamplerLogger().Info("Start to refresh last analysis durations of jobs")
+			pq.RefreshLastAnalysisDuration()
+		case <-mustRetryJobRequeueInterval.C:
+			queueSamplerLogger().Info("Start to requeue must retry jobs")
+			pq.RequeueMustRetryJobs()
 		}
 	}
 }
