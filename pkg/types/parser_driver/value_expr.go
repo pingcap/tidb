@@ -81,6 +81,14 @@ func (n *ValueExpr) SetValue(res any) {
 
 // Restore implements Node interface.
 func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
+	// For non-prepared plan cache: collect the value and write '?' instead.
+	// This enables single-pass parameterization without modifying the AST.
+	if ctx.Flags.HasRestoreForNonPrepPlanCache() && ctx.ParamCollector != nil && !ctx.SkipCollectingParams {
+		*ctx.ParamCollector = append(*ctx.ParamCollector, n)
+		ctx.WritePlain("?")
+		return nil
+	}
+
 	switch n.Kind() {
 	case types.KindNull:
 		ctx.WriteKeyWord("NULL")
