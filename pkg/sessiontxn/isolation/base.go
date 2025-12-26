@@ -700,11 +700,11 @@ type delayedOracleFuture struct {
 // Wait injects delay before calling inner Wait() if failpoint is enabled
 func (f *delayedOracleFuture) Wait() (uint64, error) {
 	// Inject delay before waiting for TSO to test maxExecutionTime behavior
-	if val, err := failpoint.Eval("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"); err == nil {
+	failpoint.Inject("injectTSOWaitDelay", func(val failpoint.Value) {
 		if delayMs, ok := val.(int); ok {
 			time.Sleep(time.Duration(delayMs) * time.Millisecond)
 		}
-	}
+	})
 	return f.inner.Wait()
 }
 
