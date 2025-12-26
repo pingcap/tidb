@@ -91,9 +91,10 @@ func New(
 	schemaLease time.Duration,
 	sysSessionPool util.DestroyableSessionPool,
 	isValidator validatorapi.Validator,
+	filter Filter,
 ) *Syncer {
 	s := newSyncer(store, logutil.BgLogger(), schemaLease, sysSessionPool, isValidator)
-	s.loader = newLoader(store, infoCache, &s.deferFn)
+	s.loader = newLoader(store, infoCache, &s.deferFn, filter)
 	return s
 }
 
@@ -196,6 +197,10 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 }
 
 func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
+	if s.loader.filter != nil {
+		return s.loader.filter.SkipMDLCheck(tableIDs, s.InfoSchema())
+	}
+
 	if !s.crossKS {
 		return false
 	}
@@ -294,6 +299,7 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 // SyncLoop is the main loop for syncing the info schema.
 func (s *Syncer) SyncLoop(ctx context.Context) {
 	defer util.Recover(metrics.LabelDomain, "SyncLoop", nil, true)
+
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(s.schemaLease / 2)

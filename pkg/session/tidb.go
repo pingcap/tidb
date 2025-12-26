@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -65,10 +66,14 @@ type domainMap struct {
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil)
+	return dm.getWithEtcdClient(store, nil, nil)
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client) (d *domain.Domain, err error) {
+func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, filter)
+}
+
+func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -102,6 +107,7 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 				return getCrossKSSessionFactory(store, targetKS, schemaValidator)
 			},
 			etcdClient,
+			schemaFilter,
 		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker

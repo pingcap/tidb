@@ -46,6 +46,7 @@ go_library(
         "//pkg/extension/extensionimpl",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
+        "//pkg/infoschema/issyncer",
         "//pkg/infoschema/validatorapi",
         "//pkg/kv",
         "//pkg/meta",
