@@ -661,3 +661,34 @@ func TestRollupMPP(t *testing.T) {
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
 }
+
+func TestEnforceMPPNewest(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table t1(a int primary key, b int);`)
+		tk.MustExec(`create table t2(a int primary key, b int);`)
+		testkit.SetTiFlashReplica(t, dom, "test", "t1")
+		testkit.SetTiFlashReplica(t, dom, "test", "t2")
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		enforceMPPSuiteData := GetEnforceMPPSuiteData()
+		enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			res := tk.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
+}
