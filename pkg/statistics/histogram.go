@@ -1121,19 +1121,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundR := histR + histWidth
 
 	var leftPercent, rightPercent, timeAdjLeft, timeAdjRight, avgRowCount float64
-	if debugTrace {
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx,
-				"histL", histL,
-				"histR", histR,
-				"boundL", boundL,
-				"boundR", boundR,
-				"lPercent", leftPercent,
-				"rPercent", rightPercent,
-				"avgRowCount", avgRowCount,
-			)
-		}()
-	}
 
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
@@ -1197,8 +1184,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if entirelyOutOfRange {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// It is adjusted by a further 50% to reduce its impact.
-		timeAdjPercent := min(timeAdjLeft*0.5+timeAdjRight*0.5, 1.0) * 0.5
-		totalPercent = max(totalPercent, timeAdjPercent)
 		maxTotalPercent = max(maxTotalPercent, timeAdjLeft+timeAdjRight)
 	}
 	maxTotalPercent = min(maxTotalPercent, 1.0)
