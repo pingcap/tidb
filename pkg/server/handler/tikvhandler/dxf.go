@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -55,10 +54,6 @@ func (h *DXFScheduleStatusHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 		handler.WriteError(w, errors.Errorf("This api only support GET method"))
 		return
 	}
-	if h.store.GetKeyspace() != keyspace.System {
-		handler.WriteError(w, errors.Errorf("This api only support SYSTEM keyspace, current keyspace is %s", h.store.GetKeyspace()))
-		return
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
 	defer cancel()
@@ -85,10 +80,6 @@ func NewDXFScheduleHandler(store kv.Storage) *DXFScheduleHandler {
 func (h *DXFScheduleHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		handler.WriteError(w, errors.Errorf("This api only support POST method"))
-		return
-	}
-	if h.store.GetKeyspace() != keyspace.System {
-		handler.WriteError(w, errors.Errorf("This api only support SYSTEM keyspace, current keyspace is %s", h.store.GetKeyspace()))
 		return
 	}
 	name, param, err := parsePauseScaleInFlag(req)
@@ -154,10 +145,6 @@ func NewDXFScheduleTuneHandler(storage kv.Storage) http.Handler {
 }
 
 func (h *DXFScheduleTuneHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if h.store.GetKeyspace() != keyspace.System {
-		handler.WriteError(w, errors.Errorf("This api only support SYSTEM keyspace, current keyspace is %s", h.store.GetKeyspace()))
-		return
-	}
 	targetKeyspace := req.FormValue("keyspace")
 	if targetKeyspace == "" || naming.CheckKeyspaceName(targetKeyspace) != nil {
 		handler.WriteError(w, errors.Errorf("invalid or empty target keyspace %s", targetKeyspace))
@@ -222,4 +209,19 @@ func (h *DXFScheduleTuneHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 		handler.WriteError(w, errors.Errorf("This api only support GET and POST method"))
 		return
 	}
+}
+
+// DXFTaskMaxRuntimeSlotsHandler handles changing max runtime slots of DXF task.
+type DXFTaskMaxRuntimeSlotsHandler struct {
+	store kv.Storage
+}
+
+// NewDXFTaskMaxRuntimeSlotsHandler creates a new DXFTaskMaxRuntimeSlotsHandler.
+func NewDXFTaskMaxRuntimeSlotsHandler(storage kv.Storage) *DXFTaskMaxRuntimeSlotsHandler {
+	return &DXFTaskMaxRuntimeSlotsHandler{store: storage}
+}
+
+// ServeHTTP implements http.Handler interface.
+func (h *DXFTaskMaxRuntimeSlotsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+
 }
