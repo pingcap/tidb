@@ -267,6 +267,32 @@ func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highB
 	return lowBuffer, highBuffer, nil
 }
 
+func (ran *Range) Equal(other *Range) bool {
+	if ran == other {
+		return true
+	}
+	if ran == nil || other == nil {
+		return false
+	}
+	if ran.LowExclude != other.LowExclude || ran.HighExclude != other.HighExclude {
+		return false
+	}
+	if len(ran.LowVal) != len(other.LowVal) || len(ran.HighVal) != len(other.HighVal) {
+		return false
+	}
+	for i := range ran.LowVal {
+		if !ran.LowVal[i].Equals(other.LowVal[i]) {
+			return false
+		}
+	}
+	for i := range ran.HighVal {
+		if !ran.HighVal[i].Equals(other.HighVal[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // PrefixEqualLen tells you how long the prefix of the range is a point.
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
 func (ran *Range) PrefixEqualLen(tc types.Context) (int, error) {
