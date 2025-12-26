@@ -163,8 +163,8 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	require.True(t, baseFunc.vectorized() && baseFunc.isChildrenVectorized())
 	cast := &builtinCastRealAsTimeSig{baseFunc}
+	require.True(t, cast.vectorized() && cast.isChildrenVectorized())
 
 	inputChunk, expect := genCastRealAsTime()
 	inputs := []*chunk.Chunk{
