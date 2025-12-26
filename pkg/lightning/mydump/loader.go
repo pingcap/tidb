@@ -631,7 +631,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 					zap.Stringer("type", res.Type), zap.Error(err))
 				return nil, errors.Trace(err)
 			}
-			s.sampledParquetInfos.Store(tableName, checkRes)
+			s.sampledParquetInfos.Store(tableName, *checkRes)
 		}
 	}
 

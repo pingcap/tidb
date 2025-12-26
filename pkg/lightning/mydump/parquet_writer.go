@@ -38,19 +38,15 @@ type ParquetColumn struct {
 	Gen       func(numRows int) (any, []int16)
 }
 
-// WriteCloserWrapper implements io.WriteCloser interface.
-// Exported for test.
-type WriteCloserWrapper struct {
+type writeWrapper struct {
 	Writer storage.ExternalFileWriter
 }
 
-// Write implements io.Writer interface.
-func (w *WriteCloserWrapper) Write(b []byte) (int, error) {
+func (w *writeWrapper) Write(b []byte) (int, error) {
 	return w.Writer.Write(context.Background(), b)
 }
 
-// Close implements io.Closer interface.
-func (w *WriteCloserWrapper) Close() error {
+func (w *writeWrapper) Close() error {
 	return w.Writer.Close(context.Background())
 }
 
@@ -67,19 +63,20 @@ func getStore(path string) (storage.ExternalStorage, error) {
 	return store, nil
 }
 
-// WriteParquetFileWithStore writes a simple Parquet file with the specified
-// columns and number of rows. It's used for test and DON'T use this function
-// to generate large Parquet files.
-func WriteParquetFileWithStore(
-	s storage.ExternalStorage, fileName string,
-	pcolumns []ParquetColumn, groups, rows int,
-	addOpts ...parquet.WriterProperty,
-) error {
+// WriteParquetFile writes a simple Parquet file with the specified columns and
+// number of rows. It's used for test and DON'T use this function to generate
+// large Parquet files.
+func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, groups, rows int, addOpts ...parquet.WriterProperty) error {
+	s, err := getStore(path)
+	if err != nil {
+		return err
+	}
+
 	writer, err := s.Create(context.Background(), fileName, nil)
 	if err != nil {
 		return err
 	}
-	wrapper := &WriteCloserWrapper{Writer: writer}
+	wrapper := &writeWrapper{Writer: writer}
 
 	fields := make([]schema.Node, len(pcolumns))
 	opts := make([]parquet.WriterProperty, 0, len(pcolumns)*2)
@@ -154,15 +151,4 @@ func WriteParquetFileWithStore(
 	}
 
 	return nil
-}
-
-// WriteParquetFile is a helper function that writes a simple Parquet file
-// to the specified local path. It's used for test.
-func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, groups, rows int, addOpts ...parquet.WriterProperty) error {
-	s, err := getStore(path)
-	if err != nil {
-		return err
-	}
-
-	return WriteParquetFileWithStore(s, fileName, pcolumns, groups, rows, addOpts...)
 }

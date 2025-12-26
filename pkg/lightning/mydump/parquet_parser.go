@@ -632,7 +632,7 @@ func NewParquetParser(
 	}
 
 	numColumns := len(colTypes)
-	rowPool := zeropool.New(func() []types.Datum {
+	pool := zeropool.New(func() []types.Datum {
 		return make([]types.Datum, numColumns)
 	})
 
@@ -661,7 +661,7 @@ func NewParquetParser(
 		colNames: colNames,
 		alloc:    allocator,
 		logger:   logger,
-		rowPool:  &rowPool,
+		rowPool:  &pool,
 	}
 	if err := parser.Init(meta.Loc); err != nil {
 		return nil, errors.Trace(err)
@@ -714,8 +714,8 @@ func PrecheckParquet(
 	}
 
 	var (
-		totalRowSize int64
-		rowCount     int64
+		rowSize  int64
+		rowCount int64
 	)
 	for range reader.MetaData().RowGroups[0].NumRows {
 		err = parser.ReadRow()
@@ -725,9 +725,9 @@ func PrecheckParquet(
 			}
 			return nil, err
 		}
-		lastRow := parser.LastRow()
-		totalRowSize += int64(lastRow.Length)
 		rowCount++
+		lastRow := parser.LastRow()
+		rowSize += int64(lastRow.Length)
 		parser.RecycleRow(lastRow)
 		if allocator.peakAllocation.Load() >= ParquetParserMemoryLimit {
 			return nil, exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
@@ -736,8 +736,8 @@ func PrecheckParquet(
 	}
 
 	fileSize := reader.MetaData().GetSourceFileSize()
-	avgRowSize := float64(totalRowSize) / float64(rowCount)
-	sizeExpansionRatio := (float64)(totalRowSize) / float64(fileSize)
+	avgRowSize := float64(rowSize) / float64(rowCount)
+	sizeExpansionRatio := (float64)(rowSize) / float64(fileSize)
 
 	return &ParquetPrecheckResult{avgRowSize, sizeExpansionRatio}, nil
 }

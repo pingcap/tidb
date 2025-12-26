@@ -1354,7 +1354,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		sizeExpansionRatio = 1.0
 	)
 
-	checkFirstFile := func(s storage.ExternalStorage, path string, size int64) error {
+	checkFirstFile := func(s storage.ExternalStorage, path string) error {
 		var (
 			err      error
 			checkRes *mydump.ParquetPrecheckResult
@@ -1391,7 +1391,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
-		if err := checkFirstFile(s, fileNameKey, size); err != nil {
+		if err := checkFirstFile(s, fileNameKey); err != nil {
 			return errors.Trace(err)
 		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
@@ -1444,7 +1444,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				// pick arbitrary one file to detect the format.
 				var err2 error
 				once.Do(func() {
-					err2 = checkFirstFile(s, path, size)
+					err2 = checkFirstFile(s, path)
 				})
 				if err2 != nil {
 					return nil, err2
