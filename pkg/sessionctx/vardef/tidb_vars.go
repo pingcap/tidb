@@ -1335,6 +1335,9 @@ const (
 	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
 	// The log backup task will be paused if the checkpoint lag is larger than it.
 	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+
+	// TiDBIndexLookUpPushDownPolicy controls the push down policy of index lookup.
+	TiDBIndexLookUpPushDownPolicy = "tidb_index_lookup_pushdown_policy"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1450,7 +1453,7 @@ const (
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
 	DefTiDBMemQuotaBindingCache             = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                       = false
-	DefTiDBTraceEvent                       = Off
+	DefTiDBTraceEvent                       = ""
 	DefTiDBPProfSQLCPU                      = 0
 	DefTiDBRetryLimit                       = 10
 	DefTiDBDisableTxnAutoRetry              = true
@@ -1599,7 +1602,7 @@ const (
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
-	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
+	DefTiDBAnalyzeColumnOptions                       = "ALL"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 1
@@ -1749,6 +1752,7 @@ const (
 	DefTiDBMemArbitratorModeText                      = memory.ArbitratorModeDisableName
 	DefTiDBMemArbitratorQueryReservedText             = "0"
 	DefTiDBMemArbitratorWaitAverse                    = "0"
+	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 )
 
 // Process global variables.
@@ -2071,6 +2075,13 @@ const (
 	StrategyConservative = "conservative"
 	// StrategyCustom is a choice of variable TiDBPipelinedDmlResourcePolicy,
 	StrategyCustom = "custom"
+
+	// IndexLookUpPushDownPolicyHintOnly indicates only use the hint to decide whether to push down the index lookup or not.
+	IndexLookUpPushDownPolicyHintOnly = "hint-only"
+	// IndexLookUpPushDownPolicyAffinityForce indicates to force push down the index lookup for table with affinity options.
+	IndexLookUpPushDownPolicyAffinityForce = "affinity-force"
+	// IndexLookUpPushDownPolicyForce indicates to force push down the index lookup for all tables.
+	IndexLookUpPushDownPolicyForce = "force"
 )
 
 // Global config name list.

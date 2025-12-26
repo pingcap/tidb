@@ -425,6 +425,7 @@ func getTaskStepKey(id int64, step proto.Step) string {
 func ReduceCheckInterval(t testing.TB) {
 	schedulerMgrCheckIntervalBak := scheduler.CheckTaskRunningInterval
 	schedulerCheckIntervalBak := scheduler.CheckTaskFinishedInterval
+	cleanUpIntervalBak := scheduler.DefaultCleanUpInterval
 	taskCheckIntervalBak := taskexecutor.TaskCheckInterval
 	checkIntervalBak := taskexecutor.SubtaskCheckInterval
 	maxIntervalBak := taskexecutor.MaxSubtaskCheckInterval
@@ -432,12 +433,14 @@ func ReduceCheckInterval(t testing.TB) {
 	t.Cleanup(func() {
 		scheduler.CheckTaskRunningInterval = schedulerMgrCheckIntervalBak
 		scheduler.CheckTaskFinishedInterval = schedulerCheckIntervalBak
+		scheduler.DefaultCleanUpInterval = cleanUpIntervalBak
 		taskexecutor.TaskCheckInterval = taskCheckIntervalBak
 		taskexecutor.SubtaskCheckInterval = checkIntervalBak
 		taskexecutor.MaxSubtaskCheckInterval = maxIntervalBak
 		taskexecutor.DetectParamModifyInterval = detectModifyIntBak
 	})
 	scheduler.CheckTaskRunningInterval, scheduler.CheckTaskFinishedInterval = 100*time.Millisecond, 100*time.Millisecond
+	scheduler.DefaultCleanUpInterval = 200 * time.Millisecond
 	taskexecutor.TaskCheckInterval, taskexecutor.MaxSubtaskCheckInterval, taskexecutor.SubtaskCheckInterval =
 		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond
 	taskexecutor.DetectParamModifyInterval = 10 * time.Millisecond

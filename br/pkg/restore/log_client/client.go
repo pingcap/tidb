@@ -939,10 +939,13 @@ func (rc *LogClient) RestoreKVFiles(
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
 
+					maxTs, minTs := uint64(0), uint64(math.MaxUint64)
 					if err == nil {
 						filenames := make([]string, 0, len(files))
 						for _, f := range files {
-							filenames = append(filenames, f.Path+", ")
+							maxTs = max(f.MaxTs, maxTs)
+							minTs = min(f.MinTs, minTs)
+							filenames = append(filenames, f.Path)
 							if rc.logRestoreManager.checkpointRunner != nil {
 								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.logRestoreManager.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
@@ -951,6 +954,7 @@ func (rc *LogClient) RestoreKVFiles(
 							}
 						}
 						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+							zap.Uint64("min-ts", minTs), zap.Uint64("max-ts", maxTs), zap.String("cf", files[0].Cf),
 							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 
 						metrics.KVApplyBatchDuration.Observe(time.Since(fileStart).Seconds())
@@ -1147,6 +1151,9 @@ func LoadAndProcessMetaKVFilesInBatch(
 			} else {
 				// Either f.MinTS > rangeMax or f.MinTs is the filterTs we need.
 				// So it is ok to pass f.MinTs as filterTs.
+				logutil.CL(ctx).Info("Meta KV restore batch: default CF.",
+					zap.Int("from-idx", defaultIdx), zap.Int("to-idx", i), zap.Uint64("range-min-ts", rangeMin),
+					zap.Uint64("range-max-ts", rangeMax), zap.Uint64("total-batch-size", batchSize))
 				defaultKvEntries, err = processor.ProcessBatch(ctx, defaultFiles[defaultIdx:i], defaultKvEntries, f.MinTs, consts.DefaultCF)
 				if err != nil {
 					return errors.Trace(err)
@@ -1164,6 +1171,9 @@ func LoadAndProcessMetaKVFilesInBatch(
 						break
 					}
 				}
+				logutil.CL(ctx).Info("Meta KV restore batch: write CF.",
+					zap.Int("from-idx", writeIdx), zap.Int("to-idx", toWriteIdx), zap.Uint64("range-min-ts", rangeMin),
+					zap.Uint64("range-max-ts", rangeMax))
 				writeKvEntries, err = processor.ProcessBatch(ctx, writeFiles[writeIdx:toWriteIdx], writeKvEntries, f.MinTs, consts.WriteCF)
 				if err != nil {
 					return errors.Trace(err)
@@ -1176,10 +1186,14 @@ func LoadAndProcessMetaKVFilesInBatch(
 	// restore the left meta kv files and entries
 	// Notice: restoreBatch needs to realize the parameter `files` and `kvEntries` might be empty
 	// Assert: defaultIdx <= len(defaultFiles) && writeIdx <= len(writeFiles)
+	logutil.CL(ctx).Info("Meta KV restore batch: last default CF.",
+		zap.Int("from-idx", defaultIdx), zap.Uint64("range-min-ts", rangeMin), zap.Uint64("range-max-ts", rangeMax))
 	_, err = processor.ProcessBatch(ctx, defaultFiles[defaultIdx:], defaultKvEntries, math.MaxUint64, consts.DefaultCF)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.CL(ctx).Info("Meta KV restore batch: last write CF.",
+		zap.Int("from-idx", writeIdx), zap.Uint64("range-min-ts", rangeMin), zap.Uint64("range-max-ts", rangeMax))
 	_, err = processor.ProcessBatch(ctx, writeFiles[writeIdx:], writeKvEntries, math.MaxUint64, consts.WriteCF)
 	if err != nil {
 		return errors.Trace(err)
@@ -1648,6 +1662,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		}
+		// WHERE CONDITION
+		if len(info.IndexInfo.ConditionExprString) > 0 {
+			addSQL.WriteString(" WHERE ")
+			addSQL.WriteString(info.IndexInfo.ConditionExprString)
+		}
 		// USING BTREE/HASH/RTREE
 		indexTypeStr := info.IndexInfo.Tp.String()
 		if len(indexTypeStr) > 0 {
@@ -2095,33 +2114,35 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	deletedTableCount := 0
 
 	// First, delete all tables
-	for dbID, tableIDsSet := range deletedTablesMap {
+	for upstreamDBID, tableIDsSet := range deletedTablesMap {
 		if len(tableIDsSet) > 0 {
 			// handle table deletions
-			for tableID := range tableIDsSet {
-				var dbName, tableName string
-				if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
-					dbName = dbReplace.Name
-					if tableReplace, ok := dbReplace.TableMap[tableID]; ok {
-						tableName = tableReplace.Name
-					}
+			for upstreamTableID := range tableIDsSet {
+				dbReplace, ok := schemasReplace.DbReplaceMap[upstreamDBID]
+				if !ok {
+					return errors.Errorf("the database(upstream ID: %d) of deleted table has no record in replace map", upstreamDBID)
 				}
+				tableReplace, ok := dbReplace.TableMap[upstreamTableID]
+				if !ok {
+					return errors.Errorf("the deleted table(upstream ID: %d) has no record in replace map", upstreamTableID)
+				}
+
 				args := &model.RefreshMetaArgs{
-					SchemaID:      dbID,
-					TableID:       tableID,
-					InvolvedDB:    dbName,
-					InvolvedTable: tableName,
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
 				}
 
 				log.Info("refreshing deleted table meta",
-					zap.Int64("schemaID", dbID),
-					zap.String("dbName", dbName),
-					zap.Any("tableID", tableID),
-					zap.String("tableName", tableName))
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.String("dbName", dbReplace.Name),
+					zap.Any("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name))
 				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
 					return errors.Annotatef(err,
 						"failed to refresh meta for deleted table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
-						dbID, tableID, dbName, tableName)
+						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
 				}
 				deletedTableCount++
 			}
@@ -2129,25 +2150,25 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	}
 
 	// Then, delete databases if needed
-	for dbID := range deletedTablesMap {
+	for upstreamDBID := range deletedTablesMap {
 		// Get database name for logging
-		var dbName string
-		if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
-			dbName = dbReplace.Name
+		dbReplace, ok := schemasReplace.DbReplaceMap[upstreamDBID]
+		if !ok {
+			return errors.Errorf("the deleted database(upstream ID: %d) has no record in replace map", upstreamDBID)
 		}
 		args := &model.RefreshMetaArgs{
-			SchemaID:      dbID,
+			SchemaID:      dbReplace.DbID,
 			TableID:       0, // 0 for database-only refresh
-			InvolvedDB:    dbName,
+			InvolvedDB:    dbReplace.Name,
 			InvolvedTable: model.InvolvingAll,
 		}
 
 		log.Info("refreshing potential deleted database meta",
-			zap.Int64("schemaID", dbID),
-			zap.String("dbName", dbName))
+			zap.Int64("schemaID", dbReplace.DbID),
+			zap.String("dbName", dbReplace.Name))
 		if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
 			return errors.Annotatef(err, "failed to refresh meta for deleted database with schemaID=%d, dbName=%s",
-				dbID, dbName)
+				dbReplace.DbID, dbReplace.Name)
 		}
 	}
 
@@ -2158,13 +2179,13 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	regularCount := 0
 
 	// First, handle database-only operations
-	for _, dbReplace := range schemasReplace.DbReplaceMap {
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
 
 		// Skip if we already processed this database in delete section
-		if _, alreadyProcessed := deletedTablesMap[dbReplace.DbID]; alreadyProcessed {
+		if _, alreadyProcessed := deletedTablesMap[upstreamDBID]; alreadyProcessed {
 			continue
 		}
 
@@ -2184,20 +2205,20 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	}
 
 	// Then, handle table operations
-	for _, dbReplace := range schemasReplace.DbReplaceMap {
+	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
 
 		if len(dbReplace.TableMap) > 0 {
-			for _, tableReplace := range dbReplace.TableMap {
+			for upstreamTableID, tableReplace := range dbReplace.TableMap {
 				if tableReplace.FilteredOut {
 					continue
 				}
 
 				// skip if this table is in the deleted list
-				if tableIDsSet, dbExists := deletedTablesMap[dbReplace.DbID]; dbExists {
-					if _, isDeleted := tableIDsSet[tableReplace.TableID]; isDeleted {
+				if tableIDsSet, dbExists := deletedTablesMap[upstreamDBID]; dbExists {
+					if _, isDeleted := tableIDsSet[upstreamTableID]; isDeleted {
 						continue
 					}
 				}

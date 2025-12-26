@@ -172,7 +172,8 @@ func TestInconsistentIndex(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	idx := tbl.Meta().FindIndexByName("idx_a")
-	idxOp := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
+	idxOp, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
+	require.NoError(t, err)
 	ctx := mock.NewContext()
 	ctx.Store = store
 
@@ -602,9 +603,6 @@ func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
 }
 
 func TestIndexLookUpPushDownCopTask(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("IndexLookUp push down is not supported temporarily in nextgen")
-	}
 	// ensure cop-cache is enabled by default
 	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {

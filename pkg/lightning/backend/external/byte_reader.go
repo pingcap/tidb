@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -71,7 +70,6 @@ type byteReader struct {
 
 	logger               *zap.Logger
 	mergeSortReadCounter prometheus.Counter
-	requestCnt           atomic.Int64
 }
 
 func openStoreReaderAndSeek(
@@ -113,7 +111,6 @@ func newByteReader(
 	r.curBuf = [][]byte{r.smallBuf}
 	r.logger = logutil.Logger(r.ctx)
 	// When the storage reader is open, a GET request has been made.
-	r.requestCnt.Add(1)
 	return r, r.reload()
 }
 
@@ -193,7 +190,6 @@ func (r *byteReader) switchToConcurrentReader() error {
 		fileSize,
 		readerFields.concurrency,
 		readerFields.bufSizePerConc,
-		&r.requestCnt,
 	)
 	if err != nil {
 		return err

@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -153,13 +155,13 @@ type tableScanExec struct {
 
 func (e *tableScanExec) SkipValue() bool { return false }
 
-func (e *tableScanExec) Process(key, value []byte) error {
+func (e *tableScanExec) Process(key, value []byte, commitTS uint64) error {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = e.decoder.DecodeToChunk(value, handle, e.chk)
+	err = e.decoder.DecodeToChunk(value, commitTS, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -294,6 +296,8 @@ type indexScanExec struct {
 
 	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
 	physTblIDColIdx *int
+	// if common handle key is requested, fill the common handle in this column
+	commonHandleKeyIdx *int
 	// This is used to update the paging range result, updated in next().
 	paging                 *coprocessor.KeyRange
 	chunkLastProcessedKeys []kv.Key
@@ -310,7 +314,7 @@ func (e *indexScanExec) isNewVals(values [][]byte) bool {
 	return false
 }
 
-func (e *indexScanExec) Process(key, value []byte) error {
+func (e *indexScanExec) Process(key, value []byte, _ uint64) error {
 	decodedKey := key
 	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
 		// If the key is in API V2, then ignore the prefix
@@ -350,6 +354,20 @@ func (e *indexScanExec) Process(key, value []byte) error {
 		tblID := tablecodec.DecodeTableID(decodedKey)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
+
+	// If we need common handle key, we should fill it here.
+	if e.commonHandleKeyIdx != nil && *e.commonHandleKeyIdx >= len(values) {
+		h, err := tablecodec.DecodeIndexHandle(decodedKey, value, e.numIdxCols)
+		if err != nil {
+			return err
+		}
+		commonHandle, ok := h.(*kv.CommonHandle)
+		if !ok {
+			return errors.New("common handle expected")
+		}
+		e.chk.AppendBytes(*e.commonHandleKeyIdx, commonHandle.Encoded())
+	}
+
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)
 		if e.paging != nil {
@@ -426,6 +444,7 @@ func (e *indexScanExec) next() (*chunk.Chunk, error) {
 
 type indexLookUpExec struct {
 	baseMPPExec
+	keyspaceID          uint32
 	indexHandleOffsets  []uint32
 	tblScanPB           *tipb.TableScan
 	isCommonHandle      bool
@@ -527,9 +546,14 @@ func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts
 		for i := range chk.NumRows() {
 			row := chk.GetRow(i)
 			indexRows = append(indexRows, row)
+			handle, err := e.buildHandle(row)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+
 			sortedHandles = append(sortedHandles, Handle{
 				IndexOrder: rowCnt,
-				Handle:     e.buildIntHandle(row),
+				Handle:     handle,
 			})
 			rowCnt++
 		}
@@ -590,12 +614,25 @@ func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts
 		return nil
 	}
 
+	var codecV2 tikv.Codec
+	if kerneltype.IsNextGen() {
+		codecV2, err = tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+			Id: e.keyspaceID,
+		})
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
 	for _, h := range sortedHandles {
 		if handleFilter != nil && !handleFilter(h.Handle) {
 			leftRows[h.IndexOrder] = true
 			continue
 		}
 		rowKey := tablecodec.EncodeRowKey(e.tblScanPB.TableId, h.Encoded())
+		if codecV2 != nil {
+			rowKey = codecV2.EncodeKey(rowKey)
+		}
 		mvccKey := codec.EncodeBytes(nil, rowKey)
 		if curRegion.Found {
 			if e.regionContainsKey(curRegion.Region, mvccKey) {
@@ -646,9 +683,12 @@ func (e *indexLookUpExec) regionContainsKey(r *metapb.Region, key []byte) bool {
 		(bytes.Compare(key, r.GetEndKey()) < 0 || len(r.GetEndKey()) == 0)
 }
 
-func (e *indexLookUpExec) buildIntHandle(row chunk.Row) kv.Handle {
+func (e *indexLookUpExec) buildHandle(row chunk.Row) (kv.Handle, error) {
+	if e.isCommonHandle {
+		return kv.NewCommonHandle(row.GetBytes(row.Len() - 1))
+	}
 	i := row.GetInt64(int(e.indexHandleOffsets[0]))
-	return kv.IntHandle(i)
+	return kv.IntHandle(i), nil
 }
 
 func (e *indexLookUpExec) takeIntermediateResults() (ret []*chunk.Chunk) {

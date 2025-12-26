@@ -18,11 +18,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/apache/arrow-go/v18/parquet"
@@ -30,10 +32,13 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/golang/snappy"
 	"github.com/klauspost/compress/zstd"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func (s *mockGCSSuite) TestCSVSource() {
@@ -233,11 +238,15 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		// CSV-only option applied to SQL file
 		{objectName: "data.sql", options: "fields_enclosed_by='\"'", wantSubstr: "Unsupported option fields_enclosed_by for non-CSV"},
 		// SQL data present but no suffix
-		{objectName: "sql_noext", options: "", wantSubstr: "encode kv erro"},
+		{objectName: "sql_noext", options: "", wantSubstr: "encode kv error"},
 		// CSV data but filename ends with .sql
-		{objectName: "csv_as_sql.sql", options: "", wantSubstr: "encode kv erro"},
+		{objectName: "csv_as_sql.sql", options: "", wantSubstr: "encode kv error"},
 	}
 
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	taskMgr, err := storage.GetTaskManager()
+	s.NoError(err)
+	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
 	for _, nc := range negativeCases {
 		s.tk.MustExec("CREATE TABLE IF NOT EXISTS auto_detect.t (a INT, b VARCHAR(10));")
 		path := fmt.Sprintf("gs://auto_detect/%s?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", nc.objectName, gcsEndpoint)
@@ -249,6 +258,15 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		}
 		err := s.tk.QueryToErr(badImportSQL)
 		s.Require().ErrorContains(err, nc.wantSubstr)
+		s.T().Logf("the task id is %d", storage.TestLastTaskID.Load())
+		// wait cleanup done, so the table mode is switched back to normal
+		// Note: the first case doesn't submit the task, so no task id, but it's
+		// ok to call GetTaskByID with non-existing id, it will just return
+		// ErrTaskNotFound immediately.
+		s.Eventually(func() bool {
+			_, err2 := taskMgr.GetTaskByID(ctx, storage.TestLastTaskID.Load())
+			return goerrors.Is(err2, storage.ErrTaskNotFound)
+		}, 30*time.Second, 100*time.Millisecond)
 		s.tk.MustExec("DROP TABLE auto_detect.t;")
 	}
 }

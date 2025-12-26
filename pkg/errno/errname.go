@@ -1159,8 +1159,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupInvalidBackgroundTaskName: mysql.Message("Unknown background task name '%-.192s'", nil),
 	ErrQueryExecStopped:                       mysql.Message("Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]", nil),
 
-	ErrEngineAttributeInvalidFormat: mysql.Message("Invalid engine attribute format: %s", nil),
-	ErrStorageClassInvalidSpec:      mysql.Message("Invalid storage class: %s", nil),
+	ErrEngineAttributeInvalidFormat:             mysql.Message("Invalid engine attribute format: %s", nil),
+	ErrStorageClassInvalidSpec:                  mysql.Message("Invalid storage class: %s", nil),
+	ErrModifyColumnReferencedByPartialCondition: mysql.Message("Cannot drop, change or modify column '%s': it is referenced in partial index '%s'", nil),
+	ErrCheckPartialIndexWithoutFastCheck:        mysql.Message("Validation of partial indexes requires tidb_enable_fast_table_check=ON", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:      mysql.Message("PD server timeout: %s", nil),
@@ -1191,4 +1193,5 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
+	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
 }

@@ -87,11 +87,19 @@ type Index interface {
 	Meta() *model.IndexInfo
 	// TableMeta returns TableInfo
 	TableMeta() *model.TableInfo
+	// MeetPartialCondition returns true if the row meets the partial index condition of the index.
+	MeetPartialCondition(row []types.Datum) (bool, error)
 	// Create supports insert into statement.
+	// The `Create` inserts the index without considering the partial index condition. The caller should call `MeetPartialCondition` to check whether the
+	// row meets the partial index condition before calling `Create` to avoid unnecessary index creation.
 	Create(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOption) (kv.Handle, error)
 	// Delete supports delete from statement.
+	// The `Delete` deletes the index without considering the partial index condition. The caller should call `MeetPartialCondition` to check whether the
+	// row meets the partial index condition before calling `Delete` to avoid unnecessary index deletion.
 	Delete(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
 	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
+	// `GenIndexKVIter` doesn't consider the partial index condition, the caller should call `MeetPartialCondition` to check. If the row doesn't meet
+	// the condition, it's suggested to use an empty kv generator instead.
 	GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexKVGenerator
 	// Exist supports check index exists or not.
 	Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)

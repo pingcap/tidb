@@ -523,7 +523,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "220000", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t, reason to use this rate is \"use min(1, 110000/220000) as the sample-rate=0.5\"",
 	))
 	tk.MustExec("insert into t values(1),(1),(1)")
@@ -533,7 +532,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "3", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"",
 	))
 }
@@ -722,7 +720,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	}()
 	tk.MustExec("analyze table t with 1 topn, 2 buckets")
 	is := dom.InfoSchema()
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -759,7 +757,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	lastVersion = tbl.Version
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 3, len(col0.Buckets))
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	col1 = tbl.GetCol(tableInfo.Columns[1].ID)
 	require.Equal(t, 1, len(col1.TopN.TopN))
@@ -2216,7 +2214,7 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
-PARTITION BY RANGE ( a ) (
+		PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (20)
 )`
@@ -2238,7 +2236,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table only sets table options and gen globalStats
 	tk.MustExec("analyze table t columns a,c with 1 topn, 3 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
@@ -2258,7 +2256,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table with persisted table-level options
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2278,7 +2276,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table with merged table-level options
 	tk.MustExec("analyze table t with 2 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2310,7 +2308,7 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
-PARTITION BY RANGE ( a ) (
+		PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (20)
 )`
@@ -2332,7 +2330,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition under static mode with options
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
@@ -2357,7 +2355,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table in dynamic mode will ignore partition-level options and use default
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2381,7 +2379,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode with specified options with old partition-level options
 	tk.MustExec("analyze table t columns b,d with 2 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2401,7 +2399,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode without options with old table-level & partition-level options
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -2411,7 +2409,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze table under dynamic mode with specified options with old table-level & partition-level options
 	tk.MustExec("analyze table t with 1 topn")
-	tk.MustQuery("select * from t where b > 1 and d > 1")
+	tk.MustQuery("select * from t where a > 1 and b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)

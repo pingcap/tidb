@@ -72,7 +72,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -81,9 +83,6 @@ import (
 
 const (
 	expressionIndexPrefix = "_V$"
-	changingColumnPrefix  = "_Col$_"
-	removingObjPrefix     = "_Tombstone$_"
-	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
 	blobMaxLength         = 65535
@@ -185,6 +184,16 @@ type ExecutorForTest interface {
 type executor struct {
 	sessPool    *sess.Pool
 	statsHandle *handle.Handle
+
+	// startMode stores the start mode of the ddl executor, it's used to indicate
+	// whether the executor is responsible for auto ID rebase.
+	// Since https://github.com/pingcap/tidb/pull/64356, we move rebase logic from
+	// executor into DDL job worker. So typically, the job worker is responsible for
+	// rebase. But sometimes we use higher version of BR to restore db to lower version
+	// of TiDB cluster, which may cause rebase is not executed on both executor(BR) and
+	// worker(downstream TiDB) side. So we use this mode to check if this is runned by BR.
+	// If so, the executor should handle auto ID rebase.
+	startMode StartMode
 
 	ctx        context.Context
 	uuid       string
@@ -1191,6 +1200,11 @@ func (e *executor) CreateTableWithInfo(
 		}
 
 		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+		if e.startMode == BR {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return errors.Trace(err)
 }
@@ -1287,6 +1301,11 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 	for _, tblArgs := range args.Tables {
 		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
+		if e.startMode == BR {
+			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	return nil
@@ -1861,6 +1880,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = e.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable, ttlJobInterval)
 
 					ttlOptionsHandled = true
+				case ast.TableOptionAffinity:
+					err = e.AlterTableAffinity(sctx, ident, opt.StrValue)
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -1990,7 +2011,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
-	setNeedAnalyze(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -2195,6 +2215,11 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
+
+	if meta.Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of a table with AFFINITY option")
+	}
+
 	if pi.Type == ast.PartitionTypeHash || pi.Type == ast.PartitionTypeKey {
 		// Add partition for hash/key is actually a reorganize partition
 		// operation and not a metadata only change!
@@ -2372,6 +2397,11 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER TABLE PARTITIONING of a table with AFFINITY option")
+	}
+
 	piOld := meta.GetPartitionInfo()
 	var partNames []string
 	if piOld != nil {
@@ -2442,6 +2472,11 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	if pi == nil {
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REORGANIZE PARTITION of a table with AFFINITY option")
+	}
+
 	switch pi.Type {
 	case ast.PartitionTypeRange, ast.PartitionTypeList:
 	case ast.PartitionTypeHash, ast.PartitionTypeKey:
@@ -2512,6 +2547,11 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	if pi == nil {
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REMOVE PARTITIONING of a table with AFFINITY option")
+	}
+
 	// TODO: Optimize for remove partitioning with a single partition
 	// TODO: Add the support for this in onReorganizePartition
 	// skip if only one partition
@@ -2649,6 +2689,10 @@ func (e *executor) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, 
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("COALESCE PARTITION of a table with AFFINITY option")
 	}
 
 	switch pi.Type {
@@ -3022,6 +3066,10 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 		return errors.Trace(dbterror.ErrPartitionExchangePartTable.GenWithStackByArgs(nt.Name))
 	}
 
+	if nt.Affinity != nil || pt.Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("EXCHANGE PARTITION of a table with AFFINITY option")
+	}
+
 	if len(nt.ForeignKeys) > 0 {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
@@ -3180,6 +3228,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	}
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, dbterror.ErrCantDropColWithAutoInc
+	}
+	// Check the partial index condition
+	err = checkColumnReferencedByPartialCondition(t.Meta(), col.ColumnInfo.Name)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
 	return true, nil
 }
@@ -3762,6 +3815,43 @@ func (e *executor) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) 
 	return nil
 }
 
+func (e *executor) AlterTableAffinity(ctx sessionctx.Context, ident ast.Ident, affinityLevel string) error {
+	is := e.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	affinity, err := model.NewTableAffinityInfoWithLevel(affinityLevel)
+	if err != nil {
+		return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", affinityLevel)))
+	}
+
+	tblInfo := tb.Meta()
+	if err = validateTableAffinity(tblInfo, affinity); err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionAlterTableAffinity,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = e.doDDLJob2(ctx, job, &model.AlterTableAffinityArgs{Affinity: affinity})
+	return errors.Trace(err)
+}
+
 func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 	// Memory tables and system tables are not supported by TiFlash
 	if metadef.IsMemOrSysDB(dbName.L) {
@@ -4145,13 +4235,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				logutil.DDLLogger().Warn("admin check table before drop",
-					zap.String("database", fullti.Schema.O),
-					zap.String("table", fullti.Name.O),
-				)
-				exec := ctx.GetRestrictedSQLExecutor()
-				internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-				_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+				err := adminCheckTableBeforeDrop(ctx, fullti)
 				if err != nil {
 					return err
 				}
@@ -4219,6 +4303,40 @@ func (e *executor) dropTableObject(
 		for _, table := range notExistTables {
 			sessVars.StmtCtx.AppendNote(dropExistErr.FastGenByArgs(table))
 		}
+	}
+	return nil
+}
+
+// adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
+// Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
+// using it in other places by mistake, it's named like this.
+func adminCheckTableBeforeDrop(ctx sessionctx.Context, fullti ast.Ident) error {
+	logutil.DDLLogger().Warn("admin check table before drop",
+		zap.String("database", fullti.Schema.O),
+		zap.String("table", fullti.Name.O),
+	)
+	exec := ctx.GetRestrictedSQLExecutor()
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	// `tidb_enable_fast_table_check` is already the default value, and some feature (e.g. partial index)
+	// doesn't support admin check with `tidb_enable_fast_table_check = OFF`, so we just set it to `ON` here.
+	// TODO: set the value of `tidb_enable_fast_table_check` to 'ON' for all internal sessions if it's OK.
+	originalFastTableCheck := ctx.GetSessionVars().FastCheckTable
+	_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'ON';")
+	if err != nil {
+		return err
+	}
+	if !originalFastTableCheck {
+		defer func() {
+			_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'OFF';")
+			if err != nil {
+				logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(err))
+			}
+		}()
+	}
+	_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -4946,6 +5064,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if len(conditionString) > 0 && !job.ReorgMeta.IsFastReorg {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
+		}
 	}
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
@@ -5413,6 +5534,42 @@ func validateGlobalIndexWithGeneratedColumns(ec errctx.Context, tblInfo *model.T
 			return
 		}
 	}
+}
+
+func validateTableAffinity(tblInfo *model.TableInfo, affinity *model.TableAffinityInfo) error {
+	if affinity == nil {
+		return nil
+	}
+
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrCannotSetAffinityOnTable.FastGenByArgs("AFFINITY", "temporary table")
+	}
+
+	level := affinity.Level
+	isPartitionTable := tblInfo.Partition != nil
+
+	switch affinity.Level {
+	case ast.TableAffinityLevelTable:
+		if isPartitionTable {
+			return dbterror.ErrCannotSetAffinityOnTable.FastGenByArgs(
+				fmt.Sprintf("AFFINITY='%s'", level),
+				"partition table",
+			)
+		}
+	case ast.TableAffinityLevelPartition:
+		if !isPartitionTable {
+			return dbterror.ErrCannotSetAffinityOnTable.FastGenByArgs(
+				fmt.Sprintf("AFFINITY='%s'", level),
+				"non-partition table",
+			)
+		}
+	default:
+		// this should not happen, the affinity level should have been normalized and checked in the parser stage.
+		intest.Assert(false)
+		return errors.Errorf("invalid affinity level: %s for table %s (ID: %d)", level, tblInfo.Name.O, tblInfo.ID)
+	}
+
+	return nil
 }
 
 // BuildAddedPartitionInfo build alter table add partition info
@@ -6636,19 +6793,33 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
+		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
+		defer r.End()
+	}
+
 	job := jobW.Job
 	job.TraceInfo = &tracing.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
 		SessionAlias: ctx.GetSessionVars().SessionAlias,
+		TraceID:      traceevent.TraceIDFromContext(ctx.GetTraceCtx()),
 	}
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
-	e.checkInvolvingSchemaInfoInTest(job)
+	if err := job.CheckInvolvingSchemaInfo(); err != nil {
+		return err
+	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
+
+	if traceevent.IsEnabled(tracing.DDLJob) && ctx.GetTraceCtx() != nil {
+		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",
+			zap.Uint64("ConnID", job.TraceInfo.ConnectionID),
+			zap.String("SessionAlias", job.TraceInfo.SessionAlias))
+	}
 	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
@@ -6991,4 +7162,16 @@ func getAnalyzeVersion(sctx sessionctx.Context) string {
 	}
 	logutil.DDLLogger().Info("system variable tidb_analyze_version not found, use default value")
 	return strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
+}
+
+// checkColumnReferencedByPartialCondition checks whether alter column is referenced by a partial index condition
+func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIStr) error {
+	for _, idx := range t.Indices {
+		_, ic := model.FindIndexColumnByName(idx.AffectColumn, colName.L)
+		if ic != nil {
+			return dbterror.ErrModifyColumnReferencedByPartialCondition.GenWithStackByArgs(colName.O, idx.Name.O)
+		}
+	}
+
+	return nil
 }

@@ -7,10 +7,11 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -105,7 +106,6 @@ type Writer interface {
 type WriterOption struct {
 	Concurrency int
 	PartSize    int64
-	OnUpload    func()
 }
 
 type ReaderOption struct {
@@ -201,11 +201,16 @@ type ExternalStorageOptions struct {
 
 	// S3Retryer is the retryer for create s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
-	S3Retryer request.Retryer
+	S3Retryer retry.Standard
 
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.
 	CheckS3ObjectLockOptions bool
+	// AccessRecording records the access statistics of object storage.
+	// we use the read/write file size as an estimate of the network traffic,
+	// we don't consider the traffic consumed by network protocol, and traffic
+	// caused by retry
+	AccessRecording *recording.AccessStats
 }
 
 // Create creates ExternalStorage.

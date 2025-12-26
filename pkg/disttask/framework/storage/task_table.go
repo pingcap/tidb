@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	clitutil "github.com/tikv/client-go/v2/util"
 )
 
@@ -258,7 +259,7 @@ func (mgr *TaskManager) CreateTask(
 	key string,
 	tp proto.TaskType,
 	keyspace string,
-	concurrency int,
+	requiredSlots int,
 	targetScope string,
 	maxNodeCnt int,
 	extraParams proto.ExtraParams,
@@ -266,7 +267,7 @@ func (mgr *TaskManager) CreateTask(
 ) (taskID int64, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, keyspace, concurrency, targetScope, maxNodeCnt, extraParams, meta)
+		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, keyspace, requiredSlots, targetScope, maxNodeCnt, extraParams, meta)
 		return err2
 	})
 	return
@@ -279,7 +280,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	key string,
 	tp proto.TaskType,
 	keyspace string,
-	concurrency int,
+	requiredSlots int,
 	targetScope string,
 	maxNodeCount int,
 	extraParams proto.ExtraParams,
@@ -289,9 +290,10 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	if err != nil {
 		return 0, err
 	}
-	if concurrency > cpuCount {
-		return 0, errors.Errorf("task concurrency(%d) larger than cpu count(%d) of managed node", concurrency, cpuCount)
+	if requiredSlots > cpuCount {
+		return 0, errors.Errorf("task required slots(%d) larger than cpu count(%d) of managed node", requiredSlots, cpuCount)
 	}
+	failpoint.InjectCall("beforeSubmitTask", &requiredSlots, &extraParams)
 	extraParamBytes, err := json.Marshal(extraParams)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -299,7 +301,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
 			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?, %?, %?, %?)`,
-		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency,
+		key, tp, proto.TaskStatePending, proto.NormalPriority, requiredSlots,
 		proto.StepInit, meta, targetScope, maxNodeCount, json.RawMessage(extraParamBytes), keyspace)
 	if err != nil {
 		return 0, err
@@ -373,6 +375,8 @@ func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskSta
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
+	r := tracing.StartRegion(ctx, "TaskManager.GetTaskExecInfoByExecID")
+	defer r.End()
 	var res []*TaskExecInfo
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
@@ -1082,4 +1086,40 @@ func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se se
 	sql := "update mysql.tidb_global_task set concurrency = %? where concurrency > %?;"
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, cpuCount, cpuCount)
 	return err
+}
+
+// UpdateSubtaskCheckpoint updates the checkpoint of a subtask.
+func (mgr *TaskManager) UpdateSubtaskCheckpoint(ctx context.Context, subtaskID int64, checkpoint any) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
+
+	data, err := json.Marshal(checkpoint)
+	if err != nil {
+		return err
+	}
+	checkpointJSON := string(data)
+
+	_, err = mgr.ExecuteSQLWithNewSession(ctx,
+		`UPDATE mysql.tidb_background_subtask SET checkpoint = %? WHERE id = %?`,
+		checkpointJSON, subtaskID)
+	return err
+}
+
+// GetSubtaskCheckpoint gets the checkpoint of a subtask.
+func (mgr *TaskManager) GetSubtaskCheckpoint(ctx context.Context, subtaskID int64) (string, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return "", err
+	}
+
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"SELECT checkpoint FROM mysql.tidb_background_subtask WHERE id = %?", subtaskID)
+	if err != nil {
+		return "", err
+	}
+	if len(rs) == 0 || rs[0].IsNull(0) {
+		return "", nil
+	}
+
+	return rs[0].GetString(0), nil
 }

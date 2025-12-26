@@ -241,7 +241,7 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 		initFn(t, tk)
 		err := tk.ExecToErr("IMPORT INTO test.t FROM select 1")
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-		require.Regexp(t, `IMPORT INTO .* select`, err.Error())
+		require.ErrorContains(t, err, "IMPORT INTO from select")
 	})
 
 	t.Run("local sort", func(t *testing.T) {
@@ -272,6 +272,8 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 			"cloud_storage_uri",
 			"thread",
 			"__max_engine_size",
+			"checksum_table",
+			"record_errors",
 		} {
 			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv' with %s='1'", option))
 			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)

@@ -65,7 +65,7 @@ go_test(
     ],
     embed = [":split"],
     flaky = True,
-    shard_count = 28,
+    shard_count = 29,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/restore/utils",

@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -70,6 +72,7 @@ type Manager struct {
 	logger       *zap.Logger
 	slotManager  *slotManager
 	nodeResource *proto.NodeResource
+	trace        *traceevent.Trace
 }
 
 // NewManager creates a new task executor Manager.
@@ -86,7 +89,10 @@ func NewManager(ctx context.Context, store kv.Storage, id string, taskTable Task
 		logger:       logger,
 		slotManager:  newSlotManager(resource.TotalCPU),
 		nodeResource: resource,
+		trace:        traceevent.NewTrace(),
 	}
+
+	ctx = tracing.WithFlightRecorder(ctx, m.trace)
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.taskExecutors = make(map[int64]TaskExecutor)
 
@@ -149,6 +155,8 @@ func (m *Manager) handleTasksLoop() {
 		}
 
 		m.handleTasks()
+		m.trace.DiscardOrFlush(m.ctx)
+
 		// service scope might change, so we call WithLabelValues every time.
 		dxfmetric.UsedSlotsGauge.WithLabelValues(vardef.ServiceScope.Load()).
 			Set(float64(m.slotManager.usedSlots()))
@@ -164,6 +172,9 @@ func (m *Manager) handleTasksLoop() {
 // when there is no enough slots to run a task even after considers preemption,
 // tasks with low ranking can run.
 func (m *Manager) handleTasks() {
+	r := tracing.StartRegion(m.ctx, "taskexecutor.handleTasks")
+	defer r.End()
+
 	// we don't query task in 'modifying' state, if it's prev-state is 'pending'
 	// or 'paused', then they are not executable, if it's 'running', it should be
 	// queried out soon as 'modifying' is a fast process.
@@ -302,7 +313,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	if !m.slotManager.alloc(&task.TaskBase) {
 		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
 			zap.Int64("task-id", taskBase.ID), zap.String("task-key", taskBase.Key),
-			zap.Int("concurrency", taskBase.Concurrency),
+			zap.Int("required-slots", taskBase.RequiredSlots),
 			zap.Int("remaining-slots", m.slotManager.availableSlots()))
 		return false
 	}
@@ -333,8 +344,10 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	}
 	m.addTaskExecutor(executor)
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
-		zap.Stringer("type", task.Type), zap.Int("concurrency", task.Concurrency),
-		zap.Int("remaining-slots", m.slotManager.availableSlots()))
+		zap.Stringer("type", task.Type), zap.Int("required-slots", task.RequiredSlots),
+		zap.Int("runtime-slots", task.GetRuntimeSlots()),
+		zap.Int("node-remaining-slots", m.slotManager.availableSlots()),
+	)
 	m.executorWG.RunWithLog(func() {
 		defer func() {
 			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),

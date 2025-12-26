@@ -131,11 +131,17 @@ func TestCalculateRegionBatch(t *testing.T) {
 
 	// Test calculate in local storage.
 	batchCnt = ddl.CalculateRegionBatch(100, 8, true)
-	require.Equal(t, 13, batchCnt)
+	require.Equal(t, 100, batchCnt)
 	batchCnt = ddl.CalculateRegionBatch(2, 8, true)
-	require.Equal(t, 1, batchCnt)
+	require.Equal(t, 2, batchCnt)
 	batchCnt = ddl.CalculateRegionBatch(24, 8, true)
-	require.Equal(t, 3, batchCnt)
+	require.Equal(t, 24, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(1000, 8, true)
+	require.Equal(t, 334, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(1000, 2, true)
+	require.Equal(t, 500, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(200, 3, true)
+	require.Equal(t, 100, batchCnt)
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
@@ -373,12 +379,12 @@ func createAddIndexTask(t *testing.T,
 
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{
-			ID:          time.Now().UnixMicro(),
-			Type:        taskType,
-			Step:        proto.StepInit,
-			State:       proto.TaskStatePending,
-			Concurrency: 16,
-			Keyspace:    ks,
+			ID:            time.Now().UnixMicro(),
+			Type:          taskType,
+			Step:          proto.StepInit,
+			State:         proto.TaskStatePending,
+			RequiredSlots: 16,
+			Keyspace:      ks,
 		},
 		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),

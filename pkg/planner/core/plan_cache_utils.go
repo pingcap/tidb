@@ -22,7 +22,6 @@ import (
 	"hash"
 	"math"
 	"slices"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -191,10 +191,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	// Collect information for metadata lock.
-	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
-	for id := range vars.StmtCtx.MDLRelatedTableIDs {
+	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
+	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
+	for id := range vars.StmtCtx.RelatedTableIDs {
 		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
@@ -305,7 +305,14 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the user might switch the prune mode dynamically
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 
-	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
+	// Get buffer from pool and ensure it has enough capacity
+	hash := planCacheKeyBufPool.Get()[:0]
+	if cap(hash) < len(stmt.StmtText)*2 {
+		hash = make([]byte, 0, len(stmt.StmtText)*2)
+	}
+	defer func() {
+		planCacheKeyBufPool.Put(hash)
+	}()
 	hash = append(hash, hack.Slice(userName)...)
 	hash = append(hash, hack.Slice(hostName)...)
 	hash = append(hash, hack.Slice(stmtDB)...)
@@ -333,9 +340,9 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, hack.Slice(binding)...)
 	hash = append(hash, hack.Slice(connCharset)...)
 	hash = append(hash, hack.Slice(connCollation)...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vars.InRestrictedSQL))...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vardef.RestrictedReadOnly.Load()))...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vardef.VarTiDBSuperReadOnly.Load()))...)
+	hash = append(hash, bool2Byte(vars.InRestrictedSQL))
+	hash = append(hash, bool2Byte(vardef.RestrictedReadOnly.Load()))
+	hash = append(hash, bool2Byte(vardef.VarTiDBSuperReadOnly.Load()))
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 
@@ -390,7 +397,11 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// handle dirty tables
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
-		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
+		// Get int64 slice from pool
+		dirtyTableIDs := dirtyTableIDsPool.Get()[:0]
+		if cap(dirtyTableIDs) < len(dirtyTables) {
+			dirtyTableIDs = make([]int64, 0, len(dirtyTables))
+		}
 		for t, dirty := range dirtyTables {
 			if !dirty {
 				continue
@@ -401,6 +412,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		for _, id := range dirtyTableIDs {
 			hash = codec.EncodeInt(hash, id)
 		}
+		// Return slice to pool
+		dirtyTableIDsPool.Put(dirtyTableIDs)
 	}
 
 	// txn status
@@ -522,6 +535,16 @@ var planCacheHasherPool = sync.Pool{
 		return sha256.New()
 	},
 }
+
+// planCacheKeyBufPool is a pool for byte slices used in NewPlanCacheKey.
+var planCacheKeyBufPool = zeropool.New[[]byte](func() []byte {
+	return make([]byte, 0, 512)
+})
+
+// dirtyTableIDsPool is a pool for int64 slices used in NewPlanCacheKey.
+var dirtyTableIDsPool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(

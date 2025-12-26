@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -41,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -217,10 +220,26 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}
 	}
+
+	lastUpdate := func() {
+		// Try the best effort to update the summary before exiting.
+		// Total retry time is 0.2s + 0.4s + 0.8s + 1.6s + 3.2s + 5s * 5 = 31.2s
+		backoffer := backoff.NewExponential(time.Millisecond*200, 2, time.Second*5)
+		if err := handle.RunWithRetry(runStepCtx, 10, backoffer, e.logger,
+			func(context.Context) (bool, error) {
+				summary := stepExec.RealtimeSummary()
+				err := taskMgr.UpdateSubtaskSummary(runStepCtx, curSubtaskID, summary)
+				return true, err
+			},
+		); err != nil {
+			e.logger.Info("update subtask row count failed", zap.Error(err))
+		}
+	}
+
 	for {
 		select {
 		case <-checkCtx.Done():
-			update()
+			lastUpdate()
 			return
 		case <-ticker.C:
 		}
@@ -251,7 +270,11 @@ func (e *BaseTaskExecutor) Run() {
 		if e.stepExec != nil {
 			e.cleanStepExecutor()
 		}
+		metering.UnregisterRecorder(e.GetTaskBase().ID)
 	}()
+
+	trace := traceevent.NewTrace()
+	ctx := tracing.WithFlightRecorder(e.ctx, trace)
 	// task executor occupies resources, if there's no subtask to run for 10s,
 	// we release the resources so that other tasks can use them.
 	// 300ms + 600ms + 1.2s + 2s * 4 = 10.1s
@@ -259,6 +282,7 @@ func (e *BaseTaskExecutor) Run() {
 	checkInterval, noSubtaskCheckCnt := SubtaskCheckInterval, 0
 	skipBackoff := false
 	for {
+		trace.DiscardOrFlush(ctx)
 		if e.ctx.Err() != nil {
 			return
 		}
@@ -272,7 +296,7 @@ func (e *BaseTaskExecutor) Run() {
 		skipBackoff = false
 		oldTask := e.task.Load()
 		failpoint.InjectCall("beforeGetTaskByIDInRun", oldTask.ID)
-		newTask, err := e.taskTable.GetTaskByID(e.ctx, oldTask.ID)
+		newTask, err := e.taskTable.GetTaskByID(ctx, oldTask.ID)
 		if err != nil {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
@@ -286,7 +310,7 @@ func (e *BaseTaskExecutor) Run() {
 				zap.String("oldStep", proto.Step2Str(oldTask.Type, oldTask.Step)),
 				zap.String("newStep", proto.Step2Str(newTask.Type, newTask.Step)))
 			// when task switch to next step, task meta might change too, but in
-			// this case step executor will be recreated with new concurrency and
+			// this case step executor will be recreated with new required slots and
 			// meta, so we only notify it when it's still running the same step.
 			if e.stepExec != nil && e.stepExec.GetStep() == newTask.Step {
 				e.logger.Info("notify step executor to update task meta")
@@ -297,16 +321,16 @@ func (e *BaseTaskExecutor) Run() {
 				}
 			}
 		}
-		if newTask.Concurrency != oldTask.Concurrency {
+		if newTask.RequiredSlots != oldTask.RequiredSlots {
 			if !e.slotMgr.exchange(&newTask.TaskBase) {
-				e.logger.Info("task concurrency modified, but not enough slots, executor exit",
-					zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency))
+				e.logger.Info("task required slots modified, but not enough slots, executor exit",
+					zap.Int("old", oldTask.RequiredSlots), zap.Int("new", newTask.RequiredSlots))
 				return
 			}
-			e.logger.Info("task concurrency modification applied",
-				zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency),
+			e.logger.Info("task required slots modification applied",
+				zap.Int("old", oldTask.RequiredSlots), zap.Int("new", newTask.RequiredSlots),
 				zap.Int("availableSlots", e.slotMgr.availableSlots()))
-			newResource := e.nodeRc.GetStepResource(newTask.Concurrency)
+			newResource := e.nodeRc.GetStepResource(&newTask.TaskBase)
 
 			if e.stepExec != nil {
 				e.stepExec.SetResource(newResource)
@@ -319,7 +343,7 @@ func (e *BaseTaskExecutor) Run() {
 			return
 		}
 
-		subtask, err := e.taskTable.GetFirstSubtaskInStates(e.ctx, e.execID, task.ID, task.Step,
+		subtask, err := e.taskTable.GetFirstSubtaskInStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
 			e.logger.Warn("get first subtask meets error", zap.Error(err))
@@ -375,8 +399,9 @@ func (e *BaseTaskExecutor) createStepExecutor() error {
 		e.failOneSubtask(e.ctx, task.ID, err)
 		return errors.Trace(err)
 	}
-	resource := e.nodeRc.GetStepResource(e.GetTaskBase().Concurrency)
-	execute.SetFrameworkInfo(stepExecutor, task.Step, resource)
+	resource := e.nodeRc.GetStepResource(e.GetTaskBase())
+	failpoint.InjectCall("beforeSetFrameworkInfo", resource)
+	execute.SetFrameworkInfo(stepExecutor, task, resource, e.taskTable.UpdateSubtaskCheckpoint, e.taskTable.GetSubtaskCheckpoint)
 
 	if err := stepExecutor.Init(e.ctx); err != nil {
 		if e.IsRetryableError(err) {
@@ -465,6 +490,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
+			e.stepExec.ResetSummary()
 			wg.RunWithLog(func() {
 				e.updateSubtaskSummaryLoop(checkCtx, subtaskCtx, e.stepExec)
 			})
@@ -538,37 +564,37 @@ func (e *BaseTaskExecutor) detectAndHandleParamModify(ctx context.Context) error
 	}
 
 	metaModified := !bytes.Equal(latestTask.Meta, oldTask.Meta)
-	if latestTask.Concurrency == oldTask.Concurrency && !metaModified {
+	if latestTask.RequiredSlots == oldTask.RequiredSlots && !metaModified {
 		return nil
 	}
 
 	e.logger.Info("task param modification detected",
 		zap.Int64("currSubtaskID", e.currSubtaskID.Load()),
 		zap.Bool("metaModified", metaModified),
-		zap.Int("oldConcurrency", oldTask.Concurrency),
-		zap.Int("newConcurrency", latestTask.Concurrency))
+		zap.Int("oldRequiredSlots", oldTask.RequiredSlots),
+		zap.Int("newRequiredSlots", latestTask.RequiredSlots))
 
-	// we don't report error here, as we might fail to modify task concurrency due
-	// to not enough slots, we still need try to apply meta modification.
-	e.tryModifyTaskConcurrency(ctx, oldTask, latestTask)
+	// we don't report error here, as we might fail to modify task required slots
+	// due to not enough slots, we still need try to apply meta modification.
+	e.tryModifyTaskRequiredSlots(ctx, oldTask, latestTask)
 	if metaModified {
 		if err := e.stepExec.TaskMetaModified(ctx, latestTask.Meta); err != nil {
 			return errors.Annotate(err, "failed to apply task param modification")
 		}
 		e.metaModifyApplied(latestTask.Meta)
 	}
-	failpoint.InjectCall("afterDetectAndHandleParamModify")
+	failpoint.InjectCall("afterDetectAndHandleParamModify", e.task.Load().Step)
 	return nil
 }
 
-func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask, latestTask *proto.Task) {
+func (e *BaseTaskExecutor) tryModifyTaskRequiredSlots(ctx context.Context, oldTask, latestTask *proto.Task) {
 	logger := e.logger.With(zap.Int64("currSubtaskID", e.currSubtaskID.Load()),
-		zap.Int("old", oldTask.Concurrency), zap.Int("new", latestTask.Concurrency))
-	if latestTask.Concurrency < oldTask.Concurrency {
+		zap.Int("old", oldTask.RequiredSlots), zap.Int("new", latestTask.RequiredSlots))
+	if latestTask.RequiredSlots < oldTask.RequiredSlots {
 		// we need try to release the resource first, then free slots, to avoid
 		// OOM when manager starts other task executor and start to allocate memory
 		// immediately.
-		newResource := e.nodeRc.GetStepResource(latestTask.Concurrency)
+		newResource := e.nodeRc.GetStepResource(&latestTask.TaskBase)
 		if err := e.stepExec.ResourceModified(ctx, newResource); err != nil {
 			logger.Warn("failed to reduce resource usage", zap.Error(err))
 			return
@@ -580,18 +606,18 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 			return
 		}
 
-		// after application reduced memory usage, the garbage might not recycle
+		// After reducing memory usage, garbage may not be recycled
 		// in time, so we trigger GC here.
 		//nolint: revive
 		runtime.GC()
-		e.concurrencyModifyApplied(latestTask.Concurrency)
-	} else if latestTask.Concurrency > oldTask.Concurrency {
+		e.requiredSlotsModifyApplied(latestTask.RequiredSlots)
+	} else if latestTask.RequiredSlots > oldTask.RequiredSlots {
 		exchanged := e.slotMgr.exchange(&latestTask.TaskBase)
 		if !exchanged {
 			logger.Info("failed to exchange slots", zap.Int("availableSlots", e.slotMgr.availableSlots()))
 			return
 		}
-		newResource := e.nodeRc.GetStepResource(latestTask.Concurrency)
+		newResource := e.nodeRc.GetStepResource(&latestTask.TaskBase)
 		if err := e.stepExec.ResourceModified(ctx, newResource); err != nil {
 			exchanged := e.slotMgr.exchange(&oldTask.TaskBase)
 			intest.Assert(exchanged, "failed to return slots")
@@ -600,16 +626,16 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 			return
 		}
 
-		e.concurrencyModifyApplied(latestTask.Concurrency)
+		e.requiredSlotsModifyApplied(latestTask.RequiredSlots)
 	}
 }
 
-func (e *BaseTaskExecutor) concurrencyModifyApplied(newConcurrency int) {
+func (e *BaseTaskExecutor) requiredSlotsModifyApplied(newSlots int) {
 	clone := *e.task.Load()
-	e.logger.Info("task concurrency modification applied",
-		zap.Int64("currSubtaskID", e.currSubtaskID.Load()), zap.Int("old", clone.Concurrency),
-		zap.Int("new", newConcurrency), zap.Int("availableSlots", e.slotMgr.availableSlots()))
-	clone.Concurrency = newConcurrency
+	e.logger.Info("task required slots modification applied",
+		zap.Int64("currSubtaskID", e.currSubtaskID.Load()), zap.Int("old", clone.RequiredSlots),
+		zap.Int("new", newSlots), zap.Int("availableSlots", e.slotMgr.availableSlots()))
+	clone.RequiredSlots = newSlots
 	e.task.Store(&clone)
 }
 

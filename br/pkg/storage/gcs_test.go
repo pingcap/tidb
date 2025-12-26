@@ -19,12 +19,22 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
 
-func TestGCS(t *testing.T) {
+func CheckAccessStats(t *testing.T, rec *recording.AccessStats, expectedGets, expectedPuts, expectedRead, expectWrite int) {
+	t.Helper()
+	require.EqualValues(t, expectedGets, rec.Requests.Get.Load())
+	require.EqualValues(t, expectedPuts, rec.Requests.Put.Load())
+	require.EqualValues(t, expectedRead, rec.Traffic.Read.Load())
+	require.EqualValues(t, expectWrite, rec.Traffic.Write.Load())
+}
+
+func prepareGCSStore(t *testing.T, bucketName string, accessRec *recording.AccessStats) (*fakestorage.Server, *GCSStorage) {
+	t.Helper()
 	require.True(t, intest.InTest)
 	ctx := context.Background()
 
@@ -33,7 +43,6 @@ func TestGCS(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opts)
 	require.NoError(t, err)
-	bucketName := "testbucket"
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
 
 	gcs := &backuppb.GCS{
@@ -47,10 +56,19 @@ func TestGCS(t *testing.T) {
 		SendCredentials:  false,
 		CheckPermissions: []Permission{AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
+		AccessRecording:  accessRec,
 	})
 	require.NoError(t, err)
+	return server, stg
+}
 
-	err = stg.WriteFile(ctx, "key", []byte("data"))
+func TestGCS(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+	bucketName := "testbucket"
+	server, stg := prepareGCSStore(t, bucketName, nil)
+
+	err := stg.WriteFile(ctx, "key", []byte("data"))
 	require.NoError(t, err)
 
 	err = stg.WriteFile(ctx, "key1", []byte("data1"))
@@ -628,4 +646,30 @@ func TestDeleteFiles(t *testing.T) {
 	err := stg.WriteFile(ctx, filename, []byte("0123456789"))
 	require.NoError(t, err)
 	require.NoError(t, stg.DeleteFiles(ctx, []string{filename, "not-exist-file"}))
+}
+
+func TestGCSAccessRecording(t *testing.T) {
+	ctx := context.Background()
+	accessRec := &recording.AccessStats{}
+	_, store := prepareGCSStore(t, "testbucket", accessRec)
+	require.NoError(t, store.WriteFile(ctx, "a.txt", []byte("hello")))
+	CheckAccessStats(t, accessRec, 0, 1, 0, 5)
+	_, err := store.ReadFile(ctx, "a.txt")
+	require.NoError(t, err)
+	CheckAccessStats(t, accessRec, 1, 1, 5, 5)
+	writer, err := store.Create(ctx, "b.txt", nil)
+	require.NoError(t, err)
+	_, err = writer.Write(ctx, []byte(" world!"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
+	CheckAccessStats(t, accessRec, 1, 2, 5, 12)
+	reader, err := store.Open(ctx, "b.txt", nil)
+	require.NoError(t, err)
+	buf := make([]byte, 20)
+	n, err := reader.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, 7, n)
+	require.NoError(t, reader.Close())
+	// Open will use 2 get, one for get file size.
+	CheckAccessStats(t, accessRec, 3, 2, 12, 12)
 }

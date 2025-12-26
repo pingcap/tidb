@@ -352,7 +352,7 @@ func TestReadAfterCloseConnReader(t *testing.T) {
 	require.NoError(t, err)
 
 	wrapKVReader := &KVReader{byteReader: reader}
-	_, _, err = wrapKVReader.nextKV()
+	_, _, err = wrapKVReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 }
 
@@ -545,10 +545,6 @@ func (i *intReader) switchConcurrentMode(bool) error { return nil }
 func (i *intReader) close() error {
 	i.refCnt.Dec()
 	return nil
-}
-
-func (i *intReader) getRequestCount() int64 {
-	return 0
 }
 
 func buildOpener(in [][]int, refCnt *atomic.Int64) []readerOpenerFn[myInt, *intReader] {

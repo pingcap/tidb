@@ -16,6 +16,7 @@ package priorityqueue_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -36,14 +37,9 @@ func TestCallAPIBeforeInitialize(t *testing.T) {
 	defer pq.Close()
 
 	t.Run("IsEmpty", func(t *testing.T) {
-		isEmpty, err := pq.IsEmpty()
+		isEmpty, err := pq.IsEmptyForTest()
 		require.Error(t, err)
 		require.False(t, isEmpty)
-	})
-
-	t.Run("Push", func(t *testing.T) {
-		err := pq.Push(nil)
-		require.Error(t, err)
 	})
 
 	t.Run("Pop", func(t *testing.T) {
@@ -58,7 +54,7 @@ func TestCallAPIBeforeInitialize(t *testing.T) {
 	})
 
 	t.Run("Peek", func(t *testing.T) {
-		job, err := pq.Peek()
+		job, err := pq.PeekForTest()
 		require.Error(t, err)
 		require.Nil(t, job)
 	})
@@ -105,7 +101,7 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 	})
 
 	t.Run("IsEmpty And Pop", func(t *testing.T) {
-		isEmpty, err := pq.IsEmpty()
+		isEmpty, err := pq.IsEmptyForTest()
 		require.NoError(t, err)
 		require.False(t, isEmpty)
 
@@ -117,7 +113,7 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, poppedJob)
 
-		isEmpty, err = pq.IsEmpty()
+		isEmpty, err = pq.IsEmptyForTest()
 		require.NoError(t, err)
 		require.True(t, isEmpty)
 
@@ -150,7 +146,7 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
 
@@ -255,15 +251,15 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	updatedJob1, err := pq.Peek()
+	updatedJob1, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob1.GetWeight())
 	require.Equal(t, tbl1.Meta().ID, updatedJob1.GetTableID())
 
-	// Update some rows in t2.
-	tk.MustExec("update t2 set a = 3 where a = 2")
-	tk.MustExec("update t2 set a = 4 where a = 3")
-	tk.MustExec("update t2 set a = 5 where a = 4")
+	// Update 15 times on t2.
+	for i := 0; i < 15; i++ {
+		tk.MustExec("update t2 set a = a + 1 where a = " + strconv.Itoa(i+3))
+	}
 
 	// Dump the stats to kv.
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
@@ -273,10 +269,10 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	updatedJob2, err := pq.Peek()
+	updatedJob2, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob2.GetWeight())
-	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size")
+	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size and more changes")
 }
 
 func TestProcessDMLChanges(t *testing.T) {
@@ -323,7 +319,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	runningJobs := pq.GetRunningJobs()
 	require.Len(t, runningJobs, 0)
 	// Check no jobs are in the queue.
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
@@ -458,7 +454,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tbl1.Meta().ID, job.GetTableID())
 
@@ -470,7 +466,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
 
@@ -519,7 +515,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	require.NoError(t, err)
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
 	require.Equal(t, tableID, job.GetTableID())
@@ -544,7 +540,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableID, job.GetTableID())
 }
@@ -582,7 +578,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	pid := tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
@@ -607,7 +603,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	pid = tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
@@ -664,7 +660,7 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 
 	// Drop the table and mock the table stats is removed from the cache.
 	tk.MustExec("drop table t1")
-	deleteEvent := findEvent(handle.DDLEventCh(), model.ActionDropTable)
+	deleteEvent := statstestutil.FindEvent(handle.DDLEventCh(), model.ActionDropTable)
 	require.NotNil(t, deleteEvent)
 	err = statstestutil.HandleDDLEventWithTxn(handle, deleteEvent)
 	require.NoError(t, err)
