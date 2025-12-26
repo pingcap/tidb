@@ -132,6 +132,7 @@ go_test(
         "//lightning/pkg/importer/opts",
         "//lightning/pkg/precheck",
         "//lightning/pkg/web",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/errno",
         "//pkg/kv",
