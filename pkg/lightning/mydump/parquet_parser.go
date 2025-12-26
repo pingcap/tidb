@@ -679,7 +679,7 @@ func PrecheckParquet(
 	path string,
 ) (*ParquetPrecheckResult, error) {
 	failpoint.Inject("skipCheckForParquet", func() {
-		failpoint.Return(ParquetPrecheckResult{1.0, 1.0}, nil)
+		failpoint.Return(&ParquetPrecheckResult{1.0, 1.0}, nil)
 	})
 
 	r, err := store.Open(ctx, path, nil)

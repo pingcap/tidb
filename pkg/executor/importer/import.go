@@ -1361,7 +1361,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		)
 
 		e.detectAndUpdateFormat(path)
-		sourceType := e.getSourceType()
+		sourceType = e.getSourceType()
 		if sourceType != mydump.SourceTypeParquet {
 			return nil
 		}
