@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package rule
 
 import (
 	"context"
@@ -157,7 +157,7 @@ func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *logicalop.LogicalAgg
 		newAgg := logicalop.LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
 		newAgg.SetChildren(a.cloneSubPlans(agg.Children()[0]))
 		newAgg.SetSchema(expression.NewSchema(agg.Schema().Columns[i]))
-		// Since LogicalAggregation doesn’t use the parent base.LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
+		// Since LogicalAggregation doesn't use the parent base.LogicalPlan, passing an incorrect parameter here won't affect subsequent optimizations.
 		var (
 			p   base.LogicalPlan
 			err error
