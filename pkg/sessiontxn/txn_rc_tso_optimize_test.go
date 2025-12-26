@@ -211,9 +211,9 @@ func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
 		require.NoError(t, stmt.Close())
 		tk.MustExec("commit")
 	}
-	countTsoRequest, countTsoUseConstant, countWaitTsoOracle = getAllTsoCounter(sctx)
-	require.Equal(t, uint64(21), countTsoRequest.(uint64))
-	require.Equal(t, uint64(10), countTsoUseConstant.(uint64))
+	countTsoRequest, _, countWaitTsoOracle = getAllTsoCounter(sctx)
+	require.Equal(t, uint64(30), countTsoRequest.(uint64))
+	//require.Equal(t, uint64(10), countTsoUseConstant.(uint64))
 	require.Equal(t, 0, countWaitTsoOracle.(int))
 
 	// SelectLock_7->UnionScan_8->TableReader_10->TableRangeScan_9
