@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -92,7 +91,7 @@ var optRuleList = []base.LogicalOptRule{
 	&AggregationEliminator{},
 	&SkewDistinctAggRewriter{},
 	&ProjectionEliminator{},
-	&MaxMinEliminator{},
+	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
@@ -373,11 +372,6 @@ func DoOptimize(
 	flag uint64,
 	logic base.LogicalPlan,
 ) (base.PhysicalPlan, float64, error) {
-	sessVars := sctx.GetSessionVars()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
 	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
 }
@@ -967,10 +961,6 @@ func LogicalOptimizeTest(ctx context.Context, flag uint64, logic base.LogicalPla
 }
 
 func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(logic.SCtx())
-		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
 	var err error
 	// todo: the normalization rule driven way will be changed as stack-driven.
 	for i, rule := range normalizeRuleList {
@@ -989,10 +979,6 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(logic.SCtx())
-		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
 	var err error
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range logicalRuleList {
@@ -1031,10 +1017,6 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 }
 
 func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(logic.SCtx())
-		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
 	if _, _, err := logic.RecursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}

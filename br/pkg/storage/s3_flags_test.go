@@ -3,9 +3,11 @@
 package storage
 
 import (
+	"net"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/dumpling/context"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -366,4 +368,15 @@ func TestS3ProfileAvoidAutoNewCred(t *testing.T) {
 	require.Equal(t, "us-west-2", s3Backend.Region)
 	require.Equal(t, "", s3Backend.AccessKey, "Should not have explicit access key when using profile")
 	require.Equal(t, "", s3Backend.SecretAccessKey, "Should not have explicit secret key when using profile")
+}
+
+func TestS3TidbRetryerNeverExhaustTokens(t *testing.T) {
+	retryer := newTidbRetryer()
+	ctx := context.Background()
+	// default retry.NewStandard only have 500 tokens
+	opErr := &net.DNSError{IsTimeout: true}
+	for range 10000 {
+		_, err := retryer.GetRetryToken(ctx, opErr)
+		require.NoError(t, err)
+	}
 }
