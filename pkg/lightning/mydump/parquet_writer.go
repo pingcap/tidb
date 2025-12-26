@@ -108,12 +108,11 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, groups, r
 	rowsPerGroup := mathutil.Divide2Batches(rows, groups)
 	for _, groupRows := range rowsPerGroup {
 		rgw := pw.AppendRowGroup()
-		//nolint: errcheck
-		defer rgw.Close()
-
 		for _, pc := range pcolumns {
 			cw, err := rgw.NextColumn()
 			if err != nil {
+				//nolint: errcheck
+				rgw.Close()
 				return err
 			}
 			vals, defLevel := pc.Gen(groupRows)
@@ -138,16 +137,22 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, groups, r
 				buf, _ := vals.([]bool)
 				_, err = w.WriteBatch(buf, defLevel, nil)
 			default:
-				return fmt.Errorf("unsupported column type %T", cw)
+				err = fmt.Errorf("unsupported column type %T", cw)
+			}
+
+			err2 := cw.Close()
+			if err == nil {
+				err = err2
 			}
 
 			if err != nil {
-				return err
-			}
-			if err := cw.Close(); err != nil {
+				_ = rgw.Close()
 				return err
 			}
 		}
+
+		//nolint: errcheck
+		rgw.Close()
 	}
 
 	return nil

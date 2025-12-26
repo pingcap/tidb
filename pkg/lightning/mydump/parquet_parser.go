@@ -53,12 +53,12 @@ const (
 
 var (
 	// ParquetParserMemoryLimit is the memory limit for the parquet parser
-	// during precheck. It is used to validate that parsing a Parquet file
+	// during precheck. It is used to validate that parsing a parquet file
 	// does not consume excessive memory. If the peak memory usage exceeds this
-	// limit, the precheck will fail to prevent potential OOM errors during the
-	// actual import. The value 512MB is chosen as a safe upper bound under the
-	// assumption that worker nodes has >= 2GiB/core, where half of the memory
-	// is allocated to the external writer.
+	// limit, the precheck will fail to prevent potential OOM during the actual
+	// import. This value is chosen as an experimental value since we don't know
+	// the actual memory for the worker. Here we assume that worker nodes has
+	// >= 2GiB/core, where half of the memory is allocated to the external writer.
 	// Exported for test.
 	ParquetParserMemoryLimit int64 = 512 << 20 // 512MB
 )
