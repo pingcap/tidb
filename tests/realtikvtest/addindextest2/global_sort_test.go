@@ -530,6 +530,10 @@ func TestIngestUseGivenTS(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	var tblInfo *model.TableInfo
 	var idxInfo *model.IndexInfo
+	var useCloudStorage bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterLoadCloudStorageURI", func(job *model.Job) {
+		useCloudStorage = job.ReorgMeta.UseCloudStorage
+	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if idxInfo == nil {
 			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
@@ -578,6 +582,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
+	require.True(t, useCloudStorage)
 }
 
 func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
@@ -995,47 +1000,4 @@ func getStepSummary(t *testing.T, taskMgr *diststorage.TaskManager, taskID int64
 		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
 	}
 	return &accumSummary
-}
-
-func TestUseCloudStorageSetCorrectly(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("next-gen always use cloud storage")
-	}
-	server, cloudStorageURI := genServerWithStorage(t)
-	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("drop database if exists test_use_cloud_storage;")
-	tk.MustExec("create database test_use_cloud_storage;")
-	tk.MustExec("use test_use_cloud_storage;")
-
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
-	defer func() {
-		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-		tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
-	}()
-
-	// 1. Global sort enabled
-	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
-	tk.MustExec("create table t1 (a int);")
-	tk.MustExec("insert into t1 values (1), (2), (3);")
-
-	var useCloudStorage bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterLoadCloudStorageURI", func(job *model.Job) {
-		useCloudStorage = job.ReorgMeta.UseCloudStorage
-	})
-
-	tk.MustExec("alter table t1 add index idx(a);")
-	require.True(t, useCloudStorage)
-
-	// 2. Global sort disabled
-	tk.MustExec("set @@global.tidb_cloud_storage_uri = ''")
-	tk.MustExec("create table t2 (a int);")
-	tk.MustExec("insert into t2 values (1), (2), (3);")
-
-	useCloudStorage = true // reset to true to verify it becomes false
-	tk.MustExec("alter table t2 add index idx(a);")
-	require.False(t, useCloudStorage)
 }
