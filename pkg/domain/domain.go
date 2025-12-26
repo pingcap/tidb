@@ -1061,16 +1061,13 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil)
-		}
-	})
-
 	taskManager := storage.NewTaskManager(do.dxfSessionPool)
 	storage.SetTaskManager(taskManager)
+	failpoint.Inject("MockDisableDistTask", func() {
+		failpoint.Return(nil)
+	})
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	if kv.IsUserKS(do.store) {
 		sp, err := do.GetKSSessPool(keyspace.System)
 		if err != nil {

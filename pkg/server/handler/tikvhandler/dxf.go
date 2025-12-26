@@ -20,9 +20,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -223,5 +226,97 @@ func NewDXFTaskMaxRuntimeSlotsHandler(storage kv.Storage) *DXFTaskMaxRuntimeSlot
 
 // ServeHTTP implements http.Handler interface.
 func (h *DXFTaskMaxRuntimeSlotsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+	taskID, maxRuntimeSlots, steps, err := func() (int64, int, []proto.Step, error) {
+		params := mux.Vars(req)
+		var (
+			taskID int64
+			steps  []proto.Step
+		)
+		if val, ok := params["taskID"]; ok {
+			intVal, err := strconv.Atoi(val)
+			if err != nil {
+				return 0, 0, nil, errors.Errorf("invalid task ID %s, error %v", val, err)
+			}
+			taskID = int64(intVal)
+		}
+		if taskID <= 0 {
+			return 0, 0, nil, errors.New("invalid task ID")
+		}
 
+		if err := req.ParseForm(); err != nil {
+			return 0, 0, nil, err
+		}
+		strVal := req.FormValue("value")
+		maxRuntimeSlots, err := strconv.Atoi(strVal)
+		if err != nil {
+			return 0, 0, nil, errors.Errorf("invalid value %s, error %v", strVal, err)
+		}
+		if maxRuntimeSlots <= 0 {
+			return 0, 0, nil, errors.Errorf("invalid value %d", maxRuntimeSlots)
+		}
+
+		strSteps := req.Form["target_step"]
+		if len(strSteps) > 0 {
+			steps = make([]proto.Step, 0, len(strSteps))
+			for _, str := range strSteps {
+				step, err := strconv.Atoi(str)
+				if err != nil {
+					return 0, 0, nil, errors.Errorf("invalid target step %s, error %v", str, err)
+				}
+				steps = append(steps, proto.Step(step))
+			}
+		}
+		return taskID, maxRuntimeSlots, steps, nil
+	}()
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	taskMgr, err := storage.GetTaskManager()
+	if err != nil {
+		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
+	defer cancel()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	task, err := taskMgr.GetTaskByID(ctx, taskID)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	if maxRuntimeSlots >= task.RequiredSlots {
+		handler.WriteError(w, errors.Errorf("max runtime slots should be less than required slots(%d)", task.RequiredSlots))
+		return
+	}
+	stepStrs := make([]string, 0, len(steps))
+	for _, step := range steps {
+		if !proto.IsValidStep(task.Type, step) {
+			handler.WriteError(w, errors.Errorf("invalid target step %d for task type %s", step, task.Type.String()))
+			return
+		}
+		stepStrs = append(stepStrs, proto.Step2Str(task.Type, step))
+	}
+	params := proto.ExtraParams{
+		MaxRuntimeSlots: maxRuntimeSlots,
+		TargetSteps:     steps,
+	}
+	if err := taskMgr.UpdateTaskExtraParams(ctx, taskID, params); err != nil {
+		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	logutil.BgLogger().Info("set DXF task max runtime slots",
+		zap.Int64("taskID", taskID), zap.String("taskKey", task.Key),
+		zap.Int("maxRuntimeSlots", maxRuntimeSlots), zap.Any("targetSteps", steps))
+	handler.WriteData(w, map[string]any{
+		"task_id":           taskID,
+		"task_key":          task.Key,
+		"required_slots":    task.RequiredSlots,
+		"max_runtime_slots": maxRuntimeSlots,
+		"target_steps":      stepStrs,
+	})
 }

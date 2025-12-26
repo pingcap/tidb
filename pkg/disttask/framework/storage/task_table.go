@@ -1123,3 +1123,24 @@ func (mgr *TaskManager) GetSubtaskCheckpoint(ctx context.Context, subtaskID int6
 
 	return rs[0].GetString(0), nil
 }
+
+// UpdateTaskExtraParams update the extra params of a task.
+func (mgr *TaskManager) UpdateTaskExtraParams(ctx context.Context, taskID int64, extraParams proto.ExtraParams) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
+	extraParamBytes, err := json.Marshal(&extraParams)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_global_task
+			set extra_params = %?
+			where id = %?`, json.RawMessage(extraParamBytes), taskID)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
