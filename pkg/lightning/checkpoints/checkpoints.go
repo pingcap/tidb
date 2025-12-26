@@ -80,7 +80,7 @@ const (
 
 const (
 	// Some frequently used table name or constants.
-	allTables       = "all"
+	allTables       = common.AllTables
 	columnTableName = "table_name"
 )
 
