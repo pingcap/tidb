@@ -256,8 +256,8 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	baseCast := newBaseBuiltinCastFunc(baseFunc, true)
 	// set the `UnsignedFlag` bit
 	baseCast.tp.AddFlag(mysql.UnsignedFlag)
-	require.True(t, baseCast.vectorized() && baseCast.isChildrenVectorized())
 	cast := &builtinCastStringAsDecimalSig{baseCast}
+	require.True(t, cast.vectorized() && cast.isChildrenVectorized())
 
 	inputs := []*chunk.Chunk{
 		genCastStringAsDecimal(false),
