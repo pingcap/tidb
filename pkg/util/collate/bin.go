@@ -45,6 +45,16 @@ func (*binCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
 }
 
+// MaxBytesOneCharacter implements Collator interface.
+func (*binCollator) MaxBytesOneCharacter() int {
+	return 1
+}
+
+// GetCharacterNum returns number of character for string type
+func (*binCollator) GetCharacterNum(s string) int {
+	return len(s)
+}
+
 // Pattern implements Collator interface.
 func (*binCollator) Pattern() WildcardPattern {
 	return &binPattern{}
@@ -83,6 +93,16 @@ func (*binPaddingCollator) ImmutableKey(str string) []byte {
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*binPaddingCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
+}
+
+// MaxBytesOneCharacter implements Collator interface.
+func (*binPaddingCollator) MaxBytesOneCharacter() int {
+	return 4
+}
+
+// GetCharacterNum returns number of character for string type
+func (*binPaddingCollator) GetCharacterNum(s string) int {
+	return len(s)
 }
 
 // Pattern implements Collator interface.

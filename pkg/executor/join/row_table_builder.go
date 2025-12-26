@@ -16,6 +16,7 @@ package join
 
 import (
 	"errors"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"math"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
@@ -70,6 +72,9 @@ type rowTableBuilder struct {
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector  []bool // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector []bool // nullKeyVector[i] = true if any of the key is null
+
+	serializedKeyLens    []int
+	serializedKeysBuffer []byte
 
 	// When respilling a row, we need to recalculate the row's hash value.
 	// These are auxiliary utility for rehash.
@@ -156,6 +161,20 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 	if err != nil {
 		return err
 	}
+
+	b.serializedKeyLens, b.serializedKeysBuffer, err = codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer, b.serializedKeyLens, b.serializedKeysBuffer)
+	if err != nil {
+		return err
+	}
+
+	serializedKeyVectorBufferCapsForTest := make([]int, 0)
+	if intest.InTest {
+		serializedKeyVectorBufferCapsForTest = make([]int, len(b.serializedKeyVectorBuffer))
+		for i := range b.serializedKeyVectorBuffer {
+			serializedKeyVectorBufferCapsForTest[i] = cap(b.serializedKeyVectorBuffer[i])
+		}
+	}
+
 	// 1. split partition
 	for index, colIdx := range b.buildKeyIndex {
 		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
@@ -163,6 +182,15 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 			return err
 		}
 	}
+
+	if intest.InTest {
+		for i := range b.serializedKeyVectorBuffer {
+			if serializedKeyVectorBufferCapsForTest[i] < cap(b.serializedKeyVectorBuffer[i]) {
+				panic(fmt.Sprintf("Before: %d, After: %d", serializedKeyVectorBufferCapsForTest[i], cap(b.serializedKeyVectorBuffer[i])))
+			}
+		}
+	}
+
 	for _, key := range b.serializedKeyVectorBuffer {
 		if len(key) > math.MaxUint32 {
 			// TiDB's max row size is 128MB, so key size should never exceed limit

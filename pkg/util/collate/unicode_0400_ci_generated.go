@@ -147,3 +147,13 @@ func (uc *unicodeCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 func (uc *unicodeCICollator) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
 }
+
+// MaxBytesOneCharacter implements Collator interface.
+func (uc *unicodeCICollator) MaxBytesOneCharacter() int {
+	return 16
+}
+
+// GetCharacterNum returns number of character for string type
+func (uc *unicodeCICollator) GetCharacterNum(s string) int {
+	return utf8.RuneCountInString(s)
+}
