@@ -522,7 +522,7 @@ func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
 	return plannercore.LineFieldsInfo{
 		FieldsTerminatedBy: `,`,
 		FieldsEnclosedBy:   `"`,
-		FieldsEscapedBy:    `\\`,
+		FieldsEscapedBy:    `\`,
 		LinesStartingBy:    ``,
 		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
 		// But user cannot set this to empty explicitly.
