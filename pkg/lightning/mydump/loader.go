@@ -624,10 +624,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		// Only check once for each table
 		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, ParquetPrecheckResult{})
 		if !loaded {
-			checkRes, err := PrecheckParquet(ctx, s.loader.GetStore(), path, true)
-			if err == nil {
-				err = checkRes.Error()
-			}
+			checkRes, err := PrecheckParquet(ctx, s.loader.GetStore(), path)
 			if err != nil {
 				logger.Error("fail to sample parquet file", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),

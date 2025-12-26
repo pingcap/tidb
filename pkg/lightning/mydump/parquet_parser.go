@@ -672,23 +672,8 @@ func NewParquetParser(
 
 // ParquetPrecheckResult is the result of parquet import check.
 type ParquetPrecheckResult struct {
-	SchemaValid        bool
-	MemoryValid        bool
 	AvgRowSize         float64
 	SizeExpansionRatio float64
-}
-
-// Error returns the error if the parquet import check failed.
-func (p *ParquetPrecheckResult) Error() error {
-	if !p.SchemaValid {
-		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
-			"parquet file schema invalid")
-	}
-	if !p.MemoryValid {
-		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
-			"parquet files are too large and may cause OOM, consider changing to CSV format")
-	}
-	return nil
 }
 
 // PrecheckParquet checks whether the import file is valid to import.
@@ -696,15 +681,14 @@ func PrecheckParquet(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	path string,
-	checkMemoryConsumption bool,
-) (ParquetPrecheckResult, error) {
+) (*ParquetPrecheckResult, error) {
 	failpoint.Inject("skipCheckForParquet", func() {
-		failpoint.Return(ParquetPrecheckResult{true, true, 1.0, 1.0}, nil)
+		failpoint.Return(ParquetPrecheckResult{1.0, 1.0}, nil)
 	})
 
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
-		return ParquetPrecheckResult{false, false, 1.0, 1.0}, err
+		return nil, err
 	}
 
 	allocator := &trackingAllocator{}
@@ -712,22 +696,21 @@ func PrecheckParquet(
 
 	if err != nil {
 		if goerrors.Is(err, common.ErrParquetSchemaInvalid) {
-			return ParquetPrecheckResult{false, true, 1.0, 1.0}, nil
+			return nil, exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
+				"parquet file schema invalid")
 		}
-		return ParquetPrecheckResult{false, false, 1.0, 1.0}, err
+		return nil, err
 	}
 
 	//nolint: errcheck
 	defer parser.Close()
 
-	if !checkMemoryConsumption {
-		return ParquetPrecheckResult{true, true, 1.0, 1.0}, nil
-	}
-
 	reader := parser.readers[0]
+
+	// The file is empty, use 1.0 and 2.0 as row size and ratio respectively.
 	if len(reader.MetaData().RowGroups) == 0 ||
 		reader.MetaData().RowGroups[0].NumRows == 0 {
-		return ParquetPrecheckResult{true, true, 1.0, 1.0}, nil
+		return &ParquetPrecheckResult{1.0, 2.0}, nil
 	}
 
 	var (
@@ -740,14 +723,15 @@ func PrecheckParquet(
 			if errors.Cause(err) == io.EOF {
 				break
 			}
-			return ParquetPrecheckResult{false, false, 1.0, 1.0}, err
+			return nil, err
 		}
 		lastRow := parser.LastRow()
 		totalRowSize += int64(lastRow.Length)
 		rowCount++
 		parser.RecycleRow(lastRow)
 		if allocator.peakAllocation.Load() >= ParquetParserMemoryLimit {
-			return ParquetPrecheckResult{true, false, 1.0, 1.0}, nil
+			return nil, exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
+				"parquet files are too large and may cause OOM, consider changing to CSV format")
 		}
 	}
 
@@ -755,7 +739,7 @@ func PrecheckParquet(
 	avgRowSize := float64(totalRowSize) / float64(rowCount)
 	sizeExpansionRatio := (float64)(totalRowSize) / float64(fileSize)
 
-	return ParquetPrecheckResult{true, true, avgRowSize, sizeExpansionRatio}, nil
+	return &ParquetPrecheckResult{avgRowSize, sizeExpansionRatio}, nil
 }
 
 // addressOf returns the address of a buffer, return 0 if the buffer is nil or

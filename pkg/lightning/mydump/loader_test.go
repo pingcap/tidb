@@ -1198,9 +1198,8 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	md.WriteParquetFile(s.sourceDir, fileName, pc, 2, count)
 
 	expectedAvgRowSize := float64(totalRowSize) / float64(count)
-	checkRes, err := md.PrecheckParquet(ctx, store, fileName, true)
+	checkRes, err := md.PrecheckParquet(ctx, store, fileName)
 	require.NoError(t, err)
-	require.NoError(t, checkRes.Error())
 	// expected error within 10%
 	require.InDelta(t, expectedAvgRowSize, checkRes.AvgRowSize, 0.1)
 }

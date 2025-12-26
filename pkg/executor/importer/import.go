@@ -1357,7 +1357,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	checkFirstFile := func(s storage.ExternalStorage, path string, size int64) error {
 		var (
 			err      error
-			checkRes mydump.ParquetPrecheckResult
+			checkRes *mydump.ParquetPrecheckResult
 		)
 
 		e.detectAndUpdateFormat(path)
@@ -1366,11 +1366,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return nil
 		}
 
-		checkRes, err = mydump.PrecheckParquet(ctx, s, path, true)
+		checkRes, err = mydump.PrecheckParquet(ctx, s, path)
 		if err != nil {
-			return err
-		}
-		if err = checkRes.Error(); err != nil {
 			return err
 		}
 		sizeExpansionRatio = checkRes.SizeExpansionRatio
