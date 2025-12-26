@@ -604,12 +604,8 @@ func NewParquetParser(
 
 	for i := range colTypes {
 		desc := reader.MetaData().Schema.Column(i)
-		if desc.MaxDefinitionLevel() > 1 {
-			return nil, common.ErrParquetSchemaInvalid.FastGenByArgs(
-				fmt.Sprintf("%s has nested schema", desc.Name()))
-		}
-
 		colNames = append(colNames, strings.ToLower(desc.Name()))
+
 		logicalType := desc.LogicalType()
 		if logicalType.IsValid() {
 			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
