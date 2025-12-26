@@ -581,6 +581,9 @@ func TestIngestUseGivenTS(t *testing.T) {
 }
 
 func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("resource params are calculated automatically on nextgen for add-index, we don't support alter them")
+	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 
@@ -970,7 +973,11 @@ func TestNextGenMetering(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		items := *rowAndSizeMeterItems.Load()
-		return items != nil && items["row_count"].(int64) == 3 && items["index_kv_bytes"].(int64) == 153
+		return items != nil && items["row_count"].(int64) == 3 &&
+			items["index_kv_bytes"].(int64) == 153 &&
+			items[metering.RequiredSlotsField].(int) == task.RequiredSlots &&
+			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
+			items[metering.DurationSecondsField].(int64) > 0
 	}, 30*time.Second, 100*time.Millisecond)
 }
 

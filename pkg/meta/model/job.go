@@ -117,6 +117,7 @@ const (
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
 	ActionModifySchemaReadOnly   ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableAffinity     ActionType = 78
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -193,6 +194,7 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTableMode:                "alter table mode",
 	ActionRefreshMeta:                   "refresh meta",
 	ActionModifySchemaReadOnly:          "modify schema read only",
+	ActionAlterTableAffinity:            "alter table affinity",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -205,6 +207,47 @@ func (action ActionType) String() string {
 		return v
 	}
 	return "none"
+}
+
+// ModifyColumnType is used to indicate what type of modify column job it is.
+// Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
+// https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
+const (
+	ModifyTypeNone byte = iota
+	// modify column that guarantees no reorganization or check is needed.
+	ModifyTypeNoReorg
+
+	// modify column that don't need to reorg the data, but need to check the existing data.
+	ModifyTypeNoReorgWithCheck
+
+	// modify column that only needs to reorg the index
+	ModifyTypeIndexReorg
+
+	// modify column that needs to reorg both the row and index data.
+	ModifyTypeReorg
+
+	// A special type for varchar->char conversion with data precheck.
+	ModifyTypePrecheck
+)
+
+// ModifyTypeToString converts ModifyColumnType to string.
+func ModifyTypeToString(tp byte) string {
+	switch tp {
+	case ModifyTypeNone:
+		return "none"
+	case ModifyTypeNoReorg:
+		return "modify meta only"
+	case ModifyTypeNoReorgWithCheck:
+		return "modify meta only with range check"
+	case ModifyTypeIndexReorg:
+		return "reorg index only"
+	case ModifyTypeReorg:
+		return "reorg row and index"
+	case ModifyTypePrecheck:
+		return "prechecking"
+	}
+
+	return ""
 }
 
 // SchemaState is the state for schema elements.
@@ -312,10 +355,10 @@ type Job struct {
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
 
-	// CtxVars are variables attached to the job. It is for internal usage.
-	// E.g. passing arguments between functions by one single *Job pointer.
-	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
-	CtxVars []any `json:"-"`
+	// NeedReorg indicates whether the job needs reorg.
+	// It's only used by modify column and not the accurate value.
+	NeedReorg bool `json:"-"`
+
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
 	args []any
@@ -735,15 +778,10 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
-		// TODO(joechenrh): remove CtxVars here
-		if len(job.CtxVars) > 0 {
-			needReorg, ok := job.CtxVars[0].(bool)
-			return ok && needReorg
-		}
-		return false
+		return job.NeedReorg
 	case ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := Job{Type: sub.Type, CtxVars: sub.CtxVars}
+			proxyJob := Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
 			if proxyJob.MayNeedReorg() {
 				return true
 			}
@@ -867,11 +905,10 @@ type SubJob struct {
 	State        JobState        `json:"state"`
 	RowCount     int64           `json:"row_count"`
 	Warning      *terror.Error   `json:"warning"`
-	CtxVars      []any           `json:"-"`
+	NeedReorg    bool            `json:"-"`
 	SchemaVer    int64           `json:"schema_version"`
 	ReorgTp      ReorgType       `json:"reorg_tp"`
 	ReorgStage   ReorgStage      `json:"reorg_stage"`
-	NeedAnalyze  bool            `json:"need_analyze"`
 	AnalyzeState int8            `json:"analyze_state"`
 }
 
@@ -893,26 +930,12 @@ func (sub *SubJob) IsFinished() bool {
 		sub.State == JobStateCancelled
 }
 
-// CanEmbeddedAnalyze indicates that this sub-job can do embedded analyze right after the schema change.
-func (sub *SubJob) CanEmbeddedAnalyze() bool {
-	switch sub.Type {
-	case ActionAddIndex, ActionAddPrimaryKey:
-		return true
-	case ActionModifyColumn:
-		if len(sub.CtxVars) > 0 {
-			needReorg, ok := sub.CtxVars[0].(bool)
-			return ok && needReorg
-		}
-		return false
-	default:
-		return false
-	}
-}
-
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
-	reorgMeta := parentJob.ReorgMeta
-	if reorgMeta != nil {
+	var reorgMeta *DDLReorgMeta
+	if parentJob.ReorgMeta != nil {
+		reorgMeta = parentJob.ReorgMeta.ShallowCopy()
+		reorgMeta.ReorgTp = sub.ReorgTp
 		reorgMeta.Stage = sub.ReorgStage
 		reorgMeta.AnalyzeState = sub.AnalyzeState
 	}
@@ -929,7 +952,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		ErrorCount:      0,
 		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
-		CtxVars:         sub.CtxVars,
+		NeedReorg:       sub.NeedReorg,
 		args:            sub.args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
@@ -940,7 +963,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
 		ReorgMeta:       reorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq), NeedAnalyze: sub.NeedAnalyze},
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
 		Charset:         parentJob.Charset,
@@ -996,8 +1019,6 @@ type MultiSchemaInfo struct {
 
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
-	// NeedAnalyze is used to indicate whether we need to analyze the table after the sub-job is done.
-	NeedAnalyze bool `json:"-"`
 
 	AddColumns    []ast.CIStr `json:"-"`
 	DropColumns   []ast.CIStr `json:"-"`

@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
-	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
@@ -349,7 +348,13 @@ type Summary struct {
 	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
 
 	// ImportedRows is the number of rows imported into TiKV.
-	ImportedRows int64 `json:"row-count,omitempty"`
+	// conflicted rows are excluded from this count if using global-sort.
+	ImportedRows   int64  `json:"row-count,omitempty"`
+	ConflictRowCnt uint64 `json:"conflict-row-count,omitempty"`
+	// TooManyConflicts indicates there are too many conflicted rows that we
+	// cannot deduplicate during collecting its checksum, so we will skip later
+	// checksum step.
+	TooManyConflicts bool `json:"too-many-conflicts,omitempty"`
 }
 
 // LoadDataController load data controller.
@@ -693,14 +698,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	p.specifiedOptions = specifiedOptions
 
-	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
-	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
-	if kerneltype.IsNextGen() && semv1.IsEnabled() {
+	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
-	}
-	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -1237,6 +1238,92 @@ func estimateCompressionRatio(
 	return compressionRatio, nil
 }
 
+// maxSampledCompressedFiles indicates the max number of files we used to sample
+// compression ratio for each compression type. Consider the extreme case that
+// user data contains all 3 compression types. Then we need to sample about 1,500
+// files. Suppose each file costs 0.5 second (for example, cross region access),
+// we still can finish in one minute with 16 concurrency.
+const maxSampledCompressedFiles = 512
+
+// compressionEstimator estimates compression ratio for different compression types.
+// It uses harmonic mean to get the average compression ratio.
+type compressionEstimator struct {
+	mu      sync.Mutex
+	records map[mydump.Compression][]float64
+	ratio   sync.Map
+}
+
+func newCompressionRecorder() *compressionEstimator {
+	return &compressionEstimator{
+		records: make(map[mydump.Compression][]float64),
+	}
+}
+
+func getHarmonicMean(rs []float64) float64 {
+	if len(rs) == 0 {
+		return 1.0
+	}
+	var (
+		sumInverse float64
+		count      int
+	)
+	for _, r := range rs {
+		if r > 0 {
+			sumInverse += 1.0 / r
+			count++
+		}
+	}
+
+	if count == 0 {
+		return 1.0
+	}
+	return float64(count) / sumInverse
+}
+
+func (r *compressionEstimator) estimate(
+	ctx context.Context,
+	fileMeta mydump.SourceFileMeta,
+	store storage.ExternalStorage,
+) float64 {
+	compressTp := mydump.ParseCompressionOnFileExtension(fileMeta.Path)
+	if compressTp == mydump.CompressionNone {
+		return 1.0
+	}
+	if v, ok := r.ratio.Load(compressTp); ok {
+		return v.(float64)
+	}
+
+	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
+	if err != nil {
+		logutil.Logger(ctx).Error("fail to calculate data file compress ratio",
+			zap.String("category", "loader"),
+			zap.String("path", fileMeta.Path),
+			zap.Stringer("type", fileMeta.Type), zap.Error(err),
+		)
+		return 1.0
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.ratio.Load(compressTp); ok {
+		return compressRatio
+	}
+
+	if r.records[compressTp] == nil {
+		r.records[compressTp] = make([]float64, 0, 256)
+	}
+	if len(r.records[compressTp]) < maxSampledCompressedFiles {
+		r.records[compressTp] = append(r.records[compressTp], compressRatio)
+	}
+	if len(r.records[compressTp]) >= maxSampledCompressedFiles {
+		// Using harmonic mean can better handle outlier values.
+		compressRatio = getHarmonicMean(r.records[compressTp])
+		r.ratio.Store(compressTp, compressRatio)
+	}
+	return compressRatio
+}
+
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
@@ -1288,9 +1375,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize        int64
-		sourceType       mydump.SourceType
-		compressionRatio = 1.0
+		totalSize  int64
+		sourceType mydump.SourceType
+		// sizeExpansionRatio is the estimated size expansion for parquet format.
+		// For non-parquet format, it's always 1.0.
+		sizeExpansionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1350,6 +1439,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		var err error
 		var processedFiles []*mydump.SourceFileMeta
 		var once sync.Once
+
+		ce := newCompressionRecorder()
+
 		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				// we have checked in LoadDataExec.Next
@@ -1364,7 +1456,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
-					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
 				})
 				if err2 != nil {
 					return nil, err2
@@ -1376,8 +1468,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Compression: compressTp,
 					Type:        sourceType,
 				}
-				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
+				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
@@ -1425,7 +1517,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		}
 	}
 	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
-	e.ThreadCnt = cal.CalcConcurrency()
+	e.ThreadCnt = cal.CalcRequiredSlots()
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",

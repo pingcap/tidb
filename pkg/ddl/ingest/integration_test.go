@@ -576,7 +576,7 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 			_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
 			assert.Nil(t, err)
 
-			_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
+			_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 20, a = b where b = %d", tmp-1))
 			assert.Nil(t, err)
 		}
 	})
