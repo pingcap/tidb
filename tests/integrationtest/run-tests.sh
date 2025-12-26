@@ -74,7 +74,7 @@ function find_available_port() {
             echo "Error: No available ports found below 65536." >&2
             exit 1
         fi
-        if ! lsof -i :"$port" &> /dev/null; then
+        if ! lsof -nP -i :"$port" &> /dev/null; then
             echo $port
             return 0
         fi
