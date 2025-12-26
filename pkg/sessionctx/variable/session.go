@@ -1798,6 +1798,12 @@ type SessionVars struct {
 
 	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
 	OutPacketBytes atomic.Uint64
+
+	// Used in ActiveActive replication, providing value for @@tidb_active_active_sync_stats
+	// When CDC replicate upstream cluster to downstream cluster in active-active mode, some rows
+	// may be skipped due to conflict. And this counter is used to record the number of rows skipped
+	// by such kind of conflict.
+	ActiveActiveConflictSkipRows atomic.Uint64
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.

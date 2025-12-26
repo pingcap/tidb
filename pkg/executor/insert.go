@@ -566,17 +566,6 @@ func (e *InsertExec) doDupRowUpdate(
 	e.curInsertVals.SetDatums(newRow...)
 	e.Ctx().GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
 
-	updateOriginTSCol := -1
-	if e.Table.Meta().IsActiveActive {
-		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
-		// should be set to null rather than copy the old value.
-		for _, col := range e.Table.Cols() {
-			if col.Name.Equals(&model.ExtraOriginTSName) {
-				updateOriginTSCol = col.Offset
-			}
-		}
-	}
-
 	// NOTE: In order to execute the expression inside the column assignment,
 	// we have to put the value of "oldRow" and "extraCols" before "newRow" in
 	// "row4Update" to be consistent with "Schema4OnDuplicate" in the "Insert"
@@ -595,6 +584,29 @@ func (e *InsertExec) doDupRowUpdate(
 			generated = append(generated, assign)
 		} else {
 			nonGenerated = append(nonGenerated, assign)
+		}
+	}
+
+	needActiveActiveSyncStats := false
+	updateOriginTSCol := -1
+	if e.Table.Meta().IsActiveActive {
+		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+		// should be set to null rather than copy the old value.
+		for _, col := range e.Table.Cols() {
+			if col.Name.Equals(&model.ExtraOriginTSName) {
+				updateOriginTSCol = col.Offset
+			}
+		}
+
+		// Only CDC uses this pattern:
+		// _tidb_origin_ts = IF(@cond, VALUES(_tidb_origin_ts), test._tidb_origin_ts)
+		if e.Ctx().GetSessionVars().CDCWriteSource != 0 {
+			for _, assign := range nonGenerated {
+				if assign.ColName.Equals(&model.ExtraOriginTSName) {
+					needActiveActiveSyncStats = true
+					break
+				}
+			}
 		}
 	}
 
@@ -619,6 +631,7 @@ func (e *InsertExec) doDupRowUpdate(
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	sctx := e.Ctx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	realOverwrite := false
 	for _, assign := range nonGenerated {
 		var val types.Datum
 		if assign.LazyErr != nil {
@@ -639,8 +652,19 @@ func (e *InsertExec) doDupRowUpdate(
 
 		_ = errorHandler(sctx, assign, &val, nil)
 		e.evalBuffer4Dup.SetDatum(idx, val)
+		if needActiveActiveSyncStats {
+			if !e.row4Update[assign.Col.Index].Equals(val) {
+				realOverwrite = true
+			}
+		}
 		e.row4Update[assign.Col.Index] = val
 		assignFlag[assign.Col.Index] = true
+	}
+
+	if needActiveActiveSyncStats && len(nonGenerated) > 0 && !realOverwrite {
+		// ActiveActiveSyncStats info is required, but no overwrite really happen, it means
+		// that all conflicts are skipped.
+		e.Ctx().GetSessionVars().ActiveActiveConflictSkipRows.Add(1)
 	}
 
 	newData := e.row4Update[:len(e.Table.WritableCols())]
