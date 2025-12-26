@@ -3056,7 +3056,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			return errors.Trace(err)
 		}
 		taskID = task.ID
-		lastConcurrency = task.Concurrency
+		lastConcurrency = task.RequiredSlots
 		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
 		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
 		g.Go(func() error {
@@ -3228,7 +3228,7 @@ func modifyTaskParamLoop(
 		}
 		if concurrency != lastConcurrency {
 			modifies = append(modifies, proto.Modification{
-				Type: proto.ModifyConcurrency,
+				Type: proto.ModifyRequiredSlots,
 				To:   int64(concurrency),
 			})
 		}

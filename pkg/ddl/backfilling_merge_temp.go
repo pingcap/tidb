@@ -37,6 +37,7 @@ import (
 
 type mergeTempIndexExecutor struct {
 	taskexecutor.BaseStepExecutor
+	task          *proto.TaskBase
 	job           *model.Job
 	store         kv.Storage
 	parentTable   table.PhysicalTable // The parent table for partition table.
@@ -52,9 +53,10 @@ type mergeTempIndexExecutor struct {
 	buffers   *tempIdxBuffers
 }
 
-func newMergeTempIndexExecutor(job *model.Job, store kv.Storage, tbl table.PhysicalTable) (*mergeTempIndexExecutor, error) {
+func newMergeTempIndexExecutor(task *proto.TaskBase, job *model.Job, store kv.Storage, tbl table.PhysicalTable) (*mergeTempIndexExecutor, error) {
 	batchCnt := job.ReorgMeta.GetBatchSize()
 	return &mergeTempIndexExecutor{
+		task:           task,
 		job:            job,
 		store:          store,
 		batchCnt:       batchCnt,
@@ -121,7 +123,7 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	collector := &mergeTempIndexCollector{}
 
 	srcOp := NewTempIndexScanTaskSource(wctx, e.store, e.physicalTable, meta.StartKey, meta.EndKey)
-	mergeOp := NewMergeTempIndexOperator(wctx, e.store, e.physicalTable, e.idxInfo, e.job.ID, subtask.Concurrency, e.batchCnt, e.job.ReorgMeta)
+	mergeOp := NewMergeTempIndexOperator(wctx, e.store, e.physicalTable, e.idxInfo, e.job.ID, e.task.RequiredSlots, e.batchCnt, e.job.ReorgMeta)
 	sinkOp := newTempIndexResultSink(wctx, e.physicalTable, collector)
 
 	operator.Compose(srcOp, mergeOp)

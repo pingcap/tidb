@@ -751,15 +751,6 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			return matchGE(threshold, items.MemMax)
 		},
 	},
-	strings.ToLower(SlowLogMemArbitration): {
-		Parse: parseFloat64,
-		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
-			items.MemArbitration = seVars.StmtCtx.MemTracker.MemArbitration().Seconds()
-		},
-		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, items.MemArbitration)
-		},
-	},
 	strings.ToLower(SlowLogDiskMax): {
 		Parse: parseInt64,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {

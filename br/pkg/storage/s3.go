@@ -19,6 +19,7 @@ import (
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
 	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -1402,6 +1403,12 @@ func newTidbRetryer() aws.Retryer {
 		standardRetryer: retry.NewStandard(func(so *retry.StandardOptions) {
 			so.MaxAttempts = maxRetries
 			so.MaxBackoff = 30 * time.Second
+			// this rate limiter is shared by all requests on the same S3 store
+			// instance, if there are network issues, we might easily exhaust the
+			// token bucket which doesn't add tokens back on error. such as for
+			// global-sort, we have many concurrent requests, a short period of
+			// network issue might exhaust the bucket.
+			so.RateLimiter = ratelimit.None
 		}),
 	}
 }

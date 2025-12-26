@@ -121,7 +121,7 @@ func (*BaseScheduler) Init() error {
 func (s *BaseScheduler) ScheduleTask() {
 	task := s.GetTask()
 	s.logger.Info("schedule task",
-		zap.Stringer("state", task.State), zap.Int("concurrency", task.Concurrency))
+		zap.Stringer("state", task.State), zap.Int("requiredSlots", task.RequiredSlots))
 	s.scheduleTask()
 }
 
@@ -415,15 +415,15 @@ func (s *BaseScheduler) onModifying() (bool, error) {
 	metaModifies := make([]proto.Modification, 0, len(task.ModifyParam.Modifications))
 	for _, m := range task.ModifyParam.Modifications {
 		switch m.Type {
-		case proto.ModifyConcurrency:
-			if task.Concurrency == int(m.To) {
+		case proto.ModifyRequiredSlots:
+			if task.RequiredSlots == int(m.To) {
 				// shouldn't happen normally.
-				s.logger.Info("task concurrency not changed, skip", zap.Int("concurrency", task.Concurrency))
+				s.logger.Info("task required slots not changed, skip", zap.Int("requiredSlots", task.RequiredSlots))
 				continue
 			}
-			s.logger.Info("modify task concurrency", zap.Int("from", task.Concurrency), zap.Int64("to", m.To))
+			s.logger.Info("modify task required slots", zap.Int("from", task.RequiredSlots), zap.Int64("to", m.To))
 			recreateScheduler = true
-			task.Concurrency = int(m.To)
+			task.RequiredSlots = int(m.To)
 		case proto.ModifyMaxNodeCount:
 			if m.To <= 0 {
 				s.logger.Warn("task max-node-count should be greater than 0, skip")
@@ -520,7 +520,7 @@ func (s *BaseScheduler) scheduleSubTask(
 	s.logger.Info("schedule subtasks",
 		zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, subtaskStep)),
-		zap.Int("concurrency", task.Concurrency),
+		zap.Int("requiredSlots", task.RequiredSlots),
 		zap.Int("subtasks", len(metas)))
 
 	// the scheduled node of the subtask might not be optimal, as we run all
@@ -531,14 +531,14 @@ func (s *BaseScheduler) scheduleSubTask(
 	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
 		return err
 	}
-	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, task.Concurrency)
+	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, task.RequiredSlots)
 	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// our schedule target is to maximize the resource usage of all nodes while
 		// fulfilling the target of schedule tasks in the task order, we will try
 		// to pack the subtasks of different tasks onto as minimal number of nodes
-		// as possible, to allow later tasks of higher concurrency can be scheduled
+		// as possible, to allow later tasks of higher required slots can be scheduled
 		// and run, so we order nodes, see TaskManager.GetAllNodes and assign the
 		// subtask to the instance in a round-robin way.
 		// for example:
@@ -550,7 +550,7 @@ func (s *BaseScheduler) scheduleSubTask(
 		instanceID := adjustedEligibleNodes[pos]
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
-			subtaskStep, task.ID, task.Type, instanceID, task.Concurrency, meta, i+1))
+			subtaskStep, task.ID, task.Type, instanceID, task.RequiredSlots, meta, i+1))
 
 		size += uint64(len(meta))
 	}

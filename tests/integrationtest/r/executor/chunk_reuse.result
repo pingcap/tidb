@@ -336,3 +336,12 @@ select @@last_sql_use_alloc;
 @@last_sql_use_alloc
 0
 set tidb_enable_clustered_index = default;
+drop table if exists t;
+create table t(id int primary key, col int);
+insert into t values (1, 1);
+select * from t where id = 1;
+id	col
+1	1
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
