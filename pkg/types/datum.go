@@ -2717,3 +2717,15 @@ func DatumsContainNull(vals []Datum) bool {
 	}
 	return false
 }
+
+// ConvertBetweenSign converts between signed and unsigned datum.
+func ConvertBetweenSign(datum Datum, toUnsigned bool) (Datum, error) {
+	if toUnsigned && datum.Kind() == KindInt64 {
+		val, err := ConvertIntToUint(StrictFlags, datum.GetInt64(), math.MaxUint64, mysql.TypeLonglong)
+		return NewUintDatum(val), err
+	} else if !toUnsigned && datum.Kind() == KindUint64 {
+		val, err := ConvertUintToInt(datum.GetUint64(), math.MaxInt64, mysql.TypeLonglong)
+		return NewIntDatum(val), err
+	}
+	return datum, nil
+}

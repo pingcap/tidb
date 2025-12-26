@@ -2907,10 +2907,9 @@ func TestIssue40135Ver2(t *testing.T) {
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use test")
 
-	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', c varchar(255), index(a)) PARTITION BY HASH (a) PARTITIONS 6")
-	tk.MustExec("insert into t40135 values (1, 'md', '1-md'), (2, 'ma','2-ma'), (3, 'md','3-md'), (4, 'ma','4-ma'), (5, 'md','5-md'), (6, 'ma','6-ma')")
+	tk.MustExec("CREATE TABLE t40135 (a int DEFAULT NULL, b varchar(32) DEFAULT 'md', c varchar(255), index(a)) PARTITION BY HASH (a) PARTITIONS 6")
+	tk.MustExec("insert into t40135 values (1, 'md', '1-md'), (2, 'ma', '2-ma'), (3, 'md', '3-md'), (4, 'ma', '4-ma'), (5, 'md', '5-md'), (6, 'ma', '6-ma')")
 	one := true
-	var checkErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
@@ -2920,17 +2919,16 @@ func TestIssue40135Ver2(t *testing.T) {
 		if one {
 			one = false
 			go func() {
-				_, checkErr = tk1.Exec("alter table t40135 modify column a int NULL")
+				tk.MustExec("alter table t40135 modify column a int NULL DEFAULT '12345'")
 				wg.Done()
 			}()
 		}
 	})
 	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
 	wg.Wait()
-	require.ErrorContains(t, checkErr, "Unsupported modify column, decreasing length of int may result in truncation and change of partition")
 	tk.MustQuery("show create table t40135").Check(testkit.Rows("" +
 		"t40135 CREATE TABLE `t40135` (\n" +
-		"  `a` bigint(20) DEFAULT '6243108',\n" +
+		"  `a` int(11) DEFAULT '12345',\n" +
 		"  `b` varchar(32) DEFAULT 'md',\n" +
 		"  `c` varchar(255) DEFAULT NULL,\n" +
 		"  KEY `a` (`a`)\n" +
