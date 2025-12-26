@@ -1859,7 +1859,7 @@
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN mpp[tiflash]  Column, offset:0, count:1",
-          "      └─TableFullScan mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column"
+          "      └─TableFullScan mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#5"
         ],
         "Warn": null
       },
@@ -1870,7 +1870,7 @@
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN mpp[tiflash]  Column, offset:0, count:1",
-          "      └─TableFullScan mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column"
+          "      └─TableFullScan mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#5"
         ],
         "Warn": null
       },

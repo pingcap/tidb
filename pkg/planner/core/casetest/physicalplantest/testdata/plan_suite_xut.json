@@ -3662,7 +3662,7 @@
           "Limit root  offset:0, count:79",
           "└─Sort root  Column, Column, Column, Column",
           "  └─HashAgg root  funcs:avg(distinct Column)->Column, funcs:min(Column)->Column, funcs:sum(distinct Column)->Column, funcs:max(Column)->Column",
-          "    └─Projection root  cast(test.tbl_15.col_96, decimal(10,0) UNSIGNED BINARY)->Column, Column->Column, cast(test.tbl_15.col_91, decimal(3,0) UNSIGNED BINARY)->Column, Column->Column",
+          "    └─Projection root  cast(test.tbl_15.col_96, decimal(10,0) UNSIGNED BINARY)->Column, Column, cast(test.tbl_15.col_91, decimal(3,0) UNSIGNED BINARY)->Column, Column",
           "      └─PartitionUnion root  ",
           "        ├─TableReader root  MppVersion: 3, data:ExchangeSender",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
