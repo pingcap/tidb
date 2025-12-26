@@ -170,8 +170,8 @@
       "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([test.t.a test.t.b],0,5)->Projection}->TopN([Column#25 Column#26],0,5)",
       "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([test.t.a test.t.b],0,10)->Projection}->TopN([Column#25 Column#26],5,5)",
       "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([test.t.a],0,5)->Projection}->Limit",
-      "Join{DataScan(t1)->TopN([cast(test.t.b, int(11) BINARY)],0,5)->DataScan(t2)}(test.t.e,test.t.e)->TopN([cast(test.t.b, int(11) BINARY)],0,5)->Projection->Projection",
-      "Join{DataScan(t1)->DataScan(t2)}(test.t.e,test.t.e)->TopN([ifnull(test.t.h, test.t.b)],0,5)->Projection->Projection"
+      "Join{DataScan(t1)->TopN([cast(test.t.b, int(11) BINARY)],0,5)->DataScan(t2)}(test.t.e,test.t.e)->Projection->TopN([cast(test.t.b, int(11) BINARY)],0,5)->Projection->Projection",
+      "Join{DataScan(t1)->DataScan(t2)}(test.t.e,test.t.e)->Projection->TopN([ifnull(test.t.h, test.t.b)],0,5)->Projection->Projection"
     ]
   },
   {
