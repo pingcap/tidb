@@ -95,7 +95,7 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	sessVars.CurrentDB = "testdb"
 	sessVars.DurationParse = time.Second
 	sessVars.DurationCompile = 2 * time.Second
-	sessVars.DurationOptimization = 3 * time.Second
+	sessVars.DurationOptimizer.Total = 3 * time.Second
 	sessVars.DurationWaitTS = 4 * time.Second
 	sessVars.StmtCtx.ExecRetryCount = 2
 	sessVars.StmtCtx.ExecSuccess = true
