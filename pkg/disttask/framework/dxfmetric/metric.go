@@ -38,6 +38,8 @@ const (
 	EventRetry                = "retry"
 	EventTooManyIdx           = "too-many-idx"
 	EventMergeSort            = "merge-sort"
+	EventCleanupFailed        = "cleanup-failed"
+	EventMeterWriteFailed     = "meter-write-failed"
 )
 
 // DXF metrics

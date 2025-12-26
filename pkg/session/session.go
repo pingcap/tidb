@@ -2445,24 +2445,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
 		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
 	}
-	if sessVars.InPlanReplayer {
-		sessVars.StmtCtx.EnableOptimizerDebugTrace = true
-	} else if dom := domain.GetDomain(s); dom != nil && !sessVars.InRestrictedSQL {
-		// This is the earliest place we can get the SQL digest for this execution.
-		// If we find this digest is registered for PLAN REPLAYER CAPTURE, we need to enable optimizer debug trace no matter
-		// the plan digest will be matched or not.
-		if planReplayerHandle := dom.GetPlanReplayerHandle(); planReplayerHandle != nil {
-			tasks := planReplayerHandle.GetTasks()
-			for _, task := range tasks {
-				if task.SQLDigest == digest.String() {
-					sessVars.StmtCtx.EnableOptimizerDebugTrace = true
-				}
-			}
-		}
-	}
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		plannercore.DebugTraceReceivedCommand(s.pctx, cmdByte, stmtNode)
-	}
 
 	if err := s.validateStatementInTxn(stmtNode); err != nil {
 		return nil, err
@@ -2651,16 +2633,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
-		// Generate trace ID for point-get path (same as runStmt does)
-		prevTraceID := s.sessionVars.PrevTraceID
-		startTS := s.sessionVars.TxnCtx.StartTS
-		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
-		traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
-		ctx = trace.ContextWithTraceID(ctx, traceID)
-		s.currentCtx = ctx
-
-		// Store trace ID for next statement
-		s.sessionVars.PrevTraceID = traceID
+		ctx, prevTraceID := resetStmtTraceID(ctx, s)
 
 		// Emit stmt.start trace event (simplified for point-get fast path)
 		if traceevent.IsEnabled(traceevent.StmtLifecycle) {
@@ -2824,21 +2797,9 @@ func (s stmtLabelAlias) stmtLabelDumpTriggerCheck(config *traceevent.DumpTrigger
 	return config.UserCommand.StmtLabel == s.label
 }
 
-// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
-	failpoint.Inject("assertTxnManagerInRunStmt", func() {
-		sessiontxn.RecordAssert(se, "assertTxnManagerInRunStmt", true)
-		if stmt, ok := s.(*executor.ExecStmt); ok {
-			sessiontxn.AssertTxnManagerInfoSchema(se, stmt.InfoSchema)
-		}
-	})
-
-	r, ctx := tracing.StartRegionEx(ctx, "session.runStmt")
-	defer r.End()
-	if r.Span != nil {
-		r.Span.LogKV("sql", s.Text())
-	}
-
+// resetStmtTraceID generates a new trace ID for the current statement,
+// injects it into the session context for cross-statement correlation, and returns the previous trace ID.
+func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte) {
 	// Capture previous trace ID from session variables (for statement chaining)
 	// We store it in session variables instead of context because the context
 	// is recreated for each statement and doesn't persist across executions
@@ -2854,6 +2815,26 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	se.currentCtx = ctx
 	// Store trace ID for next statement
 	se.sessionVars.PrevTraceID = traceID
+
+	return ctx, prevTraceID
+}
+
+// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
+func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
+	failpoint.Inject("assertTxnManagerInRunStmt", func() {
+		sessiontxn.RecordAssert(se, "assertTxnManagerInRunStmt", true)
+		if stmt, ok := s.(*executor.ExecStmt); ok {
+			sessiontxn.AssertTxnManagerInfoSchema(se, stmt.InfoSchema)
+		}
+	})
+
+	r, ctx := tracing.StartRegionEx(ctx, "session.runStmt")
+	defer r.End()
+	if r.Span != nil {
+		r.Span.LogKV("sql", s.Text())
+	}
+
+	ctx, prevTraceID := resetStmtTraceID(ctx, se)
 	stmtCtx := se.sessionVars.StmtCtx
 	sqlDigest, _ := stmtCtx.SQLDigest()
 	// Make sure StmtType is filled even if succ is false.
@@ -4163,7 +4144,19 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	ses[0].GetSessionVars().InRestrictedSQL = true
+	// Mark all bootstrap sessions as restricted since they are used for internal operations
+	// ses[0]: main bootstrap session
+	// ses[1-2]: reserved
+	// ses[3]: privilege loading
+	// ses[4]: sysvar cache
+	// ses[5]: telemetry, expression pushdown
+	// ses[6]: plan replayer collector
+	// ses[7]: dump file GC
+	// ses[8]: historical stats
+	// ses[9]: bootstrap SQL file
+	for i := range ses {
+		ses[i].GetSessionVars().InRestrictedSQL = true
+	}
 
 	// get system tz from mysql.tidb
 	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
@@ -4407,6 +4400,12 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
 		upgrade(s)
+	case ddl.Normal:
+		// We need to init MDL variable before start the domain to prevent potential stuck issue
+		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
+		if err := InitMDLVariable(store); err != nil {
+			logutil.BgLogger().Fatal("init metadata lock failed during normal startup", zap.Error(err))
+		}
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
@@ -5529,7 +5528,7 @@ func GetDBNames(seVar *variable.SessionVars) []string {
 		}
 	}
 	if len(dbNames) == 0 {
-		dbNames[seVar.CurrentDB] = struct{}{}
+		dbNames[strings.ToLower(seVar.CurrentDB)] = struct{}{}
 	}
 	ns := make([]string, 0, len(dbNames))
 	for n := range dbNames {

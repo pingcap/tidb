@@ -11,6 +11,7 @@ go_test(
         "one_parquet_test.go",
         "parquet_test.go",
         "precheck_test.go",
+        "sdk_test.go",
         "util_test.go",
     ],
     embedsrcs = [
@@ -35,6 +36,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/executor/importer",
+        "//pkg/importsdk",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/lightning/backend/local",

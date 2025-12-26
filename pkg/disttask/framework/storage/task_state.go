@@ -253,7 +253,7 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 			    modify_params = null,
 				state_update_time = CURRENT_TIMESTAMP()
 			where id = %? and state = %?`,
-			prevState, task.Concurrency, task.MaxNodeCount, task.Meta, task.ID, proto.TaskStateModifying,
+			prevState, task.RequiredSlots, task.MaxNodeCount, task.Meta, task.ID, proto.TaskStateModifying,
 		)
 		if err != nil {
 			return err
@@ -269,7 +269,7 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 			update mysql.tidb_background_subtask
 			set concurrency = %?, state_update_time = unix_timestamp()
 			where task_key = %? and state in (%?, %?, %?)`,
-			task.Concurrency, task.ID,
+			task.RequiredSlots, task.ID,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning, proto.SubtaskStatePaused)
 		return err
 	})

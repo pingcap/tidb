@@ -88,6 +88,21 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		ResourceGroupName: "rg_Test",
 	}
 
+	checkRet := func(expectMatch bool, condition slowlogrule.SlowLogCondition) {
+		rule := &slowlogrule.SlowLogRule{
+			Conditions: []slowlogrule.SlowLogCondition{
+				condition,
+			},
+		}
+		ctx.GetSessionVars().SlowLogRules.Rules = []*slowlogrule.SlowLogRule{rule}
+
+		if expectMatch {
+			require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		} else {
+			require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		}
+	}
+
 	t.Run("string type", func(t *testing.T) {
 		ctx.GetSessionVars().CurrentDB = "db_Test"
 		ctx.GetSessionVars().SessionAlias = "seA"
@@ -111,22 +126,23 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		ctx.GetSessionVars().SessionAlias = "seA"
 		items.Digest = "abC"
 		require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+
+		// test Rewrite_time field
+		// test with zero value (RewriteInfo not set)
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogRewriteTimeStr, Threshold: 0.0})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogRewriteTimeStr, Threshold: 0.00000001})
+		// set RewritePhaseInfo and use Setter to populate items.RewriteInfo
+		ctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = 5 * time.Millisecond
+		accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogRewriteTimeStr)]
+		accessor.Setter(context.Background(), ctx.GetSessionVars(), items)
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogRewriteTimeStr, Threshold: 0.001})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogRewriteTimeStr, Threshold: 0.0})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogRewriteTimeStr, Threshold: 0.01})
+		// test reset DurationRewrite with smaller value (should not match larger threshold)
+		items.RewriteInfo.DurationRewrite = 500 * time.Microsecond
+		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogRewriteTimeStr, Threshold: 0.001})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogRewriteTimeStr, Threshold: 0.0001})
 	})
-
-	checkRet := func(expectMatch bool, condition slowlogrule.SlowLogCondition) {
-		rule := &slowlogrule.SlowLogRule{
-			Conditions: []slowlogrule.SlowLogCondition{
-				condition,
-			},
-		}
-		ctx.GetSessionVars().SlowLogRules.Rules = []*slowlogrule.SlowLogRule{rule}
-
-		if expectMatch {
-			require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
-		} else {
-			require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
-		}
-	}
 
 	t.Run("util.ExecDetails type", func(t *testing.T) {
 		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogKVTotal, Threshold: 0.00000001})
@@ -288,10 +304,6 @@ func TestParseSingleSlowLogField(t *testing.T) {
 
 	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "abc")
 	require.Error(t, err)
-
-	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogMemArbitration, "1.2345")
-	require.NoError(t, err)
-	require.Equal(t, 1.2345, v)
 
 	// string fields
 	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogDBStr, "testdb")

@@ -16,6 +16,9 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	goerrors "errors"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -42,16 +45,16 @@ import (
 
 type cloudImportExecutor struct {
 	taskexecutor.BaseStepExecutor
-	job             *model.Job
-	store           kv.Storage
-	indexes         []*model.IndexInfo
-	ptbl            table.PhysicalTable
-	cloudStoreURI   string
-	backendCtx      ingest.BackendCtx
-	backend         *local.Backend
-	taskConcurrency int
-	metric          *lightningmetric.Common
-	summary         *execute.SubtaskSummary
+	job           *model.Job
+	store         kv.Storage
+	indexes       []*model.IndexInfo
+	ptbl          table.PhysicalTable
+	cloudStoreURI string
+	backendCtx    ingest.BackendCtx
+	backend       *local.Backend
+	metric        *lightningmetric.Common
+	engine        atomic.Pointer[external.Engine]
+	summary       *execute.SubtaskSummary
 }
 
 func newCloudImportExecutor(
@@ -60,16 +63,14 @@ func newCloudImportExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
-	taskConcurrency int,
 ) (*cloudImportExecutor, error) {
 	return &cloudImportExecutor{
-		job:             job,
-		store:           store,
-		indexes:         indexes,
-		ptbl:            ptbl,
-		cloudStoreURI:   cloudStoreURI,
-		taskConcurrency: taskConcurrency,
-		summary:         &execute.SubtaskSummary{},
+		job:           job,
+		store:         store,
+		indexes:       indexes,
+		ptbl:          ptbl,
+		cloudStoreURI: cloudStoreURI,
+		summary:       &execute.SubtaskSummary{},
 	}, nil
 }
 
@@ -77,7 +78,8 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, hasUniqueIndex(e.indexes), false, e.taskConcurrency)
+	concurrency := int(e.GetResource().CPU.Capacity())
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, hasUniqueIndex(e.indexes), false, concurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -155,6 +157,14 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
+
+	eng := localBackend.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	e.engine.Store(eng)
+	defer e.engine.Store(nil)
+
 	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
@@ -208,14 +218,42 @@ func (e *cloudImportExecutor) ResetSummary() {
 }
 
 // TaskMetaModified changes the max write speed for ingest
-func (*cloudImportExecutor) TaskMetaModified(context.Context, []byte) error {
-	// Will be added in the future PR
+func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	logutil.Logger(ctx).Info("cloud import executor update task meta")
+	newTaskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+
+	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+	if newMaxWriteSpeed != e.job.ReorgMeta.GetMaxWriteSpeed() {
+		e.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+		if e.backend != nil {
+			e.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+		}
+	}
 	return nil
 }
 
 // ResourceModified change the concurrency for ingest
-func (*cloudImportExecutor) ResourceModified(context.Context, *proto.StepResource) error {
-	// Will be added in the future PR
+func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	logutil.Logger(ctx).Info("cloud import executor update resource")
+	newConcurrency := int(newResource.CPU.Capacity())
+	if newConcurrency == e.backend.GetWorkerConcurrency() {
+		return nil
+	}
+
+	eng := e.engine.Load()
+	if eng == nil {
+		// let framework retry
+		return goerrors.New("engine not started")
+	}
+
+	if err := eng.UpdateResource(ctx, newConcurrency, newResource.Mem.Capacity()); err != nil {
+		return err
+	}
+
+	e.backend.SetWorkerConcurrency(newConcurrency)
 	return nil
 }
 

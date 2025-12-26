@@ -1875,3 +1875,35 @@ func TestNonPreparedPlanCacheResourceGroup(t *testing.T) {
 	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
 }
+
+func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.Exec(`set @@global.tidb_enable_metadata_lock=off`)
+
+	tk.MustExec(`prepare stmt from 'select * from t where a = ?'`)
+	tk.MustExec(`set @a=1`)
+
+	// check that cache works without metadata lock
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+	tk.MustExec(`begin`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+	tk.MustExec(`rollback`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+}

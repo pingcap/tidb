@@ -181,3 +181,13 @@ func SetGlobalMemArbitratorGauge(gaugeVec prometheus.GaugeVec, taskType string, 
 
 	g.Set(float64(value))
 }
+
+// ResetGlobalMemArbitratorGauge resets all gauges for the global memory arbitrator to zero.
+func ResetGlobalMemArbitratorGauge() {
+	gauges.RLock()
+	defer gauges.RUnlock()
+
+	for _, g := range gauges.g {
+		g.Set(0)
+	}
+}
