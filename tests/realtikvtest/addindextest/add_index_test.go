@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -44,6 +45,14 @@ func TestCreateNonUniqueIndex(t *testing.T) {
 	}
 	ctx := testutils.InitTest(t)
 	testutils.TestOneColFrame(ctx, colIDs, testutils.AddIndexNonUnique)
+}
+
+func TestRepeatCreateNonUniqueIndex(t *testing.T) {
+	for i := 0; i < 30; i++ {
+		t.Run(fmt.Sprintf("iter_%d", i), func(t *testing.T) {
+			TestCreateNonUniqueIndex(t)
+		})
+	}
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
