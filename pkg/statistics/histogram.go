@@ -1227,12 +1227,15 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
+	maxTotalPercent := leftPercent + rightPercent
 	if entirelyOutOfRange {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// It is adjusted by a further 50% to reduce its impact.
 		timeAdjPercent := min(timeAdjLeft*0.5+timeAdjRight*0.5, 1.0) * 0.5
 		totalPercent = max(totalPercent, timeAdjPercent)
+		maxTotalPercent = max(maxTotalPercent, timeAdjLeft+timeAdjRight)
 	}
+	maxTotalPercent = min(maxTotalPercent, 1.0)
 
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
@@ -1250,6 +1253,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
 		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
+	addedRows *= maxTotalPercent
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
