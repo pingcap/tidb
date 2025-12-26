@@ -110,7 +110,7 @@ where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
 		`  ├─TableDual(Build) root  rows:1`,
 		`  └─HashAgg(Probe) root  group by:Column, Column, funcs:firstrow(1)->Column`,
 		`    └─Selection root  eq(Column, "1"), eq(Column, 1)`,
-		`      └─Window root  row_number()->Column over(rows between current row and current row)`,
+		`      └─Window root  row_number()->Column#12 over(rows between current row and current row)`,
 		`        └─Apply root  CARTESIAN left outer join, left side:TableReader`,
 		`          ├─TableReader(Build) root  data:TableFullScan`,
 		`          │ └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo`,
