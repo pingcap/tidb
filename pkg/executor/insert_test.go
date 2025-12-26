@@ -794,19 +794,30 @@ func TestXXX(t *testing.T) {
 
 	tk.MustExec("create table t (id int primary key, v int) active_active='on' softdelete retention 7 day")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("update t set _tidb_origin_ts = 1 where id = 2")
+	tk.MustExec("update t set _tidb_origin_ts = 2 where id = 2")
 	tk.MustExec("update t set _tidb_softdelete_time = now() where id = 3")
 
 	// mock CDC operation
 	tk.MustExec("set @@tidb_cdc_write_source = 1")
 	tk.MustExec("set @@tidb_translate_softdelete_sql = 0")
-	// 1 duplicate and overwrite
-	// 2 duplicate and skip
-	// 3 softdeleted, no duplicate
-	tk.MustExec(`insert into t (id, v, _tidb_origin_ts, _tidb_softdelete_time) values (1, 11, 666, NULL), (2, 22, 666, NULL), (3, 33, 666, NULL)
+	// 1 duplicate and skip
+	// 2 duplicate and overwrite
+	tk.MustExec(`insert into t (id, v, _tidb_origin_ts, _tidb_softdelete_time) values (1, 11, 666, NULL), (2, 22, 666, NULL)
 		on duplicate key update v = IF((@cond := (IFNULL(_tidb_origin_ts, _tidb_commit_ts) <= VALUES(_tidb_origin_ts))), VALUES(v), v),
 		_tidb_softdelete_time = IF(@cond, VALUES(_tidb_softdelete_time), _tidb_softdelete_time),
 		_tidb_origin_ts = IF(@cond, VALUES(_tidb_origin_ts), _tidb_origin_ts)`)
-	tk.MustQuery("select id, v, _tidb_origin_ts from t where _tidb_softdelete_time is null").Check(testkit.Rows("1 1 <nil>", "2 22 666", "3 33 666"))
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where _tidb_softdelete_time is null").Check(testkit.Rows("1 1 <nil>", "2 22 666"))
 	tk.MustQuery("select @@tidb_active_active_sync_stats").Check(testkit.Rows("{\"conflict_skip_rows\": 1}"))
+
+	tk.MustExec("begin")
+	tk.MustExec("set @xx = @@tidb_current_ts")
+	tk.MustExec("rollback")
+	// 3 softdeleted, no duplicate
+	// 4 new value, no duplicate
+	tk.MustExec(`insert into t (id, v, _tidb_origin_ts, _tidb_softdelete_time) values (3, 33, @xx, NULL), (4, 44, @xx, NULL)
+		on duplicate key update v = IF((@cond := (IFNULL(_tidb_origin_ts, _tidb_commit_ts) <= VALUES(_tidb_origin_ts))), VALUES(v), v),
+		_tidb_softdelete_time = IF(@cond, VALUES(_tidb_softdelete_time), _tidb_softdelete_time),
+		_tidb_origin_ts = IF(@cond, VALUES(_tidb_origin_ts), _tidb_origin_ts)`)
+	tk.MustQuery("select @@tidb_active_active_sync_stats").Check(testkit.Rows("{\"conflict_skip_rows\": 1}"))
+	tk.MustQuery("select id, v from t where _tidb_softdelete_time is null").Check(testkit.Rows("1 1", "2 22", "3 33", "4 44"))
 }
