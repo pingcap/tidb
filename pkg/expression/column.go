@@ -704,8 +704,12 @@ func (col *Column) CleanHashCode() {
 	col.hashcode = make([]byte, 0, 9)
 }
 
-func (col *Column) getIndex(schema *Schema) int {
-	return schema.ColumnIndex(col)
+func (col *Column) getIndex(schema *Schema) (int, error) {
+	index := schema.ColumnIndex(col)
+	if index == -1 {
+		return index, errors.Errorf("Can't find column %s in schema %s", col, schema)
+	}
+	return index, nil
 }
 
 // ResolveIndices implements Expression interface.
@@ -715,7 +719,7 @@ func (col *Column) ResolveIndices(schema *Schema, allowLazyCopy bool) (Expressio
 		col.indexResolved.Store(2)
 		return col, false, err
 	}
-	index := col.getIndex(schema)
+	index, err := col.getIndex(schema)
 	// index is not changed, no need to clone a new column
 	if index != -1 && col.indexResolved.Load() == 2 && col.Index == index {
 		return col, false, nil
@@ -723,20 +727,14 @@ func (col *Column) ResolveIndices(schema *Schema, allowLazyCopy bool) (Expressio
 	// else, clone a new column and resolve its index
 	newCol := col.CloneAndClearIndexResolvedFlag()
 	newCol.(*Column).Index = index
-	newCol.(*Column).indexResolved.Store(2)
-	if index == -1 {
-		return newCol, true, errors.Errorf("Can't find column %s in schema %s", col, schema)
-	}
 	// no datarace here because newCol is a local variable
-	return newCol, true, nil
+	newCol.(*Column).indexResolved.Store(2)
+	return newCol, true, err
 }
 
-func (col *Column) resolveIndices(schema *Schema, _ bool) error {
-	col.Index = col.getIndex(schema)
-	if col.Index == -1 {
-		return errors.Errorf("Can't find column %s in schema %s", col, schema)
-	}
-	return nil
+func (col *Column) resolveIndices(schema *Schema, _ bool) (err error) {
+	col.Index, err = col.getIndex(schema)
+	return err
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
