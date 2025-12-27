@@ -14,10 +14,7 @@
 
 package membuf
 
-import (
-	"encoding/binary"
-	"unsafe"
-)
+import "unsafe"
 
 const (
 	defaultPoolSize  = 1024
@@ -251,7 +248,7 @@ var sizeOfSlice = int(unsafe.Sizeof([]byte{}))
 
 // AllocBytes allocates bytes with the given length.
 func (b *Buffer) AllocBytes(n int) []byte {
-	if n+extraAllocateBytes > b.pool.blockSize {
+	if n > b.pool.blockSize {
 		return make([]byte, n)
 	}
 
@@ -262,28 +259,23 @@ func (b *Buffer) AllocBytes(n int) []byte {
 	return bs
 }
 
-const extraAllocateBytes = 4 // store length of slice
-
 // SliceLocation is like a reflect.SliceHeader, but it's associated with a
 // Buffer. The advantage is that it's smaller than a slice, and it doesn't
 // contain a pointer thus more GC-friendly.
 type SliceLocation struct {
-	SortKeyPrefix uint64
-	bufIdx        int32
-	offset        int32
+	bufIdx int32
+	offset int32
+	Length int32
 }
 
 var sizeOfSliceLocation = int(unsafe.Sizeof(SliceLocation{}))
 
 func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
-	// Store length at the beginning of the slice
-	needAllocate := n + extraAllocateBytes
-
-	if needAllocate > b.pool.blockSize {
+	if n > b.pool.blockSize {
 		return nil, SliceLocation{}
 	}
 
-	if b.curIdx+needAllocate > len(b.curBlock) {
+	if b.curIdx+n > len(b.curBlock) {
 		if b.blockCntLimit >= 0 && b.curBlockIdx+1 >= b.blockCntLimit {
 			return nil, SliceLocation{}
 		}
@@ -291,15 +283,11 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	}
 	blockIdx := int32(b.curBlockIdx)
 	offset := int32(b.curIdx)
-	loc := SliceLocation{
-		bufIdx: blockIdx,
-		offset: offset,
-	}
+	loc := SliceLocation{bufIdx: blockIdx, offset: offset, Length: int32(n)}
 
 	idx := b.curIdx
-	b.curIdx += needAllocate
-	binary.BigEndian.PutUint32(b.curBlock[idx:], uint32(n))
-	return b.curBlock[idx+extraAllocateBytes : b.curIdx : b.curIdx], loc
+	b.curIdx += n
+	return b.curBlock[idx:b.curIdx:b.curIdx], loc
 }
 
 // AllocBytesWithSliceLocation is like AllocBytes, but it must allocate the
@@ -332,16 +320,12 @@ func (b *Buffer) addBlock() {
 
 // GetSlice returns the byte slice for the slice location.
 func (b *Buffer) GetSlice(loc *SliceLocation) []byte {
-	block := b.blocks[loc.bufIdx]
-	length := binary.BigEndian.Uint32(block[loc.offset:])
-	return block[loc.offset+extraAllocateBytes : loc.offset+extraAllocateBytes+int32(length)]
+	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.Length]
 }
 
 // GetSliceByValue returns the byte slice for the slice location.
 func (b *Buffer) GetSliceByValue(loc SliceLocation) []byte {
-	block := b.blocks[loc.bufIdx]
-	length := binary.BigEndian.Uint32(block[loc.offset:])
-	return block[loc.offset+extraAllocateBytes : loc.offset+extraAllocateBytes+int32(length)]
+	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.Length]
 }
 
 // AddBytes adds the bytes into this Buffer's managed memory and return it.

@@ -142,8 +142,7 @@ func newChunkWorker(
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
 				SetOnDup(onDup).
-				SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec()).
-				SetWriterMode(external.WriterModeIndex)
+				SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", external.IndexID2KVGroup(indexID), workerUUID)
@@ -164,8 +163,7 @@ func newChunkWorker(
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
 			SetOnDup(onDup).
-			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec()).
-			SetWriterMode(external.WriterModeData)
+			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join(external.DataKVGroup, workerUUID)

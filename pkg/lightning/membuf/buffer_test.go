@@ -44,7 +44,7 @@ func (t *testAllocator) Free(_ []byte) {
 func TestBufferPool(t *testing.T) {
 	allocator := &testAllocator{}
 	pool := NewPool(
-		WithBlockNum(3),
+		WithBlockNum(2),
 		WithAllocator(allocator),
 		WithBlockSize(1024),
 	)
@@ -58,11 +58,11 @@ func TestBufferPool(t *testing.T) {
 	bytesBuf.AllocBytes(257)
 	require.Equal(t, 2, allocator.allocs)
 	bytesBuf.AllocBytes(767)
-	require.Equal(t, 3, allocator.allocs)
+	require.Equal(t, 2, allocator.allocs)
 
 	largeBytes := bytesBuf.AllocBytes(1025)
 	require.Equal(t, 1025, len(largeBytes))
-	require.Equal(t, 3, allocator.allocs)
+	require.Equal(t, 2, allocator.allocs)
 
 	require.Equal(t, 0, allocator.frees)
 	bytesBuf.Destroy()
@@ -70,11 +70,11 @@ func TestBufferPool(t *testing.T) {
 
 	bytesBuf = pool.NewBuffer()
 	for range 6 {
-		bytesBuf.AllocBytes(508)
+		bytesBuf.AllocBytes(512)
 	}
 	bytesBuf.Destroy()
 	require.Equal(t, 3, allocator.allocs)
-	require.Equal(t, 0, allocator.frees)
+	require.Equal(t, 1, allocator.frees)
 }
 
 func TestPoolMemLimit(t *testing.T) {
@@ -141,7 +141,7 @@ func TestBufferMemLimit(t *testing.T) {
 	// the actual memory limit is 10 bytes.
 	bytesBuf := pool.NewBuffer(WithBufferMemoryLimit(5))
 
-	got, _ := bytesBuf.AllocBytesWithSliceLocation(6)
+	got, _ := bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(3)
 	require.Nil(t, got)
@@ -154,9 +154,9 @@ func TestBufferMemLimit(t *testing.T) {
 	// exactly 2 block
 	bytesBuf = pool.NewBuffer(WithBufferMemoryLimit(20))
 
-	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
-	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(2)
 	require.Nil(t, got)
@@ -164,9 +164,9 @@ func TestBufferMemLimit(t *testing.T) {
 	// after reset, can get same allocation again
 	bytesBuf.Reset()
 
-	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
-	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(2)
 	require.Nil(t, got)
