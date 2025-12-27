@@ -49,7 +49,7 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
-    shard_count = 26,
+    shard_count = 27,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",

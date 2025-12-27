@@ -51,3 +51,10 @@ func TestStep(t *testing.T) {
 	// unknown type
 	require.Equal(t, "unknown type 123", Step2Str(TaskType("123"), 123))
 }
+
+func TestIsValidStep(t *testing.T) {
+	require.True(t, IsValidStep(Backfill, BackfillStepReadIndex))
+	require.False(t, IsValidStep(Backfill, 123))
+	require.True(t, IsValidStep(ImportInto, ImportStepWriteAndIngest))
+	require.False(t, IsValidStep(ImportInto, 456))
+}

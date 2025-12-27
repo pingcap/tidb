@@ -16,6 +16,7 @@ package proto
 
 import (
 	"fmt"
+	"strings"
 )
 
 // Step is the step of task.
@@ -27,6 +28,8 @@ type Step int64
 const (
 	StepInit Step = -1
 	StepDone Step = -2
+
+	unknownStepPrefix = "unknown step"
 )
 
 // Step2Str converts step to string.
@@ -49,6 +52,12 @@ func Step2Str(t TaskType, s Step) string {
 	return fmt.Sprintf("unknown type %s", t)
 }
 
+// IsValidStep returns whether the step is valid for the task type.
+func IsValidStep(t TaskType, s Step) bool {
+	str := Step2Str(t, s)
+	return !strings.Contains(str, unknownStepPrefix)
+}
+
 // Steps of example task type.
 const (
 	StepOne   Step = 1
@@ -65,7 +74,7 @@ func exampleStep2Str(s Step) string {
 	case StepThree:
 		return "three"
 	default:
-		return fmt.Sprintf("unknown step %d", s)
+		return unknownStepStr(s)
 	}
 }
 
@@ -134,7 +143,7 @@ func importIntoStep2Str(s Step) string {
 	case ImportStepConflictResolution:
 		return "conflict-resolution"
 	default:
-		return fmt.Sprintf("unknown step %d", s)
+		return unknownStepStr(s)
 	}
 }
 
@@ -172,6 +181,10 @@ func backfillStep2Str(s Step) string {
 	case BackfillStepMergeTempIndex:
 		return "merge-temp-index"
 	default:
-		return fmt.Sprintf("unknown step %d", s)
+		return unknownStepStr(s)
 	}
+}
+
+func unknownStepStr(s Step) string {
+	return fmt.Sprintf("%s %d", unknownStepPrefix, s)
 }
