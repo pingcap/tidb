@@ -14,6 +14,8 @@ go_library(
         "physical_batch_point_get.go",
         "physical_common_plans.go",
         "physical_cte.go",
+        "physical_cte_sink.go",
+        "physical_cte_source.go",
         "physical_cte_table.go",
         "physical_exchange_receiver.go",
         "physical_exchange_sender.go",
