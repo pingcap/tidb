@@ -18,6 +18,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -82,6 +83,9 @@ func parseLine(line string) string {
 	}
 	m := keywordRe.FindStringSubmatch(line)
 	if len(m) != 2 {
+		return ""
+	}
+	if slices.Contains(keywordsMariaDB, m[1]) {
 		return ""
 	}
 	return m[1]
