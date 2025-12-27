@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -153,6 +154,7 @@ func (tk *TestKit) MustExec(sql string, args ...any) {
 		}
 	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	tk.MustExecWithContext(ctx, sql, args...)
 }
 
@@ -248,6 +250,7 @@ func (tk *TestKit) MustQueryToErr(sql string, args ...any) {
 func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...any) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
 	cmts := append([]any{comment}, tk.comments...)
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	rs, err := tk.ExecWithContext(ctx, sql, args...)
 	tk.require.NoError(err, cmts)
 	tk.require.NotNil(rs, cmts)
@@ -381,6 +384,7 @@ func (tk *TestKit) NotHasKeywordInOperatorInfo(sql string, keyword string, args 
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...any) (sqlexec.RecordSet, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	return tk.ExecWithContext(ctx, sql, args...)
 }
 
