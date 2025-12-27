@@ -1268,7 +1268,10 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 		tblInfo.Partition = &pi
 	}
 
-	if referTblInfo.TTLInfo != nil {
+	// for issue #64948, temporary table does not support TLL, we should remove it
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		tblInfo.TTLInfo = nil
+	} else if tblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
 
