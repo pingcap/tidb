@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
@@ -542,6 +541,7 @@ outside:
 	}
 	// Create a single string and create slices out of it.
 	// This pins the memory of the fields together, but allocates once.
+	str := string(parser.recordBuffer) // Convert to string once to batch allocations
 	dst = dst[:0]
 	if cap(dst) < len(parser.fieldIndexes) {
 		dst = make([]field, len(parser.fieldIndexes))
@@ -549,7 +549,7 @@ outside:
 	dst = dst[:len(parser.fieldIndexes)]
 	var preIdx int
 	for i, idx := range parser.fieldIndexes {
-		dst[i].content = string(hack.String(parser.recordBuffer[preIdx:idx]))
+		dst[i].content = str[preIdx:idx]
 		dst[i].quoted = parser.fieldIsQuoted[i]
 		preIdx = idx
 	}
