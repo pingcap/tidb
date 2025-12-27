@@ -3418,3 +3418,50 @@ SELECT UTC_TIMESTAMP(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'utc_timestamp'. Maximum is 6.
 SELECT UTC_TIMESTAMP(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
+SELECT DATE_FORMAT('2023-10-30', '');
+DATE_FORMAT('2023-10-30', '')
+NULL
+show warnings;
+Level	Code	Message
+SELECT DATE_FORMAT('2023-10-32', '');
+DATE_FORMAT('2023-10-32', '')
+NULL
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2023-10-32'
+SELECT DATE_FORMAT('0000-10-30', '');
+DATE_FORMAT('0000-10-30', '')
+NULL
+show warnings;
+Level	Code	Message
+SELECT DATE_FORMAT('2023-00-30', '');
+DATE_FORMAT('2023-00-30', '')
+NULL
+show warnings;
+Level	Code	Message
+SELECT DATE_FORMAT('2023-10-00', '');
+DATE_FORMAT('2023-10-00', '')
+NULL
+show warnings;
+Level	Code	Message
+SELECT DATE_FORMAT('0000-00-30', '');
+DATE_FORMAT('0000-00-30', '')
+NULL
+show warnings;
+Level	Code	Message
+SELECT DATE_FORMAT('0000-10-00', '');
+DATE_FORMAT('0000-10-00', '')
+NULL
+show warnings;
+Level	Code	Message
+SELECT DATE_FORMAT('2023-00-00', '');
+DATE_FORMAT('2023-00-00', '')
+NULL
+show warnings;
+Level	Code	Message
+SELECT DATE_FORMAT('0000-00-00', '');
+DATE_FORMAT('0000-00-00', '')
+NULL
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '0000-00-00 00:00:00.000000'
