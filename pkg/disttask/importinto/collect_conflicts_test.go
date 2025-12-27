@@ -32,8 +32,8 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	stMeta := importinto.CollectConflictsStepMeta{Infos: hdlCtx.conflictedKVInfo}
 	bytes, err := json.Marshal(stMeta)
 	require.NoError(t, err)
-	st := &proto.Subtask{SubtaskBase: proto.SubtaskBase{Concurrency: 1}, Meta: bytes}
-	stepExe := importinto.NewCollectConflictsStepExecutor(1, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
+	st := &proto.Subtask{Meta: bytes}
+	stepExe := importinto.NewCollectConflictsStepExecutor(&proto.TaskBase{RequiredSlots: 1}, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
 	runConflictedKVHandleStep(t, st, stepExe)
 	outSTMeta := &importinto.CollectConflictsStepMeta{}
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))

@@ -174,8 +174,8 @@ func TestConflictResolutionStepExecutor(t *testing.T) {
 	stMeta := importinto.ConflictResolutionStepMeta{Infos: hdlCtx.conflictedKVInfo}
 	bytes, err := json.Marshal(stMeta)
 	require.NoError(t, err)
-	st := &proto.Subtask{SubtaskBase: proto.SubtaskBase{Concurrency: 1}, Meta: bytes}
-	stepExe := importinto.NewConflictResolutionStepExecutor(1, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
+	st := &proto.Subtask{SubtaskBase: proto.SubtaskBase{}, Meta: bytes}
+	stepExe := importinto.NewConflictResolutionStepExecutor(&proto.TaskBase{RequiredSlots: 1}, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
 	runConflictedKVHandleStep(t, st, stepExe)
 	hdlCtx.tk.MustQuery("select * from tc").Sort().Check(testkit.Rows("4 4 4", "5 5 5"))
 }

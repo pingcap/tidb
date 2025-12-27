@@ -38,7 +38,7 @@ import (
 
 type conflictResolutionStepExecutor struct {
 	taskexecutor.BaseStepExecutor
-	taskID   int64
+	task     *proto.TaskBase
 	store    tidbkv.Storage
 	taskMeta *TaskMeta
 	logger   *zap.Logger
@@ -52,13 +52,13 @@ var _ execute.StepExecutor = &conflictResolutionStepExecutor{}
 // NewConflictResolutionStepExecutor creates a new StepExecutor for conflict
 // resolution step, exported for test.
 func NewConflictResolutionStepExecutor(
-	taskID int64,
+	task *proto.TaskBase,
 	store tidbkv.Storage,
 	taskMeta *TaskMeta,
 	logger *zap.Logger,
 ) execute.StepExecutor {
 	return &conflictResolutionStepExecutor{
-		taskID:   taskID,
+		task:     task,
 		taskMeta: taskMeta,
 		logger:   logger,
 		store:    store,
@@ -66,7 +66,7 @@ func NewConflictResolutionStepExecutor(
 }
 
 func (e *conflictResolutionStepExecutor) Init(ctx context.Context) error {
-	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store, e.logger)
+	tableImporter, err := getTableImporter(ctx, e.task.ID, e.taskMeta, e.store, e.logger)
 	if err != nil {
 		return err
 	}
@@ -102,7 +102,7 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 	// it's possible to resolve different kv groups in parallel, we can enhance
 	// it later.
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
-		err = e.resolveConflictsOfKVGroup(ctx, objStore, subtask.Concurrency, kvGroup, ci)
+		err = e.resolveConflictsOfKVGroup(ctx, objStore, int(e.GetResource().CPU.Capacity()), kvGroup, ci)
 		failpoint.InjectCall("afterResolveOneKVGroup", &err)
 		if err != nil {
 			return err
