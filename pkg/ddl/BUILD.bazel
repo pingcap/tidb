@@ -232,6 +232,7 @@ go_test(
         "attributes_sql_test.go",
         "backfilling_dist_scheduler_test.go",
         "backfilling_test.go",
+        "backfilling_txn_executor_test.go",
         "bdr_test.go",
         "bench_test.go",
         "cancel_test.go",
