@@ -1060,10 +1060,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
-	oneValue := float64(0)
-	if histNDV > 0 {
-		oneValue = max(1, hg.NotNullCount()/max(float64(histNDV), outOfRangeBetweenRate)) // avoid inaccurate selectivity caused by small NDV
-	}
+	// outOfRangeBetweenRate (100) avoids an artificially low NDV.
+	oneValue := max(1.0, hg.NotNullCount()/max(float64(histNDV), outOfRangeBetweenRate))
 
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
