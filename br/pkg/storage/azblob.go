@@ -822,6 +822,11 @@ func (r *azblobObjectReader) reopenReader() error {
 		}
 	}
 
+	if r.pos == r.totalSize {
+		r.reader = io.NopCloser(bytes.NewReader(nil))
+		return nil
+	}
+
 	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{
 		Range: blob.HTTPRange{
 			Offset: r.pos,
