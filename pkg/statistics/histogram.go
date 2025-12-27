@@ -1208,25 +1208,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
-	if skewRatio > 0 {
-		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
-		result := CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
-		result.Est = max(result.Est, oneValue)
-		result.MinEst = 1
-		result.MaxEst = max(result.Est, addedRows)
-		return result
-	}
+	result = CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
+	result.Est = max(result.Est, oneValue)
+	result.MinEst = 1
+	result.MaxEst = max(result.Est, addedRows)
 
-	// Use oneValue as lower bound and provide meaningful min/max estimates
-	finalEst := max(avgRowCount, oneValue)
-	// Maximum could be as high as all added rows.
-	maxEst := max(finalEst, addedRows)
-
-	return RowEstimate{
-		Est:    finalEst,
-		MinEst: 1, // Assume a minimum of 1 row qualifies
-		MaxEst: maxEst,
-	}
+	return result
 }
 
 // Copy deep copies the histogram.
