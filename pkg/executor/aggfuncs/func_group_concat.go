@@ -60,8 +60,21 @@ type baseGroupConcat4String struct {
 	truncated *int32
 }
 
+func (*baseGroupConcat4String) AllocPartialResult() (PartialResult, int64) {
+	panic("Not implemented")
+}
+
+func (*baseGroupConcat4String) ResetPartialResult(PartialResult) {
+	panic("Not implemented")
+}
+
+func (*baseGroupConcat4String) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
+	panic("Not implemented")
+}
+
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcat)(pr)
+
 	if p.buffer == nil {
 		chk.AppendNull(e.ordinal)
 		return nil
@@ -88,6 +101,46 @@ func (e *baseGroupConcat4String) truncatePartialResultIfNeed(ctx AggFuncUpdateCo
 		return e.handleTruncateError(ctx)
 	}
 	return nil
+}
+
+type baseGroupConcatDistinct4String struct {
+	baseGroupConcat4String
+}
+
+func (e *baseGroupConcatDistinct4String) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4GroupConcatDistinct)(pr)
+
+	if p.valSet.Len() == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+
+	for _, val := range p.valSet.M {
+		if p.buffer == nil {
+			p.buffer = &bytes.Buffer{}
+		} else {
+			p.buffer.WriteString(e.sep)
+		}
+		p.buffer.WriteString(val)
+	}
+
+	err := e.truncatePartialResultIfNeed(sctx, p.buffer)
+	if err != nil {
+		return err
+	}
+
+	chk.AppendString(e.ordinal, p.buffer.String())
+	return nil
+}
+
+// SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *baseGroupConcatDistinct4String) SetTruncated(t *int32) {
+	e.truncated = t
+}
+
+// GetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *baseGroupConcatDistinct4String) GetTruncated() *int32 {
+	return e.truncated
 }
 
 // nolint:structcheck
@@ -207,40 +260,54 @@ func (e *groupConcat) GetTruncated() *int32 {
 
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
-	valSet            set.StringSetWithMemoryUsage
+	valSet            set.StringToStringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
-type groupConcatDistinct struct {
-	baseGroupConcat4String
+type groupPartialConcatDistinct struct {
+	baseGroupConcatDistinct4String
 }
 
-func (*groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (e *groupPartialConcatDistinct) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+	s, d := (*partialResult4GroupConcatDistinct)(src), (*partialResult4GroupConcatDistinct)(dst)
+
+	for key, val := range s.valSet.M {
+		if d.valSet.Exist(key) {
+			continue
+		}
+
+		memDelta += d.valSet.Insert(key, val)
+		memDelta += int64(len(e.sep) + len(key) + len(val))
+	}
+
+	return memDelta, nil
+}
+
+type groupOriginalConcatDistinct struct {
+	baseGroupConcatDistinct4String
+}
+
+func (*groupOriginalConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	setSize := int64(0)
-	p.valSet, setSize = set.NewStringSetWithMemoryUsage()
+	p.valSet, setSize = set.NewStringToStringSetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + DefBytesBufferSize + setSize
 }
 
-func (*groupConcatDistinct) ResetPartialResult(pr PartialResult) {
+func (*groupOriginalConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.buffer = nil
-	p.valSet, _ = set.NewStringSetWithMemoryUsage()
+	p.valSet, _ = set.NewStringToStringSetWithMemoryUsage()
 }
 
-func (e *groupConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *groupOriginalConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	v, isNull := "", false
 	memDelta += int64(-p.valsBuf.Cap()) + (int64(-cap(p.encodeBytesBuffer)))
-	if p.buffer != nil {
-		memDelta += int64(-p.buffer.Cap())
-	}
+
 	defer func() {
 		memDelta += int64(p.valsBuf.Cap()) + (int64(cap(p.encodeBytesBuffer)))
-		if p.buffer != nil {
-			memDelta += int64(p.buffer.Cap())
-		}
 	}()
 
 	collators := make([]collate.Collator, 0, len(e.args))
@@ -269,31 +336,22 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx AggFuncUpdateContext, row
 		if p.valSet.Exist(joinedVal) {
 			continue
 		}
-		memDelta += p.valSet.Insert(joinedVal)
+		valStr := p.valsBuf.String()
+		memDelta += p.valSet.Insert(joinedVal, valStr)
 		memDelta += int64(len(joinedVal))
-		// write separator
-		if p.buffer == nil {
-			p.buffer = &bytes.Buffer{}
-			memDelta += DefBytesBufferSize
-		} else {
-			p.buffer.WriteString(e.sep)
-		}
-		// write values
-		p.buffer.WriteString(p.valsBuf.String())
+		memDelta += int64(len(valStr))
 	}
-	if p.buffer != nil {
-		return memDelta, e.truncatePartialResultIfNeed(sctx, p.buffer)
-	}
+
 	return memDelta, nil
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
-func (e *groupConcatDistinct) SetTruncated(t *int32) {
+func (e *groupOriginalConcatDistinct) SetTruncated(t *int32) {
 	e.truncated = t
 }
 
 // GetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
-func (e *groupConcatDistinct) GetTruncated() *int32 {
+func (e *groupOriginalConcatDistinct) GetTruncated() *int32 {
 	return e.truncated
 }
 
