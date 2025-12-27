@@ -282,8 +282,8 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		count.MultiplyAll(increaseFactor)
 
-		// handling the out-of-range part
-		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+		// handling the out-of-range part (unless the row count is already greater than the realtime row count)
+		if count.Est < float64(realtimeRowCount) && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {

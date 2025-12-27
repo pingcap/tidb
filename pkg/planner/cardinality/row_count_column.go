@@ -209,15 +209,13 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			}
 			cnt.Add(highCnt)
 		}
-		// Clamp all 3 fields of RowEstimate to [0, realtimeRowCount]
-		cnt.Clamp(0, float64(realtimeRowCount))
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		cnt.MultiplyAll(increaseFactor)
 
-		// handling the out-of-range part
-		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
+		// handling the out-of-range part (unless the row count is already greater than the realtime row count)
+		if cnt.Est < float64(realtimeRowCount) && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
 			histNDV := c.NDV
 			// Exclude the TopN
 			if c.StatsVer == statistics.Version2 {
