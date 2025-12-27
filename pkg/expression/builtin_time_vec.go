@@ -609,6 +609,9 @@ func (b *builtinGetFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 }
 
 func (b *builtinGetFormatSig) getFormat(format, location string) string {
+	// for Issue 59420, location should be case insensitive
+	location = strings.ToUpper(location)
+
 	res := ""
 	switch format {
 	case dateFormat:
