@@ -323,6 +323,11 @@ func (b *Buffer) GetSlice(loc *SliceLocation) []byte {
 	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.Length]
 }
 
+// GetSliceByValue returns the byte slice for the slice location.
+func (b *Buffer) GetSliceByValue(loc SliceLocation) []byte {
+	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.Length]
+}
+
 // AddBytes adds the bytes into this Buffer's managed memory and return it.
 func (b *Buffer) AddBytes(bytes []byte) []byte {
 	buf := b.AllocBytes(len(bytes))

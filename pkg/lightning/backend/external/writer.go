@@ -567,13 +567,13 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortStart := time.Now()
 	var (
 		dupFound bool
-		dupLoc   *membuf.SliceLocation
+		dupLoc   membuf.SliceLocation
 	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
+		res := bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
 		if res == 0 && !dupFound {
 			dupFound = true
-			dupLoc = &i
+			dupLoc = i
 		}
 		return res
 	})
@@ -592,10 +592,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		case engineapi.OnDuplicateKeyRecord:
 			// we don't have a global view, so need to keep duplicates with duplicate
 			// count <= 2, so later we can find them.
-			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
+			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLocPtr)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyRemove:
-			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
+			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLocPtr, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
 			dupKey := slices.Clone(w.getKeyByLoc(dupLoc))
@@ -645,7 +645,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.totalSize += uint64(w.kvSize)
 		w.kvFileCount++
 
-		minKey, maxKey := w.getKeyByLoc(&w.kvLocations[0]), w.getKeyByLoc(&w.kvLocations[len(w.kvLocations)-1])
+		minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
 		w.recordMinMax(minKey, maxKey)
 
 		w.addNewKVFile2MultiFileStats(dataFile, statFile, minKey, maxKey)
@@ -789,14 +789,20 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 	return dupPath, nil
 }
 
-func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
+func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSliceByValue(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[2*lengthBytes : 2*lengthBytes+keyLen]
+}
+
+func (w *Writer) getKeyByLocPtr(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
 }
 
-func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
-	block := w.kvBuffer.GetSlice(loc)
+func (w *Writer) getValueByLoc(loc membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSliceByValue(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
 	return block[2*lengthBytes+keyLen:]
 }
