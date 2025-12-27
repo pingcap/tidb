@@ -911,6 +911,7 @@ func (rc *LogClient) RestoreKVFiles(
 		memApplied = metrics.KVLogFileEmittedMemory.WithLabelValues("2-applied")
 	)
 	applyFunc := func(files []*LogDataFileInfo, kvCount int64, size uint64) {
+		cnt := 0
 		if len(files) == 0 {
 			return
 		}
@@ -926,6 +927,9 @@ func (rc *LogClient) RestoreKVFiles(
 		} else {
 			submitted.Add(float64(len(files)))
 			applyWg.Add(1)
+			cnt += 1
+			i := cnt
+			ectx := logutil.ContextWithField(ectx, zap.Int("sn", i))
 			rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				started.Add(float64(len(files)))
 				fileStart := time.Now()
@@ -953,7 +957,7 @@ func (rc *LogClient) RestoreKVFiles(
 								}
 							}
 						}
-						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+						logutil.CL(ectx).Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
 							zap.Uint64("min-ts", minTs), zap.Uint64("max-ts", maxTs), zap.String("cf", files[0].Cf),
 							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 
