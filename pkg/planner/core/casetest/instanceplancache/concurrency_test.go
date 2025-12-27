@@ -93,6 +93,9 @@ func (w *worker) run() {
 func testWithWorkers(TKs []*testkit.TestKit, stmts []*testStmt) {
 	nStmts := make([][]*testStmt, len(TKs))
 	for _, stmt := range stmts {
+		if stmt == nil {
+			continue
+		}
 		if isDML(stmt.normalStmt) { // avoid duplicate DML
 			x := rand.Intn(len(TKs))
 			nStmts[x] = append(nStmts[x], stmt)
@@ -194,6 +197,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		switch rand.Intn(2) {
 		case 0: // update sbtest set k=k+1 where id=?
 			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+			if id == txnLeastID {
+				return nil // avoid updating duplicated row id and deadlock
+			}
 			txnLeastID = id
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set k=k+1 where id=%v", id),
@@ -203,6 +209,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 		default: // update sbtest set c=? where id=?
 			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+			if id == txnLeastID {
+				return nil // avoid updating duplicated row id and deadlock
+			}
 			txnLeastID = id
 			c := fmt.Sprintf("%v", rand.Intn(10000))
 			return &testStmt{
@@ -227,6 +236,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	}
 	genDelete := func() *testStmt {
 		id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+		if id == txnLeastID {
+			return nil // avoid deleting duplicated row id and deadlock
+		}
 		txnLeastID = id
 		return &testStmt{
 			normalStmt: fmt.Sprintf("delete from normal.sbtest where id=%v", id),

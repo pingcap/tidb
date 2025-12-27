@@ -116,7 +116,7 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 	e.resetForNewSubtask(subtask.ID)
 
 	for kvGroup, ci := range stMeta.Infos.ConflictInfos {
-		err := e.collectConflictsOfKVGroup(ctx, objStore, e.task.RequiredSlots, kvGroup, ci)
+		err := e.collectConflictsOfKVGroup(ctx, objStore, int(e.GetResource().CPU.Capacity()), kvGroup, ci)
 		failpoint.InjectCall("afterCollectOneKVGroup", &err)
 		if err != nil {
 			return err
