@@ -16,6 +16,7 @@ package importintotest
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -23,11 +24,88 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
+
+//go:embed memorycheck.parquet
+var parquetCheckContent []byte
+
+//go:embed list.parquet
+var listParquetContent []byte
+
+//go:embed map.parquet
+var mapParquetContent []byte
+
+func (s *mockGCSSuite) TestPrecheckParquet() {
+	bak := mydump.ParquetParserMemoryLimit
+	s.T().Cleanup(func() {
+		mydump.ParquetParserMemoryLimit = bak
+	})
+
+	s.prepareAndUseDB("check_parquet")
+
+	type testCase struct {
+		name        string
+		content     []byte
+		memoryLimit int64
+		expectError error
+	}
+
+	// Write file with map type
+	for _, tc := range []testCase{
+		{
+			// List logical type is not supported.
+			// Note: we will support list type in the future, but not now.
+			name:        "list.parquet",
+			content:     listParquetContent,
+			memoryLimit: 0,
+			expectError: exeerrors.ErrLoadDataPreCheckFailed,
+		},
+		{
+			// Map logical type is not supported.
+			name:        "map.parquet",
+			content:     mapParquetContent,
+			memoryLimit: 0,
+			expectError: exeerrors.ErrLoadDataPreCheckFailed,
+		},
+		{
+			name:        "memorycheck.parquet",
+			content:     parquetCheckContent,
+			memoryLimit: 512,
+			expectError: exeerrors.ErrLoadDataPreCheckFailed,
+		},
+		{
+			name:        "memorycheck.parquet",
+			content:     parquetCheckContent,
+			memoryLimit: 0,
+			expectError: nil,
+		},
+	} {
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{
+				BucketName: "precheck-parquet",
+				Name:       tc.name,
+			},
+			Content: tc.content,
+		})
+
+		if tc.memoryLimit > 0 {
+			mydump.ParquetParserMemoryLimit = tc.memoryLimit
+		} else {
+			mydump.ParquetParserMemoryLimit = bak
+		}
+
+		s.tk.MustExec("drop table if exists t;")
+		s.tk.MustExec("create table t (a char(16))")
+		sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://precheck-parquet/%s?endpoint=%s'`, tc.name, gcsEndpoint)
+		err := s.tk.QueryToErr(sql)
+		require.ErrorIs(s.T(), err, tc.expectError)
+	}
+}
 
 func (s *mockGCSSuite) TestPreCheckTotalFileSize0() {
 	s.server.CreateObject(fakestorage.Object{

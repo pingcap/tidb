@@ -531,6 +531,11 @@ error = '''
 update pd error
 '''
 
+["Lightning:Parquet:ErrParquetSchemaInvalid"]
+error = '''
+check parquet schema failed, `%s`
+'''
+
 ["Lightning:PreCheck:ErrCheckCDCPiTR"]
 error = '''
 check TiCDC/PiTR task error

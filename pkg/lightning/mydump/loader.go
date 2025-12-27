@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -92,9 +93,8 @@ type MDTableMeta struct {
 
 // ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
 type ParquetFileMeta struct {
-	// memory usage for reader, preserve for later PR
-	MemoryUsage int
-	Loc         *time.Location
+	allocator memory.Allocator
+	Loc       *time.Location
 }
 
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
@@ -266,11 +266,6 @@ type MDLoader struct {
 type RawFile struct {
 	Path string
 	Size int64
-}
-
-type parquetInfo struct {
-	rowSize          float64 // the average row size of the parquet file
-	compressionRatio float64 // the estimated compression ratio of the parquet file
 }
 
 type mdLoaderSetup struct {
@@ -483,10 +478,10 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		// process file size for parquet files
 		if info.FileMeta.Type == SourceTypeParquet {
 			v, _ := s.sampledParquetInfos.Load(info.TableName.String())
-			pinfo, _ := v.(parquetInfo)
-			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * pinfo.compressionRatio)
+			checkRes, _ := v.(ParquetPrecheckResult)
+			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * checkRes.SizeExpansionRatio)
 			// Postpone reading the row count to `MakeTableRegion` if necessary.
-			info.FileMeta.Rows = int64(float64(info.FileMeta.RealSize) / pinfo.rowSize)
+			info.FileMeta.Rows = int64(float64(info.FileMeta.RealSize) / checkRes.AvgRowSize)
 
 			if m, ok := metric.FromContext(ctx); ok {
 				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, info.TableName.String()).Add(float64(info.FileMeta.Rows))
@@ -626,18 +621,17 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 	case SourceTypeParquet:
 		tableName := info.TableName.String()
 
-		// Only sample once for each table
-		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, parquetInfo{})
+		// Only check once for each table
+		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, ParquetPrecheckResult{})
 		if !loaded {
-			rows, rowSize, err := SampleStatisticsFromParquet(ctx, info.FileMeta.Path, s.loader.GetStore())
+			checkRes, err := PrecheckParquet(ctx, s.loader.GetStore(), path)
 			if err != nil {
-				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
+				logger.Error("check parquet file meets error", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
 					zap.Stringer("type", res.Type), zap.Error(err))
 				return nil, errors.Trace(err)
 			}
-			compressionRatio := float64(info.FileMeta.FileSize) / (rowSize * float64(rows))
-			s.sampledParquetInfos.Store(tableName, parquetInfo{rowSize, compressionRatio})
+			s.sampledParquetInfos.Store(tableName, *checkRes)
 		}
 	}
 

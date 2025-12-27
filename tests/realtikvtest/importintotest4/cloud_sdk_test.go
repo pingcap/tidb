@@ -315,7 +315,7 @@ func (s *mockGCSSuite) getParquetData() []byte {
 	}
 
 	tmpDir := s.T().TempDir()
-	s.Require().NoError(mydump.WriteParquetFile(tmpDir, "test.parquet", pc, 2))
+	s.Require().NoError(mydump.WriteParquetFile(tmpDir, "test.parquet", pc, 1, 2))
 	data, err := os.ReadFile(filepath.Join(tmpDir, "test.parquet"))
 	s.Require().NoError(err)
 	s.NotEmpty(data)

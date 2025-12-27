@@ -44,6 +44,7 @@ var (
 	ErrInvalidSchemaFile  = errors.Normalize("invalid schema file", errors.RFCCodeText("Lightning:Loader:ErrInvalidSchemaFile"))
 	ErrTooManySourceFiles = errors.Normalize("too many source files", errors.RFCCodeText("Lightning:Loader:ErrTooManySourceFiles"))
 
+	ErrParquetSchemaInvalid       = errors.Normalize("check parquet schema failed, `%s`", errors.RFCCodeText("Lightning:Parquet:ErrParquetSchemaInvalid"))
 	ErrSystemRequirementNotMet    = errors.Normalize("system requirement not met", errors.RFCCodeText("Lightning:PreCheck:ErrSystemRequirementNotMet"))
 	ErrCheckpointSchemaConflict   = errors.Normalize("checkpoint schema conflict", errors.RFCCodeText("Lightning:PreCheck:ErrCheckpointSchemaConflict"))
 	ErrPreCheckFailed             = errors.Normalize("tidb-lightning pre-check failed: %s", errors.RFCCodeText("Lightning:PreCheck:ErrPreCheckFailed"))
