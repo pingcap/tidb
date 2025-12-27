@@ -151,7 +151,11 @@ func run() error {
 		if len(tables) == 0 {
 			fmt.Fprintln(os.Stderr, "No table has lost intermediate files according to given config")
 		} else {
-			fmt.Fprintln(os.Stderr, "These tables are missing intermediate files:", tables)
+			tableNames := make([]string, 0, len(tables))
+			for name := range tables {
+				tableNames = append(tableNames, name)
+			}
+			fmt.Fprintln(os.Stderr, "These tables are missing intermediate files:", tableNames)
 		}
 		return nil
 	}
