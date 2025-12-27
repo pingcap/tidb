@@ -1059,9 +1059,23 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return DefaultRowEst(0)
 	}
 
+	// Step 1: Calculate the number of newly added rows
+	// Use absolute value to account for the case where rows may have been added on one side,
+	// but deleted from the other, resulting in qualifying out of range rows even though
+	// realtimeRowCount is less than histogram count
+	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+	if realtimeRowCount <= 0 {
+		realtimeRowCount = int64(hg.TotalRowCount())
+	}
+	// If modifyCount is low, it may be caused by a delay in updates to modifyCount.
+	// Assume a minimum worst case of 1% of the total row count.
+	maxAddedRows := max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
 	// outOfRangeBetweenRate (100) avoids an artificially low NDV.
-	oneValue := max(1.0, hg.NotNullCount()/max(float64(histNDV), outOfRangeBetweenRate))
+	// TODO: If we have a large number of added rows, the NDV maybe underestimated.
+	histNDV = max(histNDV, int64(outOfRangeBetweenRate))
+	oneValue := max(1.0, hg.NotNullCount()/float64(histNDV))
 
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
@@ -1072,6 +1086,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
 	// Here we calculate the length of common prefix.
+	// TODO: If the common prefix is large, we may underestimate the out-of-range
+	// portion because we can't distinguish the values with the same prefix.
 	commonPrefix := 0
 	if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString {
 		// Calculate the common prefix length among the lower and upper bound of histogram and the range we want to estimate.
@@ -1088,6 +1104,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
 	// Maybe it's better to do this transformation in the ranger like the normal negative value.
+	// TODO - Refactor this logic to avoid duplication.
 	if unsigned {
 		if l < 0 {
 			l = 0
@@ -1118,7 +1135,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, timeAdjLeft, timeAdjRight, avgRowCount float64
+	var leftPercent, rightPercent, timeAdjLeft, timeAdjRight, estRows float64
 
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
@@ -1173,10 +1190,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
-	// Use absolute value to account for the case where rows may have been added on one side,
-	// but deleted from the other, resulting in qualifying out of range rows even though
-	// realtimeRowCount is less than histogram count
-	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	maxTotalPercent := leftPercent + rightPercent
 	if entirelyOutOfRange {
@@ -1188,28 +1201,15 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount = (addedRows * 0.5) * totalPercent
-
-	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
-	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
-	// account for at least 1% of the total row count as a worst case for "addedRows".
-	// We inflate this here so ONLY to impact the MaxEst value.
-	if modifyCount == 0 || addedRows == 0 {
-		if realtimeRowCount <= 0 {
-			realtimeRowCount = int64(hg.TotalRowCount())
-		}
-		// Use outOfRangeBetweenRate as a divisor to get a small percentage of the approximate
-		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
-		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
-	}
-	addedRows *= maxTotalPercent
+	estRows = (addedRows * 0.5) * totalPercent
+	maxAddedRows *= maxTotalPercent
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
-	result = CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
+	result = CalculateSkewRatioCounts(estRows, maxAddedRows, skewRatio)
 	result.Est = max(result.Est, oneValue)
 	result.MinEst = 1
-	result.MaxEst = max(result.Est, addedRows)
+	result.MaxEst = max(result.Est, maxAddedRows)
 
 	return result
 }
