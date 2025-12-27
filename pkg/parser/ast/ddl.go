@@ -80,6 +80,11 @@ const (
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
 	DatabaseSetTiFlashReplica
+	DatabaseOptionSoftDelete
+	DatabaseOptionSoftDeleteRetention
+	DatabaseOptionSoftDeleteJobEnable
+	DatabaseOptionSoftDeleteJobInterval
+	DatabaseOptionActiveActive
 	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
@@ -2627,6 +2632,11 @@ const (
 	TableOptionIetfQuotes
 	TableOptionSequence
 	TableOptionAffinity
+	TableOptionSoftDelete
+	TableOptionSoftDeleteRetention
+	TableOptionSoftDeleteJobInterval
+	TableOptionSoftDeleteJobEnable
+	TableOptionActiveActive
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
