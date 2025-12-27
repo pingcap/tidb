@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -73,6 +74,14 @@ const (
 	DefaultMemSizeLimit = 256 * size.MB
 	// DefaultBlockSize is the default block size for writer.
 	DefaultBlockSize = 16 * units.MiB
+)
+
+type WriterMode int
+
+const (
+	WriterModeNone WriterMode = iota
+	WriterModeData
+	WriterModeIndex
 )
 
 func commonGetAdjustCount(isOverlapThreshold bool, concurrency int) int64 {
@@ -209,6 +218,7 @@ type WriterBuilder struct {
 	onClose      OnWriterCloseFunc
 	tikvCodec    tikv.Codec
 	onDup        engineapi.OnDuplicateKey
+	mode         WriterMode
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -279,6 +289,11 @@ func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder 
 	return b
 }
 
+func (b *WriterBuilder) SetWriterMode(mode WriterMode) *WriterBuilder {
+	b.mode = mode
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -286,6 +301,17 @@ func (b *WriterBuilder) Build(
 	prefix string,
 	writerID string,
 ) *Writer {
+	prefixLength := tablecodec.RecordRowKeyLen
+	if b.tikvCodec != nil {
+		prefixLength += len(b.tikvCodec.GetKeyspace())
+	}
+	switch b.mode {
+	case WriterModeIndex:
+		prefixLength += 1
+	case WriterModeNone:
+		prefixLength = 0
+	}
+
 	filenamePrefix := filepath.Join(prefix, writerID)
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
@@ -299,20 +325,22 @@ func (b *WriterBuilder) Build(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		store:          store,
-		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
-		currentSeq:     0,
-		filenamePrefix: filenamePrefix,
-		rnd:            rnd,
-		writerID:       writerID,
-		groupOffset:    b.groupOffset,
-		onClose:        b.onClose,
-		onDup:          b.onDup,
-		closed:         false,
-		multiFileStats: make([]MultipleFilesStat, 0),
-		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
-		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
-		tikvCodec:      b.tikvCodec,
+		store:               store,
+		kvBuffer:            p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
+		currentSeq:          0,
+		filenamePrefix:      filenamePrefix,
+		rnd:                 rnd,
+		writerID:            writerID,
+		sortKeyPrefixLength: prefixLength,
+		enableSortKeyPrefix: prefixLength > 0,
+		groupOffset:         b.groupOffset,
+		onClose:             b.onClose,
+		onDup:               b.onDup,
+		closed:              false,
+		multiFileStats:      make([]MultipleFilesStat, 0),
+		fileMinKeys:         make([]tidbkv.Key, 0, multiFileStatNum),
+		fileMaxKeys:         make([]tidbkv.Key, 0, multiFileStatNum),
+		tikvCodec:           b.tikvCodec,
 	}
 
 	return ret
@@ -444,6 +472,9 @@ type Writer struct {
 	// Statistic information per batch.
 	batchSize uint64
 
+	sortKeyPrefixLength int
+	enableSortKeyPrefix bool
+
 	// Statistic information per 500 batches.
 	multiFileStats []MultipleFilesStat
 	fileMinKeys    []tidbkv.Key
@@ -485,6 +516,14 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(val)))
 	copy(dataBuf[2*lengthBytes:], key)
 	copy(dataBuf[2*lengthBytes+keyLen:], val)
+
+	if w.enableSortKeyPrefix {
+		if len(key) >= w.sortKeyPrefixLength+8 {
+			loc.SortKeyPrefix = binary.BigEndian.Uint64(key[w.sortKeyPrefixLength:])
+		} else {
+			w.enableSortKeyPrefix = false
+		}
+	}
 
 	w.kvLocations = append(w.kvLocations, loc)
 	// TODO: maybe we can unify the size calculation during write to store.
@@ -570,6 +609,13 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		dupLoc   membuf.SliceLocation
 	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
+		if w.enableSortKeyPrefix && i.SortKeyPrefix != j.SortKeyPrefix {
+			if i.SortKeyPrefix < j.SortKeyPrefix {
+				return -1
+			}
+			return 1
+		}
+
 		res := bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
 		if res == 0 && !dupFound {
 			dupFound = true
@@ -810,7 +856,7 @@ func (w *Writer) getValueByLoc(loc membuf.SliceLocation) []byte {
 func (w *Writer) reCalculateKVSize() int64 {
 	s := int64(0)
 	for _, loc := range w.kvLocations {
-		s += int64(loc.Length) - 2*lengthBytes
+		s += int64(len(w.getValueByLoc(loc))) - 2*lengthBytes
 	}
 	return s
 }
