@@ -1424,7 +1424,9 @@ func resolveAutoConsistency(d *Dumper) error {
 		//nolint: errcheck
 		defer conn.Close()
 
-		err = FlushTableWithReadLock(d.tctx, conn)
+		ftwrlCtx, ftwrlCancel := context.WithTimeout(d.tctx.Context, timeout)
+		defer ftwrlCancel()
+		err = FlushTableWithReadLock(ftwrlCtx, conn)
 		//nolint: errcheck
 		defer UnlockTables(d.tctx, conn)
 		if err != nil {
