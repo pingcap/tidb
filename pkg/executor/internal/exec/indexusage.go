@@ -44,9 +44,9 @@ func NewIndexUsageReporter(reporter *indexusage.StmtIndexUsageCollector,
 }
 
 // ReportCopIndexUsageForHandle wraps around `ReportCopIndexUsageForTable` to get the `indexID` automatically
-// from the `table.Table` if the table has a clustered index or integer primary key.
+// from the `table.Table` if the table has a primary key (clustered or nonclustered).
 func (e *IndexUsageReporter) ReportCopIndexUsageForHandle(tbl table.Table, planID int) {
-	idxID, ok := getClusterIndexID(tbl.Meta())
+	idxID, ok := getPrimaryIndexID(tbl.Meta())
 	if !ok {
 		return
 	}
@@ -85,9 +85,9 @@ func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID 
 }
 
 // ReportPointGetIndexUsageForHandle wraps around `ReportPointGetIndexUsage` to get the `indexID` automatically
-// from the `table.Table` if the table has a clustered index or integer primary key.
+// from the `table.Table` if the table has a primary key (clustered or nonclustered).
 func (e *IndexUsageReporter) ReportPointGetIndexUsageForHandle(tblInfo *model.TableInfo, physicalTableID int64, kvRequestTotal, rows int64) {
-	idxID, ok := getClusterIndexID(tblInfo)
+	idxID, ok := getPrimaryIndexID(tblInfo)
 	if !ok {
 		return
 	}
@@ -125,22 +125,21 @@ func (e *IndexUsageReporter) getTableRowCount(tableID int64) (int64, bool) {
 	return stats.RealtimeCount, true
 }
 
-// getClusterIndexID returns the indexID of the clustered index. If the table doesn't have a clustered index, it returns
-// (0, false).
-func getClusterIndexID(tblInfo *model.TableInfo) (int64, bool) {
-	var idxID int64
+// getPrimaryIndexID returns the indexID of the primary key, whether clustered or nonclustered.
+// For PKIsHandle tables, it returns (0, true).
+// For tables with a primary key index (clustered or nonclustered), it returns the index ID.
+// If the table doesn't have a primary key, it returns (0, false).
+func getPrimaryIndexID(tblInfo *model.TableInfo) (int64, bool) {
 	if tblInfo.PKIsHandle {
-		idxID = 0
-	} else if tblInfo.IsCommonHandle {
-		for _, idx := range tblInfo.Indices {
-			if idx.Primary {
-				idxID = idx.ID
-			}
-		}
-	} else {
-		// just ignore, this table is read through rowid.
-		return 0, false
+		return 0, true
 	}
 
-	return idxID, true
+	// Find primary key index (works for both clustered and nonclustered)
+	for _, idx := range tblInfo.Indices {
+		if idx.Primary {
+			return idx.ID, true
+		}
+	}
+
+	return 0, false
 }
