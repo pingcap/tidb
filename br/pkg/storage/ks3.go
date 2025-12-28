@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -45,10 +46,7 @@ var (
 	_ Copier = &KS3Storage{}
 )
 
-const (
-	// ks3 sdk does not expose context, we use hardcoded timeout for network request
-	ks3SDKProvider = "ks3-sdk"
-)
+const ks3SDKEndpoint = "ksyuncs.com"
 
 // KS3Storage acts almost same as S3Storage except it's used for kingsoft s3.
 type KS3Storage struct {
@@ -66,6 +64,24 @@ func NewKS3Storage(
 	qs := *backend
 	awsConfig := aws.DefaultConfig
 	awsConfig.S3ForcePathStyle = qs.ForcePathStyle
+	if qs.ForcePathStyle {
+		awsConfig.DomainMode = true
+		// To keep the same as aws s3 sdk, the raw path is
+		//   "s3://{prefix}?endpoint=http://{bucket}.ks3-cn-beijing.ksyuncs.com&force-path-style=true&..."
+		// But for ks3 sdk, it still needs to pass the bucket.
+		qs.Prefix = path.Join(qs.Bucket, qs.Prefix)
+		// http://{bucket}.ks3-cn-beijing-internal.ksyuncs.com
+		u, err := url.Parse(qs.Endpoint)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		strs := strings.SplitN(u.Host, ".", 2)
+		if len(strs) < 2 {
+			return nil, errors.Errorf("bucket is not found in the endpoint(%s) when force path style is on", qs.Endpoint)
+		}
+		qs.Bucket = strs[0]
+	}
+
 	if qs.Region == "" {
 		return nil, errors.New("ks3 region is empty")
 	}
@@ -361,11 +377,9 @@ func (rs *KS3Storage) FileExists(ctx context.Context, file string) (bool, error)
 
 	_, err := rs.svc.HeadObjectWithContext(ctx, input)
 	if err != nil {
-		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
-			switch aerr.Code() {
-			case s3.ErrCodeNoSuchBucket, s3.ErrCodeNoSuchKey, notFound:
-				return false, nil
-			}
+		if strings.Contains(err.Error(), "status code: 404") {
+			log.Info("response status code 404, file does not exist")
+			return false, nil
 		}
 		if rerr, ok := errors.Cause(err).(awserr.RequestFailure); ok {
 			if rerr.StatusCode() == 404 {
