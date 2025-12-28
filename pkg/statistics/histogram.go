@@ -1060,6 +1060,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Step 1: Calculate the number of newly added rows
+	// addedRows - used for row estimation
+	// maxAddedRows - used for max row count estimation ONLY
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
@@ -1075,12 +1077,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
 
+	// Step 2: Calculate "one value"
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
 	// outOfRangeBetweenRate (100) avoids an artificially low NDV.
 	// TODO: If we have a large number of added rows, the NDV maybe underestimated.
 	histNDV = max(histNDV, int64(outOfRangeBetweenRate))
 	oneValue := max(1.0, hg.NotNullCount()/float64(histNDV))
 
+	// Step 3: Exit if usage of modifyCount is disabled.
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
@@ -1088,6 +1092,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
 	}
 
+	// Step 4: Calculate how much of the statistics share a common prefix.
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
 	// Here we calculate the length of common prefix.
 	// TODO: If the common prefix is large, we may underestimate the out-of-range
@@ -1101,7 +1106,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 			rDatum.GetBytes())
 	}
 
-	// Convert the range we want to estimate to scalar value(float64)
+	// Step 5: Convert the range we want to estimate to scalar value(float64)
 	l := convertDatumToScalar(lDatum, commonPrefix)
 	r := convertDatumToScalar(rDatum, commonPrefix)
 	unsigned := mysql.HasUnsignedFlag(hg.Tp.GetFlag())
@@ -1117,19 +1122,25 @@ func (hg *Histogram) OutOfRangeRowCount(
 			r = 0
 		}
 	}
-
+	histInvalid, entirelyOutOfRange := false, false
 	// make sure l < r
-	if l >= r {
+	// TODO: If predWidth == 0, it may be because the common prefix is too large.
+	// In future - out of range for equal predicates should also use this logic
+	// for consistency. We need to handle both "equal" and "large common prefix".
+	predWidth := r - l
+	if predWidth < 0 {
+		// This should never happen.
 		return DefaultRowEst(0)
+	} else if predWidth == 0 {
+		// TODO: Temporarily set histInvalid=true so that we can still return a
+		// minimum of oneValue, and return the max as worst case.
+		histInvalid = true
 	}
 
-	// Convert the lower and upper bound of the histogram to scalar value(float64)
+	// Step 6: Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
-	// If we find that the histogram width is too small or too large - we still may need to consider
-	// the impact of modifications to the table
-	histInvalid, entirelyOutOfRange := false, false
 	if histWidth <= 0 {
 		histInvalid = true
 	}
@@ -1141,6 +1152,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	var leftPercent, rightPercent, timeAdjLeft, timeAdjRight, estRows float64
 
+	// Step 7: Calculate the percentage on the left/right that we are searching.
+	// TODO: Simplify the setting/resetting of actualL and actualR, and refactor
+	// this logic to avoid duplication.
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
 	actualR := r
@@ -1178,7 +1192,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// recalculating the percentage of the shaded area.
 		actualL = l
 		actualR = r
-		predWidth := r - l
 		// Predicate entirely on the right side of the histogram envelope.
 		if actualL > histR {
 			entirelyOutOfRange = true
@@ -1194,20 +1207,23 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
+	// Step 8: Calculate the total percentage of the out-of-range rows.
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	maxTotalPercent := leftPercent + rightPercent
+	if totalPercent > 0 {
+		estRows = (addedRows * 0.5) * totalPercent
+	} else {
+		estRows = oneValue
+	}
 	if entirelyOutOfRange {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// It is adjusted by a further 50% to reduce its impact.
-		maxTotalPercent = max(maxTotalPercent, timeAdjLeft+timeAdjRight)
+		totalPercent = min(max(totalPercent, (timeAdjLeft*0.5)+(timeAdjRight*0.5)), 1.0)
 	}
-	maxTotalPercent = min(maxTotalPercent, 1.0)
+	if totalPercent > 0 {
+		maxAddedRows *= totalPercent
+	}
 
-	// Assume on average, half of newly added rows are within the histogram range, and the other
-	// half are distributed out of range according to the diagram in the function description.
-	estRows = (addedRows * 0.5) * totalPercent
-	maxAddedRows *= maxTotalPercent
-
+	// Step 9: Evaluate the skew ratio to determine it's impact on the returned estimate.
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 	result = CalculateSkewRatioCounts(estRows, maxAddedRows, skewRatio)
