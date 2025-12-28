@@ -1262,6 +1262,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int unsigned) " +
@@ -1302,6 +1303,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	for i := range input {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='ON'")
 }
 
 func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {

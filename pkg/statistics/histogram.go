@@ -1076,6 +1076,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if addedRows == 0 || modifyCount == 0 {
 		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
+	// Adjust the added rows downward if modifications are dominated by deletes.
+	if realtimeRowCount < int64(hg.TotalRowCount()) {
+		addedRows *= float64(realtimeRowCount) / float64(hg.TotalRowCount())
+	}
 
 	// Step 2: Calculate "one value"
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
