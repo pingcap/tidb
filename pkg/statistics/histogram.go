@@ -1069,7 +1069,11 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 	// If modifyCount is low, it may be caused by a delay in updates to modifyCount.
 	// Assume a minimum worst case of 1% of the total row count.
-	maxAddedRows := max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+	// TODO: Remove modifyCount as it provides little value here.
+	maxAddedRows := addedRows
+	if addedRows == 0 || modifyCount == 0 {
+		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+	}
 
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
 	// outOfRangeBetweenRate (100) avoids an artificially low NDV.
