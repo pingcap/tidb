@@ -255,16 +255,16 @@ select @@last_plan_from_cache;
 1
 explain select /*+ index_lookup_pushdown(t1, i) agg_to_cop() */ count(1) from t1 where a > '1i' and c > 300;
 id	estRows	task	access object	operator info
-HashAgg_16	1.00	root		funcs:count(Column#8)->Column#5
-└─IndexLookUp_17	1.00	root		
-  ├─HashAgg_18(Build)	1.00	cop[tikv]		funcs:count(1)->Column#8
-  │ └─Selection_19	1111.11	cop[tikv]		gt(executor__index_lookup_pushdown.t1.c, 300)
-  │   └─LocalIndexLookUp_21	3333.33	cop[tikv]		index handle offsets:[2]
-  │     ├─IndexRangeScan_13(Build)	3333.33	cop[tikv]	table:t1, index:i(a, b)	range:("1i",+inf], keep order:false, stats:pseudo
-  │     └─TableRowIDScan_20(Probe)	3333.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashAgg_15	1.00	root		funcs:count(Column#8)->Column#5
+└─IndexLookUp_16	1.00	root		
+  ├─HashAgg_17(Build)	1.00	cop[tikv]		funcs:count(1)->Column#8
+  │ └─Selection_18	1111.11	cop[tikv]		gt(executor__index_lookup_pushdown.t1.c, 300)
+  │   └─LocalIndexLookUp_20	3333.33	cop[tikv]		index handle offsets:[2]
+  │     ├─IndexRangeScan_12(Build)	3333.33	cop[tikv]	table:t1, index:i(a, b)	range:("1i",+inf], keep order:false, stats:pseudo
+  │     └─TableRowIDScan_19(Probe)	3333.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─HashAgg_8(Probe)	0.00	cop[tikv]		funcs:count(1)->Column#8
-    └─Selection_15	0.00	cop[tikv]		gt(executor__index_lookup_pushdown.t1.c, 300)
-      └─TableRowIDScan_14	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─Selection_14	0.00	cop[tikv]		gt(executor__index_lookup_pushdown.t1.c, 300)
+      └─TableRowIDScan_13	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(t1, i) agg_to_cop() */ count(1) from t1 where a > '1i' and c > 300;
 count(1)
 5

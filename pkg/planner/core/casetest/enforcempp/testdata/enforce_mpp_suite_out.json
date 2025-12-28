@@ -82,10 +82,10 @@
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_19 1.00 193.81 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_20 1.00 143.91 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan_18 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_18 1.00 193.81 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader_19 1.00 143.91 root  index:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan_17 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -118,10 +118,10 @@
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_19 1.00 193.81 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_20 1.00 143.91 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan_18 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_18 1.00 193.81 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader_19 1.00 143.91 root  index:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan_17 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -154,10 +154,10 @@
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_19 1.00 193.81 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_20 1.00 143.91 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan_18 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_18 1.00 193.81 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader_19 1.00 143.91 root  index:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 2127.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan_17 10.00 1628.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have set a hint to read table `t` from TiKV."
@@ -229,10 +229,10 @@
       {
         "SQL": "explain select count(*) from t where a=1 -- 2. replica not ready",
         "Plan": [
-          "StreamAgg_19 1.00 root  funcs:count(Column#8)->Column#6",
-          "└─IndexReader_20 1.00 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#8",
-          "    └─IndexRangeScan_18 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_18 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─IndexReader_19 1.00 root  index:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─IndexRangeScan_17 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because tiflash replicas of table `t` not ready."
@@ -251,10 +251,10 @@
       {
         "SQL": "explain select count(*) from t where a=1 -- 3. isolation_engine not match",
         "Plan": [
-          "StreamAgg_19 1.00 root  funcs:count(Column#8)->Column#6",
-          "└─IndexReader_20 1.00 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#8",
-          "    └─IndexRangeScan_18 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_18 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─IndexReader_19 1.00 root  index:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─IndexRangeScan_17 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tikv') not match, need 'tiflash'."
@@ -370,6 +370,15 @@
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'."
         ]
       },
@@ -383,6 +392,15 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
@@ -1295,13 +1313,6 @@
         "Warn": null
       },
       {
-        "SQL": "select count(distinct a) from t",
-        "Plan": [
-          "5"
-        ],
-        "Warn": null
-      },
-      {
         "SQL": "EXPLAIN select count(distinct a), count(distinct b) from t",
         "Plan": [
           "TableReader_43 1.00 root  MppVersion: 3, data:ExchangeSender_42",
@@ -1316,13 +1327,6 @@
           "                └─HashAgg_32 16000.00 mpp[tiflash]  group by:Column#11, test.t.a, test.t.b, ",
           "                  └─Expand_35 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#11, [{<test.t.a>},{<test.t.b>}]",
           "                    └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": null
-      },
-      {
-        "SQL": "select count(distinct a), count(distinct b) from t",
-        "Plan": [
-          "5 5"
         ],
         "Warn": null
       },
@@ -1346,13 +1350,6 @@
         "Warn": null
       },
       {
-        "SQL": "select count(distinct a), count(distinct b), count(c) from t",
-        "Plan": [
-          "5 5 10"
-        ],
-        "Warn": null
-      },
-      {
         "SQL": "EXPLAIN select count(distinct a), count(distinct b), count(c+1) from t",
         "Plan": [
           "TableReader_43 1.00 root  MppVersion: 3, data:ExchangeSender_42",
@@ -1368,13 +1365,6 @@
           "                  └─Projection_37 20000.00 mpp[tiflash]  test.t.a, test.t.b, test.t.c, Column#16, case(eq(Column#16, 1), plus(test.t.c, 1), <nil>)->Column#17",
           "                    └─Expand_35 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#16, [{<test.t.a>},{<test.t.b>}]",
           "                      └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": null
-      },
-      {
-        "SQL": "select count(distinct a), count(distinct b), count(c+1) from t",
-        "Plan": [
-          "5 5 10"
         ],
         "Warn": null
       },
@@ -1399,13 +1389,6 @@
         "Warn": null
       },
       {
-        "SQL": "select count(distinct a), count(distinct b), sum(c) from t",
-        "Plan": [
-          "5 5 30000"
-        ],
-        "Warn": null
-      },
-      {
         "SQL": "EXPLAIN select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
         "Plan": [
           "TableReader_33 1.00 root  MppVersion: 3, data:ExchangeSender_32",
@@ -1417,16 +1400,6 @@
           "          └─HashAgg_27 1.00 mpp[tiflash]  group by:Column#16, Column#17, funcs:count(Column#14)->Column#12, funcs:sum(Column#15)->Column#13",
           "            └─Projection_34 10000.00 mpp[tiflash]  test.t.c->Column#14, cast(test.t.d, decimal(10,0) BINARY)->Column#15, test.t.a->Column#16, test.t.b->Column#17",
           "              └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "Some grouping sets should be merged",
-          "Some grouping sets should be merged"
-        ]
-      },
-      {
-        "SQL": "select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
-        "Plan": [
-          "5 5 10 10"
         ],
         "Warn": [
           "Some grouping sets should be merged",
@@ -1449,13 +1422,6 @@
         "Warn": null
       },
       {
-        "SQL": "select count(distinct a+b), sum(c) from t",
-        "Plan": [
-          "5 30000"
-        ],
-        "Warn": null
-      },
-      {
         "SQL": "EXPLAIN select count(distinct a+b), count(distinct b+c), count(c) from t",
         "Plan": [
           "TableReader_33 1.00 root  MppVersion: 3, data:ExchangeSender_32",
@@ -1471,13 +1437,6 @@
         "Warn": null
       },
       {
-        "SQL": "select count(distinct a+b), count(distinct b+c), count(c) from t",
-        "Plan": [
-          "5 5 10"
-        ],
-        "Warn": null
-      },
-      {
         "SQL": "explain select count(distinct a,c), count(distinct b,c), count(c) from t",
         "Plan": [
           "TableReader_33 1.00 root  MppVersion: 3, data:ExchangeSender_32",
@@ -1488,13 +1447,6 @@
           "        └─ExchangeSender_30 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─HashAgg_27 1.00 mpp[tiflash]  group by:test.t.a, test.t.b, test.t.c, funcs:count(test.t.c)->Column#10",
           "            └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": null
-      },
-      {
-        "SQL": "select count(distinct a), count(distinct b), count(*) from t",
-        "Plan": [
-          "5 5 10"
         ],
         "Warn": null
       },
@@ -1514,13 +1466,6 @@
           "                  └─Projection_37 20000.00 mpp[tiflash]  test.t.a, test.t.b, Column#16, case(eq(Column#16, 1), 1, <nil>)->Column#17",
           "                    └─Expand_35 20000.00 mpp[tiflash]  group set num:2, groupingID:Column#16, [{<test.t.a>},{<test.t.b>}]",
           "                      └─TableFullScan_16 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": null
-      },
-      {
-        "SQL": "select count(distinct a), count(distinct b), avg(c+d) from t",
-        "Plan": [
-          "5 5 3001.0000"
         ],
         "Warn": null
       },

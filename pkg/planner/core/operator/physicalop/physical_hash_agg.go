@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -49,13 +50,13 @@ type PhysicalHashAgg struct {
 //	for 2, the final result for this physical operator enumeration is chosen or rejected is according to more factors later (hint/variable/partition/virtual-col/cost)
 //
 // That is to say, the non-complete positive judgement of canPushDownToMPP/canPushDownToTiFlash/canPushDownToTiKV is not that for sure here.
-func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) (_ []base.PhysicalPlan, onlyMpp bool) {
 	la := lp.(*logicalop.LogicalAggregation)
 	if !prop.IsSortItemEmpty() {
-		return nil
+		return nil, false
 	}
 	if prop.TaskTp == property.MppTaskType && !checkCanPushDownToMPP(la) {
-		return nil
+		return nil, false
 	}
 	hashAggs := make([]base.PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
@@ -86,6 +87,22 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
 	taskTypes = admitIndexJoinTypes(taskTypes, prop)
+	if prop.TaskTp != property.RootTaskType && lp.SCtx().GetSessionVars().IsMPPEnforced() && (canPushDownToMPP || prop.IsFlashProp()) {
+		for _, taskTp := range taskTypes {
+			if taskTp == property.MppTaskType {
+				mppAggs := tryToGetMppHashAggs(la, prop)
+				if len(mppAggs) > 0 {
+					hashAggs = append(hashAggs, mppAggs...)
+				}
+			}
+		}
+		if len(hashAggs) > 0 {
+			return hashAggs, true
+		}
+		taskTypes = sliceutil.Filter(taskTypes, func(taskType property.TaskType) bool {
+			return taskType != property.MppTaskType
+		})
+	}
 	for _, taskTp := range taskTypes {
 		if taskTp == property.MppTaskType {
 			mppAggs := tryToGetMppHashAggs(la, prop)
@@ -104,7 +121,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 			hashAggs = append(hashAggs, agg)
 		}
 	}
-	return hashAggs
+	return hashAggs, false
 }
 
 func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {

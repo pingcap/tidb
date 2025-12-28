@@ -770,3 +770,36 @@ func (*LogicalAggregation) getGroupNDVs(childProfile *property.StatsInfo, gbyCol
 	}
 	return []property.GroupNDV{*groupNDV}
 }
+
+// CheckAggCanPushMPP is to check whether this agg can be pushed down into tiflash.
+func (la *LogicalAggregation) CheckAggCanPushMPP() (result bool) {
+	return checkAggCanPushMPP(la)
+}
+
+func checkAggCanPushMPP(s base.LogicalPlan) bool {
+	if _, ok := s.SCtx().GetSessionVars().IsolationReadEngines[kv.TiFlash]; !ok {
+		return false
+	}
+	switch l := s.(type) {
+	case *LogicalLock:
+		if l.Lock != nil && l.Lock.LockType != ast.SelectLockNone {
+			return false
+		}
+	case *LogicalSelection:
+		pushed, _ := expression.PushDownExprs(util.GetPushDownCtx(l.SCtx()), l.Conditions, kv.TiFlash)
+		if len(pushed) == 0 {
+			// if this selection's Expr cannot be pushed into tiflash, it has to be in the root/tikv node.
+			return false
+		}
+	case *DataSource:
+		return l.CanUseTiflash4Physical()
+	case *LogicalUnionScan, *LogicalPartitionUnionAll:
+		return false
+	}
+	for _, child := range s.Children() {
+		if !checkAggCanPushMPP(child) {
+			return false
+		}
+	}
+	return true
+}
