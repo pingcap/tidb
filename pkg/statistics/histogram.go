@@ -1078,7 +1078,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 	// Adjust the added rows downward if modifications are dominated by deletes.
 	if realtimeRowCount < int64(hg.TotalRowCount()) {
-		addedRows *= float64(realtimeRowCount) / float64(hg.TotalRowCount())
+		addedRows *= float64(realtimeRowCount) / hg.TotalRowCount()
 	}
 
 	// Step 2: Calculate "one value"
