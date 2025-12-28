@@ -1208,20 +1208,27 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Step 8: Calculate the total percentage of the out-of-range rows.
+	// totalPercent is used for the average estimate (estRows) - never updated for entirelyOutOfRange
+	// maxTotalPercent is used for the maximum estimate (maxAddedRows) - updated for entirelyOutOfRange
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
+	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
+
+	// Calculate estRows using totalPercent (average) - this matches old avgRowCount calculation
 	if totalPercent > 0 {
 		estRows = (addedRows * 0.5) * totalPercent
 	} else {
 		estRows = oneValue
 	}
+
+	// Update maxTotalPercent for entirelyOutOfRange cases (matching old behavior)
 	if entirelyOutOfRange {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
-		// It is adjusted by a further 50% to reduce its impact.
-		totalPercent = min(max(totalPercent, (timeAdjLeft*0.5)+(timeAdjRight*0.5)), 1.0)
+		// For max estimate, use the sum (not average) to account for worst case
+		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 1.0)
 	}
-	if totalPercent > 0 {
-		maxAddedRows *= totalPercent
-	}
+
+	// Always apply maxTotalPercent to maxAddedRows (matching old behavior where addedRows was always scaled)
+	maxAddedRows *= maxTotalPercent
 
 	// Step 9: Evaluate the skew ratio to determine it's impact on the returned estimate.
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
