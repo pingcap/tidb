@@ -41,7 +41,8 @@ const (
 	baseDataSize = 200 * units.GiB
 	// To improve performance for small tasks, we assume that on a 8c machine,
 	// importing 200 GiB of data requires full utilization of a single node’s resources.
-	// Therefore, for every additional 25 GiB, add 1 concurrency unit as an estimate for task concurrency.
+	// Therefore, for every additional 25 GiB, add 1 slot as an estimate for task's
+	// required slots.
 	baseSizePerConc = 25 * units.GiB
 	// The maximum number of nodes that can be used for add-index.
 	maxNodeCountLimitForAddIndex = 30
@@ -139,16 +140,16 @@ func CalcMaxNodeCountByStoresNum(ctx context.Context, store kv.Storage) int {
 	return max(3, len(stores)/3)
 }
 
-// CalcConcurrency calculates the concurrency based on the data size.
-func (rc *ResourceCalc) CalcConcurrency() int {
+// CalcRequiredSlots calculates the required slots based on the data size.
+func (rc *ResourceCalc) CalcRequiredSlots() int {
 	size := rc.getAmplifiedDataSize()
 	if size <= 0 {
 		return 4
 	}
-	concurrency := float64(size) / baseSizePerConc
-	concurrency = min(concurrency, float64(rc.nodeCPU))
-	concurrency = max(concurrency, 1)
-	return int(math.Round(concurrency))
+	slots := float64(size) / baseSizePerConc
+	slots = min(slots, float64(rc.nodeCPU))
+	slots = max(slots, 1)
+	return int(math.Round(slots))
 }
 
 // GetExecCPUNode returns the number of CPU cores on the system keyspace node.

@@ -259,7 +259,7 @@ func (mgr *TaskManager) CreateTask(
 	key string,
 	tp proto.TaskType,
 	keyspace string,
-	concurrency int,
+	requiredSlots int,
 	targetScope string,
 	maxNodeCnt int,
 	extraParams proto.ExtraParams,
@@ -267,7 +267,7 @@ func (mgr *TaskManager) CreateTask(
 ) (taskID int64, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, keyspace, concurrency, targetScope, maxNodeCnt, extraParams, meta)
+		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, keyspace, requiredSlots, targetScope, maxNodeCnt, extraParams, meta)
 		return err2
 	})
 	return
@@ -280,7 +280,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	key string,
 	tp proto.TaskType,
 	keyspace string,
-	concurrency int,
+	requiredSlots int,
 	targetScope string,
 	maxNodeCount int,
 	extraParams proto.ExtraParams,
@@ -290,9 +290,10 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	if err != nil {
 		return 0, err
 	}
-	if concurrency > cpuCount {
-		return 0, errors.Errorf("task concurrency(%d) larger than cpu count(%d) of managed node", concurrency, cpuCount)
+	if requiredSlots > cpuCount {
+		return 0, errors.Errorf("task required slots(%d) larger than cpu count(%d) of managed node", requiredSlots, cpuCount)
 	}
+	failpoint.InjectCall("beforeSubmitTask", &requiredSlots, &extraParams)
 	extraParamBytes, err := json.Marshal(extraParams)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -300,7 +301,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
 			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?, %?, %?, %?)`,
-		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency,
+		key, tp, proto.TaskStatePending, proto.NormalPriority, requiredSlots,
 		proto.StepInit, meta, targetScope, maxNodeCount, json.RawMessage(extraParamBytes), keyspace)
 	if err != nil {
 		return 0, err

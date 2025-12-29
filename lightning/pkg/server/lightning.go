@@ -1053,7 +1053,7 @@ func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 
 // CleanupMetas removes the table metas of the given table.
 func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
-	if tableName == "all" {
+	if tableName == common.AllTables {
 		tableName = ""
 	}
 	// try to clean up table metas if exists

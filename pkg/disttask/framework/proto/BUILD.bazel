@@ -26,6 +26,6 @@ go_test(
     ],
     embed = [":proto"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = ["@com_github_stretchr_testify//require"],
 )

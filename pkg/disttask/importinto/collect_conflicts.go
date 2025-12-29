@@ -44,7 +44,7 @@ import (
 
 type collectConflictsStepExecutor struct {
 	taskexecutor.BaseStepExecutor
-	taskID   int64
+	task     *proto.TaskBase
 	store    tidbkv.Storage
 	taskMeta *TaskMeta
 	logger   *zap.Logger
@@ -65,13 +65,13 @@ var _ execute.StepExecutor = &collectConflictsStepExecutor{}
 // NewCollectConflictsStepExecutor creates a new collectConflictsStepExecutor.
 // exported for test.
 func NewCollectConflictsStepExecutor(
-	taskID int64,
+	task *proto.TaskBase,
 	store tidbkv.Storage,
 	taskMeta *TaskMeta,
 	logger *zap.Logger,
 ) execute.StepExecutor {
 	return &collectConflictsStepExecutor{
-		taskID:   taskID,
+		task:     task,
 		store:    store,
 		taskMeta: taskMeta,
 		logger:   logger,
@@ -79,7 +79,7 @@ func NewCollectConflictsStepExecutor(
 }
 
 func (e *collectConflictsStepExecutor) Init(ctx context.Context) error {
-	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store, e.logger)
+	tableImporter, err := getTableImporter(ctx, e.task.ID, e.taskMeta, e.store, e.logger)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 	e.resetForNewSubtask(subtask.ID)
 
 	for kvGroup, ci := range stMeta.Infos.ConflictInfos {
-		err := e.collectConflictsOfKVGroup(ctx, objStore, subtask.Concurrency, kvGroup, ci)
+		err := e.collectConflictsOfKVGroup(ctx, objStore, int(e.GetResource().CPU.Capacity()), kvGroup, ci)
 		failpoint.InjectCall("afterCollectOneKVGroup", &err)
 		if err != nil {
 			return err
@@ -176,7 +176,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 	for i := range concurrency {
 		encoder := encoders[i]
 		uid := uuid.New().String()
-		filenamePrefix := getConflictRowFilenamePrefix(e.taskID, e.currSubtaskID, uid)
+		filenamePrefix := getConflictRowFilenamePrefix(e.task.ID, e.currSubtaskID, uid)
 		localSet := conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
 		collector := conflictedkv.NewCollector(e.tableImporter.Table, e.logger, objStore, e.store, filenamePrefix, kvGroup, encoder, e.sharedHandleSet, localSet)
 		eg.Go(func() (err error) {

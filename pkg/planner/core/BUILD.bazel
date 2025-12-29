@@ -55,7 +55,6 @@ go_library(
         "rule_join_reorder.go",
         "rule_join_reorder_dp.go",
         "rule_join_reorder_greedy.go",
-        "rule_max_min_eliminate.go",
         "rule_outer_to_inner_join.go",
         "rule_predicate_push_down.go",
         "rule_push_down_sequence.go",
