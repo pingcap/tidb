@@ -221,21 +221,6 @@ func WaitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regi
 	}
 }
 
-// waitScatterIfNeeded waits for scatter to finish based on scatterScope
-// Extracted from multiple places to avoid code duplication
-func waitScatterIfNeeded(ctx context.Context, store kv.SplittableStore,
-	scatterScope string, regionIDs []uint64) {
-	if scatterScope == vardef.ScatterOff {
-		return // No need to wait
-	}
-
-	if len(regionIDs) == 0 {
-		return
-	}
-
-	WaitScatterRegionFinish(ctx, store, regionIDs...)
-}
-
 func hasSplitPolicies(tbInfo *model.TableInfo) bool {
 	if tbInfo.TableSplitPolicy != nil {
 		return true

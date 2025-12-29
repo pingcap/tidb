@@ -1419,9 +1419,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	var parse *parser.Parser
 	// Show table region split policy
 	if tableInfo.TableSplitPolicy != nil {
-		if parse == nil {
-			parse = parser.New()
-		}
+		parse = parser.New()
 		buf.WriteString("\n/*T![region_split] ")
 		buf.WriteString("SPLIT BETWEEN (")
 
