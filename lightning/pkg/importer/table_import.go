@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -160,7 +161,7 @@ func (tr *TableImporter) importTable(
 		versionInfo := version.ParseServerInfo(versionStr)
 
 		// "show table next_row_id" is only available after tidb v4.0.0
-		if versionInfo.ServerVersion.Major >= 4 && isLocalBackend(rc.cfg) {
+		if versionInfo.ServerVersion.Major >= 4 && rc.cfg.TikvImporter.IsPhysicalBackend() {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
 				return false, err
@@ -220,7 +221,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 2. Do duplicate detection if needed
-	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config.NoneOnDup {
+	if rc.cfg.TikvImporter.IsPhysicalBackend() && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
 		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
 		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
@@ -253,7 +254,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 3. Drop indexes if add-index-by-sql is enabled
-	if cp.Status < checkpoints.CheckpointStatusIndexDropped && isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.AddIndexBySQL {
+	if cp.Status < checkpoints.CheckpointStatusIndexDropped && rc.cfg.TikvImporter.IsPhysicalBackend() && rc.cfg.TikvImporter.AddIndexBySQL {
 		err := tr.dropIndexes(ctx, rc.db)
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexDropped)
 		if err := firstErr(err, saveCpErr); err != nil {
@@ -446,12 +447,19 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 	}
+	if rc.cfg.TikvImporter.IsRemoteBackend() {
+		idxEngineCfg.Remote = backend.RemoteEngineConfig{
+			EngineID:          common.IndexEngineID,
+			EstimatedDataSize: remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
+			IsRecoverable:     remote.HasRecoverableEngineProgress(indexEngineCp),
+		}
+	}
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
 		handleDataEngineThisRun = true
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
 
-		if rc.cfg.TikvImporter.Backend == config.BackendLocal {
+		if rc.cfg.TikvImporter.IsLocalBackend() {
 			// for index engine, the estimate factor is non-clustered index count
 			idxCnt := len(tr.tableInfo.Core.Indices)
 			if !common.TableHasAutoRowID(tr.tableInfo.Core) {
@@ -537,7 +545,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 						dataWorker := rc.closedEngineLimit.Apply()
 						defer rc.closedEngineLimit.Recycle(dataWorker)
 						err = tr.importEngine(ctx, dataClosedEngine, rc, ecp)
-						if rc.status != nil && rc.status.backend == config.BackendLocal {
+						if rc.status != nil && (rc.status.backend == config.BackendLocal || rc.status.backend == config.BackendRemote) {
 							for _, chunk := range ecp.Chunks {
 								rc.status.FinishedFileSize.Add(chunk.TotalSize())
 							}
@@ -635,6 +643,12 @@ func (tr *TableImporter) preprocessEngine(
 		engineCfg := &backend.EngineConfig{
 			TableInfo: tr.tableInfo,
 		}
+		if rc.cfg.TikvImporter.IsRemoteBackend() {
+			engineCfg.Remote = backend.RemoteEngineConfig{
+				EngineID:      engineID,
+				IsRecoverable: remote.HasRecoverableEngineProgress(cp),
+			}
+		}
 		closedEngine, err := rc.engineMgr.UnsafeCloseEngine(ctx, engineCfg, tr.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
@@ -673,6 +687,13 @@ func (tr *TableImporter) preprocessEngine(
 		dataEngineCfg.Local.Compact = true
 		dataEngineCfg.Local.CompactConcurrency = 4
 		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
+	}
+	if rc.cfg.TikvImporter.IsRemoteBackend() {
+		dataEngineCfg.Remote = backend.RemoteEngineConfig{
+			EngineID:          engineID,
+			EstimatedDataSize: remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
+			IsRecoverable:     remote.HasRecoverableEngineProgress(cp),
+		}
 	}
 	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
@@ -874,17 +895,17 @@ ChunkLoop:
 		return nil
 	}
 
-	// in local mode, this check-point make no sense, because we don't do flush now,
+	// in physical mode, this check-point make no sense, because we don't do flush now,
 	// so there may be data lose if exit at here. So we don't write this checkpoint
 	// here like other mode.
-	if !isLocalBackend(rc.cfg) {
+	if !rc.cfg.TikvImporter.IsPhysicalBackend() {
 		if saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusAllWritten); saveCpErr != nil {
 			return nil, errors.Trace(firstErr(err, saveCpErr))
 		}
 	}
 	if err != nil {
 		// if process is canceled, we should flush all chunk checkpoints for local backend
-		if isLocalBackend(rc.cfg) && common.IsContextCanceledError(err) {
+		if rc.cfg.TikvImporter.IsLocalBackend() && common.IsContextCanceledError(err) {
 			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
 			if _, err2 := dataEngine.Close(context.Background()); err2 != nil {
 				logutil.Logger(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
@@ -898,9 +919,9 @@ ChunkLoop:
 	}
 
 	closedDataEngine, err := dataEngine.Close(ctx)
-	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
-	// this flush action impact up to 10% of the performance, so we only do it if necessary.
-	if err == nil && rc.cfg.Checkpoint.Enable && isLocalBackend(rc.cfg) {
+	// For physical backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
+	// This flush action for local backend impact up to 10% of the performance, so we only do it if necessary.
+	if err == nil && rc.cfg.Checkpoint.Enable && rc.cfg.TikvImporter.IsPhysicalBackend() {
 		if err = indexEngine.Flush(ctx); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -970,7 +991,7 @@ func (tr *TableImporter) postProcess(
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			if isLocalBackend(rc.cfg) {
+			if rc.cfg.TikvImporter.IsPhysicalBackend() {
 				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
 				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
@@ -1028,11 +1049,18 @@ func (tr *TableImporter) postProcess(
 		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
 		// 4.5. do duplicate detection.
-		// if we came here, it must be a local backend.
-		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
-		// try to abstract it with logical mode.
-		localBackend := rc.backend.(*local.Backend)
-		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		// if we came here, it must be a physical backend.
+		// TODO: remove this cast after we refactor the backend interface.
+		// 1. Physical mode is so different, we shouldn't try to abstract it with logical mode.
+		// 2. We should abstract `GetDupeController` for local backend and remote backend.
+		var dupeController *local.DupeController
+		if rc.cfg.TikvImporter.IsLocalBackend() {
+			localBackend := rc.backend.(*local.Backend)
+			dupeController = localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		} else {
+			remoteBakcned := rc.backend.(*remote.Backend)
+			dupeController = remoteBakcned.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		}
 		hasDupe := false
 		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
 			opts := &encode.SessionOptions{

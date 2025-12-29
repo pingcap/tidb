@@ -751,7 +751,7 @@ func (cr *chunkProcessor) deliverLoop(
 		// can safely update current checkpoint.
 
 		failpoint.Inject("LocalBackendSaveCheckpoint", func() {
-			if !isLocalBackend(rc.cfg) && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
+			if !rc.cfg.TikvImporter.IsLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
 				// No need to save checkpoint if nothing was delivered.
 				saveCheckpoint(rc, t, engineID, cr.chunk)
 			}

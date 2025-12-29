@@ -143,7 +143,7 @@ func NewTargetInfoGetterImpl(
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
-	case config.BackendLocal:
+	case config.BackendLocal, config.BackendRemote:
 		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
@@ -232,7 +232,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 // It implements the TargetInfoGetter interface.
 // It uses the SQL to fetch sys variables from the target.
 func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
-	sysVars := ObtainImportantVariables(ctx, g.db, !isTiDBBackend(g.cfg))
+	sysVars := ObtainImportantVariables(ctx, g.db, !g.cfg.TikvImporter.IsTiDBBackend())
 	// override by manually set vars
 	maps.Copy(sysVars, g.cfg.TiDB.Vars)
 	return sysVars
@@ -297,7 +297,7 @@ func NewPreImportInfoGetter(
 		switch cfg.TikvImporter.Backend {
 		case config.BackendTiDB:
 			encBuilder = tidb.NewEncodingBuilder()
-		case config.BackendLocal:
+		case config.BackendLocal, config.BackendRemote:
 			encBuilder = local.NewEncodingBuilder(context.Background())
 		default:
 			return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
@@ -563,7 +563,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 				tableSize := tbl.TotalSize
 				// Do not sample small table because there may a large number of small table and it will take a long
 				// time to sample data for all of them.
-				if isTiDBBackend(p.cfg) || tbl.TotalSize < int64(config.SplitRegionSize) {
+				if p.cfg.TikvImporter.IsTiDBBackend() || tbl.TotalSize < int64(config.SplitRegionSize) {
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
@@ -590,7 +590,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 		}
 	}
 
-	if isLocalBackend(p.cfg) {
+	if p.cfg.TikvImporter.IsLocalBackend() {
 		sizeWithIndex = int64(float64(sizeWithIndex) * compressionRatio)
 		tiflashSize = int64(float64(tiflashSize) * compressionRatio)
 	}

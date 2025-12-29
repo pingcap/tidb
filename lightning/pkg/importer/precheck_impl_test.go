@@ -686,7 +686,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().True(result.Passed)
-	s.Require().Equal("TiDB Lightning is not using local backend, skip this check", result.Message)
+	s.Require().Equal("TiDB Lightning is not using physical backend, skip this check", result.Message)
 }
 
 func (s *precheckImplSuite) TestPDTiDBFromSameCluster() {

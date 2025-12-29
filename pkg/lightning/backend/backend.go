@@ -95,6 +95,8 @@ type EngineConfig struct {
 	TableInfo *checkpoints.TidbTableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
+	// remote backend specified configuration
+	Remote RemoteEngineConfig
 	// local backend external engine specified configuration
 	External *ExternalEngineConfig
 	// KeepSortDir indicates whether to keep the temporary sort directory
@@ -119,6 +121,17 @@ type LocalEngineConfig struct {
 
 	// blocksize
 	BlockSize int
+}
+
+// RemoteEngineConfig is the configuration used for remote backend in OpenEngine.
+type RemoteEngineConfig struct {
+	// EngineID is the ID of the engine.
+	EngineID int32
+	// EstimatedDataSize is the estimated size of the data to be written to the engine.
+	EstimatedDataSize int64
+	// IsRecoverable indicates whether the engine has any recoverable progress.
+	// If it's true, remote backend will check the remote worker.
+	IsRecoverable bool
 }
 
 // ExternalEngineConfig is the configuration used for local backend external engine.

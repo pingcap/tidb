@@ -38,6 +38,7 @@ go_library(
         "//pkg/lightning/backend/encode",
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/backend/local",
+        "//pkg/lightning/backend/remote",
         "//pkg/lightning/backend/tidb",
         "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",

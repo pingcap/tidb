@@ -819,9 +819,9 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 		Severity: precheck.Critical,
 	}
 
-	if ci.cfg.TikvImporter.Backend != config.BackendLocal {
+	if !ci.cfg.TikvImporter.IsPhysicalBackend() {
 		theResult.Passed = true
-		theResult.Message = "TiDB Lightning is not using local backend, skip this check"
+		theResult.Message = "TiDB Lightning is not using physical backend, skip this check"
 		return theResult, nil
 	}
 
