@@ -86,7 +86,7 @@ func prepareModifyTaskTest(t *testing.T, nodeCount int) (*testutil.TestDXFContex
 
 	executorExt := testutil.GetCommonTaskExecutorExt(c.MockCtrl, func(task *proto.Task) (execute.StepExecutor, error) {
 		runtimeInfo.currTaskMeta.Store(&task.Meta)
-		runtimeInfo.currTaskConcurrency.Store(int64(task.Concurrency))
+		runtimeInfo.currTaskConcurrency.Store(int64(task.RequiredSlots))
 		executor := mockexecute.NewMockStepExecutor(c.MockCtrl)
 		executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
 		executor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
@@ -123,18 +123,18 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 			once.Do(func() {
 				task, err := handle.SubmitTask(c.Ctx, "k1", proto.TaskTypeExample, "", 3, scope, 0, []byte("init"))
 				require.NoError(t, err)
-				require.Equal(t, 3, task.Concurrency)
+				require.Equal(t, 3, task.RequiredSlots)
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
 					PrevState: proto.TaskStatePending,
 					Modifications: []proto.Modification{
-						{Type: proto.ModifyConcurrency, To: 7},
+						{Type: proto.ModifyRequiredSlots, To: 7},
 					},
 				}))
 				theTask = task
 				gotTask, err := c.TaskMgr.GetTaskBaseByID(c.Ctx, theTask.ID)
 				require.NoError(t, err)
 				require.Equal(t, proto.TaskStateModifying, gotTask.State)
-				require.Equal(t, 3, gotTask.Concurrency)
+				require.Equal(t, 3, gotTask.RequiredSlots)
 				<-modifySyncCh
 			})
 		})
@@ -166,7 +166,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
 					PrevState: proto.TaskStateRunning,
 					Modifications: []proto.Modification{
-						{Type: proto.ModifyConcurrency, To: 7},
+						{Type: proto.ModifyRequiredSlots, To: 7},
 					},
 				}))
 				<-modifySyncCh
@@ -174,7 +174,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		})
 		task, err := handle.SubmitTask(c.Ctx, "k2", proto.TaskTypeExample, "", 3, scope, 0, nil)
 		require.NoError(t, err)
-		require.Equal(t, 3, task.Concurrency)
+		require.Equal(t, 3, task.RequiredSlots)
 		// finish StepOne
 		subtaskCh <- struct{}{}
 		subtaskCh <- struct{}{}
@@ -209,7 +209,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 					require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, taskID, &proto.ModifyParam{
 						PrevState: proto.TaskStateRunning,
 						Modifications: []proto.Modification{
-							{Type: proto.ModifyConcurrency, To: 7},
+							{Type: proto.ModifyRequiredSlots, To: 7},
 						},
 					}))
 					// wait task move back to 'running' state
@@ -223,7 +223,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		)
 		task, err := handle.SubmitTask(c.Ctx, "k2-2", proto.TaskTypeExample, "", 3, scope, 0, nil)
 		require.NoError(t, err)
-		require.Equal(t, 3, task.Concurrency)
+		require.Equal(t, 3, task.RequiredSlots)
 		for range 5 {
 			subtaskCh <- struct{}{}
 		}
@@ -247,7 +247,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 			once.Do(func() {
 				task, err := handle.SubmitTask(c.Ctx, "k3", proto.TaskTypeExample, "", 3, scope, 0, nil)
 				require.NoError(t, err)
-				require.Equal(t, 3, task.Concurrency)
+				require.Equal(t, 3, task.RequiredSlots)
 				found, err := c.TaskMgr.PauseTask(c.Ctx, task.Key)
 				require.NoError(t, err)
 				require.True(t, found)
@@ -261,7 +261,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, theTask.ID, &proto.ModifyParam{
 			PrevState: proto.TaskStatePaused,
 			Modifications: []proto.Modification{
-				{Type: proto.ModifyConcurrency, To: 7},
+				{Type: proto.ModifyRequiredSlots, To: 7},
 			},
 		}))
 		taskBase = testutil.WaitTaskDoneOrPaused(c.Ctx, t, theTask.Key)
@@ -293,18 +293,18 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 			once.Do(func() {
 				task, err := handle.SubmitTask(c.Ctx, "k4", proto.TaskTypeExample, "", 3, scope, 0, nil)
 				require.NoError(t, err)
-				require.Equal(t, 3, task.Concurrency)
+				require.Equal(t, 3, task.RequiredSlots)
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
 					PrevState: proto.TaskStatePending,
 					Modifications: []proto.Modification{
-						{Type: proto.ModifyConcurrency, To: 7},
+						{Type: proto.ModifyRequiredSlots, To: 7},
 					},
 				}))
 				theTask = task
 				gotTask, err := c.TaskMgr.GetTaskBaseByID(c.Ctx, theTask.ID)
 				require.NoError(t, err)
 				require.Equal(t, proto.TaskStateModifying, gotTask.State)
-				require.Equal(t, 3, gotTask.Concurrency)
+				require.Equal(t, 3, gotTask.RequiredSlots)
 			})
 		})
 		var onceForRefresh sync.Once
@@ -313,7 +313,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 				onceForRefresh.Do(func() {
 					require.Equal(t, proto.TaskStateModifying, task.State)
 					taskClone := *task
-					taskClone.Concurrency = 7
+					taskClone.RequiredSlots = 7
 					require.NoError(t, c.TaskMgr.ModifiedTask(c.Ctx, &taskClone))
 					gotTask, err := c.TaskMgr.GetTaskBaseByID(c.Ctx, task.ID)
 					require.NoError(t, err)
@@ -347,7 +347,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 			once.Do(func() {
 				task, err := handle.SubmitTask(c.Ctx, "k5", proto.TaskTypeExample, "", 3, scope, 0, []byte("init"))
 				require.NoError(t, err)
-				require.Equal(t, 3, task.Concurrency)
+				require.Equal(t, 3, task.RequiredSlots)
 				require.EqualValues(t, []byte("init"), task.Meta)
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
 					PrevState: proto.TaskStatePending,
@@ -359,7 +359,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 				gotTask, err := c.TaskMgr.GetTaskBaseByID(c.Ctx, theTask.ID)
 				require.NoError(t, err)
 				require.Equal(t, proto.TaskStateModifying, gotTask.State)
-				require.Equal(t, 3, gotTask.Concurrency)
+				require.Equal(t, 3, gotTask.RequiredSlots)
 				<-modifySyncCh
 			})
 		})
@@ -379,13 +379,13 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		testModifyWhenSubtaskRun.Store(true)
 		task, err := handle.SubmitTask(c.Ctx, "k6", proto.TaskTypeExample, "", 3, scope, 0, []byte("init"))
 		require.NoError(t, err)
-		require.Equal(t, 3, task.Concurrency)
+		require.Equal(t, 3, task.RequiredSlots)
 		require.EqualValues(t, []byte("init"), task.Meta)
 		modifyWaitCh <- struct{}{}
 		require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
 			PrevState: proto.TaskStateRunning,
 			Modifications: []proto.Modification{
-				{Type: proto.ModifyConcurrency, To: 7},
+				{Type: proto.ModifyRequiredSlots, To: 7},
 				{Type: proto.ModifyMaxWriteSpeed, To: 123},
 			},
 		}))
@@ -411,13 +411,13 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		testModifyWhenSubtaskRun.Store(true)
 		task, err := handle.SubmitTask(c.Ctx, "k7", proto.TaskTypeExample, "", 9, scope, 0, []byte("init"))
 		require.NoError(t, err)
-		require.Equal(t, 9, task.Concurrency)
+		require.Equal(t, 9, task.RequiredSlots)
 		require.EqualValues(t, []byte("init"), task.Meta)
 		modifyWaitCh <- struct{}{}
 		require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
 			PrevState: proto.TaskStateRunning,
 			Modifications: []proto.Modification{
-				{Type: proto.ModifyConcurrency, To: 5},
+				{Type: proto.ModifyRequiredSlots, To: 5},
 				{Type: proto.ModifyMaxWriteSpeed, To: 456},
 			},
 		}))
@@ -457,7 +457,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		})
 		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, "", 3, scope, 1, nil)
 		require.NoError(t, err)
-		require.Equal(t, 3, task.Concurrency)
+		require.Equal(t, 3, task.RequiredSlots)
 		require.EqualValues(t, 1, task.MaxNodeCount)
 		// finish StepOne
 		subtaskCh <- struct{}{}
@@ -506,7 +506,7 @@ func TestModifyTaskMaxNodeCountForSubtaskBalance(t *testing.T) {
 		})
 		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, "", 3, scope, 1, nil)
 		require.NoError(t, err)
-		require.Equal(t, 3, task.Concurrency)
+		require.Equal(t, 3, task.RequiredSlots)
 		require.EqualValues(t, 1, task.MaxNodeCount)
 		// only 1 subtask can be running at the same time
 		require.Eventually(t, func() bool {
