@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -99,6 +100,40 @@ func TestImportIntoCheckpointControl(t *testing.T) {
 			},
 			setup:   func() {},
 			wantErr: false,
+		},
+		{
+			name: "RemoveError",
+			operation: func() error {
+				return control.Remove(ctx, "db.t1")
+			},
+			setup: func() {
+				mockMgr.EXPECT().Remove(ctx, "db.t1").Return(errors.New("remove error"))
+				mockMgr.EXPECT().Close().Return(nil)
+			},
+			wantErr: true,
+		},
+		{
+			name: "IgnoreErrorError",
+			operation: func() error {
+				return control.IgnoreError(ctx, "db.t1")
+			},
+			setup: func() {
+				mockMgr.EXPECT().IgnoreError(ctx, "db.t1").Return(errors.New("ignore error error"))
+				mockMgr.EXPECT().Close().Return(nil)
+			},
+			wantErr: true,
+		},
+		{
+			name: "DumpError",
+			operation: func() error {
+				tempDir := t.TempDir()
+				return control.Dump(ctx, tempDir)
+			},
+			setup: func() {
+				mockMgr.EXPECT().DumpTables(ctx, gomock.Any()).Return(errors.New("dump error"))
+				mockMgr.EXPECT().Close().Return(nil)
+			},
+			wantErr: true,
 		},
 	}
 
