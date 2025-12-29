@@ -1643,7 +1643,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	}
 	sessionVars := ds.SCtx().GetSessionVars()
 	_, isolationReadEnginesHasTiKV := sessionVars.GetIsolationReadEngines()[kv.TiKV]
-	if ds.IsForUpdateRead && sessionVars.TxnCtx.IsExplicit && isolationReadEnginesHasTiKV && !sessionVars.IsMPPEnforced() {
+	if ds.IsForUpdateRead && sessionVars.TxnCtx.IsExplicit && isolationReadEnginesHasTiKV {
 		hasPointGetPath := false
 		for _, path := range ds.PossibleAccessPaths {
 			if isPointGetPath(ds, path) {
