@@ -1,11 +1,11 @@
 create table t (id int primary key, v int) active_active='on' softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = 0;
 insert into t values (1, 1), (2, 2), (3, 3);
 update t set _tidb_origin_ts = 2 where id = 2;
 update t set _tidb_softdelete_time = now() where id = 3;
 
 # mock CDC operation
 set @@tidb_cdc_write_source = 1;
-set @@tidb_translate_softdelete_sql = 0;
 
 # 1 duplicate and skip
 # 2 duplicate and overwrite
