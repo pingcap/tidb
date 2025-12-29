@@ -16,11 +16,12 @@ package ddl
 
 import (
 	"context"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -246,8 +248,7 @@ func hasSplitPolicies(tbInfo *model.TableInfo) bool {
 	return false
 }
 
-func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, store kv.SplittableStore,
-	tbInfo *model.TableInfo, physicalTableID int64) []uint64 {
+func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalTableID int64) []uint64 {
 	var regionIDs []uint64
 
 	sc := sctx.GetSessionVars().StmtCtx
@@ -256,13 +257,13 @@ func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, st
 
 	// apply table policy
 	if policy := tbInfo.TableSplitPolicy; policy != nil {
-		lower, err := parseValuesToDatums(policy.Lower)
+		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse lower bound for table policy",
 				zap.String("table", tbInfo.Name.O), zap.Error(err))
 			goto index
 		}
-		upper, err := parseValuesToDatums(policy.Upper)
+		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse upper bound for table policy",
 				zap.String("table", tbInfo.Name.O), zap.Error(err))
@@ -303,7 +304,7 @@ index:
 		}
 
 		policy := idx.RegionSplitPolicy
-		lower, err := parseValuesToDatums(policy.Lower)
+		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse lower bound for index policy",
 				zap.String("table", tbInfo.Name.O),
@@ -311,7 +312,7 @@ index:
 				zap.Error(err))
 			continue
 		}
-		upper, err := parseValuesToDatums(policy.Upper)
+		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse upper bound for index policy",
 				zap.String("table", tbInfo.Name.O),
@@ -339,31 +340,22 @@ index:
 	return regionIDs
 }
 
-func parseValuesToDatums(values []string) ([]types.Datum, error) {
+func parseValuesToDatums(exprCtx exprctx.ExprContext, values []string) ([]types.Datum, error) {
 	datums := make([]types.Datum, len(values))
 	for i, val := range values {
-		// Try to parse as different types
-		// First try integer
-		if intVal, err := strconv.ParseInt(val, 10, 64); err == nil {
-			datums[i] = types.NewIntDatum(intVal)
-			continue
+		d, err := expression.ParseSimpleExpr(exprCtx, val)
+		if err != nil {
+			return nil, err
 		}
-		// Then try float
-		if floatVal, err := strconv.ParseFloat(val, 64); err == nil {
-			datums[i] = types.NewFloat64Datum(floatVal)
-			continue
+		datums[i], err = d.Eval(exprCtx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return nil, err
 		}
-		// Default to string (remove quotes if present)
-		strVal := val
-		if len(strVal) >= 2 && strVal[0] == '\'' && strVal[len(strVal)-1] == '\'' {
-			strVal = strVal[1 : len(strVal)-1]
-		}
-		datums[i] = types.NewStringDatum(strVal)
 	}
 	return datums, nil
 }
 
-func normalizeSplitPolicy(splitOpt *ast.SplitIndexOption, tbInfo *model.TableInfo) (*model.RegionSplitPolicy, string, error) {
+func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexOption, tbInfo *model.TableInfo) (*model.RegionSplitPolicy, string, error) {
 	if tbInfo.HasClusteredIndex() && splitOpt.PrimaryKey {
 		// cannot specify both SPLIT PRIMARY for CLUSTERED table
 		// it is for unclustered primary
@@ -421,14 +413,34 @@ func normalizeSplitPolicy(splitOpt *ast.SplitIndexOption, tbInfo *model.TableInf
 	policy.Lower = make([]string, len(splitOpt.SplitOpt.Lower))
 	for i, expr := range splitOpt.SplitOpt.Lower {
 		buf.Reset()
-		_ = expr.Restore(restoreCtx)
+		// validate expr
+		d, err := expression.BuildSimpleExpr(ctx, expr)
+		if err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		if _, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		if err := expr.Restore(restoreCtx); err != nil {
+			return nil, "", errors.Trace(err)
+		}
 		policy.Lower[i] = buf.String()
 	}
 
 	policy.Upper = make([]string, len(splitOpt.SplitOpt.Upper))
 	for i, expr := range splitOpt.SplitOpt.Upper {
 		buf.Reset()
-		_ = expr.Restore(restoreCtx)
+		// validate expr
+		d, err := expression.BuildSimpleExpr(ctx, expr)
+		if err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		if _, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		if err := expr.Restore(restoreCtx); err != nil {
+			return nil, "", errors.Trace(err)
+		}
 		policy.Upper[i] = buf.String()
 	}
 

@@ -1044,7 +1044,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	// Process region split policies from CREATE TABLE
 	if len(s.SplitIndex) > 0 {
 		for _, splitOpt := range s.SplitIndex {
-			policy, indexName, err := normalizeSplitPolicy(splitOpt, tbInfo)
+			policy, indexName, err := normalizeSplitPolicy(metaBuildCtx.GetExprCtx(), splitOpt, tbInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -7208,7 +7208,7 @@ func (e *executor) AlterTableSetRegionSplitPolicy(ctx sessionctx.Context, ident 
 
 	meta := tb.Meta()
 
-	policy, indexName, err := normalizeSplitPolicy(splitOpt, tb.Meta())
+	policy, indexName, err := normalizeSplitPolicy(ctx.GetExprCtx(), splitOpt, tb.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -1416,28 +1416,34 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
+	var parse *parser.Parser
 	// Show table region split policy
 	if tableInfo.TableSplitPolicy != nil {
+		if parse == nil {
+			parse = parser.New()
+		}
 		buf.WriteString("\n/*T![region_split] ")
 		buf.WriteString("SPLIT BETWEEN (")
 
 		policy := tableInfo.TableSplitPolicy
 
-		// Lower bounds
 		for i, val := range policy.Lower {
 			if i > 0 {
 				buf.WriteString(", ")
 			}
-			buf.WriteString(formatSplitValue(val))
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		buf.WriteString(") AND (")
 
-		// Upper bounds
 		for i, val := range policy.Upper {
 			if i > 0 {
 				buf.WriteString(", ")
 			}
-			buf.WriteString(formatSplitValue(val))
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
@@ -1448,6 +1454,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	for _, indexInfo := range tableInfo.Indices {
 		if indexInfo.RegionSplitPolicy == nil {
 			continue
+		}
+		if parse == nil {
+			parse = parser.New()
 		}
 
 		policy := indexInfo.RegionSplitPolicy
@@ -1461,21 +1470,23 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 		fmt.Fprintf(buf, "%s BETWEEN (", stringutil.Escape(indexInfo.Name.O, sqlMode))
 
-		// Lower bounds
 		for i, val := range policy.Lower {
 			if i > 0 {
 				buf.WriteString(", ")
 			}
-			buf.WriteString(formatSplitValue(val))
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		buf.WriteString(") AND (")
 
-		// Upper bounds
 		for i, val := range policy.Upper {
 			if i > 0 {
 				buf.WriteString(", ")
 			}
-			buf.WriteString(formatSplitValue(val))
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
@@ -2887,15 +2898,11 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	return fn(sysCtx)
 }
 
-// formatSplitValue formats split boundary value for display
-func formatSplitValue(val string) string {
-	// Try parsing as number
-	if _, err := strconv.ParseInt(val, 10, 64); err == nil {
-		return val
+func formatSplitValue(parser *parser.Parser, buf *bytes.Buffer, val string) error {
+	stmts, _, err := parser.ParseSQL("select " + val)
+	if err == nil {
+		expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
+		expr.Format(buf)
 	}
-	if _, err := strconv.ParseFloat(val, 64); err == nil {
-		return val
-	}
-	// String value, add quotes
-	return "'" + format.OutputFormat(val) + "'"
+	return err
 }

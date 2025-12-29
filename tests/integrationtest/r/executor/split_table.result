@@ -211,7 +211,7 @@ t	CREATE TABLE `t` (
   PRIMARY KEY (`a`,`b`) /*T![clustered_index] CLUSTERED */,
   KEY `idx_c` (`c`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-/*T![region_split] SPLIT INDEX `idx_c` BETWEEN ('_UTF8MB4''a''') AND ('_UTF8MB4''z''') REGIONS 3 */
+/*T![region_split] SPLIT INDEX `idx_c` BETWEEN ('a') AND ('z') REGIONS 3 */
 drop table if exists t1;
 create table t1 (
 a int,
@@ -245,7 +245,7 @@ t	CREATE TABLE `t` (
   PRIMARY KEY (`a`,`b`,`c`) /*T![clustered_index] CLUSTERED */,
   KEY `idx_d` (`d`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-/*T![region_split] SPLIT INDEX `idx_d` BETWEEN ('_UTF8MB4''a''') AND ('_UTF8MB4''z''') REGIONS 3 */
+/*T![region_split] SPLIT INDEX `idx_d` BETWEEN ('a') AND ('z') REGIONS 3 */
 set tidb_enable_clustered_index=OFF;
 drop table if exists t;
 create table t (id bigint primary key, val bigint);
@@ -296,7 +296,7 @@ t	CREATE TABLE `t` (
   PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 /*T![region_split] SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3 */
-/*T![region_split] SPLIT INDEX `idx_status` BETWEEN ('_UTF8MB4''a''') AND ('_UTF8MB4''z''') REGIONS 2 */
+/*T![region_split] SPLIT INDEX `idx_status` BETWEEN ('a') AND ('z') REGIONS 2 */
 /*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (1000000) REGIONS 4 */
 PARTITION BY RANGE (`id`)
 (PARTITION `p0` VALUES LESS THAN (100000),
