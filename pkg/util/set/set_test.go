@@ -15,7 +15,6 @@
 package set
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -28,13 +27,6 @@ type item struct {
 
 func (i item) Key() string {
 	return i.Text
-}
-
-func TestSS(t *testing.T) {
-	a, _ := NewStringToStringSetWithMemoryUsage()
-	b, _ := NewStringToDecimalSetWithMemoryUsage()
-	fmt.Println(a.RealBytes())
-	fmt.Println(b.RealBytes())
 }
 
 func TestSetBasic(t *testing.T) {

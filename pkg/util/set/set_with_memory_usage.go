@@ -23,7 +23,6 @@ import (
 // StringToStringSetWithMemoryUsage is a string-string set with memory usage.
 type StringToStringSetWithMemoryUsage struct {
 	hack.MemAwareMap[string, string]
-	bInMap int64
 
 	// For tracking large memory usage in time.
 	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
@@ -34,7 +33,6 @@ type StringToStringSetWithMemoryUsage struct {
 func NewStringToStringSetWithMemoryUsage() (setWithMemoryUsage StringToStringSetWithMemoryUsage, delta int64) {
 	set := make(map[string]string)
 	delta = setWithMemoryUsage.Init(set)
-	setWithMemoryUsage.bInMap = 0
 	return setWithMemoryUsage, delta
 }
 
@@ -48,7 +46,7 @@ func (s *StringToStringSetWithMemoryUsage) Insert(key string, val string) (delta
 	return delta
 }
 
-// SetTracker sets memory tracker for StringToStringMapWithMemoryUsage
+// SetTracker sets memory tracker for StringToStringSetWithMemoryUsage
 func (s *StringToStringSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
 	s.tracker = t
 }
@@ -56,7 +54,6 @@ func (s *StringToStringSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
 // StringToDecimalSetWithMemoryUsage is a string-decimal set with memory usage.
 type StringToDecimalSetWithMemoryUsage struct {
 	hack.MemAwareMap[string, *types.MyDecimal]
-	bInMap int64
 
 	// For tracking large memory usage in time.
 	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
@@ -67,7 +64,6 @@ type StringToDecimalSetWithMemoryUsage struct {
 func NewStringToDecimalSetWithMemoryUsage() (setWithMemoryUsage StringToDecimalSetWithMemoryUsage, delta int64) {
 	set := make(map[string]*types.MyDecimal)
 	delta = setWithMemoryUsage.Init(set)
-	setWithMemoryUsage.bInMap = 0
 	return setWithMemoryUsage, delta
 }
 
@@ -81,7 +77,7 @@ func (s *StringToDecimalSetWithMemoryUsage) Insert(key string, val *types.MyDeci
 	return delta
 }
 
-// SetTracker sets memory tracker for StringToDecimalMapWithMemoryUsage
+// SetTracker sets memory tracker for StringToDecimalSetWithMemoryUsage
 func (s *StringToDecimalSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
 	s.tracker = t
 }

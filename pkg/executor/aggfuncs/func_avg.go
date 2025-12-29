@@ -243,18 +243,6 @@ func (*baseAvgDistinct) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, P
 	panic("Not implemented")
 }
 
-func (*baseAvgDistinct) MergePartialResult(_ AggFuncUpdateContext, _, _ PartialResult) (int64, error) {
-	panic("Not implemented")
-}
-
-func (*baseAvgDistinct) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
-	panic("Not implemented")
-}
-
-func (*baseAvgDistinct) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
-	panic("Not implemented")
-}
-
 type baseAvgDistinct4Decimal struct {
 	baseAvgDistinct
 }
@@ -297,8 +285,7 @@ func (*avgPartial4DistinctDecimal) MergePartialResult(_ AggFuncUpdateContext, sr
 			continue
 		}
 
-		memDelta += d.valSet.Insert(key, val)
-		memDelta += int64(len(key) + types.MyDecimalStructSize)
+		memDelta += d.valSet.Insert(key, val) + int64(len(key)) + types.MyDecimalStructSize
 
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&d.sum, val, newSum)
@@ -348,8 +335,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx AggFuncUpdateCont
 		if p.valSet.Exist(keyStr) {
 			continue
 		}
-		memDelta += p.valSet.Insert(keyStr, input.Clone())
-		memDelta += int64(len(keyStr)) + pointerSize
+		memDelta += p.valSet.Insert(keyStr, input.Clone()) + int64(len(keyStr)) + pointerSize
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {

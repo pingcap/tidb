@@ -487,8 +487,7 @@ func (e *sum4OriginalDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateCon
 		if p.valSet.Exist(keyStr) {
 			continue
 		}
-		memDelta += p.valSet.Insert(keyStr, input.Clone())
-		memDelta += int64(len(keyStr)) + pointerSize
+		memDelta += p.valSet.Insert(keyStr, input.Clone()) + int64(len(keyStr)) + pointerSize
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
