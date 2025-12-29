@@ -2376,6 +2376,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
 		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:     vardef.DefTiDBIndexLookUpPushDownPolicy,
+		OptPrefixIndexForOrderLimit:   vardef.DefTiDBOptPrefixIndexForOrderLimit,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
