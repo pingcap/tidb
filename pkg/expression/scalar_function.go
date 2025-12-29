@@ -817,7 +817,7 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema, allowLazyCopy bool) err
 			return err
 		}
 		if cloned {
-			// if cloned is false, then continue to use the original arg
+			// if cloned is true, then update the arg, otherwise keep the original arg
 			sf.GetArgs()[index] = newArg
 		}
 	}

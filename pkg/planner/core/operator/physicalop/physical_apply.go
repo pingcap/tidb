@@ -126,7 +126,7 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 	}
 	p.OuterSchema = make([]*expression.CorrelatedColumn, 0, len(dedupCols))
 	for _, col := range dedupCols {
-		newCol, _, err := col.Column.ResolveIndices(p.Children()[0].Schema(), false)
+		newCol, _, err := col.Column.ResolveIndices(p.Children()[0].Schema(), true)
 		if err != nil {
 			return err
 		}
@@ -140,14 +140,14 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 	joinedSchema := expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema())
 	for i, cond := range p.PhysicalHashJoin.EqualConditions {
 		// todo double check if it can allowLazyCopy?
-		newSf, _, err := cond.ResolveIndices(joinedSchema, false)
+		newSf, _, err := cond.ResolveIndices(joinedSchema, true)
 		if err != nil {
 			return err
 		}
 		p.PhysicalHashJoin.EqualConditions[i] = newSf.(*expression.ScalarFunction)
 	}
 	for i, cond := range p.PhysicalHashJoin.NAEqualConditions {
-		newSf, _, err := cond.ResolveIndices(joinedSchema, false)
+		newSf, _, err := cond.ResolveIndices(joinedSchema, true)
 		if err != nil {
 			return err
 		}
