@@ -806,6 +806,11 @@ error = '''
 Incorrect table name '%-.100s'
 '''
 
+["ddl:1105"]
+error = '''
+Must have at least one region to split
+'''
+
 ["ddl:1111"]
 error = '''
 Invalid use of group function

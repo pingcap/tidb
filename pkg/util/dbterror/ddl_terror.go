@@ -525,6 +525,12 @@ var (
 
 	// ErrInvalidTableAffinity is returned when set an invalid affinity value on a table
 	ErrInvalidTableAffinity = ClassDDL.NewStd(mysql.ErrInvalidAffinityOption)
+	// ErrMissingRegionSplitPolicy warns about missing region split policy.
+	ErrMissingRegionSplitPolicy = ClassDDL.NewStdErr(mysql.ErrUnknown, parser_mysql.Message("It is recommended to add a region split strategy to the new index to avoid write hotspots", nil))
+	// ErrInvalidRegionSplitPolicyClustered warns about missing region split policy.
+	ErrInvalidRegionSplitPolicyClustered = ClassDDL.NewStdErr(mysql.ErrUnknown, parser_mysql.Message("Can not split primary key for clustered table", nil))
+	// ErrInvalidRegionSplitPolicyNumber warns about wrong region split number.
+	ErrInvalidRegionSplitPolicyNumber = ClassDDL.NewStdErr(mysql.ErrUnknown, parser_mysql.Message("Must have at least one region to split", nil))
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
