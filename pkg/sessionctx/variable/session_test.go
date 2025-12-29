@@ -381,7 +381,7 @@ func TestSlowLogFormat(t *testing.T) {
 	defer memory.CleanupGlobalMemArbitratorForTest()
 	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
 	memTracker := seVar.StmtCtx.MemTracker
-	require.True(t, memTracker.InitMemArbitrator(memory.GlobalMemArbitrator(), 0, nil, "", memory.ArbitrationPriorityMedium, false, 0))
+	require.True(t, memTracker.InitMemArbitratorForTest())
 	memTracker.MemArbitrator.AwaitAlloc.TotalDur.Store(int64(logItems.MemArbitration * float64(time.Second.Nanoseconds())))
 
 	// get an ExecStmt

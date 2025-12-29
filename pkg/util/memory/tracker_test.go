@@ -586,6 +586,8 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.small.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.intoBig.Load() == 0)
+		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 0)
+		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 0)
 	}()
 
 	newRootTracker := func(uid uint64) (t1 *Tracker) {
@@ -1017,7 +1019,10 @@ func TestGlobalMemArbitrator(t *testing.T) {
 
 		t1 := newRootTracker(29)
 		require.True(t,
-			t1.InitMemArbitrator(m, 0, t1.Killer, "", ArbitrationPriorityMedium, false, 0, false))
+			t1.InitMemArbitrator(m, 0, t1.Killer, "", ArbitrationPriorityMedium, false, 0, true))
+		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 1)
+		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 0)
+
 		t1.MemArbitrator.ctx.PrevMaxMem = 1 // mock set prev max mem to trigger reserve big budget
 		require.True(t, t1.MemArbitrator.state.Load() == memArbitratorStateSmallBudget)
 		t1.Consume(1e5)
@@ -1033,6 +1038,8 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			require.True(t, globalArbitrator.metrics.pools.small.Load() == 0)
 			wg.Go(func() {
 				t1.Detach()
+				require.True(t, t1.MemArbitrator != nil)
+				require.False(t, t1.DetachMemArbitrator())
 			})
 			for t1.MemArbitrator.state.Load() != memArbitratorStateDown {
 				runtime.Gosched()
@@ -1049,10 +1056,14 @@ func TestGlobalMemArbitrator(t *testing.T) {
 				require.True(t, growThreshold == 1e5*0.95)
 				require.True(t, capacity == 1e5)
 				require.True(t, t1.MemArbitrator.bigBudget().Pool.allocated() == 1e5) // use big budget pool
+				require.True(t, globalArbitrator.metrics.pools.internal.Load() == 1)
+				require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 1)
 			}
 		}
 		t1.Consume(1e8)
 		wg.Wait()
+		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 0)
+		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 1)
 
 		// all budget released
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 0)
@@ -1079,10 +1090,12 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, t1.MemArbitrator.smallBudgetUsed() == 1)
 		require.True(t, m.awaitFreePoolUsed().quota == 1)
 
-		t1.Detach()
+		require.False(t, t1.DetachMemArbitrator())
 
 		// clean small budget
 		require.True(t, t1.MemArbitrator.smallBudgetUsed() == 0)
 		require.True(t, m.awaitFreePoolUsed().quota == 0)
+
+		RemovePoolFromGlobalMemArbitrator(t1.SessionID.Load())
 	}
 }

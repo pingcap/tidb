@@ -2125,7 +2125,7 @@ func (b *ConcurrentBudget) Stop() int64 {
 	b.Lock()
 	defer b.Unlock()
 
-	b.Pool.SetOutOfCapacityAction(func(s OutOfCapacityActionArgs) error {
+	b.Pool.SetOutOfCapacityAction(func(OutOfCapacityActionArgs) error {
 		return errArbitrateFailError
 	})
 
@@ -2761,7 +2761,7 @@ func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 	return true
 }
 
-func (m *MemArbitrator) innerTime() time.Time {
+func (*MemArbitrator) innerTime() time.Time {
 	if intest.InTest {
 		if mockNow != nil {
 			return mockNow()

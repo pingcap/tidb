@@ -1202,16 +1202,7 @@ func (t *Tracker) DetachMemArbitrator() bool {
 		m.cleanSmallBudget()
 	}
 
-	oriState := m.state.Load()
-	if oriState >= memArbitratorStateDown {
-		return false
-	}
-
-	if m.state.CompareAndSwap(oriState, memArbitratorStateDown) == false {
-		return false
-	}
-
-	switch oriState {
+	switch m.state.Swap(memArbitratorStateDown) {
 	case memArbitratorStateSmallBudget:
 		globalArbitrator.metrics.pools.small.Add(-1)
 	case memArbitratorStateIntoBigBudget:
@@ -1224,6 +1215,8 @@ func (t *Tracker) DetachMemArbitrator() bool {
 		}
 	case memArbitratorStateBigBudget:
 		globalArbitrator.metrics.pools.big.Add(-1)
+	default:
+		return false
 	}
 
 	if m.isInternal {
@@ -1245,6 +1238,11 @@ func (t *Tracker) DetachMemArbitrator() bool {
 		m.ResetRootPoolByID(m.uid, maxConsumed, !killed)
 	}
 	return true
+}
+
+// InitMemArbitratorForTest is a simplified version of InitMemArbitrator for test usage.
+func (t *Tracker) InitMemArbitratorForTest() bool {
+	return t.InitMemArbitrator(GlobalMemArbitrator(), 0, nil, "", ArbitrationPriorityMedium, false, 0, false)
 }
 
 // InitMemArbitrator attaches (not thread-safe) to the mem arbitrator and initializes the context
