@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -115,6 +116,11 @@ func (o *DefaultJobOrchestrator) SubmitAndWait(ctx context.Context, tables []*im
 	o.mu.Unlock()
 
 	o.logger.Info("all jobs submitted", zap.Int("count", len(jobs)))
+
+	failpoint.Inject("FailAfterSubmission", func() {
+		o.logger.Info("failpoint FailAfterSubmission triggered")
+		failpoint.Return(errors.New("failpoint error after submission"))
+	})
 
 	// Phase 2: Wait for all jobs to complete (delegated to monitor)
 	return o.monitor.WaitForJobs(ctx, jobs)

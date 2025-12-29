@@ -1,0 +1,61 @@
+[lightning]
+level = "info"
+file = "lightning.log"
+check-requirements = true
+table-concurrency = 2
+max-error = { type = 10 }
+
+[tikv-importer]
+backend = "import-into"
+disk-quota = "10GB"
+store-write-bwlimit = "100MB"
+
+[mydumper]
+data-source-dir = "/workspaces/tidb/lightning/tests/lightning_import_into/data"
+strict-format = true
+character-set = "utf8mb4"
+data-character-set = "utf8mb4"
+
+[[mydumper.files]]
+pattern = '(?i)mydata_.*\.csv'
+schema = "import_into"
+table = "t"
+type = "csv"
+
+[[mydumper.files]]
+pattern = '(?i)myschema-create\.sql'
+schema = "import_into"
+type = "schema-schema"
+
+[[mydumper.files]]
+pattern = '(?i)mytable-schema\.sql'
+schema = "import_into"
+table = "t"
+type = "table-schema"
+
+[mydumper.csv]
+separator = "|"
+delimiter = "'"
+terminator = "\n"
+header = true
+not-null = false
+null = "\\N"
+backslash-escape = true
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+password = ""
+
+[checkpoint]
+enable = true
+driver = "file"
+dsn = "/tmp/lightning_import_into_checkpoint.pb"
+
+[post-restore]
+checksum = "required"
+analyze = "required"
+
+[cron]
+log-progress = "5s"

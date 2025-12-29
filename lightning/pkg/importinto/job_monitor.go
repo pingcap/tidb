@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -96,6 +97,9 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 		case <-logTicker.C:
 			m.logProgress(len(jobs), stats)
 		case <-ticker.C:
+			failpoint.Inject("SlowDownPolling", func() {
+				time.Sleep(time.Second)
+			})
 			// Get detailed status for each job
 			statuses, err := m.sdk.GetJobsByGroup(ctx, groupKey)
 			if err != nil {
