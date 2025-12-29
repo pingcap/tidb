@@ -4,6 +4,7 @@
     "cases": [
       "explain format='brief' select * from t1 where fts_match_word('hello', title)",
       "explain format='brief' select * from t1 where fts_match_prefix('hello', title)",
+      "explain format='brief' select * from t1 where fts_match_prefix('hello', title) and id = 10",
       "explain format='brief' select id from t1 where fts_match_word('hello', title)",
       "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10",
       "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
@@ -41,7 +42,12 @@
       "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, t, d limit 10 offset 5",
       "explain format='brief' select * from t4 where i in (1, 2, 3) and d between '2025-11-01' and '2025-11-30' order by i, ts desc, d limit 10",
       "explain format='brief' select i from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc limit 10",
-      "explain format='brief' select /*+ inl_join(t4), use_index(t4, idx) */ * from t4, t2 where t2.a=t4.i and t4.t = 'apple'"
+      "explain format='brief' select /*+ inl_join(t4), use_index(t4, idx) */ * from t4, t2 where t2.a=t4.i and t4.t = 'apple'",
+      "explain format='brief' select * from t5 where t = 'apple'",
+      "explain format='brief' select * from t5 where t = 'apple' and ts < '2025-11-30 00:00:00'",
+      "explain format='brief' select * from t5 where t = 'apple' and i > 10",
+      "explain format='brief' select * from t5 where t = 'apple' and ts < '2025-11-30 00:00:00' order by ts limit 5",
+      "explain format='brief' select * from t5 where t = 'apple' and ts < '2025-11-30 00:00:00' order by ts, i limit 5"
     ]
   },
   {

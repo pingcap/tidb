@@ -144,7 +144,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) (b
 			p.Exprs = slices.Delete(p.Exprs, i, i+1)
 		}
 	}
-	selfUsedCols := expression.ExtractColumnsFromExpressions(p.Exprs, nil)
+	selfUsedCols := expression.ExtractColumnsFromExpressions(p.Exprs, nil, false)
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols)
 	if err != nil {

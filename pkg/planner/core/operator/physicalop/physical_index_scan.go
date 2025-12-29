@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -451,26 +452,37 @@ func (p *PhysicalIndexScan) InitSchemaForTiKVIndex(idxExprCols []*expression.Col
 
 // InitSchemaForTiCIIndex is used to set the schema of PhysicalIndexScan.
 // Unlike the normal TiKV index, the indexed columns in TiCI index may not store its original data.
-// Currently, only primary key can return from the index library.
-func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols []*expression.Column) {
+// Currently, TiCI can return primary key and all its indexes columns.
+// There's no fixed row layout for TiCI index like the normal TiKV index.
+// But TiCI needs the deduplication on columns.
+// We build the layout like [primary key columns..., deduplicated index columns...].
+// So it makes it easier for TiCI to only return the pk for the double read case.
+func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols []*expression.Column) {
 	intest.Assert(!p.Index.Global && !p.Index.MVIndex)
 	handleLen := 1
 	if p.Table.IsCommonHandle {
 		handleLen = len(possibleHandleCols)
 	}
-	handleCols := make([]*expression.Column, 0, handleLen)
-	handleCols = append(handleCols, possibleHandleCols...)
-	if len(handleCols) == 0 {
+	rowLen := handleLen
+	for _, col := range indexCols {
+		if col == nil {
+			continue
+		}
+		rowLen++
+	}
+	rowLayout := make([]*expression.Column, 0, rowLen)
+	rowLayout = append(rowLayout, possibleHandleCols...)
+	if len(rowLayout) == 0 {
 		foundIntPK := false
 		for i, col := range p.Columns {
 			if (mysql.HasPriKeyFlag(col.GetFlag()) && p.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-				handleCols = append(handleCols, p.DataSourceSchema.Columns[i])
+				rowLayout = append(rowLayout, p.DataSourceSchema.Columns[i])
 				foundIntPK = true
 				break
 			}
 		}
 		if !foundIntPK {
-			handleCols = append(handleCols, &expression.Column{
+			rowLayout = append(rowLayout, &expression.Column{
 				RetType:  types.NewFieldType(mysql.TypeLonglong),
 				ID:       model.ExtraHandleID,
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
@@ -478,7 +490,19 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols []*express
 			})
 		}
 	}
-	p.SetSchema(expression.NewSchema(handleCols...))
+	columnIDSet := intset.NewFastIntSet()
+	for _, col := range rowLayout {
+		columnIDSet.Insert(int(col.ID))
+	}
+	for _, col := range indexCols {
+		if col == nil {
+			continue
+		}
+		if !columnIDSet.Has(int(col.ID)) {
+			rowLayout = append(rowLayout, col)
+		}
+	}
+	p.SetSchema(expression.NewSchema(rowLayout...))
 }
 
 // AddSelectionConditionForGlobalIndex adds partition filtering conditions for global index scans.
@@ -765,7 +789,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	}
 	rowCount := path.CountAfterAccess
 	if is.FtsQueryInfo != nil {
-		is.InitSchemaForTiCIIndex(ds.CommonHandleCols)
+		is.InitSchemaForTiCIIndex(ds.CommonHandleCols, path.FullIdxCols)
 	} else {
 		is.InitSchemaForTiKVIndex(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
 	}
