@@ -370,7 +370,12 @@ func (l *Lightning) adjust(i *TikvImporter) {
 			l.RegionConcurrency = cpuCount
 		}
 	case BackendImportInto:
-		// TODO: set default values for import-into backend
+		if len(l.MetaSchemaName) == 0 {
+			l.MetaSchemaName = defaultMetaSchemaName
+		}
+		if l.TableConcurrency == 0 {
+			l.TableConcurrency = l.RegionConcurrency
+		}
 	}
 }
 
