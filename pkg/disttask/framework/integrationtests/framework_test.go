@@ -339,3 +339,29 @@ func TestDXFAlwaysEnabledOnNextGen(t *testing.T) {
 	require.ErrorContains(t, tk.ExecToErr("set global tidb_enable_dist_task=0"),
 		"setting tidb_enable_dist_task is not supported in the next generation of TiDB")
 }
+
+func TestMaxRuntimeSlots(t *testing.T) {
+	c := testutil.NewTestDXFContext(t, 1, 16, true)
+
+	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
+
+	var callCount atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/beforeSetFrameworkInfo", func(rc *proto.StepResource) {
+		val := callCount.Add(1)
+		if val == 1 {
+			require.Equal(t, 12, int(rc.CPU.Capacity()))
+		} else {
+			require.Equal(t, 16, int(rc.CPU.Capacity()))
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/beforeSubmitTask",
+		func(requiredSlots *int, params *proto.ExtraParams) {
+			params.MaxRuntimeSlots = 12
+			params.TargetSteps = []proto.Step{proto.StepOne}
+		},
+	)
+	scope := handle.GetTargetScope()
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 16)
+	require.Equal(t, proto.TaskStateSucceed, task.State)
+	require.EqualValues(t, 2, callCount.Load())
+}

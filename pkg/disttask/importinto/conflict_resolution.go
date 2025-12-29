@@ -102,7 +102,7 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 	// it's possible to resolve different kv groups in parallel, we can enhance
 	// it later.
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
-		err = e.resolveConflictsOfKVGroup(ctx, objStore, e.task.RequiredSlots, kvGroup, ci)
+		err = e.resolveConflictsOfKVGroup(ctx, objStore, int(e.GetResource().CPU.Capacity()), kvGroup, ci)
 		failpoint.InjectCall("afterResolveOneKVGroup", &err)
 		if err != nil {
 			return err

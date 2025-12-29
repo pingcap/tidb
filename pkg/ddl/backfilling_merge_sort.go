@@ -131,7 +131,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	err = external.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		m.task.RequiredSlots, // the concurrency used to split subtask
+		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
 		op,
 	)
 

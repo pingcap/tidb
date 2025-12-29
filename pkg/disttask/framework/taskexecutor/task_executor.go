@@ -330,7 +330,7 @@ func (e *BaseTaskExecutor) Run() {
 			e.logger.Info("task required slots modification applied",
 				zap.Int("old", oldTask.RequiredSlots), zap.Int("new", newTask.RequiredSlots),
 				zap.Int("availableSlots", e.slotMgr.availableSlots()))
-			newResource := e.nodeRc.GetStepResource(newTask.RequiredSlots)
+			newResource := e.nodeRc.GetStepResource(&newTask.TaskBase)
 
 			if e.stepExec != nil {
 				e.stepExec.SetResource(newResource)
@@ -399,7 +399,8 @@ func (e *BaseTaskExecutor) createStepExecutor() error {
 		e.failOneSubtask(e.ctx, task.ID, err)
 		return errors.Trace(err)
 	}
-	resource := e.nodeRc.GetStepResource(e.GetTaskBase().RequiredSlots)
+	resource := e.nodeRc.GetStepResource(e.GetTaskBase())
+	failpoint.InjectCall("beforeSetFrameworkInfo", resource)
 	execute.SetFrameworkInfo(stepExecutor, task, resource, e.taskTable.UpdateSubtaskCheckpoint, e.taskTable.GetSubtaskCheckpoint)
 
 	if err := stepExecutor.Init(e.ctx); err != nil {
@@ -593,7 +594,7 @@ func (e *BaseTaskExecutor) tryModifyTaskRequiredSlots(ctx context.Context, oldTa
 		// we need try to release the resource first, then free slots, to avoid
 		// OOM when manager starts other task executor and start to allocate memory
 		// immediately.
-		newResource := e.nodeRc.GetStepResource(latestTask.RequiredSlots)
+		newResource := e.nodeRc.GetStepResource(&latestTask.TaskBase)
 		if err := e.stepExec.ResourceModified(ctx, newResource); err != nil {
 			logger.Warn("failed to reduce resource usage", zap.Error(err))
 			return
@@ -616,7 +617,7 @@ func (e *BaseTaskExecutor) tryModifyTaskRequiredSlots(ctx context.Context, oldTa
 			logger.Info("failed to exchange slots", zap.Int("availableSlots", e.slotMgr.availableSlots()))
 			return
 		}
-		newResource := e.nodeRc.GetStepResource(latestTask.RequiredSlots)
+		newResource := e.nodeRc.GetStepResource(&latestTask.TaskBase)
 		if err := e.stepExec.ResourceModified(ctx, newResource); err != nil {
 			exchanged := e.slotMgr.exchange(&oldTask.TaskBase)
 			intest.Assert(exchanged, "failed to return slots")

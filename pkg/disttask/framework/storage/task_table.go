@@ -293,6 +293,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	if requiredSlots > cpuCount {
 		return 0, errors.Errorf("task required slots(%d) larger than cpu count(%d) of managed node", requiredSlots, cpuCount)
 	}
+	failpoint.InjectCall("beforeSubmitTask", &requiredSlots, &extraParams)
 	extraParamBytes, err := json.Marshal(extraParams)
 	if err != nil {
 		return 0, errors.Trace(err)
