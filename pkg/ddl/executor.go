@@ -4724,10 +4724,10 @@ func checkTableTypeForFulltextIndex(tblInfo *model.TableInfo) error {
 
 func checkTableTypeForHybridIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Fulltext Index")
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Hybrid Index")
 	}
 	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("fulltext index")
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("hybrid index")
 	}
 	return nil
 }

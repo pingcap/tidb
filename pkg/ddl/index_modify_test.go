@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	failpoint "github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -1506,10 +1505,6 @@ func TestHybridIndexOnPartitionedTable(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess"))
-	}()
 
 	tk.MustExec("drop table if exists pt_create, pt_alter;")
 	tk.MustExec(`create table pt_create(a int, b text, v vector(3))
