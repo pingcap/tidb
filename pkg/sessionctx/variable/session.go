@@ -3051,6 +3051,8 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
 	sessionStates.LastInsertID = s.StmtCtx.PrevLastInsertID
 	sessionStates.Warnings = s.StmtCtx.GetWarnings()
+
+	sessionStates.ActiveActiveConflictSkipRows = s.ActiveActiveConflictSkipRows.Load()
 	return
 }
 
