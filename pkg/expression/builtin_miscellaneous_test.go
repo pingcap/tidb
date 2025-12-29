@@ -263,7 +263,7 @@ func TestUUIDTimestamp(t *testing.T) {
 		{"c6437ef1-5b86-3a4e-a071-c2d4ad414e65", 0, true},                  // v3
 		{"a3e3b4a1-ea6d-471e-9860-8303a8b261f6", 0, true},                  // v4
 		{"271a8175-dadd-5df9-b0bd-20a4a0b441e6", 0, true},                  // v5
-		// v6 skipped because of https://github.com/google/uuid/issues/203
+		{"1f0e48c1-7860-69cc-9b3f-35f89c103d4d", 1766995078.970004, false}, // v6
 		{"019b1440-87b7-7380-ab00-ce413e795004", 1765571332.023000, false}, // v7
 	}
 	for _, tt := range tbl {
