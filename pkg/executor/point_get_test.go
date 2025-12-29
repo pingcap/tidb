@@ -397,12 +397,11 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 		tk.MustExec("update softdelete set _tidb_softdelete_time = now() where id = 2")
 		done = true
 	}()
-	goroutineFinish := func() bool { return done == true }
 
 	// check the goroutine logic is block
-	require.Never(t, goroutineFinish, 100*time.Millisecond, 5*time.Millisecond)
+	require.Never(t, func() bool { return done }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
-	require.Eventually(t, goroutineFinish, 100*time.Millisecond, time.Millisecond)
+	require.Eventually(t, func() bool { return done }, 100*time.Millisecond, time.Millisecond)
 
 	// test again, this time, id = 2 is soft deleted, check for update lock's behavior
 	tk1.MustExec("begin")
@@ -414,11 +413,10 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 		done = true
 	}()
 
-	goroutineFinish = func() bool { return done == true }
 	// check the goroutine logic is block
-	require.Never(t, goroutineFinish, 100*time.Millisecond, 5*time.Millisecond)
+	require.Never(t, func() bool { return done }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
-	require.Eventually(t, goroutineFinish, 100*time.Millisecond, time.Millisecond)
+	require.Eventually(t, func() bool { return done }, 100*time.Millisecond, time.Millisecond)
 
 	// the third test, record id = 5 does not exist, but for update should lock it
 	tk1.MustExec("begin")
@@ -430,8 +428,7 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 		done = true
 	}()
 
-	goroutineFinish = func() bool { return done == true }
 	// check the goroutine logic is block
-	require.Never(t, goroutineFinish, 100*time.Millisecond, 5*time.Millisecond)
+	require.Never(t, func() bool { return done }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
 }
