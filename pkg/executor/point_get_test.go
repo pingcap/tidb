@@ -385,6 +385,7 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 	tk.MustExec("drop table if exists softdelete")
 	tk.MustExec(`create table softdelete (id int key, v int) active_active='on' softdelete retention 7 day`)
 	tk.MustExec(`insert into softdelete values (1, 1), (2, 2), (3, 3)`)
+	tk.MustExec(`set @@tidb_translate_softdelete_sql = 1`)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -393,8 +394,8 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 
 	var done bool
 	go func() {
-		// delete this line, should be blocked because of the for update lock
-		tk.MustExec("update softdelete set _tidb_softdelete_time = now() where id = 2")
+		// delete this row, it should be blocked because of the for update lock
+		tk.MustExec("delete from softdelete where id = 2")
 		done = true
 	}()
 
