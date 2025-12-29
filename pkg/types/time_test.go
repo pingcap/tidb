@@ -1142,6 +1142,19 @@ func TestConvertTimeZone(t *testing.T) {
 	}
 }
 
+func TestConvertTimeZoneDST(t *testing.T) {
+	// Test DST transition: 2015-03-08 02:30:00 doesn't exist in America/Los_Angeles
+	// because clocks jump from 2:00 AM to 3:00 AM.
+	// GoTime() would fail for this case, but AdjustedGoTime() handles it.
+	// This is a regression test for https://github.com/pingcap/tidb/issues/65299
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	v := types.NewTime(types.FromDate(2015, 3, 8, 2, 30, 0, 0), 0, 0)
+	err = v.ConvertTimeZone(loc, time.UTC)
+	require.NoError(t, err)
+}
+
 func TestTimeAdd(t *testing.T) {
 	tbl := []struct {
 		Arg1 string
