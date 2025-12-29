@@ -1709,7 +1709,7 @@ func onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver int64, err err
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+	if err := checkTableTypeForHybridIndex(tblInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
 
