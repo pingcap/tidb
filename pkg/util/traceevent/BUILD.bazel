@@ -10,6 +10,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/traceevent",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/tracing",
         "@com_github_tikv_client_go_v2//trace",
