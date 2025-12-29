@@ -113,7 +113,19 @@ func init() {
 var Enable = tracing.Enable
 
 // IsEnabled returns whether the specified category is enabled.
-var IsEnabled = tracing.IsEnabled
+func IsEnabled(category tracing.TraceCategory) bool {
+	if kerneltype.IsClassic() && !intest.InTest {
+		return false
+	}
+	fr := GetFlightRecorder()
+	if fr == nil {
+		return false
+	}
+	if uint64(fr.enabledCategories)&uint64(category) == 0 {
+		return false
+	}
+	return true
+}
 
 // Disable disables trace events for the specified categories.
 var Disable = tracing.Disable
@@ -220,14 +232,7 @@ func FlightRecorder() *RingBufferSink {
 //		zap.Uint64("regionID", regionID),
 //		zap.String("key", formatKey(key)))
 func TraceEvent(ctx context.Context, category TraceCategory, name string, fields ...zap.Field) {
-	if kerneltype.IsClassic() && !intest.InTest {
-		return
-	}
-	fr := GetFlightRecorder()
-	if fr == nil {
-		return
-	}
-	if uint64(fr.enabledCategories)&uint64(category) == 0 {
+	if !IsEnabled(category) {
 		return
 	}
 

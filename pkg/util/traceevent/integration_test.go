@@ -69,6 +69,14 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	}()
 
 	// Enable all categories for this test
+	var conf traceevent.FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err = traceevent.StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := traceevent.GetFlightRecorder()
+	defer fr.Close()
+
 	prevCategories := traceevent.GetEnabledCategories()
 	traceevent.SetCategories(traceevent.AllCategories)
 	defer traceevent.SetCategories(prevCategories)
@@ -163,6 +171,14 @@ func TestTraceControlIntegration(t *testing.T) {
 	prevCategories := tracing.GetEnabledCategories()
 	tracing.Enable(tracing.TiKVRequest)
 	defer tracing.SetCategories(prevCategories)
+
+	var conf traceevent.FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"tikv_request"}
+	err := traceevent.StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := traceevent.GetFlightRecorder()
+	defer fr.Close()
 
 	ctx := context.Background()
 	flags := trace.GetTraceControlFlags(ctx)

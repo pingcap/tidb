@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/trace"
 	"go.uber.org/zap"
@@ -46,18 +47,18 @@ func TestTraceEventCategories(t *testing.T) {
 		SetCategories(original)
 	})
 
-	require.True(t, IsEnabled(TxnLifecycle))
+	require.True(t, tracing.IsEnabled(TxnLifecycle))
 
 	Disable(TxnLifecycle)
-	require.False(t, IsEnabled(TxnLifecycle))
+	require.False(t, tracing.IsEnabled(TxnLifecycle))
 
 	Enable(TxnLifecycle)
-	require.True(t, IsEnabled(TxnLifecycle))
+	require.True(t, tracing.IsEnabled(TxnLifecycle))
 
 	SetCategories(0)
-	require.False(t, IsEnabled(TxnLifecycle))
+	require.False(t, tracing.IsEnabled(TxnLifecycle))
 	SetCategories(AllCategories)
-	require.True(t, IsEnabled(TxnLifecycle))
+	require.True(t, tracing.IsEnabled(TxnLifecycle))
 }
 
 func TestTraceEventCategoryFiltering(t *testing.T) {
@@ -123,6 +124,14 @@ func TestTraceEventRecordsEvent(t *testing.T) {
 		FlightRecorder().DiscardOrFlush()
 	})
 
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
 	SetCategories(AllCategories)
 	_, _ = SetMode(ModeFull)
 	FlightRecorder().DiscardOrFlush()
@@ -159,6 +168,14 @@ func TestTraceEventCarriesTraceID(t *testing.T) {
 		FlightRecorder().DiscardOrFlush()
 	})
 
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	fr := GetFlightRecorder()
+	defer fr.Close()
+
 	SetCategories(AllCategories)
 	_, _ = SetMode(ModeFull)
 	FlightRecorder().DiscardOrFlush()
@@ -183,6 +200,13 @@ func TestTraceEventLoggingSwitch(t *testing.T) {
 		_, _ = SetMode(prevMode)
 		FlightRecorder().DiscardOrFlush()
 	})
+
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	defer GetFlightRecorder().Close()
 
 	SetCategories(AllCategories)
 	_, _ = SetMode(ModeBase)
@@ -323,6 +347,13 @@ func TestFlightRecorderCoolingOff(t *testing.T) {
 		FlightRecorder().DiscardOrFlush()
 		lastDumpTime.Store(0) // Reset cooling-off state
 	})
+
+	var conf FlightRecorderConfig
+	conf.Initialize()
+	conf.EnabledCategories = []string{"*"}
+	err := StartLogFlightRecorder(&conf)
+	require.NoError(t, err)
+	defer GetFlightRecorder().Close()
 
 	SetCategories(AllCategories)
 	_, _ = SetMode(ModeFull)
