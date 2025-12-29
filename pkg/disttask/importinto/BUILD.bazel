@@ -41,6 +41,7 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
         "//pkg/executor/importer",
+        "//pkg/infoschema",
         "//pkg/ingestor/engineapi",
         "//pkg/keyspace",
         "//pkg/kv",
