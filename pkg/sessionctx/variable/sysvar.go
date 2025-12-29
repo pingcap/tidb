@@ -358,7 +358,7 @@ var defaultSysVars = []*SysVar{
 		s.lowResolutionTSO = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBActiveActiveSyncStats, Value: "", Type: vardef.TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBCDCActiveActiveSyncStats, Value: "", Type: vardef.TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return fmt.Sprintf("{\"conflict_skip_rows\": %d}", s.ActiveActiveConflictSkipRows.Load()), nil
 	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBAllowRemoveAutoInc, Value: BoolToOnOff(vardef.DefTiDBAllowRemoveAutoInc), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {

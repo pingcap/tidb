@@ -1339,8 +1339,8 @@ const (
 	// The log backup task will be paused if the checkpoint lag is larger than it.
 	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
 
-	// TiDBActiveActiveSyncStats is a read-only variable to show the status of active-active sync.
-	TiDBActiveActiveSyncStats = "tidb_active_active_sync_stats"
+	// TiDBCDCActiveActiveSyncStats is a read-only variable to show the status of active-active sync.
+	TiDBCDCActiveActiveSyncStats = "tidb_cdc_active_active_sync_stats"
 )
 
 // TiDB intentional limits, can be raised in the future.

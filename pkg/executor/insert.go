@@ -632,6 +632,7 @@ func (e *InsertExec) doDupRowUpdate(
 	sctx := e.Ctx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	realOverwrite := false
+	originTSEqual := false
 	for _, assign := range nonGenerated {
 		var val types.Datum
 		if assign.LazyErr != nil {
@@ -656,6 +657,11 @@ func (e *InsertExec) doDupRowUpdate(
 			if !e.row4Update[assign.Col.Index].Equals(val) {
 				realOverwrite = true
 			}
+			if assign.ColName.Equals(&model.ExtraOriginTSName) {
+				if newRow[updateOriginTSCol].Equals(val) {
+					originTSEqual = true
+				}
+			}
 		}
 		e.row4Update[assign.Col.Index] = val
 		assignFlag[assign.Col.Index] = true
@@ -664,7 +670,17 @@ func (e *InsertExec) doDupRowUpdate(
 	if needActiveActiveSyncStats && len(nonGenerated) > 0 && !realOverwrite {
 		// ActiveActiveSyncStats info is required, but no overwrite really happen, it means
 		// that all conflicts are skipped.
-		e.Ctx().GetSessionVars().ActiveActiveConflictSkipRows.Add(1)
+		// _tidb_origin_ts equal is a corner case, imagine that CDC sync duplicate rows, with same _tidb_origin_ts
+		// In this case, the skipped row is not caused by business logic, but CDC, we should not give misleading information.
+		if !originTSEqual {
+			e.Ctx().GetSessionVars().ActiveActiveConflictSkipRows.Add(1)
+			logutil.BgLogger().Info("[CDC active-active] skip writing conflict row.",
+				zap.Stringer("table", e.Table.Meta().Name),
+				zap.Int64("table-id", e.Table.Meta().ID),
+				zap.Stringer("handle", handle),
+				zap.String("old row", types.DatumsToStrNoErr(oldRow)),
+				zap.String("new row", types.DatumsToStrNoErr(newRow)))
+		}
 	}
 
 	newData := e.row4Update[:len(e.Table.WritableCols())]
