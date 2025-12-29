@@ -2444,6 +2444,27 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				return false, nil
 			}
 
+			// For global indexes on partitioned tables, we need to wrap the handle
+			// with the partition ID to create a PartitionHandle.
+			// This is critical for non-clustered tables after EXCHANGE PARTITION,
+			// where duplicate _tidb_rowid values exist across partitions.
+			actualHandle := handle
+			hasGlobalIndex := false
+			for _, index := range w.indexes {
+				if index.Meta().Global {
+					hasGlobalIndex = true
+					break
+				}
+			}
+			if hasGlobalIndex {
+				// Wrap the handle with partition ID for global indexes
+				actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
+				logutil.DDLLogger().Info("[DEBUG] Wrapping handle with partition ID for global index",
+					zap.Int64("partitionID", taskRange.physicalTable.GetPhysicalID()),
+					zap.String("originalHandle", handle.String()),
+					zap.String("wrappedHandle", actualHandle.String()))
+			}
+
 			// Decode one row, generate records of this row.
 			err := w.updateRowDecoder(handle, rawRow)
 			if err != nil {
@@ -2454,7 +2475,8 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				if index.Meta().HasCondition() {
 					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
 				}
-				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
+				// Use actualHandle (which may be a PartitionHandle for global indexes)
+				idxRecord, err1 := w.getIndexRecord(index.Meta(), actualHandle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
 				}
@@ -2881,11 +2903,18 @@ func (w *worker) addTableIndex(
 				if !ok {
 					return fmt.Errorf("unexpected error, can't cast %T to table.PhysicalTable", t)
 				}
+				logutil.DDLLogger().Info("[DEBUG] Processing table-level for global index",
+					zap.Int64("tableID", tbl.Meta().ID),
+					zap.Int64("physicalTableID", reorgInfo.PhysicalTableID))
 			} else {
 				p = tbl.GetPartition(reorgInfo.PhysicalTableID)
 				if p == nil {
 					return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 				}
+				logutil.DDLLogger().Info("[DEBUG] Processing partition for global index",
+					zap.Int64("tableID", tbl.Meta().ID),
+					zap.Int64("partitionID", reorgInfo.PhysicalTableID),
+					zap.Int64("physicalTableID", p.GetPhysicalID()))
 			}
 			err = w.addPhysicalTableIndex(ctx, p, reorgInfo)
 			if err != nil {
@@ -3388,6 +3417,15 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	if pi == nil {
 		return 0, nil, nil, nil
 	}
+
+	// Debug logging to understand partition iteration
+	var defIDs []int64
+	for _, def := range pi.Definitions {
+		defIDs = append(defIDs, def.ID)
+	}
+	logutil.DDLLogger().Info("[DEBUG] getNextPartitionInfo called",
+		zap.Int64("currPhysicalTableID", currPhysicalTableID),
+		zap.Int64s("partitionDefinitionIDs", defIDs))
 
 	// This will be used in multiple different scenarios/ALTER TABLE:
 	// ADD INDEX - no change in partitions, just use pi.Definitions (1)

@@ -70,6 +70,9 @@ const (
 	PartitionIDFlag byte = 126
 	// IndexVersionFlag is the flag used to decode the index's version info.
 	IndexVersionFlag byte = 125
+	// PartitionHandleFlag is the flag used to decode a partition handle in a global non-unique index key.
+	// Format: PartitionHandleFlag + partition_id (8 bytes) + inner_handle_encoded
+	PartitionHandleFlag byte = 124
 	// RestoreDataFlag is the flag that RestoreData begin with.
 	// See rowcodec.Encoder.Encode and rowcodec.row.toBytes
 	RestoreDataFlag byte = rowcodec.CodecVer
@@ -1038,6 +1041,22 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
+	// Check if this is a PartitionHandle (for global non-unique indexes)
+	if len(keySuffix) > 0 && keySuffix[0] == PartitionHandleFlag {
+		// Format: PartitionHandleFlag + partition_id (8 bytes) + inner_handle
+		keySuffix = keySuffix[1:] // Skip the flag
+		remain, partID, err := codec.DecodeInt(keySuffix)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Decode the inner handle
+		innerHandle, err := decodeHandleInIndexKey(remain)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return kv.NewPartitionHandle(partID, innerHandle), nil
+	}
+
 	remain, d, err := codec.DecodeOne(keySuffix)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1225,14 +1244,35 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 		return nil, false, err
 	}
 	if !distinct && h != nil {
-		if h.IsInt() {
-			// We choose the efficient path here instead of calling `codec.EncodeKey`
-			// because the int handle must be an int64, and it must be comparable.
-			// This remains correct until codec.encodeSignedInt is changed.
-			key = append(key, codec.IntHandleFlag)
-			key = codec.EncodeInt(key, h.IntValue())
+		// For PartitionHandle on global indexes, we must encode BOTH partition ID and inner handle
+		// in the key to prevent collisions when different partitions have duplicate handles.
+		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
+		if ph, isPartitionHandle := h.(kv.PartitionHandle); isPartitionHandle && idxInfo.Global {
+			// Encode as: PartitionHandleFlag + partition_id (8 bytes) + inner_handle_encoded
+			key = append(key, PartitionHandleFlag)
+			key = codec.EncodeInt(key, ph.PartitionID)
+			if ph.Handle.IsInt() {
+				key = append(key, codec.IntHandleFlag)
+				key = codec.EncodeInt(key, ph.Handle.IntValue())
+			} else {
+				key = append(key, ph.Handle.Encoded()...)
+			}
 		} else {
-			key = append(key, h.Encoded()...)
+			// Extract inner handle for non-global indexes or non-PartitionHandle
+			innerHandle := h
+			if ph, ok := h.(kv.PartitionHandle); ok {
+				innerHandle = ph.Handle
+			}
+
+			if innerHandle.IsInt() {
+				// We choose the efficient path here instead of calling `codec.EncodeKey`
+				// because the int handle must be an int64, and it must be comparable.
+				// This remains correct until codec.encodeSignedInt is changed.
+				key = append(key, codec.IntHandleFlag)
+				key = codec.EncodeInt(key, innerHandle.IntValue())
+			} else {
+				key = append(key, innerHandle.Encoded()...)
+			}
 		}
 	}
 	return

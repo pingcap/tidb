@@ -16,6 +16,7 @@ package tables
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -154,6 +155,27 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 				idxTblID = pi.NewTableID
 			}
 		}
+
+		// Debug logging for global index key generation
+		handleType := "unknown"
+		var partID int64
+		var innerHandle string
+		if ph, ok := h.(kv.PartitionHandle); ok {
+			handleType = "PartitionHandle"
+			partID = ph.PartitionID
+			innerHandle = ph.Handle.String()
+		} else if h != nil {
+			handleType = fmt.Sprintf("%T", h)
+			innerHandle = h.String()
+		}
+		logutil.BgLogger().Info("[DEBUG] GenIndexKey for global index",
+			zap.String("indexName", c.idxInfo.Name.O),
+			zap.Int64("idxTblID", idxTblID),
+			zap.Int64("phyTblID", c.phyTblID),
+			zap.String("handleType", handleType),
+			zap.Int64("partitionID", partID),
+			zap.String("innerHandle", innerHandle),
+			zap.Reflect("indexedValues", indexedValues))
 	}
 
 	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
@@ -176,7 +198,24 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 		return nil, errors.Trace(err)
 	}
 
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
+	// For global indexes, if the handle is a PartitionHandle, extract the partition ID from it
+	// to ensure the partition ID is encoded in the index value.
+	// This is critical for non-clustered tables after EXCHANGE PARTITION,
+	// where duplicate _tidb_rowid values exist across partitions.
+	partitionID := c.phyTblID
+	innerHandle := h
+	if c.idxInfo.Global {
+		if ph, ok := h.(kv.PartitionHandle); ok {
+			partitionID = ph.PartitionID
+			innerHandle = ph.Handle
+			logutil.BgLogger().Info("[DEBUG] GenIndexValue extracting partition ID from PartitionHandle",
+				zap.String("indexName", c.idxInfo.Name.O),
+				zap.Int64("partitionID", partitionID),
+				zap.String("innerHandle", innerHandle.String()))
+		}
+	}
+
+	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, innerHandle, partitionID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
