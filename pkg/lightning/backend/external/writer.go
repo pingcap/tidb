@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -209,6 +210,7 @@ type WriterBuilder struct {
 	onClose      OnWriterCloseFunc
 	tikvCodec    tikv.Codec
 	onDup        engineapi.OnDuplicateKey
+	isIndex      bool
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -279,6 +281,11 @@ func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder 
 	return b
 }
 
+func (b *WriterBuilder) SetIsIndex(isIndex bool) *WriterBuilder {
+	b.isIndex = isIndex
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -286,6 +293,16 @@ func (b *WriterBuilder) Build(
 	prefix string,
 	writerID string,
 ) *Writer {
+	commonPrefixLen := 0
+	if b.isIndex {
+		// The common prefix for index key is:
+		// keyspace + tablePrefix + tableID + indexPrefix + indexID + flag
+		commonPrefixLen = tablecodec.RecordRowKeyLen + 1
+		if b.tikvCodec != nil {
+			commonPrefixLen += len(b.tikvCodec.GetKeyspace())
+		}
+	}
+
 	filenamePrefix := filepath.Join(prefix, writerID)
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
@@ -299,20 +316,21 @@ func (b *WriterBuilder) Build(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		store:          store,
-		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
-		currentSeq:     0,
-		filenamePrefix: filenamePrefix,
-		rnd:            rnd,
-		writerID:       writerID,
-		groupOffset:    b.groupOffset,
-		onClose:        b.onClose,
-		onDup:          b.onDup,
-		closed:         false,
-		multiFileStats: make([]MultipleFilesStat, 0),
-		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
-		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
-		tikvCodec:      b.tikvCodec,
+		store:           store,
+		kvBuffer:        p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
+		currentSeq:      0,
+		commonPrefixLen: commonPrefixLen,
+		filenamePrefix:  filenamePrefix,
+		rnd:             rnd,
+		writerID:        writerID,
+		groupOffset:     b.groupOffset,
+		onClose:         b.onClose,
+		onDup:           b.onDup,
+		closed:          false,
+		multiFileStats:  make([]MultipleFilesStat, 0),
+		fileMinKeys:     make([]tidbkv.Key, 0, multiFileStatNum),
+		fileMaxKeys:     make([]tidbkv.Key, 0, multiFileStatNum),
+		tikvCodec:       b.tikvCodec,
 	}
 
 	return ret
@@ -444,6 +462,8 @@ type Writer struct {
 	// Statistic information per batch.
 	batchSize uint64
 
+	commonPrefixLen int
+
 	// Statistic information per 500 batches.
 	multiFileStats []MultipleFilesStat
 	fileMinKeys    []tidbkv.Key
@@ -485,6 +505,14 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(val)))
 	copy(dataBuf[2*lengthBytes:], key)
 	copy(dataBuf[2*lengthBytes+keyLen:], val)
+
+	if w.commonPrefixLen > 0 {
+		if len(key) >= w.commonPrefixLen+4 {
+			loc.KeyPrefix = binary.BigEndian.Uint32(key[w.commonPrefixLen:])
+		} else {
+			w.commonPrefixLen = 0
+		}
+	}
 
 	w.kvLocations = append(w.kvLocations, loc)
 	// TODO: maybe we can unify the size calculation during write to store.
@@ -567,13 +595,19 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortStart := time.Now()
 	var (
 		dupFound bool
-		dupLoc   *membuf.SliceLocation
+		dupLoc   membuf.SliceLocation
 	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
+		if w.commonPrefixLen > 0 && i.KeyPrefix != j.KeyPrefix {
+			if i.KeyPrefix < j.KeyPrefix {
+				return -1
+			}
+			return 1
+		}
 		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
 		if res == 0 && !dupFound {
 			dupFound = true
-			dupLoc = &i
+			dupLoc = i
 		}
 		return res
 	})
@@ -598,8 +632,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
-			dupKey := slices.Clone(w.getKeyByLoc(dupLoc))
-			dupValue := slices.Clone(w.getValueByLoc(dupLoc))
+			dupKey := slices.Clone(w.getKeyByLoc(&dupLoc))
+			dupValue := slices.Clone(w.getValueByLoc(&dupLoc))
 			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
 	}

@@ -266,6 +266,9 @@ type SliceLocation struct {
 	bufIdx int32
 	offset int32
 	Length int32
+
+	// KeyPrefix stores the first 4 bytes of the key as uint32.
+	KeyPrefix uint32
 }
 
 var sizeOfSliceLocation = int(unsafe.Sizeof(SliceLocation{}))
