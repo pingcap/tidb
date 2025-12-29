@@ -296,6 +296,14 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	txnFuture := p.sctx.GetPreparedTxnFuture()
+
+	// Inject delay before TSO wait for testing maxExecutionTime
+	failpoint.Inject("injectTSOWaitDelay", func(val failpoint.Value) {
+		if delayMs, ok := val.(int); ok {
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		}
+	})
+
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err
@@ -673,15 +681,10 @@ func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 	oracleStore := sctx.GetStore().GetOracle()
 	option := &oracle.Option{TxnScope: scope}
 
-	var innerFuture oracle.Future
 	if sctx.GetSessionVars().UseLowResolutionTSO() {
-		innerFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, option)
-	} else {
-		innerFuture = oracleStore.GetTimestampAsync(ctx, option)
+		return oracleStore.GetLowResolutionTimestampAsync(ctx, option)
 	}
-
-	// Wrap the future to inject delay for testing maxExecutionTime behavior
-	return &delayedOracleFuture{inner: innerFuture}
+	return oracleStore.GetTimestampAsync(ctx, option)
 }
 
 // funcFuture implements oracle.Future
@@ -690,22 +693,6 @@ type funcFuture func() (uint64, error)
 // Wait returns a ts got from the func
 func (f funcFuture) Wait() (uint64, error) {
 	return f()
-}
-
-// delayedOracleFuture wraps an oracle.Future to inject delay before Wait() for testing
-type delayedOracleFuture struct {
-	inner oracle.Future
-}
-
-// Wait injects delay before calling inner Wait() if failpoint is enabled
-func (f *delayedOracleFuture) Wait() (uint64, error) {
-	// Inject delay before waiting for TSO to test maxExecutionTime behavior
-	failpoint.Inject("injectTSOWaitDelay", func(val failpoint.Value) {
-		if delayMs, ok := val.(int); ok {
-			time.Sleep(time.Duration(delayMs) * time.Millisecond)
-		}
-	})
-	return f.inner.Wait()
 }
 
 // basePessimisticTxnContextProvider extends baseTxnContextProvider with some functionalities that are commonly used in
