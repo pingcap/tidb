@@ -729,9 +729,9 @@ func TestOrderByDependency(t *testing.T) {
 	require.Contains(t, names, "unknown")
 }
 
-func TestTiDBOptPrefixIndexForOrderLimit(t *testing.T) {
+func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	// Test that the variable exists and has correct properties
-	sv := GetSysVar(vardef.TiDBOptPrefixIndexForOrderLimit)
+	sv := GetSysVar(vardef.TiDBOptPartialOrderedIndexForTopN)
 	require.NotNil(t, sv)
 	require.True(t, sv.HasSessionScope())
 	require.True(t, sv.HasGlobalScope())
@@ -796,9 +796,9 @@ func TestTiDBOptPrefixIndexForOrderLimit(t *testing.T) {
 	// Test SetSession function
 	err = sv.SetSessionFromHook(vars, "ON")
 	require.NoError(t, err)
-	require.True(t, vars.OptPrefixIndexForOrderLimit)
+	require.True(t, vars.OptPartialOrderedIndexForTopN)
 
 	err = sv.SetSessionFromHook(vars, "OFF")
 	require.NoError(t, err)
-	require.False(t, vars.OptPrefixIndexForOrderLimit)
+	require.False(t, vars.OptPartialOrderedIndexForTopN)
 }

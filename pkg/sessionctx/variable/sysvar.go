@@ -3062,20 +3062,20 @@ var defaultSysVars = []*SysVar{
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPrefixIndexForOrderLimit, Value: BoolToOnOff(vardef.DefTiDBOptPrefixIndexForOrderLimit), Type: vardef.TypeBool, IsHintUpdatableVerified: true,
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPartialOrderedIndexForTopN, Value: BoolToOnOff(vardef.DefTiDBOptPartialOrderedIndexForTopN), Type: vardef.TypeBool, IsHintUpdatableVerified: true,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			// Only allow exact values: 0, 1, ON, OFF (case-insensitive)
 			// Reject string literal "DEFAULT" but allow DEFAULT keyword (which is handled by getVarValue)
 			lowerValue := strings.ToLower(strings.TrimSpace(originalValue))
 			if lowerValue == "default" {
-				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBOptPrefixIndexForOrderLimit, originalValue)
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBOptPartialOrderedIndexForTopN, originalValue)
 			}
 			if lowerValue != "0" && lowerValue != "1" && lowerValue != "on" && lowerValue != "off" {
-				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBOptPrefixIndexForOrderLimit, originalValue)
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBOptPartialOrderedIndexForTopN, originalValue)
 			}
 			return normalizedValue, nil
 		}, SetSession: func(s *SessionVars, val string) error {
-			s.OptPrefixIndexForOrderLimit = TiDBOptOn(val)
+			s.OptPartialOrderedIndexForTopN = TiDBOptOn(val)
 			return nil
 		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExternalTS, Value: strconv.FormatInt(vardef.DefTiDBExternalTS, 10), SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {

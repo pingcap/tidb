@@ -977,8 +977,11 @@ const (
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
-	// TiDBOptPrefixIndexForOrderLimit indicates whether to enable prefix index optimization for ORDER BY ... LIMIT queries.
-	TiDBOptPrefixIndexForOrderLimit = "tidb_opt_prefix_index_for_order_limit"
+	// TiDBOptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	// Examples of queries that can benefit from this optimization:
+	// 1. index a -> order by a, b limit
+	// 2. index a, prefix(b) -> order by a, b limit
+	TiDBOptPartialOrderedIndexForTopN = "tidb_opt_partial_ordered_index_for_topn"
 
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
@@ -1666,7 +1669,7 @@ const (
 	DefTiDBGOGCMaxValue                               = 500
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
-	DefTiDBOptPrefixIndexForOrderLimit                = false
+	DefTiDBOptPartialOrderedIndexForTopN              = false
 	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false

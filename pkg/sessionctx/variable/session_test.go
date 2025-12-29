@@ -716,73 +716,73 @@ func TestUserVars(t *testing.T) {
 	require.Equal(t, types.NewStringDatum("v2"), dt)
 }
 
-func TestTiDBOptPrefixIndexForOrderLimitSessionAndGlobal(t *testing.T) {
+func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// Test default value
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@global.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
 
 	// Test session scope
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = ON")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@session.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = ON")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
 	// Global should not be affected
-	tk.MustQuery("select @@global.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = OFF")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = OFF")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
 
 	// Test global scope
-	tk.MustExec("set @@global.tidb_opt_prefix_index_for_order_limit = ON")
-	tk.MustQuery("select @@global.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_opt_partial_ordered_index_for_topn = ON")
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
 	// New session should inherit global value
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	tk1.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk1.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
 
 	// Session value should override global value
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = OFF")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = OFF")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
 	// Global should still be ON
-	tk.MustQuery("select @@global.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
 
 	// Test different value formats (only 0, 1, ON, OFF are allowed)
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 1")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 0")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'ON'")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'OFF'")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'on'")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'off'")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 1")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 0")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'ON'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'OFF'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'on'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'off'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
 
 	// Test disallowed values
-	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'true'"))
-	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'false'"))
-	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 2"))
-	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = -1"))
-	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'yes'"))
-	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'no'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'true'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'false'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 2"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = -1"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'yes'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'no'"))
 
 	// Test DEFAULT keyword - should be allowed (it returns the default value "OFF" which is allowed)
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = ON")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = ON")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
 	// DEFAULT keyword should work (it returns the default value "OFF" which is allowed)
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = DEFAULT")
-	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = DEFAULT")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
 	// String literal "DEFAULT" should be rejected
-	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'DEFAULT'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'DEFAULT'"))
 
 	// Verify the field is accessible in SessionVars
 	vars := tk.Session().GetSessionVars()
-	require.False(t, vars.OptPrefixIndexForOrderLimit)
-	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = ON")
-	require.True(t, vars.OptPrefixIndexForOrderLimit)
+	require.False(t, vars.OptPartialOrderedIndexForTopN)
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = ON")
+	require.True(t, vars.OptPartialOrderedIndexForTopN)
 }
