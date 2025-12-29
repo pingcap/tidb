@@ -3083,6 +3083,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.FoundInBinding = sessionStates.FoundInBinding
 	s.HypoIndexes = sessionStates.HypoIndexes
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
+	s.ActiveActiveConflictSkipRows.Store(sessionStates.ActiveActiveConflictSkipRows)
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))

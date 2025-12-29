@@ -683,7 +683,7 @@ func (e *InsertExec) doDupRowUpdate(
 			newRowOriginTS, _ := newRow[updateOriginTSCol].ToString()
 			logutil.BgLogger().Info("[CDC active-active] skip writing conflict row.",
 				zap.Int64("tableID", e.Table.Meta().ID),
-				zap.Stringer("table", redact.Stringer(redactMode, e.Table.Meta().Name)),
+				zap.Stringer("table", e.Table.Meta().Name),
 				zap.Stringer("handle", redact.Stringer(redactMode, handle)),
 				zap.Uint64("old row commit ts", oldRowCommitTS),
 				zap.String("old row origin ts", oldRowOriginTS),
