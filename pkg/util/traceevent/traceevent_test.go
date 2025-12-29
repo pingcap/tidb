@@ -26,6 +26,16 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestSuite(t *testing.T) {
+	// Those tests use global variables, make them run in sequence to avoid flaky.
+	t.Run("TestTraceEventCategories", testTraceEventCategories)
+	t.Run("TestTraceEventCategoryFiltering", testTraceEventCategoryFiltering)
+	t.Run("TestTraceEventRecordsEvent", testTraceEventRecordsEvent)
+	t.Run("TestTraceEventCarriesTraceID", testTraceEventCarriesTraceID)
+	t.Run("TestTraceEventLoggingSwitch", testTraceEventLoggingSwitch)
+	t.Run("TestFlightRecorderCoolingOff", testFlightRecorderCoolingOff)
+}
+
 func installRecorderSink(t *testing.T, capacity int) *RingBufferSink {
 	t.Helper()
 
@@ -38,7 +48,7 @@ func installRecorderSink(t *testing.T, capacity int) *RingBufferSink {
 	return recorder
 }
 
-func TestTraceEventCategories(t *testing.T) {
+func testTraceEventCategories(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
@@ -61,7 +71,7 @@ func TestTraceEventCategories(t *testing.T) {
 	require.True(t, tracing.IsEnabled(TxnLifecycle))
 }
 
-func TestTraceEventCategoryFiltering(t *testing.T) {
+func testTraceEventCategoryFiltering(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
@@ -110,7 +120,7 @@ func TestTraceEventModes(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestTraceEventRecordsEvent(t *testing.T) {
+func testTraceEventRecordsEvent(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
@@ -156,7 +166,7 @@ func TestTraceEventRecordsEvent(t *testing.T) {
 	require.Len(t, recorded[0].Fields, 2)
 }
 
-func TestTraceEventCarriesTraceID(t *testing.T) {
+func testTraceEventCarriesTraceID(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
@@ -189,7 +199,7 @@ func TestTraceEventCarriesTraceID(t *testing.T) {
 	require.Equal(t, rawTrace, events[0].TraceID)
 }
 
-func TestTraceEventLoggingSwitch(t *testing.T) {
+func testTraceEventLoggingSwitch(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
@@ -335,7 +345,7 @@ func extractNames(events []Event) []string {
 	return names
 }
 
-func TestFlightRecorderCoolingOff(t *testing.T) {
+func testFlightRecorderCoolingOff(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
 	}
