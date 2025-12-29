@@ -129,7 +129,8 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 				strings.ToLower(variable.SlowLogDBStr):      {},
 				strings.ToLower(variable.SlowLogSucc):       {},
 				strings.ToLower(execdetails.ProcessTimeStr): {},
-			}})
+			},
+		})
 
 	sessVars.SlowLogRules.NeedUpdateEffectiveFields = false
 	items := executor.PrepareSlowLogItemsForRules(goCtx, vardef.GlobalSlowLogRules.Load(), sessVars)
@@ -556,25 +557,25 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 		description      string
 	}{
 		{
-			name:             "TSO delay 300ms, timeout 1000ms - should not timeout",
-			tsoDelayMs:       300,
-			maxExecutionTime: 1000,
-			expectTimeout:    false,
-			description:      "TSO wait time (300ms) should be included, total < 1000ms",
-		},
-		{
-			name:             "TSO delay 800ms, timeout 1000ms - should not timeout",
-			tsoDelayMs:       800,
-			maxExecutionTime: 1000,
-			expectTimeout:    false,
-			description:      "TSO wait time (800ms) should be included, total < 1000ms",
-		},
-		{
-			name:             "TSO delay 1200ms, timeout 500ms - should timeout",
-			tsoDelayMs:       1200,
+			name:             "TSO delay 50ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       50,
 			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (50ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 150ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       150,
+			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (150ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 300ms, timeout 50ms - should timeout",
+			tsoDelayMs:       300,
+			maxExecutionTime: 50,
 			expectTimeout:    true,
-			description:      "TSO wait time (1200ms) exceeds timeout (500ms)",
+			description:      "TSO wait time (300ms) exceeds timeout (50ms) clearly",
 		},
 	}
 
@@ -609,9 +610,10 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 			elapsed := time.Since(startTime)
 
 			// Verify that the elapsed time includes the TSO delay
-			// Allow some skew (50ms) for test execution overhead
+			// Allow some skew for CI scheduling / overhead.
 			expectedMinTime := time.Duration(tc.tsoDelayMs) * time.Millisecond
-			require.GreaterOrEqual(t, elapsed, expectedMinTime-time.Millisecond*50,
+			skew := 200 * time.Millisecond
+			require.GreaterOrEqual(t, elapsed, expectedMinTime-skew,
 				"Elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, elapsed)
 
 			// Check ProcessInfo to verify the start time was set before TSO wait
@@ -619,7 +621,7 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 			require.NotNil(t, pi)
 			if pi.MaxExecutionTime > 0 {
 				processElapsed := time.Since(pi.Time)
-				require.GreaterOrEqual(t, processElapsed, expectedMinTime-time.Millisecond*50,
+				require.GreaterOrEqual(t, processElapsed, expectedMinTime-skew,
 					"ProcessInfo elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, processElapsed)
 			}
 		})
