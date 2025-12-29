@@ -1,0 +1,46 @@
+create table t (id int primary key, v int) softdelete retention 7 day, active_active = 'on';
+insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205);
+insert into t (id, v) values (2, 22), (3, 33), (4, 44) on duplicate key update v = 42;
+select id, v, _tidb_origin_ts from t where id in (1, 2, 3, 4);
+id	v	_tidb_origin_ts
+1	1	123456
+2	42	NULL
+3	42	NULL
+4	44	NULL
+truncate table t;
+insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205);
+insert into t (id, _tidb_origin_ts) values (1, 11111111) on duplicate key update v = 42;
+select id, v, _tidb_origin_ts from t where id = 1;
+id	v	_tidb_origin_ts
+1	42	NULL
+insert into t (id, v) values (2, 22) on duplicate key update _tidb_origin_ts = 22222222;
+select id, v, _tidb_origin_ts from t where id = 2;
+id	v	_tidb_origin_ts
+2	2	22222222
+truncate table t;
+insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205);
+create table t1 (id int primary key, v int) softdelete retention 7 day, active_active = 'on';
+insert into t1 (id, v) values (1, 101);
+update t, t1 set t.v = t1.v, t1.v = 666 where t.id = t1.id;
+select id, v, _tidb_origin_ts from t where id = 1;
+id	v	_tidb_origin_ts
+1	101	NULL
+select id, v, _tidb_origin_ts from t1 where id = 1;
+id	v	_tidb_origin_ts
+1	666	NULL
+update t, t1 set t1._tidb_origin_ts = 9876543 where t.id = t1.id;
+select id, v, _tidb_origin_ts from t1 where id = 1;
+id	v	_tidb_origin_ts
+1	666	9876543
+truncate table t;
+insert into t (id, v) values (1, 1), (2, 2), (3, 3);
+replace into t (id, v, _tidb_origin_ts) values (1, 11, NULL), (2, 22, 222), (3, 33, 333);
+select id, v, _tidb_origin_ts from t;
+id	v	_tidb_origin_ts
+1	11	NULL
+2	22	222
+3	33	333
+select * from t where _tidb_commit_ts > _tidb_origin_ts;
+id	v
+2	22
+3	33
