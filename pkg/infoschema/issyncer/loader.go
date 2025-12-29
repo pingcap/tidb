@@ -291,12 +291,14 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 }
 
 func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
-	var latestIS infoschema.InfoSchema
-	if l.infoCache != nil {
-		latestIS = l.infoCache.GetLatest()
-	}
-	if l.filter != nil && l.filter.SkipLoadDiff(diff, latestIS) {
-		return true
+	if l.filter != nil {
+		var latestIS infoschema.InfoSchema
+		if l.infoCache != nil {
+			latestIS = l.infoCache.GetLatest()
+		}
+		if l.filter.SkipLoadDiff(diff, latestIS) {
+			return true
+		}
 	}
 
 	if !l.crossKS {
@@ -363,7 +365,7 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
 		if l.skipLoadingDiff(diff) {
-			l.logger.Warn("Skip load a schema diff due to configuration.", zap.Any("diff", diff), zap.Int64("version", diff.Version))
+			l.logger.Warn("skip load a schema diff due to configuration.", zap.Any("diff", diff), zap.Int64("version", diff.Version))
 			// we still need to set the schema version even if we skip loading
 			// the diff to reflect where the I_S has been synced to.
 			builder.SetSchemaVersion(diff.Version)

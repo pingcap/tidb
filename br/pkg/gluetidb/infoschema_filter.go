@@ -53,15 +53,16 @@ func (f *brInfoSchemaFilter) SkipLoadSchema(dbInfo *model.DBInfo) bool {
 }
 
 func (f *brInfoSchemaFilter) SkipMDLCheck(tableIDs map[int64]struct{}, latestIS infoschema.InfoSchema) bool {
-	if f == nil || f.allow == nil || latestIS == nil {
-		return false
-	}
-	for id := range tableIDs {
-		db, ok := latestIS.SchemaByID(id)
-		isAllowed := ok && f.allow(db.Name)
-		if !isAllowed {
-			return false
+	for table := range tableIDs {
+		t, ok := latestIS.TableItemByID(table)
+		// NOTE: if the action is `create table`, can we actually get this table?
+		if !ok {
+			return true
+		}
+		// If the table isn't selected, skip it.
+		if !f.allow(t.DBName) {
+			return true
 		}
 	}
-	return true
+	return false
 }

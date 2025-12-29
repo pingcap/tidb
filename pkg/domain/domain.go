@@ -232,9 +232,6 @@ type Domain struct {
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
 	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
-
-	// used for backup/restore
-	schemaFilter issyncer.Filter
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -566,7 +563,6 @@ func NewDomainWithEtcdClient(
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
-		schemaFilter:             schemaFilter,
 	}
 
 	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
@@ -597,7 +593,7 @@ func NewDomainWithEtcdClient(
 		do.schemaLease,
 		do.sysSessionPool,
 		isvalidator.New(do.schemaLease),
-		do.schemaFilter,
+		schemaFilter,
 	)
 	do.initDomainSysVars()
 

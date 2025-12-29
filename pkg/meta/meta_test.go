@@ -626,6 +626,57 @@ func TestAutoRandomTableIDKey(b *testing.T) {
 	require.Equal(b, tableID, id)
 }
 
+func TestIterDatabases(t *testing.T) {
+	// Create a new mock store and a transaction
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMutator(txn)
+
+	// Prepare multiple databases
+	db1 := &model.DBInfo{ID: 1, Name: ast.NewCIStr("db1")}
+	db2 := &model.DBInfo{ID: 2, Name: ast.NewCIStr("db2")}
+	db3 := &model.DBInfo{ID: 3, Name: ast.NewCIStr("db3")}
+
+	require.NoError(t, m.CreateDatabase(db1))
+	require.NoError(t, m.CreateDatabase(db2))
+	require.NoError(t, m.CreateDatabase(db3))
+
+	// Iterate all databases and collect names
+	var names []string
+	err = m.IterDatabases(func(info *model.DBInfo) error {
+		names = append(names, info.Name.O)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, names, 3)
+	sort.Strings(names)
+	require.Equal(t, []string{"db1", "db2", "db3"}, names)
+
+	// Verify early stop behavior by returning a sentinel error from the callback
+	count := 0
+	sentinel := errors.New("stop")
+	err = m.IterDatabases(func(info *model.DBInfo) error {
+		count++
+		if count == 2 {
+			return sentinel
+		}
+		return nil
+	})
+	require.Error(t, err)
+	require.True(t, errors.ErrorEqual(err, sentinel))
+	require.Equal(t, 2, count)
+
+	// Commit the transaction to ensure no side effects remain
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
 func TestSequenceKey(b *testing.T) {
 	var tableID int64 = 10
 	key := meta.SequenceKey(tableID)
