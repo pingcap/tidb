@@ -743,11 +743,20 @@ func TestTiDBOptPrefixIndexForOrderLimit(t *testing.T) {
 	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
+	// Test allowed values: 0, 1, ON, OFF (case-insensitive)
 	val, err := sv.Validate(vars, "ON", vardef.ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 
+	val, err = sv.Validate(vars, "on", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
 	val, err = sv.Validate(vars, "OFF", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	val, err = sv.Validate(vars, "off", vardef.ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
 
@@ -758,6 +767,31 @@ func TestTiDBOptPrefixIndexForOrderLimit(t *testing.T) {
 	val, err = sv.Validate(vars, "0", vardef.ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
+
+	// Test disallowed values
+	_, err = sv.Validate(vars, "true", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "false", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "2", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "-1", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "yes", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "no", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
 
 	// Test SetSession function
 	err = sv.SetSessionFromHook(vars, "ON")

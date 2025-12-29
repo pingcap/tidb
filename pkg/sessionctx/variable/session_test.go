@@ -749,21 +749,36 @@ func TestTiDBOptPrefixIndexForOrderLimitSessionAndGlobal(t *testing.T) {
 	// Global should still be ON
 	tk.MustQuery("select @@global.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
 
-	// Test different value formats
+	// Test different value formats (only 0, 1, ON, OFF are allowed)
 	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 1")
 	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
 	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 0")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'ON'")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'OFF'")
 	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
 	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'on'")
 	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
 	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'off'")
 	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
 
-	// Test DEFAULT value
+	// Test disallowed values
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'true'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'false'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 2"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = -1"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'yes'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'no'"))
+
+	// Test DEFAULT keyword - should be allowed (it returns the default value "OFF" which is allowed)
 	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = ON")
 	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	// DEFAULT keyword should work (it returns the default value "OFF" which is allowed)
 	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = DEFAULT")
 	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	// String literal "DEFAULT" should be rejected
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_prefix_index_for_order_limit = 'DEFAULT'"))
 
 	// Verify the field is accessible in SessionVars
 	vars := tk.Session().GetSessionVars()
