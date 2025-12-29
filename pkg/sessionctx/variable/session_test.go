@@ -715,3 +715,59 @@ func TestUserVars(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, types.NewStringDatum("v2"), dt)
 }
+
+func TestTiDBOptPrefixIndexForOrderLimitSessionAndGlobal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test default value
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+
+	// Test session scope
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = ON")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	// Global should not be affected
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = OFF")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+
+	// Test global scope
+	tk.MustExec("set @@global.tidb_opt_prefix_index_for_order_limit = ON")
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	// New session should inherit global value
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+
+	// Session value should override global value
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = OFF")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	// Global should still be ON
+	tk.MustQuery("select @@global.tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+
+	// Test different value formats
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 1")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 0")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'on'")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = 'off'")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+
+	// Test DEFAULT value
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = ON")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = DEFAULT")
+	tk.MustQuery("select @@tidb_opt_prefix_index_for_order_limit").Check(testkit.Rows("0"))
+
+	// Verify the field is accessible in SessionVars
+	vars := tk.Session().GetSessionVars()
+	require.False(t, vars.OptPrefixIndexForOrderLimit)
+	tk.MustExec("set @@tidb_opt_prefix_index_for_order_limit = ON")
+	require.True(t, vars.OptPrefixIndexForOrderLimit)
+}

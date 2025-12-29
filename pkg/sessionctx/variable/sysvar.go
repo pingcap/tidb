@@ -3062,6 +3062,10 @@ var defaultSysVars = []*SysVar{
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPrefixIndexForOrderLimit, Value: BoolToOnOff(vardef.DefTiDBOptPrefixIndexForOrderLimit), Type: vardef.TypeBool, IsHintUpdatableVerified: true, SetSession: func(s *SessionVars, val string) error {
+		s.OptPrefixIndexForOrderLimit = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExternalTS, Value: strconv.FormatInt(vardef.DefTiDBExternalTS, 10), SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 		ts, err := parseTSFromNumberOrTime(s, val)
 		if err != nil {

@@ -728,3 +728,43 @@ func TestOrderByDependency(t *testing.T) {
 	require.Greater(t, slices.Index(names, vardef.TiDBEnablePlanReplayerContinuousCapture), slices.Index(names, vardef.TiDBEnableHistoricalStats))
 	require.Contains(t, names, "unknown")
 }
+
+func TestTiDBOptPrefixIndexForOrderLimit(t *testing.T) {
+	// Test that the variable exists and has correct properties
+	sv := GetSysVar(vardef.TiDBOptPrefixIndexForOrderLimit)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.IsHintUpdatableVerified)
+	require.Equal(t, vardef.TypeBool, sv.Type)
+	require.Equal(t, "OFF", sv.Value) // Default is false
+
+	// Test validation
+	vars := NewSessionVars(nil)
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := sv.Validate(vars, "ON", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "OFF", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	val, err = sv.Validate(vars, "1", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "0", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	// Test SetSession function
+	err = sv.SetSessionFromHook(vars, "ON")
+	require.NoError(t, err)
+	require.True(t, vars.OptPrefixIndexForOrderLimit)
+
+	err = sv.SetSessionFromHook(vars, "OFF")
+	require.NoError(t, err)
+	require.False(t, vars.OptPrefixIndexForOrderLimit)
+}

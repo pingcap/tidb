@@ -1623,6 +1623,8 @@ type SessionVars struct {
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
+	// OptPrefixIndexForOrderLimit indicates whether to enable prefix index optimization for ORDER BY ... LIMIT queries.
+	OptPrefixIndexForOrderLimit bool
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator

@@ -138,3 +138,40 @@ func TestWriteSlowLogHint(t *testing.T) {
 		checkWriteSlowLog(true)
 	})
 }
+
+func TestSetVarPrefixIndexForOrderLimit(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec(`use test`)
+
+		// Test default value
+		testKit.MustQuery(`select @@tidb_opt_prefix_index_for_order_limit`).Check(testkit.Rows("0"))
+
+		// Test set_var hint changes the value during query execution
+		testKit.MustExec(`set @@tidb_opt_prefix_index_for_order_limit = 0`)
+		testKit.MustQuery(`select /*+ set_var(tidb_opt_prefix_index_for_order_limit=ON) */ @@tidb_opt_prefix_index_for_order_limit`).Check(testkit.Rows("1"))
+		// Value should be restored after query
+		testKit.MustQuery(`select @@tidb_opt_prefix_index_for_order_limit`).Check(testkit.Rows("0"))
+
+		// Test set_var hint with OFF
+		testKit.MustExec(`set @@tidb_opt_prefix_index_for_order_limit = 1`)
+		testKit.MustQuery(`select /*+ set_var(tidb_opt_prefix_index_for_order_limit=OFF) */ @@tidb_opt_prefix_index_for_order_limit`).Check(testkit.Rows("0"))
+		// Value should be restored after query
+		testKit.MustQuery(`select @@tidb_opt_prefix_index_for_order_limit`).Check(testkit.Rows("1"))
+
+		// Test set_var hint with numeric values
+		testKit.MustExec(`set @@tidb_opt_prefix_index_for_order_limit = 0`)
+		testKit.MustQuery(`select /*+ set_var(tidb_opt_prefix_index_for_order_limit=1) */ @@tidb_opt_prefix_index_for_order_limit`).Check(testkit.Rows("1"))
+		testKit.MustQuery(`select @@tidb_opt_prefix_index_for_order_limit`).Check(testkit.Rows("0"))
+
+		// Test set_var hint with multiple queries
+		testKit.MustExec(`create table t(a int, b varchar(10), index idx_b(b(5)));`)
+		testKit.MustExec(`set @@tidb_opt_prefix_index_for_order_limit = 0`)
+		testKit.MustExec(`select /*+ set_var(tidb_opt_prefix_index_for_order_limit=ON) */ * from t order by b limit 10;`)
+		testKit.MustQuery(`select @@tidb_opt_prefix_index_for_order_limit`).Check(testkit.Rows("0"))
+
+		// Test with EXPLAIN (should not change the value)
+		testKit.MustExec(`set @@tidb_opt_prefix_index_for_order_limit = 0`)
+		testKit.MustExec(`explain select /*+ set_var(tidb_opt_prefix_index_for_order_limit=ON) */ * from t order by b limit 10;`)
+		testKit.MustQuery(`select @@tidb_opt_prefix_index_for_order_limit`).Check(testkit.Rows("0"))
+	})
+}
