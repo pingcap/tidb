@@ -165,22 +165,7 @@ func checkRegionStartWithTableID(t *testing.T, id int64, store kvStore) {
 }
 
 func TestTableSplitPolicy(t *testing.T) {
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-
-	vardef.SetSchemaLease(100 * time.Millisecond)
-	session.DisableStats4Test()
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom.Close()
-
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
@@ -193,7 +178,6 @@ func TestTableSplitPolicy(t *testing.T) {
 	require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
 	require.Equal(t, []string{"0"}, tbl.Meta().TableSplitPolicy.Lower)
 	require.Equal(t, []string{"1000000"}, tbl.Meta().TableSplitPolicy.Upper)
-	checkRegionStartWithTableID(t, tbl.Meta().ID, store.(kvStore))
 
 	tk.MustExec("alter table t1 add index idx_name (name)")
 	tk.MustExec("alter table t1 split index idx_name between ('a') and ('z') regions 3")
@@ -209,6 +193,8 @@ func TestTableSplitPolicy(t *testing.T) {
 	require.NotNil(t, idxInfo)
 	require.NotNil(t, idxInfo.RegionSplitPolicy)
 	require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+
+	tk.MustExec("admin check table t1")
 
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec(`create table t2 (
@@ -228,25 +214,12 @@ func TestTableSplitPolicy(t *testing.T) {
 			require.Equal(t, int64(3), idx.RegionSplitPolicy.Regions)
 		}
 	}
+
+	tk.MustExec("admin check table t2")
 }
 
 func TestTableSplitPolicyForPartitionedTable(t *testing.T) {
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-
-	vardef.SetSchemaLease(100 * time.Millisecond)
-	session.DisableStats4Test()
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom.Close()
-
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
@@ -274,6 +247,8 @@ func TestTableSplitPolicyForPartitionedTable(t *testing.T) {
 		}
 	}
 
+	tk.MustExec("admin check table t_part")
+
 	tk.MustExec("drop table if exists t_part2")
 	tk.MustExec(`create table t_part2 (
 		id bigint primary key,
@@ -288,14 +263,10 @@ func TestTableSplitPolicyForPartitionedTable(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TableSplitPolicy)
 	require.Equal(t, int64(5), tbl.Meta().TableSplitPolicy.Regions)
 
-	pi := tbl.Meta().GetPartitionInfo()
-	require.NotNil(t, pi)
-	for _, def := range pi.Definitions {
-		checkRegionStartWithTableID(t, def.ID, store.(kvStore))
-	}
+	tk.MustExec("admin check table t_part2")
 }
 
-func TestAddIndexWithSplitPolicyWarning(t *testing.T) {
+func TestTableSplitPolicyWarning(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -329,25 +300,12 @@ func TestAddIndexWithSplitPolicyWarning(t *testing.T) {
 		}
 	}
 	require.True(t, foundWarning)
+
+	tk.MustExec("admin check table t_warn")
 }
 
-func TestSplitPolicyMultipleIndexes(t *testing.T) {
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-
-	vardef.SetSchemaLease(100 * time.Millisecond)
-	session.DisableStats4Test()
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom.Close()
-
+func TestTableSplitPolicyMultipleIndexes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
@@ -390,4 +348,6 @@ func TestSplitPolicyMultipleIndexes(t *testing.T) {
 			require.Equal(t, int64(5), idx.RegionSplitPolicy.Regions)
 		}
 	}
+
+	tk.MustExec("admin check table t_multi")
 }
