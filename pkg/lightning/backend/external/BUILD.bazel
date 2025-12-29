@@ -38,7 +38,6 @@ go_library(
         "//pkg/metrics",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/resourcemanager/util",
-        "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/hack",
         "//pkg/util/intest",

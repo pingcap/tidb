@@ -17,7 +17,6 @@ package membuf
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/binary"
 	rand2 "math/rand"
 	"runtime"
 	"slices"
@@ -257,73 +256,6 @@ func BenchmarkSortLocation(b *testing.B) {
 				rnd.Read(buf)
 			}
 			slices.SortFunc(data, func(a, b SliceLocation) int {
-				return bytes.Compare(bytesBuf.GetSlice(&a), bytesBuf.GetSlice(&b))
-			})
-		}()
-	}
-}
-
-// BenchmarkSortLocationWithSamePrefix benchmarks the case that all keys have
-// the same prefix, which should not have performance regression compared to
-// BenchmarkSortLocation.
-func BenchmarkSortLocationWithSamePrefix(b *testing.B) {
-	data := make([]SliceLocation, sortDataNum)
-	// fixed seed for benchmark
-	rnd := rand2.New(rand2.NewSource(6716))
-
-	for b.Loop() {
-		func() {
-			pool := NewPool()
-			defer pool.Destroy()
-			bytesBuf := pool.NewBuffer()
-			defer bytesBuf.Destroy()
-
-			for j := range data {
-				var buf []byte
-				buf, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
-				rnd.Read(buf[4:])
-				data[j].KeyPrefix = binary.BigEndian.Uint32(buf[:4])
-			}
-
-			slices.SortFunc(data, func(a, b SliceLocation) int {
-				if a.KeyPrefix != b.KeyPrefix {
-					if a.KeyPrefix < b.KeyPrefix {
-						return -1
-					}
-					return 1
-				}
-				return bytes.Compare(bytesBuf.GetSlice(&a), bytesBuf.GetSlice(&b))
-			})
-		}()
-	}
-}
-
-func BenchmarkSortLocationWithDifferentPrefix(b *testing.B) {
-	data := make([]SliceLocation, sortDataNum)
-	// fixed seed for benchmark
-	rnd := rand2.New(rand2.NewSource(6716))
-
-	for b.Loop() {
-		func() {
-			pool := NewPool()
-			defer pool.Destroy()
-			bytesBuf := pool.NewBuffer()
-			defer bytesBuf.Destroy()
-
-			for j := range data {
-				var buf []byte
-				buf, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
-				rnd.Read(buf)
-				data[j].KeyPrefix = binary.BigEndian.Uint32(buf[:4])
-			}
-
-			slices.SortFunc(data, func(a, b SliceLocation) int {
-				if a.KeyPrefix != b.KeyPrefix {
-					if a.KeyPrefix < b.KeyPrefix {
-						return -1
-					}
-					return 1
-				}
 				return bytes.Compare(bytesBuf.GetSlice(&a), bytesBuf.GetSlice(&b))
 			})
 		}()
