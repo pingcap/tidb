@@ -1077,6 +1077,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
 	// Adjust the added rows downward if modifications are dominated by deletes.
+	// TODO: This is a temporary fix to address the issue where there have been
+	// a large number of deletes - leading to an overestimation of out-of-range.
 	if realtimeRowCount < int64(hg.TotalRowCount()) {
 		addedRows *= float64(realtimeRowCount) / hg.TotalRowCount()
 	}
