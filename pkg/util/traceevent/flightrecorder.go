@@ -488,7 +488,7 @@ func GetFlightRecorder() *HTTPFlightRecorder {
 }
 
 // Close closes the HTTP flight recorder.
-func (_ *HTTPFlightRecorder) Close() {
+func (*HTTPFlightRecorder) Close() {
 	globalHTTPFlightRecorder.Store(nil)
 }
 
