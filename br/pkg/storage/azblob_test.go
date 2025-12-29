@@ -400,6 +400,57 @@ func TestDownloadRetry(t *testing.T) {
 	require.Less(t, azblobRetryTimes, count)
 }
 
+func TestAzblobSeekToEndShouldNotError(t *testing.T) {
+	const fileSize int32 = 16
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Log(r.URL)
+		switch r.Method {
+		case http.MethodHead:
+			// Open file request, return file size
+			header := w.Header()
+			header.Add("Content-Length", fmt.Sprintf("%d", fileSize))
+			w.WriteHeader(200)
+		case http.MethodGet:
+			if r.Header.Get("Range") != "" || r.Header.Get("x-ms-range") != "" {
+				// Seek request, return an error
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			} else {
+				w.WriteHeader(200)
+			}
+		}
+	}))
+
+	defer server.Close()
+	t.Log(server.URL)
+
+	options := &backuppb.AzureBlobStorage{
+		Bucket: "test",
+		Prefix: "a/b/",
+	}
+
+	ctx := context.Background()
+	builder := &fakeClientBuilder{Endpoint: server.URL}
+	s, err := newAzureBlobStorageWithClientBuilder(ctx, options, builder)
+	require.NoError(t, err)
+
+	r, err := s.Open(ctx, "c", nil)
+	require.NoError(t, err)
+
+	// Seek to end
+	offset, err := r.Seek(0, io.SeekEnd)
+	require.NoError(t, err)
+	require.EqualValues(t, fileSize, offset)
+
+	// Read after seek to end
+	buf := make([]byte, 1)
+	n, err := r.Read(buf)
+	require.Equal(t, 0, n)
+	require.Equal(t, io.EOF, err)
+
+	require.NoError(t, r.Close())
+}
+
 type wr struct {
 	w   ExternalFileWriter
 	ctx context.Context

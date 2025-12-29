@@ -133,7 +133,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 	// balance subtasks only to nodes with enough slots, from the view of all
 	// managed nodes, subtasks of task might not be balanced.
 	adjustedNodes := filterNodesWithEnoughSlots(b.currUsedSlots, b.slotMgr.getCapacity(),
-		eligibleNodes, subtasks[0].Concurrency)
+		eligibleNodes, task.RequiredSlots)
 	failpoint.Inject("mockNoEnoughSlots", func(_ failpoint.Value) {
 		adjustedNodes = []string{}
 	})
@@ -150,7 +150,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 
 	defer func() {
 		if err == nil {
-			b.updateUsedNodes(subtasks)
+			b.updateUsedNodes(&task.TaskBase, subtasks)
 		}
 	}()
 
@@ -239,12 +239,12 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 	return nil
 }
 
-func (b *balancer) updateUsedNodes(subtasks []*proto.SubtaskBase) {
+func (b *balancer) updateUsedNodes(task *proto.TaskBase, subtasks []*proto.SubtaskBase) {
 	used := make(map[string]int, len(b.currUsedSlots))
 	// see slotManager.alloc in task executor.
 	for _, st := range subtasks {
 		if _, ok := used[st.ExecID]; !ok {
-			used[st.ExecID] = st.Concurrency
+			used[st.ExecID] = task.RequiredSlots
 		}
 	}
 

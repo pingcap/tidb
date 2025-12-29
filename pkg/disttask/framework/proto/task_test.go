@@ -72,3 +72,19 @@ func TestTaskCompare(t *testing.T) {
 	taskB.ID = taskA.ID + 10
 	require.Less(t, taskA.CompareTask(&taskB), 0)
 }
+
+func TestTaskBaseGetRuntimeSlots(t *testing.T) {
+	task := TaskBase{RequiredSlots: 4, Step: StepOne}
+	require.Equal(t, 4, task.GetRuntimeSlots())
+
+	task.ExtraParams.MaxRuntimeSlots = 2
+	for _, step := range []Step{StepOne, StepTwo} {
+		task.Step = step
+		require.Equal(t, 2, task.GetRuntimeSlots())
+	}
+	task.ExtraParams.TargetSteps = []Step{StepOne}
+	task.Step = StepOne
+	require.Equal(t, 2, task.GetRuntimeSlots())
+	task.Step = StepTwo
+	require.Equal(t, 4, task.GetRuntimeSlots())
+}

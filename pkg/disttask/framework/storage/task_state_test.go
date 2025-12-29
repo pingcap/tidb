@@ -169,7 +169,7 @@ func TestModifyTask(t *testing.T) {
 	subtasks := make([]*proto.Subtask, 0, 4)
 	for i := range 4 {
 		subtasks = append(subtasks, proto.NewSubtask(proto.StepOne, task.ID, task.Type,
-			":4000", task.Concurrency, proto.EmptyMeta, i+1))
+			":4000", task.RequiredSlots, proto.EmptyMeta, i+1))
 	}
 	wg.Run(func() {
 		ch <- struct{}{}
@@ -188,7 +188,7 @@ func TestModifyTask(t *testing.T) {
 	param := proto.ModifyParam{
 		PrevState: proto.TaskStateRunning,
 		Modifications: []proto.Modification{
-			{Type: proto.ModifyConcurrency, To: 2},
+			{Type: proto.ModifyRequiredSlots, To: 2},
 			{Type: proto.ModifyMaxNodeCount, To: 3},
 		},
 	}
@@ -212,7 +212,7 @@ func TestModifyTask(t *testing.T) {
 			gotSubtasks[2].ID)
 		return err
 	}))
-	task.Concurrency = 2
+	task.RequiredSlots = 2
 	task.MaxNodeCount = 3
 	task.Meta = []byte("modified")
 	require.NoError(t, gm.ModifiedTask(ctx, task))
@@ -224,7 +224,7 @@ func TestModifyTask(t *testing.T) {
 	param = proto.ModifyParam{
 		PrevState: proto.TaskStateRunning,
 		Modifications: []proto.Modification{
-			{Type: proto.ModifyConcurrency, To: 3},
+			{Type: proto.ModifyRequiredSlots, To: 3},
 		},
 	}
 	require.NoError(t, gm.ModifyTaskByID(ctx, id, &param))
@@ -250,13 +250,13 @@ func TestModifyTask(t *testing.T) {
 		// to 'modifying' again to change modify params.
 		// here just to show that if another client finishes modifying, our modify
 		// will skip silently.
-		taskClone.Concurrency = 5
+		taskClone.RequiredSlots = 5
 		taskClone.MaxNodeCount = 50
 		taskClone.Meta = []byte("modified-other")
 		require.NoError(t, gm.ModifiedTask(ctx, &taskClone))
 		ch <- struct{}{}
 	})
-	task.Concurrency = 3
+	task.RequiredSlots = 3
 	task.MaxNodeCount = 30
 	task.Meta = []byte("modified2")
 	require.NoError(t, gm.ModifiedTask(ctx, task))
@@ -272,7 +272,7 @@ func checkTaskAfterModify(
 	task, err := gm.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateRunning, task.State)
-	require.Equal(t, expectConcurrency, task.Concurrency)
+	require.Equal(t, expectConcurrency, task.RequiredSlots)
 	require.EqualValues(t, expectMaxNode, task.MaxNodeCount)
 	require.Equal(t, expectedMeta, task.Meta)
 	require.Equal(t, proto.ModifyParam{}, task.ModifyParam)

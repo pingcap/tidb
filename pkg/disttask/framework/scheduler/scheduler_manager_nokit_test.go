@@ -156,22 +156,22 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil).AnyTimes()
 	tasks := []*proto.TaskBase{
 		{
-			ID:          int64(1),
-			Concurrency: 1,
-			Type:        proto.TaskTypeExample,
-			State:       proto.TaskStateCancelling,
+			ID:            int64(1),
+			RequiredSlots: 1,
+			Type:          proto.TaskTypeExample,
+			State:         proto.TaskStateCancelling,
 		},
 		{
-			ID:          int64(2),
-			Concurrency: 1,
-			Type:        proto.TaskTypeExample,
-			State:       proto.TaskStateReverting,
+			ID:            int64(2),
+			RequiredSlots: 1,
+			Type:          proto.TaskTypeExample,
+			State:         proto.TaskStateReverting,
 		},
 		{
-			ID:          int64(3),
-			Concurrency: 1,
-			Type:        proto.TaskTypeExample,
-			State:       proto.TaskStatePausing,
+			ID:            int64(3),
+			RequiredSlots: 1,
+			Type:          proto.TaskTypeExample,
+			State:         proto.TaskStatePausing,
 		},
 	}
 	for i := 1; i <= 3; i++ {
@@ -225,10 +225,10 @@ func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
 			})
 			taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil).AnyTimes()
 			task1 := &proto.TaskBase{
-				ID:          int64(1),
-				Concurrency: 1,
-				Type:        proto.TaskTypeExample,
-				State:       proto.TaskStatePending,
+				ID:            int64(1),
+				RequiredSlots: 1,
+				Type:          proto.TaskTypeExample,
+				State:         proto.TaskStatePending,
 			}
 			task1Success := *task1
 			task1Success.State = proto.TaskStateSucceed
@@ -237,10 +237,10 @@ func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
 			taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(1)).Return(&proto.Task{TaskBase: task1Success}, nil)
 
 			task2 := &proto.TaskBase{
-				ID:          int64(2),
-				Concurrency: 1,
-				Type:        proto.TaskTypeExample,
-				State:       state,
+				ID:            int64(2),
+				RequiredSlots: 1,
+				Type:          proto.TaskTypeExample,
+				State:         state,
 			}
 			// we use 'reverted' to finish the task, no matter what state it is.
 			task2Reverted := *task2

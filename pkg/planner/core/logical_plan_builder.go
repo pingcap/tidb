@@ -1744,12 +1744,12 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		if err != nil {
 			return nil, err
 		}
-		_, leftArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[0].(*expression.Column)
-		_, rightArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[1].(*expression.Column)
-		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !leftArgIsColumn || !rightArgIsColumn {
+		sf := eqCond.(*expression.ScalarFunction)
+		_, _, ok := expression.IsColOpCol(sf)
+		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !ok {
 			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
 		} else {
-			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+			joinPlan.EqualConditions = append(joinPlan.EqualConditions, sf)
 		}
 	}
 	return joinPlan, nil
