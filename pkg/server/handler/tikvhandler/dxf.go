@@ -52,7 +52,7 @@ func NewDXFScheduleStatusHandler(store kv.Storage) *DXFScheduleStatusHandler {
 }
 
 // ServeHTTP handles request of resigning ddl owner.
-func (h *DXFScheduleStatusHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (*DXFScheduleStatusHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
 		handler.WriteError(w, errors.Errorf("This api only support GET method"))
 		return
@@ -71,16 +71,14 @@ func (h *DXFScheduleStatusHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 }
 
 // DXFScheduleHandler handles the DXF schedule actions.
-type DXFScheduleHandler struct {
-	store kv.Storage
-}
+type DXFScheduleHandler struct{}
 
 // NewDXFScheduleHandler creates a new DXFScheduleHandler.
-func NewDXFScheduleHandler(store kv.Storage) *DXFScheduleHandler {
-	return &DXFScheduleHandler{store: store}
+func NewDXFScheduleHandler() *DXFScheduleHandler {
+	return &DXFScheduleHandler{}
 }
 
-func (h *DXFScheduleHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (*DXFScheduleHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		handler.WriteError(w, errors.Errorf("This api only support POST method"))
 		return
@@ -215,17 +213,15 @@ func (h *DXFScheduleTuneHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 }
 
 // DXFTaskMaxRuntimeSlotsHandler handles changing max runtime slots of DXF task.
-type DXFTaskMaxRuntimeSlotsHandler struct {
-	store kv.Storage
-}
+type DXFTaskMaxRuntimeSlotsHandler struct{}
 
 // NewDXFTaskMaxRuntimeSlotsHandler creates a new DXFTaskMaxRuntimeSlotsHandler.
-func NewDXFTaskMaxRuntimeSlotsHandler(storage kv.Storage) *DXFTaskMaxRuntimeSlotsHandler {
-	return &DXFTaskMaxRuntimeSlotsHandler{store: storage}
+func NewDXFTaskMaxRuntimeSlotsHandler() *DXFTaskMaxRuntimeSlotsHandler {
+	return &DXFTaskMaxRuntimeSlotsHandler{}
 }
 
 // ServeHTTP implements http.Handler interface.
-func (h *DXFTaskMaxRuntimeSlotsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (*DXFTaskMaxRuntimeSlotsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		handler.WriteError(w, errors.Errorf("This api only support POST method"))
 		return
