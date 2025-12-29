@@ -28,6 +28,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/trace"
@@ -218,7 +220,14 @@ func FlightRecorder() *RingBufferSink {
 //		zap.Uint64("regionID", regionID),
 //		zap.String("key", formatKey(key)))
 func TraceEvent(ctx context.Context, category TraceCategory, name string, fields ...zap.Field) {
-	if !IsEnabled(category) {
+	if kerneltype.IsClassic() && !intest.InTest {
+		return
+	}
+	fr := GetFlightRecorder()
+	if fr == nil {
+		return
+	}
+	if uint64(fr.enabledCategories)&uint64(category) == 0 {
 		return
 	}
 
