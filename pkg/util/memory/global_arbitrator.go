@@ -24,7 +24,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -59,7 +58,7 @@ var (
 		}
 		metrics struct {
 			last struct {
-				updateTime time.Time
+				updateUtimeSec atomic.Int64
 				execMetricsCounter
 			}
 			smallPool atomic.Int64
@@ -67,7 +66,8 @@ var (
 				atomic.Int64
 				into atomic.Int64
 			}
-			workModeInit atomic.Bool
+			init  atomic.Bool
+			reset atomic.Bool
 			sync.Mutex
 		}
 	}
@@ -79,18 +79,17 @@ func reportGlobalMemArbitratorMetrics() {
 		return
 	}
 
-	globalArbitrator.metrics.Lock()
-	defer globalArbitrator.metrics.Unlock()
-
-	now := time.Now()
-
-	if now.Before(globalArbitrator.metrics.last.updateTime.Add(time.Second)) {
+	curUtimeSec := nowUnixSec()
+	if curUtimeSec < globalArbitrator.metrics.last.updateUtimeSec.Load()+1 { // every 1 second
 		return
 	}
 
-	globalArbitrator.metrics.last.updateTime = now
+	globalArbitrator.metrics.Lock()
+	defer globalArbitrator.metrics.Unlock()
 
-	{
+	globalArbitrator.metrics.last.updateUtimeSec.Store(curUtimeSec)
+
+	{ // waiting task
 		setWaitingTask := func(label string, value int64) {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorWaitingTask, label, value)
 		}
@@ -101,13 +100,13 @@ func reportGlobalMemArbitratorMetrics() {
 		setWaitingTask("priority-high", p[ArbitrationPriorityHigh])
 		setWaitingTask("wait-averse", p[ArbitrationWaitAverse])
 	}
-	{
+	{ // quota
 		setQuota := func(label string, value int64) {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorQuota, label, value)
 		}
 		setQuota("allocated", m.allocated())
 		setQuota("out-of-control", m.avoidance.size.Load())
-		setQuota("buffer", m.buffer.size.Load())
+		setQuota("buffer", m.reservedBuffer())
 		setQuota("tracked-heap", m.avoidance.heapTracked.Load())
 		setQuota("awaitfree-pool-cap", m.awaitFreePoolCap())
 		setQuota("awaitfree-pool-used", m.approxAwaitFreePoolUsed().quota)
@@ -117,14 +116,14 @@ func reportGlobalMemArbitratorMetrics() {
 		setQuota("wait-alloc", m.WaitingAllocSize())
 		{
 			blockedAt := int64(0)
-			if blockedSize, utimeSec := m.lastBlockedAt(); now.Unix() <= utimeSec+5 { // within 5 seconds
+			if blockedSize, utimeSec := m.lastBlockedAt(); curUtimeSec <= utimeSec+5 { // within 5 seconds
 				blockedAt = blockedSize
 			}
 			setQuota("blocked-at", blockedAt)
 		}
 		setQuota("medium-pool", m.poolMediumQuota())
 	}
-	{
+	{ // memory magnification
 		memMagnif := float64(0)
 		if quota := m.allocated(); quota > 0 {
 			f := min(calcRatio(m.heapController.lastGC.heapAlloc.Load(), quota), defMaxMagnif)
@@ -132,7 +131,7 @@ func reportGlobalMemArbitratorMetrics() {
 		}
 		metrics.GlobalMemArbitratorRuntimeMemMagnifi.Set(memMagnif)
 	}
-	{
+	{ // root pool
 		setRootPool := func(label string, value int64) {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorRootPool, label, value)
 		}
@@ -196,10 +195,25 @@ func doReportGlobalMemArbitratorCounter(oriExecMetrics, newExecMetrics *execMetr
 func HandleGlobalMemArbitratorRuntime(s *runtime.MemStats) {
 	m := GlobalMemArbitrator()
 	if m == nil {
+		if globalArbitrator.metrics.reset.Load() {
+			resetGlobalMemArbitratorMetrics()
+		}
 		return
 	}
 	m.HandleRuntimeStats(intoRuntimeMemStats(s))
 	reportGlobalMemArbitratorMetrics()
+}
+
+func resetGlobalMemArbitratorMetrics() {
+	if !globalArbitrator.metrics.reset.Swap(false) {
+		return
+	}
+
+	globalArbitrator.metrics.Lock()
+	defer globalArbitrator.metrics.Unlock()
+
+	metrics.ResetGlobalMemArbitratorGauge()
+	metrics.GlobalMemArbitratorRuntimeMemMagnifi.Set(0)
 }
 
 // GetGlobalMemArbitratorSoftLimitText returns the text of the global memory arbitrator soft limit.
@@ -310,17 +324,17 @@ func setGlobalMemArbitratorWorkModeText(str string) {
 
 // SetGlobalMemArbitratorWorkMode sets the work mode of the global memory arbitrator.
 func SetGlobalMemArbitratorWorkMode(str string) bool {
-	if !globalArbitrator.metrics.workModeInit.Load() {
+	if !globalArbitrator.metrics.init.Load() {
 		globalArbitrator.metrics.Lock()
 
-		if !globalArbitrator.metrics.workModeInit.Load() {
+		if !globalArbitrator.metrics.init.Load() {
 			for mode := range maxArbitratorMode {
 				metrics.GlobalMemArbitratorWorkMode.WithLabelValues(mode.String()).Set(0)
 			}
 			metrics.GlobalMemArbitratorWorkMode.WithLabelValues(GetGlobalMemArbitratorWorkModeText()).Set(1)
 			execMetricsCounter := &globalArbitrator.metrics.last.execMetricsCounter
 			doReportGlobalMemArbitratorCounter(execMetricsCounter, execMetricsCounter, true)
-			globalArbitrator.metrics.workModeInit.Store(true)
+			globalArbitrator.metrics.init.Store(true)
 		}
 
 		globalArbitrator.metrics.Unlock()
@@ -364,6 +378,7 @@ func SetGlobalMemArbitratorWorkMode(str string) bool {
 	if newMode == ArbitratorModeDisable {
 		m.SetWorkMode(newMode)
 		globalArbitrator.enable.Store(false)
+		globalArbitrator.metrics.reset.Store(true)
 		return true
 	}
 

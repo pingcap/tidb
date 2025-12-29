@@ -2,26 +2,45 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "importsdk",
-    srcs = ["sdk.go"],
+    srcs = [
+        "config.go",
+        "error.go",
+        "file_scanner.go",
+        "job_manager.go",
+        "model.go",
+        "pattern.go",
+        "sdk.go",
+        "sql_generator.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/importsdk",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
+        "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
         "//pkg/parser/mysql",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "importsdk_test",
     timeout = "short",
-    srcs = ["sdk_test.go"],
+    srcs = [
+        "config_test.go",
+        "file_scanner_test.go",
+        "job_manager_test.go",
+        "model_test.go",
+        "pattern_test.go",
+        "sdk_test.go",
+        "sql_generator_test.go",
+    ],
     embed = [":importsdk"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 20,
     deps = [
         "//pkg/lightning/config",
         "//pkg/lightning/log",

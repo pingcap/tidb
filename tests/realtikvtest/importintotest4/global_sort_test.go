@@ -574,7 +574,7 @@ func TestNextGenMetering(t *testing.T) {
 		items := *rowAndSizeMeterItems.Load()
 		return items != nil && items[metering.RowCountField].(int64) == 3 &&
 			items[metering.DataKVBytesField].(int64) == 114 && items[metering.IndexKVBytesField].(int64) == 174 &&
-			items[metering.ConcurrencyField].(int) == task.Concurrency &&
+			items[metering.RequiredSlotsField].(int) == task.RequiredSlots &&
 			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
 			items[metering.DurationSecondsField].(int64) > 0
 	}, 30*time.Second, 100*time.Millisecond)

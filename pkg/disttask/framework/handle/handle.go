@@ -88,7 +88,7 @@ func GetCPUCountOfNode(ctx context.Context) (int, error) {
 }
 
 // SubmitTask submits a task.
-func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, keyspace string, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
+func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, keyspace string, requiredSlots int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
 	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, ke
 		return nil, storage.ErrTaskAlreadyExists
 	}
 
-	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, keyspace, concurrency, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, keyspace, requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -417,7 +417,7 @@ func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
 	}
 	item[metering.IndexKVBytesField] = indexKVSize
 	// below 3 fields are for better analysis of the cost of the task.
-	item[metering.ConcurrencyField] = task.Concurrency
+	item[metering.RequiredSlotsField] = task.RequiredSlots
 	item[metering.MaxNodeCountField] = task.MaxNodeCount
 	item[metering.DurationSecondsField] = int64(task.StateUpdateTime.Sub(task.CreateTime).Seconds())
 	defer func() {

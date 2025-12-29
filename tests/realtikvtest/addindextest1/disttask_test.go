@@ -113,7 +113,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
 	task, err := taskMgr.GetTaskByIDWithHistory(ctx, storage.TestLastTaskID.Load())
 	require.NoError(t, err)
-	require.Equal(t, 1, task.Concurrency)
+	require.Equal(t, 1, task.RequiredSlots)
 
 	tk.MustExec(fmt.Sprintf("set global tidb_ddl_reorg_worker_cnt = %d", bak))
 	tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt = %d", bak))

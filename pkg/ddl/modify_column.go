@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -58,6 +59,14 @@ func hasModifyFlag(col *model.ColumnInfo) bool {
 
 func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
+}
+
+func isIntegerChange(from, to *model.ColumnInfo) bool {
+	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
+}
+
+func isCharChange(from, to *model.ColumnInfo) bool {
+	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
 }
 
 // getModifyColumnType gets the modify column type.
@@ -88,8 +97,8 @@ func getModifyColumnType(
 		return model.ModifyTypeReorg
 	}
 
-	// FIXME(joechenrh): handle partition table case
-	if tblInfo.Partition != nil {
+	// FIXME(joechenrh): handle partition and TiFlash replica case
+	if tblInfo.Partition != nil || (tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0) {
 		return model.ModifyTypeReorg
 	}
 
@@ -98,6 +107,16 @@ func getModifyColumnType(
 			failpoint.Return(model.ModifyTypeReorg)
 		}
 	})
+
+	// FIXME(joechenrh): remove this when stats correctness is resolved.
+	// Since stats may store bytes encoded by codec.EncodeKey, we should disable the optimization
+	// if the same data produces different encoded bytes for the old and new types.
+	if (isIntegerChange(oldCol, args.Column) &&
+		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
+		(isCharChange(oldCol, args.Column) &&
+			!collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
+		return model.ModifyTypeReorg
+	}
 
 	if !sqlMode.HasStrictMode() {
 		return model.ModifyTypeReorg
@@ -752,17 +771,14 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 }
 
 func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	if mysql.IsIntegerType(oldCol.GetType()) && mysql.IsIntegerType(changingCol.GetType()) {
+	if isIntegerChange(oldCol, changingCol) {
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
 
-	// CHAR/VARCHAR
-	if !types.IsTypeChar(oldCol.GetType()) || !types.IsTypeChar(changingCol.GetType()) {
-		return true
-	}
+	intest.Assert(isCharChange(oldCol, changingCol))
 
 	// Check index key part, ref tablecodec.GenIndexKey
-	if oldCol.GetCollate() != changingCol.GetCollate() {
+	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
 		return true
 	}
 
@@ -773,19 +789,18 @@ func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 }
 
 func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	oldTp := oldCol.GetType()
-	changingTp := changingCol.GetType()
-
-	if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
+	// Integer changes can skip reorg
+	if isIntegerChange(oldCol, changingCol) {
 		return false
 	}
 
-	// _bin collation has padding, it must need reorg.
-	if types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType) {
+	// Other changes except char changes need row reorg.
+	if !isCharChange(oldCol, changingCol) {
 		return true
 	}
 
-	return !types.IsTypeChar(oldTp) || !types.IsTypeChar(changingTp)
+	// We have checked charset before, only need to check binary string, which needs padding.
+	return types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType)
 }
 
 // checkModifyColumnData checks the values of the old column data
@@ -1102,7 +1117,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
-			return ver, errors.New(errMsg)
+			return ver, errors.Errorf("%s", errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
@@ -1296,7 +1311,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
-			return ver, errors.New(errMsg)
+			return ver, errors.Errorf("%s", errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", oldIdxInfos[0].State)
