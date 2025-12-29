@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
@@ -141,4 +142,19 @@ func TestExchangeRangeColumnsPartition(t *testing.T) {
 
 	// Clean up
 	tk.MustExec("DROP TABLE t1")
+}
+
+func TestExchangePartitionOnNonClusteredTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED);")
+	tk.MustExec(`CREATE TABLE tp (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED)
+		PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (5),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (20)
+	);`)
+	tk.MustGetErrCode("ALTER TABLE tp EXCHANGE PARTITION p2 WITH TABLE t;", errno.ErrUnsupportedDDLOperation)
 }

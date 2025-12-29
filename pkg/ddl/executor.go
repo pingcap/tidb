@@ -2989,6 +2989,9 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
+	if !source.PKIsHandle && !source.IsCommonHandle {
+		return errors.Trace(dbterror.ErrUnsupportedExchangePartition.FastGenByArgs())
+	}
 	if len(source.Cols()) != len(target.Cols()) {
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}

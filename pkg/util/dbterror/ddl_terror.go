@@ -86,6 +86,8 @@ var (
 	ErrUnsupportedAlterCacheForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table cache for tables in system database is currently unsupported", nil))
 	// ErrUnsupportedAddPartialIndex the partial index condition is not supported
 	ErrUnsupportedAddPartialIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add partial index: %s"), nil))
+	// ErrUnsupportedExchangePartition means we don't support exchange partition on non-clustered tables.
+	ErrUnsupportedExchangePartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "EXCHANGE PARTITION on non-clustered primary key tables"), nil))
 	// ErrModifyColumnReferencedByPartialCondition is used when a column is referenced by a partial index condition.
 	ErrModifyColumnReferencedByPartialCondition = ClassDDL.NewStd(mysql.ErrModifyColumnReferencedByPartialCondition)
 	// ErrBlobKeyWithoutLength is used when BLOB is used as key but without a length.
