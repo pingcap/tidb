@@ -78,8 +78,8 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	defer fr.Close()
 
 	prevCategories := traceevent.GetEnabledCategories()
-	traceevent.SetCategories(traceevent.AllCategories)
-	defer traceevent.SetCategories(prevCategories)
+	fr.SetCategories(traceevent.AllCategories)
+	defer fr.SetCategories(prevCategories)
 
 	recorder := traceevent.NewRingBufferSink(100)
 	prevSink := traceevent.CurrentSink()

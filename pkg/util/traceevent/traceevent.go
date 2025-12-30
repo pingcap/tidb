@@ -127,14 +127,14 @@ func IsEnabled(category tracing.TraceCategory) bool {
 	return true
 }
 
-// Disable disables trace events for the specified categories.
-var Disable = tracing.Disable
-
-// SetCategories sets the enabled categories to exactly the specified value.
-var SetCategories = tracing.SetCategories
-
 // GetEnabledCategories returns the currently enabled categories.
-var GetEnabledCategories = tracing.GetEnabledCategories
+func GetEnabledCategories() TraceCategory {
+	fr := GetFlightRecorder()
+	if fr == nil {
+		return TraceCategory(0)
+	}
+	return fr.enabledCategories
+}
 
 // NormalizeMode converts a user-supplied tracing mode string into its canonical representation.
 func NormalizeMode(mode string) (string, error) {
