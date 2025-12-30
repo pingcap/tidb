@@ -44,7 +44,8 @@ func NewIndexUsageReporter(reporter *indexusage.StmtIndexUsageCollector,
 }
 
 // ReportCopIndexUsageForHandle wraps around `ReportCopIndexUsageForTable` to get the `indexID` automatically
-// from the `table.Table` if the table has a clustered index or integer primary key.
+// from the `table.Table` if the table has a clustered index or clustered integer primary key.
+// If the table has a non-clustered PK or no PK, it returns (0, false).
 func (e *IndexUsageReporter) ReportCopIndexUsageForHandle(tbl table.Table, planID int) {
 	idxID, ok := getClusterIndexID(tbl.Meta())
 	if !ok {
@@ -75,7 +76,6 @@ func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID 
 		// it's possible that there are no statistics for the table. In this case, we always
 		// report the tableRowCount as `math.MaxInt32`, so that it'll be recorded in the smallest
 		// non-zero bucket if the rows is greater than 0.
-		// This is consistent with pointget func ReportPointGetIndexUsage.
 		tableRowCount = math.MaxInt32
 	}
 
@@ -103,11 +103,9 @@ func (e *IndexUsageReporter) ReportPointGetIndexUsageForHandle(tblInfo *model.Ta
 func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, kvRequestTotal, rows int64) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
-		// it's possible that the point get doesn't have the table stats. In this case, we always
-		// report the tableRowCount as `math.MaxInt32`, so that it'll be recorded in the smallest
-		// non-zero bucket if the rows is greater than 0.
-		// This is consistent with index func ReportCopIndexUsage.
-		tableRowCount = math.MaxInt32
+		// it's possible that the point get doesn't have the table stats. In this case,
+		// set it to zero since we cannot calculate the percentage.
+		tableRowCount = 0
 	}
 
 	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(rows), uint64(tableRowCount))
@@ -133,19 +131,15 @@ func (e *IndexUsageReporter) getTableRowCount(tableID int64) (int64, bool) {
 // getClusterIndexID returns the indexID of the clustered index. If the table doesn't have a clustered index, it returns
 // (0, false).
 func getClusterIndexID(tblInfo *model.TableInfo) (int64, bool) {
-	var idxID int64
 	if tblInfo.PKIsHandle {
-		idxID = 0
+		return 0, true
 	} else if tblInfo.IsCommonHandle {
 		for _, idx := range tblInfo.Indices {
 			if idx.Primary {
-				idxID = idx.ID
+				return idx.ID, true
 			}
 		}
-	} else {
-		// just ignore, this table is read through rowid.
-		return 0, false
 	}
-
-	return idxID, true
+	// just ignore, this table is read through rowid (which is a non-clustered index).
+	return 0, false
 }
