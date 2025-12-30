@@ -491,3 +491,44 @@ func TestFix56408(t *testing.T) {
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 	tk.MustExec("ADMIN CHECK TABLE a")
 }
+
+func TestLoadDataForSoftDeleteTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test; DROP TABLE IF EXISTS softdelete;")
+	tk.MustExec("create table softdelete (id int primary key, v int) softdelete retention 7 day")
+	ctx := tk.Session().(sessionctx.Context)
+	deleteSQL := "delete from softdelete"
+	selectSQL := "select * from softdelete"
+
+	loadSQLs := []string{
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (id, v)",
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' IGNORE INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (id, v)",
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (id, v)",
+	}
+	expecteds := [][]string{
+		[]string{"1|11", "2|22", "3|33", "4|44", "5|55", "6|66"},
+		[]string{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
+		[]string{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
+	}
+	expectedMsgs := []string{
+		"Records: 6  Deleted: 4  Skipped: 0  Warnings: 0",
+		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
+		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
+	}
+
+	for i, loadSQL := range loadSQLs {
+		tk.MustExec("insert into softdelete VALUES (1,1),(2,2),(3,3),(4,4)")
+		tk.MustExec("delete from softdelete where id in (3, 4)")
+		tests := []testCase{
+			// 1, 2 duplicate
+			// 3, 4 softdeleted
+			// 5, 6 new record
+			{[]byte("1 11\n2 22\n3 33\n4 44\n5 55\n6 66"),
+				expecteds[i],
+				expectedMsgs[i],
+			},
+		}
+		checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	}
+}

@@ -437,7 +437,8 @@ type LoadData struct {
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Options            []*LoadDataOpt
 
-	GenCols physicalop.InsertGeneratedColumns
+	GenCols               physicalop.InsertGeneratedColumns
+	ReplaceConflictIfExpr []expression.Expression
 }
 
 // LoadDataOpt represents load data option.
