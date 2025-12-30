@@ -72,7 +72,7 @@
           "GID:1, GE:DataSource_30{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{()-->(1,2,7,8)}}",
           "GID:2, GE:DataSource_33{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[7:1 8:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(7)}}",
           "GID:3, GE:MaxOneRow_36{GID:2}, logic prop:{stats:{count 1, ColNDVs map[7:1 8:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(7)}}",
-          "GID:4, GE:Apply_37{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 8:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(1,2,7,8)}}",
+          "GID:4, GE:Apply_37{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 7:5 8:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(1,2,7,8)}}",
           "GID:5, GE:Aggregation_38{GID:4}, logic prop:{stats:{count 4, ColNDVs map[11:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#11] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(11)}}",
           "GID:6, GE:Projection_39{GID:5}, logic prop:{stats:{count 4, ColNDVs map[11:4], GroupNDVs []}, schema:{Column: [Column#11] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(11)}}"
         ],
@@ -85,7 +85,7 @@
           "GID:2, GE:DataSource_42{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[4:1 5:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(4)}}",
           "GID:3, GE:MaxOneRow_45{GID:2}, logic prop:{stats:{count 1, ColNDVs map[4:1 5:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(4)}}",
           "GID:4, GE:Selection_50{GID:3}, logic prop:{stats:{count 0.8, ColNDVs map[4:0.8 5:0.8], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(4)}}",
-          "GID:5, GE:Apply_46{GID:1, GID:4}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 5:5], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(4)}}",
+          "GID:5, GE:Apply_46{GID:1, GID:4}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 4:5 5:5], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(4)}}",
           "GID:6, GE:Aggregation_48{GID:5}, logic prop:{stats:{count 2, ColNDVs map[7:2], GroupNDVs []}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(7)}}",
           "GID:7, GE:Projection_49{GID:6}, logic prop:{stats:{count 2, ColNDVs map[7:2], GroupNDVs []}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(7)}}"
         ],
