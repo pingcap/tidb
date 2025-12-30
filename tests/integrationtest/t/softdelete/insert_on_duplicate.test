@@ -1,28 +1,28 @@
 create table t (id int primary key clustered, v int) softdelete retention 7 day;
 insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4);
 # soft delete (1, 1), (2, 2)
-update t set _tidb_softdelete_time = now() where id in (1, 2);
+delete from t where id in (1, 2);
 
 # multiple duplicate id = 3, 4, multiple tombstone id = 1, 2
 insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666;
-select id, v from t where _tidb_softdelete_time is null;
+select id, v from t;
 select * from t;
 
 # test insert ignore + on duplicate
 truncate table t;
 insert into t (id, v) values (1, 1), (2, 2), (3, 3);
-update t set _tidb_softdelete_time = now() where id = 1;
+delete from t where id = 1;
 -- error 1292
 insert into t values (2, 222) on duplicate key update v = 'abcd';
 insert ignore into t values (2, 222) on duplicate key update v = 'abcd';
 show warnings;
-select id, v, isnull(_tidb_softdelete_time) from t;
+select id, v from t;
 # (the case is not good enough: modify primary key is not supported)
 -- error 1062
 insert into t values (2, 22) on duplicate key update id = 3;
 insert ignore into t values (2, 22) on duplicate key update id = 3;
 show warnings;
-select id, v, isnull(_tidb_softdelete_time) from t;
+select id, v from t;
 
 # What if the on duplicate key update row duplicates with soft-deleted row again?
 # Currently we do not support changing the primary key, so this case would not happen.
@@ -37,27 +37,26 @@ drop table t;
 create table t (id int primary key nonclustered, v int) softdelete retention 7 day;
 insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4);
 # soft delete (1, 1), (2, 2)
-update t set _tidb_softdelete_time = now() where id in (1, 2);
+delete from t where id in (1, 2);
 
 # multiple duplicate id = 3, 4, multiple tombstone id = 1, 2
 insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666;
-select id, v from t where _tidb_softdelete_time is null;
-
+select id, v from t;
 # test insert ignore + on duplicate
 truncate table t;
 insert into t (id, v) values (1, 1), (2, 2), (3, 3);
-update t set _tidb_softdelete_time = now() where id = 1;
+delete from t where id = 1;
 -- error 1292
 insert into t values (2, 222) on duplicate key update v = 'abcd';
 insert ignore into t values (2, 222) on duplicate key update v = 'abcd';
 show warnings;
-select id, v, isnull(_tidb_softdelete_time) from t;
+select id, v from t;
 # (the case is not good enough: modify primary key is not supported)
 -- error 1062
 insert into t values (2, 22) on duplicate key update id = 3;
 insert ignore into t values (2, 22) on duplicate key update id = 3;
 show warnings;
-select id, v, isnull(_tidb_softdelete_time) from t;
+select id, v from t;
 
 # truncate table t;
 # What if the on duplicate key update row duplicates with soft-deleted row again?
@@ -71,7 +70,7 @@ select id, v, isnull(_tidb_softdelete_time) from t;
 
 create table t1 (id int primary key, v1 int unique, v2 int unique, v3 int unique) softdelete retention 7 day;
 insert into t1 (id, v1, v2, v3) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4);
-update t1 set _tidb_softdelete_time = now() where id in (1, 2);
+delete from t1 where id in (1, 2);
 set @@tidb_translate_softdelete_sql = 0;
 select id, v1, v2, v3, isnull(_tidb_softdelete_time) from t1;
 insert into t1 (id, v1, v2, v3) values (1, 2, 3, 5) on duplicate key update v3 = 42;
