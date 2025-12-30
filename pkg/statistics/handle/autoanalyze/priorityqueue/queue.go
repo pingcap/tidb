@@ -87,16 +87,30 @@ type pqHeap interface {
 // │                         LIFECYCLE & THREAD SAFETY GUIDE                             │
 // └─────────────────────────────────────────────────────────────────────────────────────┘
 //
-// State Machine:
+// GOROUTINE ARCHITECTURE:
+// ═══════════════════════════════════════════════════════════════════════════════════════
 //
-//	[Not Initialized] ──Initialize()──> [Running] ──Close()──> [Closed]
-//	       │                               │                        │
-//	       │                               │                        │
-//	       └─────────────────┬─────────────┘                        │
-//	                         │                                      │
-//	                         └──────────────────────────────────────┘
-//	                                     │
-//	                              (can re-initialize)
+// This priority queue system involves the following goroutines:
+//
+// 1. [Auto-Analyze Worker] - The main ticker loop in domain.autoAnalyzeWorker()
+//   - Runs every stats lease interval (~3 seconds)
+//   - Calls Initialize() or Close() based on ownership and configuration
+//   - Calls Pop() to retrieve analysis jobs and submits them for execution
+//
+// 2. [Queue Worker] - The background goroutine started by Initialize() (run() function)
+//   - Periodically processes DML changes (every 2 minutes)
+//   - Refreshes last analysis duration (every 10 minutes)
+//   - Requeues must-retry jobs (every 5 minutes)
+//   - Exits when context is canceled by Close()
+//
+// 3. [Job Executor] - The goroutine(s) that execute actual ANALYZE jobs
+//   - Started when a job is submitted for execution (after Pop())
+//   - Calls job hooks (success/failure) when analysis completes
+//   - May run concurrently with queue operations
+//
+// 4. [DDL Handler] - Goroutine(s) that handle DDL events
+//   - Calls HandleDDLEvent() when schema changes occur
+//   - May run concurrently with other goroutines
 //
 // ═══════════════════════════════════════════════════════════════════════════════════════
 // SCENARIO 1: Normal Lifecycle (Ticker-Based Ownership Management)
@@ -109,8 +123,8 @@ type pqHeap interface {
 //
 //   - If auto-analyze is disabled OR instance is not owner → call ClosePriorityQueue()
 //
-//     Ticker Loop (domain.go)          Priority Queue                 Background Goroutine
-//     ───────────────────────          ──────────────                 ────────────────────
+//     Auto-Analyze Worker              Priority Queue                 Queue Worker
+//     ───────────────────              ──────────────                 ────────────
 //     <ticker fires>
 //     │
 //     ├──check: RunAutoAnalyze.Load() && IsOwner()?
@@ -123,7 +137,7 @@ type pqHeap interface {
 //     │        │
 //     │        └──> false
 //     │
-//     ├──Initialize(ctx) ──────────────────────────────────────> run() goroutine starts
+//     ├──Initialize(ctx) ──────────────────────────────────────> run() starts
 //     │        │                                                       │
 //     │        ├──fetchAllTablesAndBuildAnalysisJobs()                 │
 //     │        ├──set initialized=true                                 │
@@ -151,13 +165,13 @@ type pqHeap interface {
 //     │        ├──cancel context                                       ├──exit loop
 //     │        ├──unlock                                               │
 //     │        ├──Wait() ◄─────────────────────────────────────────────┤
-//     │        │         (waits for run() to exit)                     │
+//     │        │         (waits for Queue Worker to exit)              │
 //     │        │                                                resetSyncFields()
 //     │        │                                                       │
 //     │        │                                                       ├──set initialized=false
 //     │        │                                                       ├──nil out maps
 //     │        │ ◄─────────────────────────────────────────────────────┘
-//     │        │         (goroutine exits)
+//     │        │         (Queue Worker exits)
 //     │        └──Done
 //     │
 //
@@ -167,8 +181,8 @@ type pqHeap interface {
 //
 // The Close() function is specifically designed to avoid deadlock. Here's why:
 //
-//	Thread 1 (Close)                 syncFields.mu              Thread 2 (run goroutine)
-//	────────────────                 ─────────────              ────────────────────────
+//	Auto-Analyze Worker (Close)      syncFields.mu              Queue Worker
+//	───────────────────────────      ─────────────              ────────────
 //	Close()
 //	  │
 //	  ├──Lock() ──────────────────> [LOCKED] ◄───────────────── ProcessDMLChanges()
@@ -188,50 +202,52 @@ type pqHeap interface {
 //	  │                                  │                         (exits loop)
 //	  │                                  │                              │
 //	  ├──Wait() ◄───────────────────────────────────────────────────────┤
-//	  │         (waits OUTSIDE lock)                            (goroutine exits)
+//	  │         (waits OUTSIDE lock)                            (Queue Worker exits)
 //	  │                                                                 │
 //	  └──Done                                                           │
 //
 // CRITICAL: If Close() waited while holding the lock, it would deadlock:
 //
-//	Thread 1: holds lock → waits for goroutine to exit
-//	Thread 2: tries to acquire lock → blocked forever
+//	Auto-Analyze Worker: holds lock → waits for Queue Worker to exit
+//	Queue Worker: tries to acquire lock → blocked forever
 //	Result: DEADLOCK ❌
 //
 // Current design (unlock before wait):
 //
-//	Thread 1: releases lock → waits for goroutine
-//	Thread 2: acquires lock → processes → checks context → exits
+//	Auto-Analyze Worker: releases lock → waits for Queue Worker
+//	Queue Worker: acquires lock → processes → checks context → exits
 //	Result: Clean shutdown
 //
 // ═══════════════════════════════════════════════════════════════════════════════════════
 // SCENARIO 3: DDL Events During Running Jobs (Must Retry Pattern)
 // ═══════════════════════════════════════════════════════════════════════════════════════
 //
-//	Analyzer Thread               Priority Queue              DDL Handler
-//	───────────────               ──────────────              ───────────
+//	Auto-Analyze Worker           Priority Queue              DDL Handler          Job Executor
+//	───────────────────           ──────────────              ───────────          ────────────
 //	Pop() for table T1
 //	  │
 //	  ├──get job
 //	  ├──add T1 to runningJobs
 //	  └──register hooks
 //	       │
-//	[Start analyzing T1]                                   ALTER TABLE T1 ADD INDEX
-//	       │                                                      │
-//	       │                                              HandleDDLEvent(T1)
-//	       │                                                      │
+//	SubmitJob(T1) ──────────────────────────────────────────────────────────────> [Start analyzing T1]
+//	       │                                                                              │
+//	       │                                              ALTER TABLE T1 ADD INDEX        │
+//	       │                                                      │                       │
+//	       │                                              HandleDDLEvent(T1)              │
+//	       │                                                      │                       │
 //	       │                                                      ├──check if T1 in runningJobs
-//	       │                                                      │        │
+//	       │                                                      │        │              │
 //	       │                                                      │        └──> YES (still running)
-//	       │                                                      │
+//	       │                                                      │                       │
 //	       │                                                      ├──add T1 to mustRetryJobs
-//	       │                                                      │  (don't queue now, will retry later)
-//	       │                                                      │
-//	       │                                                      └──return
-//	       │
-//	[Analysis completes]
-//	       │
-//	       └──Done
+//	       │                                                      │  (don't queue now)    │
+//	       │                                                      │                       │
+//	       │                                                      └──return               │
+//	       │                                                                              │
+//	       │                                                                      [Analysis completes]
+//	       │                                                                              │
+//	       │                                                                              └──Done
 //
 //	...time passes (5 minutes)...
 //
@@ -260,8 +276,8 @@ type pqHeap interface {
 // SCENARIO 4: Job Hooks After Queue Closed (Graceful Shutdown)
 // ═══════════════════════════════════════════════════════════════════════════════════════
 //
-//	Ticker Loop                   Priority Queue              Job Thread
-//	───────────                   ──────────────              ──────────
+//	Auto-Analyze Worker           Priority Queue              Job Executor
+//	───────────────────           ──────────────              ────────────
 //	Pop() for table T1
 //	  │
 //	  ├──mark T1 as running
@@ -277,7 +293,7 @@ type pqHeap interface {
 //	  │     │                                                       │
 //	  │     ├──cancel context                                       │
 //	  │     ├──unlock                                               │
-//	  │     ├──Wait() (waits for run() to exit)                     │
+//	  │     ├──Wait() (waits for Queue Worker to exit)              │
 //	  │     │                                                       │
 //	  │     │      resetSyncFields()                                │
 //	  │     │           │                                           │
@@ -310,17 +326,17 @@ type pqHeap interface {
 // SCENARIO 5: Ownership Lost During Initialization (Delayed Cleanup)
 // ═══════════════════════════════════════════════════════════════════════════════════════
 //
-// The ticker loop is single-threaded, so ClosePriorityQueue() CANNOT be called while
-// Initialize() is running. However, ownership can change DURING initialization, leading
-// to a queue that's fully initialized even though we're no longer the owner.
+// The Auto-Analyze Worker is single-threaded, so ClosePriorityQueue() CANNOT be called
+// while Initialize() is running. However, ownership can change DURING initialization,
+// leading to a queue that's fully initialized even though we're no longer the owner.
 //
 // IMPORTANT: This is a known race condition but is acceptable because:
 // 1. The queue will be closed on the NEXT ticker (within ~3 seconds)
 // 2. The new owner will have its own queue
 // 3. At worst, we waste resources for a few seconds
 //
-//	Ticker Loop (same thread)        Ownership Changes         Priority Queue State
-//	─────────────────────────        ─────────────────         ────────────────────
+//	Auto-Analyze Worker              Ownership Changes         Priority Queue State
+//	───────────────────              ─────────────────         ────────────────────
 //	<ticker fires at T=0s>
 //	     │
 //	     ├──check: IsOwner() → YES
@@ -342,12 +358,12 @@ type pqHeap interface {
 //	     │     │  └──────────────┘
 //	     │     │
 //	     │     ├──set initialized=true
-//	     │     ├──spawn run() ──────────────────────────────> Queue running
+//	     │     ├──spawn run() ──────────────────────────────> Queue Worker running
 //	     │     │                                               (but shouldn't be!)
 //	     │     └──return
 //	     │
 //	     └──return from HandleAutoAnalyze()
-//	         (ticker loop now unblocked)
+//	         (Auto-Analyze Worker now unblocked)
 //
 //	<ticker fires at T=63s>
 //	     │
@@ -362,11 +378,11 @@ type pqHeap interface {
 // - No correctness issues: the old owner's queue and new owner's queue are independent
 // - Resource waste is minimal and temporary
 // - Alternative (checking ownership during Initialize and Close) would add complexity for little gain
-// - It is possible to analyze the same table twice in this short window(Close does not wait for running jobs to finish), but this is acceptable
+// - It is possible to analyze the same table twice in this short window (Close does not wait for running jobs to finish), but this is acceptable
 //
 // SAFETY GUARANTEES:
 // - No data races: mutex protects all state transitions
-// - No concurrent Initialize/Close: ticker loop is single-threaded
+// - No concurrent Initialize/Close: Auto-Analyze Worker is single-threaded
 // - Graceful degradation: Queue can be re-initialized after Close()
 //
 //nolint:fieldalignment
@@ -1224,6 +1240,7 @@ func (pq *AnalysisPriorityQueue) Snapshot() (
 
 // Close closes the priority queue.
 // NOTE: This function is thread-safe.
+// WARNING: Please make sure to avoid calling Close concurrently with Initialize to prevent potential concurrency issues.
 func (pq *AnalysisPriorityQueue) Close() {
 	pq.syncFields.mu.Lock()
 	if !pq.syncFields.initialized {
