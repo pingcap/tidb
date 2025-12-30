@@ -4548,7 +4548,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "rate(tidb_server_tls_cipher{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])",
+              "expr": "rate(tidb_server_tls_cipher{keyspace_name=~\"$keyspace_name\", k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])",
               "hide": false,
               "interval": "",
               "legendFormat": "{{cipher}} - {{instance}}",
@@ -4656,7 +4656,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "rate(tidb_server_tls_version{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])",
+              "expr": "rate(tidb_server_tls_version{keyspace_name=~\"$keyspace_name\", k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])",
               "hide": false,
               "interval": "",
               "legendFormat": "{{version}} - {{instance}}",
