@@ -72,10 +72,21 @@ func exampleStep2Str(s Step) string {
 // Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
 // the initial step is StepInit(-1)
 // steps are processed in the following order:
-// - local sort: StepInit -> ImportStepImport -> ImportStepPostProcess -> StepDone
-// - global sort:
-// StepInit -> ImportStepEncodeAndSort -> ImportStepMergeSort -> ImportStepWriteAndIngest
-// -> ImportStepPostProcess -> StepDone
+//
+//   - local sort:
+//     StepInit
+//     -> ImportStepImport
+//     -> ImportStepPostProcess
+//     -> StepDone
+//   - global sort:
+//     StepInit
+//     -> ImportStepEncodeAndSort
+//     -> ImportStepMergeSort (optional)
+//     -> ImportStepWriteAndIngest
+//     -> ImportStepCollectConflicts (optional)
+//     -> ImportStepConflictResolution (optional)
+//     -> ImportStepPostProcess
+//     -> StepDone
 const (
 	// ImportStepImport we sort source data and ingest it into TiKV in this step.
 	ImportStepImport Step = 1
@@ -90,6 +101,20 @@ const (
 	ImportStepMergeSort Step = 4
 	// ImportStepWriteAndIngest write sorted kv into TiKV and ingest it.
 	ImportStepWriteAndIngest Step = 5
+	// ImportStepCollectConflicts collect conflicts info, this step won't mutate
+	// downstream data, so is idempotent, and we can collect a correct checksum
+	// for the conflicted rows. if we do this together with ImportStepConflictResolution,
+	// once the step retry in the middle, we can't get a correct checksum.
+	// this step also need to do deduplication for the conflicted rows due to
+	// multiple unique indexes to avoid repeated collection, currently, we do it
+	// in memory, so if there are too many conflicts, we will skip the later
+	// checksum step as we don't know the exact checksum.
+	ImportStepCollectConflicts Step = 6
+	// ImportStepConflictResolution resolve detected conflicts.
+	// during other steps of global sort, we will detect conflicts and record them
+	// in external storage, if any conflicts are detected, we will resolve them
+	// here. so there might be 0 subtasks in this step.
+	ImportStepConflictResolution Step = 7
 )
 
 func importIntoStep2Str(s Step) string {
@@ -104,6 +129,10 @@ func importIntoStep2Str(s Step) string {
 		return "merge-sort"
 	case ImportStepWriteAndIngest:
 		return "ingest"
+	case ImportStepCollectConflicts:
+		return "collect-conflicts"
+	case ImportStepConflictResolution:
+		return "conflict-resolution"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}

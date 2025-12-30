@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/tidbvar"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -87,7 +88,7 @@ func GetCPUCountOfNode(ctx context.Context) (int, error) {
 }
 
 // SubmitTask submits a task.
-func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, keyspace string, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
+func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, keyspace string, requiredSlots int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
 	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
@@ -100,7 +101,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, ke
 		return nil, storage.ErrTaskAlreadyExists
 	}
 
-	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, keyspace, concurrency, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, keyspace, requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -401,27 +402,32 @@ func newObjStore(ctx context.Context, uri string, opts *extstorage.ExternalStora
 
 // SendRowAndSizeMeterData sends the row count and size metering data.
 func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
-	dataKVSize, indexKVSize int64, logger *zap.Logger) error {
-	start := time.Now()
+	dataKVSize, indexKVSize int64, logger *zap.Logger) (err error) {
+	inLogger := log.BeginTask(logger, "send size and row metering data")
 	// in case of network errors, write might success, but return error, and we
 	// will retry sending metering data in next cleanup, to avoid duplicated data,
 	// we always use the task's last update time as the metering time and let the
 	// SDK overwrite existing file.
 	ts := task.StateUpdateTime.Truncate(time.Minute).Unix()
 	item := metering.GetBaseMeterItem(task.ID, task.Keyspace, task.Type.String())
-	item["row_count"] = rows
+	item[metering.RowCountField] = rows
 	// add-index tasks don't have data kv size.
 	if dataKVSize > 0 {
-		item["data_kv_bytes"] = dataKVSize
+		item[metering.DataKVBytesField] = dataKVSize
 	}
-	item["index_kv_bytes"] = indexKVSize
+	item[metering.IndexKVBytesField] = indexKVSize
+	// below 3 fields are for better analysis of the cost of the task.
+	item[metering.RequiredSlotsField] = task.RequiredSlots
+	item[metering.MaxNodeCountField] = task.MaxNodeCount
+	item[metering.DurationSecondsField] = int64(task.StateUpdateTime.Sub(task.CreateTime).Seconds())
+	defer func() {
+		inLogger.End(zap.InfoLevel, err, zap.Any("data", item))
+	}()
 	// same as above reason, we use the task ID as the uuid, and we also need to
 	// send different file as the metering service itself to avoid overwrite.
-	if err := metering.WriteMeterData(ctx, ts, fmt.Sprintf("%s_%d", task.Type, task.ID), []map[string]any{item}); err != nil {
+	if err = metering.WriteMeterData(ctx, ts, fmt.Sprintf("%s_%d", task.Type, task.ID), []map[string]any{item}); err != nil {
 		return errors.Trace(err)
 	}
-	logger.Info("succeed to send size and row metering data", zap.Any("data", item),
-		zap.Duration("duration", time.Since(start)))
 	failpoint.InjectCall("afterSendRowAndSizeMeterData", item)
 	return nil
 }

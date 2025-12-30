@@ -170,13 +170,13 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	mergeMemSize := (rand.Intn(10) + 1) * 100
 	// use random mergeMemSize to test different memLimit of writer.
 	// reproduce one bug, see https://github.com/pingcap/tidb/issues/49590
-	bufSizeBak := defaultReadBufferSize
+	bufSizeBak := DefaultReadBufferSize
 	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
-		defaultReadBufferSize = bufSizeBak
+		DefaultReadBufferSize = bufSizeBak
 		defaultOneWriterMemSizeLimit = memLimitBak
 	})
-	defaultReadBufferSize = 100
+	DefaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 
 	for _, group := range dataGroup {

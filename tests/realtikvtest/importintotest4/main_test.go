@@ -15,24 +15,29 @@
 package importintotest
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/suite"
+	"github.com/tikv/client-go/v2/util"
 )
 
 type mockGCSSuite struct {
 	suite.Suite
 
-	server *fakestorage.Server
-	store  kv.Storage
-	tk     *testkit.TestKit
+	server  *fakestorage.Server
+	store   kv.Storage
+	tk      *testkit.TestKit
+	taskMgr *storage.TaskManager
+	ctx     context.Context
 }
 
 var (
@@ -63,6 +68,14 @@ func (s *mockGCSSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
 	s.tk = testkit.NewTestKit(s.T(), s.store)
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	s.taskMgr = taskManager
+
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	s.ctx = ctx
 }
 
 func (s *mockGCSSuite) TearDownSuite() {

@@ -36,18 +36,18 @@ func row2TaskBasic(r chunk.Row) *proto.TaskBase {
 		}
 	}
 	task := &proto.TaskBase{
-		ID:           r.GetInt64(0),
-		Key:          r.GetString(1),
-		Type:         proto.TaskType(r.GetString(2)),
-		State:        proto.TaskState(r.GetString(3)),
-		Step:         proto.Step(r.GetInt64(4)),
-		Priority:     int(r.GetInt64(5)),
-		Concurrency:  int(r.GetInt64(6)),
-		CreateTime:   createTime,
-		TargetScope:  r.GetString(8),
-		MaxNodeCount: int(r.GetInt64(9)),
-		ExtraParams:  extraParams,
-		Keyspace:     r.GetString(11),
+		ID:            r.GetInt64(0),
+		Key:           r.GetString(1),
+		Type:          proto.TaskType(r.GetString(2)),
+		State:         proto.TaskState(r.GetString(3)),
+		Step:          proto.Step(r.GetInt64(4)),
+		Priority:      int(r.GetInt64(5)),
+		RequiredSlots: int(r.GetInt64(6)),
+		CreateTime:    createTime,
+		TargetScope:   r.GetString(8),
+		MaxNodeCount:  int(r.GetInt64(9)),
+		ExtraParams:   extraParams,
+		Keyspace:      r.GetString(11),
 	}
 	return task
 }

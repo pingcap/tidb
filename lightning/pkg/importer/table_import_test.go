@@ -492,10 +492,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 		DataFiles:  fakeDataFiles,
 	}
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
-	}()
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
 
 	cp := &checkpoints.TableCheckpoint{
 		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
@@ -528,7 +525,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 						Offset:       0,
 						EndOffset:    14,
 						PrevRowIDMax: 0,
-						RowIDMax:     4, // 37 bytes with 3 columns can store at most 7 rows.
+						RowIDMax:     4,
 					},
 					Timestamp: 1234567897,
 				},
@@ -549,23 +546,23 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					ColumnPermutation: []int{0, 1, 2, -1},
 					Chunk: mydump.Chunk{
 						Offset:       6,
-						EndOffset:    52,
+						EndOffset:    42,
 						PrevRowIDMax: 7,
-						RowIDMax:     20,
+						RowIDMax:     19,
 						Columns:      []string{"a", "b", "c"},
 					},
 
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 52},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 42},
 					FileMeta:          tableMeta.DataFiles[2].FileMeta,
 					ColumnPermutation: []int{0, 1, 2, -1},
 					Chunk: mydump.Chunk{
-						Offset:       52,
+						Offset:       42,
 						EndOffset:    60,
-						PrevRowIDMax: 20,
-						RowIDMax:     22,
+						PrevRowIDMax: 19,
+						RowIDMax:     25,
 						Columns:      []string{"a", "b", "c"},
 					},
 					Timestamp: 1234567897,
@@ -577,8 +574,8 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Chunk: mydump.Chunk{
 						Offset:       6,
 						EndOffset:    48,
-						PrevRowIDMax: 22,
-						RowIDMax:     35,
+						PrevRowIDMax: 25,
+						RowIDMax:     39,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
@@ -594,22 +591,22 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					ColumnPermutation: []int{1, 2, 0, -1},
 					Chunk: mydump.Chunk{
 						Offset:       48,
-						EndOffset:    101,
-						PrevRowIDMax: 35,
+						EndOffset:    75,
+						PrevRowIDMax: 39,
 						RowIDMax:     48,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 101},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 75},
 					FileMeta:          tableMeta.DataFiles[3].FileMeta,
 					ColumnPermutation: []int{1, 2, 0, -1},
 					Chunk: mydump.Chunk{
-						Offset:       101,
+						Offset:       75,
 						EndOffset:    102,
 						PrevRowIDMax: 48,
-						RowIDMax:     48,
+						RowIDMax:     57,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
@@ -620,27 +617,22 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					ColumnPermutation: []int{-1, 0, 1, -1},
 					Chunk: mydump.Chunk{
 						Offset:       4,
-						EndOffset:    59,
-						PrevRowIDMax: 48,
-						RowIDMax:     61,
+						EndOffset:    42,
+						PrevRowIDMax: 57,
+						RowIDMax:     69,
 						Columns:      []string{"b", "c"},
 					},
 					Timestamp: 1234567897,
 				},
-			},
-		},
-		2: {
-			Status: checkpoints.CheckpointStatusLoaded,
-			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
-					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 59},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 42},
 					FileMeta:          tableMeta.DataFiles[4].FileMeta,
 					ColumnPermutation: []int{-1, 0, 1, -1},
 					Chunk: mydump.Chunk{
-						Offset:       59,
+						Offset:       42,
 						EndOffset:    60,
-						PrevRowIDMax: 61,
-						RowIDMax:     61,
+						PrevRowIDMax: 69,
+						RowIDMax:     75,
 						Columns:      []string{"b", "c"},
 					},
 					Timestamp: 1234567897,

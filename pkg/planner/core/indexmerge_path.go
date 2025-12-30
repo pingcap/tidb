@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -45,10 +44,6 @@ import (
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func generateIndexMergePath(ds *logicalop.DataSource) error {
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 	var warningMsg string
 	stmtCtx := ds.SCtx().GetSessionVars().StmtCtx
 	defer func() {

@@ -92,7 +92,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 
 	id := "test"
 	taskID := int64(1)
-	task := &proto.TaskBase{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", Concurrency: 6}
+	task := &proto.TaskBase{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", RequiredSlots: 6}
 	mockInternalExecutor.EXPECT().GetTaskBase().Return(task).AnyTimes()
 
 	m, err := NewManager(ctx, nil, id, mockTaskTable, proto.NodeResourceForTest)
@@ -226,7 +226,7 @@ func TestManagerHandleTasks(t *testing.T) {
 
 	ch := make(chan error)
 	defer close(ch)
-	task1 := &proto.TaskBase{ID: 1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", Concurrency: 1}
+	task1 := &proto.TaskBase{ID: 1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", RequiredSlots: 1}
 
 	mockInternalExecutor.EXPECT().GetTaskBase().Return(task1).AnyTimes()
 	// handle pending tasks
@@ -292,26 +292,26 @@ func TestSlotManagerInManager(t *testing.T) {
 
 	var (
 		task1 = &proto.TaskBase{
-			ID:          1,
-			State:       proto.TaskStateRunning,
-			Concurrency: 10,
-			Step:        proto.StepOne,
-			Type:        "type",
+			ID:            1,
+			State:         proto.TaskStateRunning,
+			RequiredSlots: 10,
+			Step:          proto.StepOne,
+			Type:          "type",
 		}
 		task2 = &proto.TaskBase{
-			ID:          2,
-			State:       proto.TaskStateRunning,
-			Concurrency: 1,
-			Step:        proto.StepOne,
-			Type:        "type",
+			ID:            2,
+			State:         proto.TaskStateRunning,
+			RequiredSlots: 1,
+			Step:          proto.StepOne,
+			Type:          "type",
 		}
 		task3 = &proto.TaskBase{
-			ID:          3,
-			State:       proto.TaskStateRunning,
-			Concurrency: 1,
-			Priority:    -1,
-			Step:        proto.StepOne,
-			Type:        "type",
+			ID:            3,
+			State:         proto.TaskStateRunning,
+			RequiredSlots: 1,
+			Priority:      -1,
+			Step:          proto.StepOne,
+			Type:          "type",
 		}
 	)
 	mockInternalExecutors[task1.ID].EXPECT().GetTaskBase().Return(task1).AnyTimes()
@@ -429,7 +429,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// task rank: task3(1), task1(4), task2(1)
-	task1.Concurrency = 4
+	task1.RequiredSlots = 4
 	// task3 exchange to 8 slots, task1 cannot start, and we will skip task2 too.
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task3.ID).Return(&proto.Task{TaskBase: *task3}, nil)
 	mockInternalExecutors[task3.ID].EXPECT().Init(gomock.Any()).Return(nil)
@@ -441,7 +441,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		func(task *proto.TaskBase) {
 			if task.ID == task1.ID {
 				newTask3 := *task3
-				newTask3.Concurrency = 8
+				newTask3.RequiredSlots = 8
 				require.True(t, m.slotManager.exchange(&newTask3))
 				require.Equal(t, 2, m.slotManager.availableSlots())
 			}
@@ -453,7 +453,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	}, 2*time.Second, 300*time.Millisecond)
 	require.Equal(t, 2, m.slotManager.availableSlots())
 	require.Len(t, m.slotManager.executorTasks, 1)
-	require.EqualValues(t, 8, m.slotManager.executorTasks[0].Concurrency)
+	require.EqualValues(t, 8, m.slotManager.executorTasks[0].RequiredSlots)
 	require.True(t, m.isExecutorStarted(task3.ID))
 	// finish
 	mockInternalExecutors[task3.ID].EXPECT().Close()

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/suite"
 )
@@ -49,6 +50,7 @@ func TestImportInto(t *testing.T) {
 
 func (s *mockGCSSuite) SetupSuite() {
 	s.Require().True(*realtikvtest.WithRealTiKV)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	testutil.ReduceCheckInterval(s.T())
 	var err error
 	opt := fakestorage.Options{

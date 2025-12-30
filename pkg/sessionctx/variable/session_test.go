@@ -41,6 +41,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -234,7 +235,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
 # Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
-# Optimize_time: 0.00000001
+# Optimize_time: 0.00000001 Opt_logical: 0.00000001 Opt_physical: 0.00000001 Opt_binding_match: 0.00000001 Opt_stats_sync_wait: 0.00000001 Opt_stats_derive: 0.00000001
 # Wait_TS: 0.000000003
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Process_keys: 20001 Total_keys: 10000
 # DB: test
@@ -288,7 +289,13 @@ func TestSlowLogFormat(t *testing.T) {
 	ruDetails := util.NewRUDetailsWith(50.0, 100.56, 134*time.Millisecond)
 	seVar.DurationParse = time.Duration(10)
 	seVar.DurationCompile = time.Duration(10)
-	seVar.DurationOptimization = time.Duration(10)
+	seVar.DurationOptimizer.Total = time.Duration(10)
+	seVar.DurationOptimizer.BindingMatch = time.Duration(10)
+	seVar.DurationOptimizer.StatsSyncWait = time.Duration(10)
+	seVar.DurationOptimizer.LogicalOpt = time.Duration(10)
+	seVar.DurationOptimizer.PhysicalOpt = time.Duration(10)
+	seVar.DurationOptimizer.StatsDerive = time.Duration(10)
+	seVar.DurationOptimizer.TiFlashInfoFetch = time.Duration(10)
 	seVar.DurationWaitTS = time.Duration(3)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
@@ -368,6 +375,15 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.FoundInPlanCache = logItems.PlanFromCache
 	seVar.FoundInBinding = logItems.PlanFromBinding
 	seVar.RewritePhaseInfo = logItems.RewriteInfo
+
+	// mock MemArbitration value for MemTracker
+	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+	defer memory.CleanupGlobalMemArbitratorForTest()
+	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
+	memTracker := seVar.StmtCtx.MemTracker
+	require.True(t, memTracker.InitMemArbitrator(memory.GlobalMemArbitrator(), 0, nil, "", memory.ArbitrationPriorityMedium, false, 0))
+	memTracker.MemArbitrator.AwaitAlloc.TotalDur.Store(int64(logItems.MemArbitration * float64(time.Second.Nanoseconds())))
+
 	// get an ExecStmt
 	compiler := executor.Compiler{Ctx: tk.Session()}
 	execStmt, err := compiler.Compile(childCtx, stmt)
@@ -388,7 +404,7 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "MemArbitration", "DiskMax", "StorageKV"}
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
 			if res == f {

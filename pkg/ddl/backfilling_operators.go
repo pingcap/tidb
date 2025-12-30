@@ -122,7 +122,7 @@ func NewAddIndexIngestPipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgMeta.UseCloudStorage)
 
 	failpoint.InjectCall("beforeAddIndexScan")
 
@@ -180,7 +180,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgMeta.UseCloudStorage)
 
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
@@ -809,10 +809,6 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 	}
 	w.collector.Processed(int64(bytes), ck.tableScanRowCount)
 	scannedCount := ck.tableScanRowCount
-	if scannedCount == 0 {
-		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
-		return nil
-	}
 	if w.totalCount != nil {
 		w.totalCount.Add(scannedCount)
 	}
