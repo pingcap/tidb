@@ -49,7 +49,14 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(&url.Error{Err: fmt.Errorf("use of closed network connection")}))
 
 	require.False(t, IsRetryableError(context.Canceled))
-	require.False(t, IsRetryableError(context.DeadlineExceeded))
+	// previously, we don't retry on context deadline exceeded, but we do retry
+	// on GRPC codes.DeadlineExceeded, that doesn't make sense, the reason behind
+	// that harder to find out now.
+	// we add it to retryable errors as we might set the Dial Timeout when creating
+	// ETCD client, it might report context deadline exceeded error, the error is:
+	// "[Lightning:KV:ErrCreateKVClient]create kv client error: context deadline exceeded"
+	require.True(t, IsRetryableError(context.DeadlineExceeded))
+	require.True(t, IsRetryableError(ErrCreateKVClient.Wrap(context.DeadlineExceeded).GenWithStackByArgs()))
 	require.True(t, IsRetryableError(ErrWriteTooSlow))
 	require.False(t, IsRetryableError(io.EOF))
 	require.False(t, IsRetryableError(&net.AddrError{}))
