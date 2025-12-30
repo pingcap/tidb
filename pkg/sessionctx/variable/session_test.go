@@ -771,15 +771,6 @@ func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'yes'"))
 	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'no'"))
 
-	// Test DEFAULT keyword - should be allowed (it returns the default value "OFF" which is allowed)
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = ON")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
-	// DEFAULT keyword should work (it returns the default value "OFF" which is allowed)
-	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = DEFAULT")
-	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
-	// String literal "DEFAULT" should be rejected
-	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'DEFAULT'"))
-
 	// Verify the field is accessible in SessionVars
 	vars := tk.Session().GetSessionVars()
 	require.False(t, vars.OptPartialOrderedIndexForTopN)

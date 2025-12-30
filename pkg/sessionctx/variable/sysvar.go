@@ -3065,11 +3065,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPartialOrderedIndexForTopN, Value: BoolToOnOff(vardef.DefTiDBOptPartialOrderedIndexForTopN), Type: vardef.TypeBool, IsHintUpdatableVerified: true,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			// Only allow exact values: 0, 1, ON, OFF (case-insensitive)
-			// Reject string literal "DEFAULT" but allow DEFAULT keyword (which is handled by getVarValue)
 			lowerValue := strings.ToLower(strings.TrimSpace(originalValue))
-			if lowerValue == "default" {
-				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBOptPartialOrderedIndexForTopN, originalValue)
-			}
 			if lowerValue != "0" && lowerValue != "1" && lowerValue != "on" && lowerValue != "off" {
 				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBOptPartialOrderedIndexForTopN, originalValue)
 			}
