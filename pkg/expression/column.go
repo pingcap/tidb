@@ -699,24 +699,19 @@ func (col *Column) CleanHashCode() {
 	col.hashcode = make([]byte, 0, 9)
 }
 
-func (col *Column) getIndex(schema *Schema) (int, error) {
-	index := schema.ColumnIndex(col)
-	if index == -1 {
-		return index, errors.Errorf("Can't find column %s in schema %s", col, schema)
-	}
-	return index, nil
-}
-
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema) (Expression, bool, error) {
 	newCol := col.Clone()
-	newCol.resolveIndices(schema)
-	return newCol, true, nil
+	err := newCol.resolveIndices(schema)
+	return newCol, true, err
 }
 
 func (col *Column) resolveIndices(schema *Schema) (err error) {
-	col.Index, err = col.getIndex(schema)
-	return err
+	col.Index = schema.ColumnIndex(col)
+	if col.Index == -1 {
+		return errors.Errorf("Can't find column %s in schema %s", col, schema)
+	}
+	return nil
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
