@@ -630,12 +630,12 @@ func (m *MockExpr) Clone() Expression {
 	return cloned
 }
 
-func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
-func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstLevel() ConstLevel                            { return ConstNone }
-func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
-func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
-func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
+func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool                { return false }
+func (m *MockExpr) IsCorrelated() bool                                      { return false }
+func (m *MockExpr) ConstLevel() ConstLevel                                  { return ConstNone }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression                   { return m }
+func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, bool, error) { return m, false, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error                     { return nil }
 func (m *MockExpr) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
 	return m, true
 }
@@ -656,6 +656,8 @@ func (m *MockExpr) Repertoire() Repertoire                              { return
 func (m *MockExpr) SetRepertoire(Repertoire)                            {}
 func (m *MockExpr) IsExplicitCharset() bool                             { return false }
 func (m *MockExpr) SetExplicitCharset(bool)                             {}
+func (m *MockExpr) ClearIndexResolvedFlag()                             {}
+func (m *MockExpr) CloneAndClearIndexResolvedFlag() Expression          { return m.Clone() }
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
