@@ -769,9 +769,19 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbCharset, dbCollate, placementPolicyRef)
+		tbInfo, err = BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	}
-	return tbInfo, err
+
+	if err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, s.Table.Schema, tbInfo); err != nil {
+		return nil, err
+	}
+	return tbInfo, nil
 }
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
@@ -1271,7 +1281,7 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	// for issue #64948, temporary table does not support TLL, we should remove it
 	if s.TemporaryKeyword != ast.TemporaryNone {
 		tblInfo.TTLInfo = nil
-	} else if tblInfo.TTLInfo != nil {
+	} else if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
 
