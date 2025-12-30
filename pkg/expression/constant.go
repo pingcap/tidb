@@ -225,10 +225,12 @@ func (c *Constant) Clone() Expression {
 	return &con
 }
 
+// CloneAndClearIndexResolvedFlag implements Expression interface.
 func (c *Constant) CloneAndClearIndexResolvedFlag() Expression {
 	return c.Clone()
 }
 
+// ClearIndexResolvedFlag implements Expression interface.
 func (_ *Constant) ClearIndexResolvedFlag() {
 }
 

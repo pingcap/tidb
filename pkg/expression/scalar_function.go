@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"slices"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"sync/atomic"
 )
 
 var _ base.HashEquals = &ScalarFunction{}
