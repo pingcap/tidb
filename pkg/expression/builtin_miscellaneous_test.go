@@ -195,7 +195,7 @@ func TestUUIDv4(t *testing.T) {
 			require.Equal(t, 12, len(p))
 		}
 	}
-	_, err = funcs[ast.UUID].getFunction(ctx, datumsToConstants(nil))
+	_, err = funcs[ast.UUIDv4].getFunction(ctx, datumsToConstants(nil))
 	require.NoError(t, err)
 }
 
@@ -224,7 +224,7 @@ func TestUUIDv7(t *testing.T) {
 			require.Equal(t, 12, len(p))
 		}
 	}
-	_, err = funcs[ast.UUID].getFunction(ctx, datumsToConstants(nil))
+	_, err = funcs[ast.UUIDv7].getFunction(ctx, datumsToConstants(nil))
 	require.NoError(t, err)
 }
 
