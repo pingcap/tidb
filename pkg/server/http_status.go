@@ -248,7 +248,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
 	if kv.IsSystemKS(tikvHandlerTool.Store) {
-		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Status")
+		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler()).Name("DXF_Schedule_Status")
 		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler()).Name("DXF_Schedule")
 		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
 		router.Handle("/dxf/task/{taskID}/max_runtime_slots", tikvhandler.NewDXFTaskMaxRuntimeSlotsHandler()).Name("DXF_Task_Max_Runtime_Slots")

@@ -42,13 +42,11 @@ const (
 )
 
 // DXFScheduleStatusHandler handles the status of DXF schedule.
-type DXFScheduleStatusHandler struct {
-	store kv.Storage
-}
+type DXFScheduleStatusHandler struct{}
 
 // NewDXFScheduleStatusHandler creates a new DXFScheduleStatusHandler.
-func NewDXFScheduleStatusHandler(store kv.Storage) *DXFScheduleStatusHandler {
-	return &DXFScheduleStatusHandler{store}
+func NewDXFScheduleStatusHandler() *DXFScheduleStatusHandler {
+	return &DXFScheduleStatusHandler{}
 }
 
 // ServeHTTP handles request of resigning ddl owner.
