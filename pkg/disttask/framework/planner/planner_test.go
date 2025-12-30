@@ -63,5 +63,5 @@ func TestPlanner(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, task.RequiredSlots)
 	require.EqualValues(t, "example", task.Type)
-	require.True(t, task.ManualRecovery)
+	require.True(t, task.ExtraParams.ManualRecovery)
 }

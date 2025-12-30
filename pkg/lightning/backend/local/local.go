@@ -124,6 +124,10 @@ var (
 
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
+
+	// ForcePartitionRegionThreshold is the threshold of regions to force partition range.
+	// It is exported for testing.
+	ForcePartitionRegionThreshold = 100
 )
 
 // importClientFactory is factory to create new import client for specific store.
@@ -890,21 +894,37 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 	}
 
 	addTableSplitRange := func() {
-		var firstErr error
-		successStores := make([]string, 0, len(clients))
-		failedStores := make([]string, 0, len(clients))
-		for i, c := range clients {
-			_, err := c.AddForcePartitionRange(subctx, addReq)
-			if err == nil {
-				successStores = append(successStores, storeAddrs[i])
-				failpoint.InjectCall("AddPartitionRangeForTable")
-			} else {
-				failedStores = append(failedStores, storeAddrs[i])
-				if firstErr == nil {
-					firstErr = err
-				}
-			}
+		var (
+			firstErr      error
+			mu            sync.Mutex
+			successStores = make([]string, 0, len(clients))
+			failedStores  = make([]string, 0, len(clients))
+		)
+		concurrency := int(local.WorkerConcurrency.Load())
+		if concurrency <= 0 {
+			concurrency = 1
 		}
+		eg, _ := util.NewErrorGroupWithRecoverWithCtx(subctx)
+		eg.SetLimit(concurrency)
+		for i, c := range clients {
+			client, addr := c, storeAddrs[i]
+			eg.Go(func() error {
+				failpoint.InjectCall("AddPartitionRangeForTable")
+				_, err := client.AddForcePartitionRange(subctx, addReq)
+				mu.Lock()
+				defer mu.Unlock()
+				if err == nil {
+					successStores = append(successStores, addr)
+				} else {
+					failedStores = append(failedStores, addr)
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
+				return nil
+			})
+		}
+		_ = eg.Wait()
 		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
 			zap.Strings("success stores", successStores),
 			zap.Strings("failed stores", failedStores),
@@ -931,21 +951,37 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 		cancel()
 		wg.Wait()
 
-		var firstErr error
-		successStores := make([]string, 0, len(clients))
-		failedStores := make([]string, 0, len(clients))
-		for i, c := range clients {
-			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
-			if err == nil {
-				successStores = append(successStores, storeAddrs[i])
-				failpoint.InjectCall("RemovePartitionRangeRequest")
-			} else {
-				failedStores = append(failedStores, storeAddrs[i])
-				if firstErr == nil {
-					firstErr = err
-				}
-			}
+		var (
+			firstErr      error
+			mu            sync.Mutex
+			successStores = make([]string, 0, len(clients))
+			failedStores  = make([]string, 0, len(clients))
+		)
+		concurrency := int(local.WorkerConcurrency.Load())
+		if concurrency <= 0 {
+			concurrency = 1
 		}
+		eg, _ := util.NewErrorGroupWithRecoverWithCtx(ctx)
+		eg.SetLimit(concurrency)
+		for i, c := range clients {
+			client, addr := c, storeAddrs[i]
+			eg.Go(func() error {
+				failpoint.InjectCall("RemovePartitionRangeRequest")
+				_, err := client.RemoveForcePartitionRange(ctx, removeReq)
+				mu.Lock()
+				defer mu.Unlock()
+				if err == nil {
+					successStores = append(successStores, addr)
+				} else {
+					failedStores = append(failedStores, addr)
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
+				return nil
+			})
+		}
+		_ = eg.Wait()
 		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
 			zap.Strings("success stores", successStores),
 			zap.Strings("failed stores", failedStores),
@@ -1351,8 +1387,12 @@ func (local *Backend) ImportEngine(
 	intest.Assert(len(splitKeys) > 0)
 	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
-		tidblogutil.Logger(ctx).Info("force table split range",
+	forceSplitThreshold := ForcePartitionRegionThreshold
+	failpoint.InjectCall("ForcePartitionRegionThreshold", &forceSplitThreshold)
+	// We only force partition range when the table is large enough (>= 100 regions).
+	// This is to avoid unnecessary RPC calls for small tables.
+	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 && len(splitKeys)-1 >= forceSplitThreshold {
+		tidblogutil.Logger(ctx).Info("force partition range",
 			zap.String("startKey", redact.Key(startKey)),
 			zap.String("endKey", redact.Key(endKey)))
 		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())

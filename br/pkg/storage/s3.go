@@ -97,6 +97,12 @@ type S3Storage struct {
 	svc       S3API
 	options   *backuppb.S3
 	accessRec *recording.AccessStats
+	// used to indicate that the S3 storage is not the official AWS S3, but a
+	// S3-compatible storage, such as minio/KS3/OSS.
+	// SDK v2 has some compliance issue with its doc, such as DeleteObjects, v2
+	// doesn't send the Content-MD5 header while the doc says it must be sent,
+	// and might report "Missing required header for this request: Content-Md5"
+	s3Compatible bool
 }
 
 func (*S3Storage) MarkStrongConsistency() {
@@ -570,7 +576,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	// Perform region detection and validation
 	var detectedRegion string
-	if len(qs.Provider) == 0 || qs.Provider == "aws" {
+	officialS3 := len(qs.Provider) == 0 || qs.Provider == "aws"
+	if officialS3 {
 		// For AWS provider, detect the actual bucket region
 		// In AWS SDK v2, GetBucketRegion has a simpler signature
 		detectedRegion, err = manager.GetBucketRegion(ctx, client, qs.Bucket, func(o *s3.Options) {
@@ -633,9 +640,10 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	// Create final S3Storage instance
 	s3Storage := &S3Storage{
-		svc:       client,
-		options:   &qs,
-		accessRec: opts.AccessRecording,
+		svc:          client,
+		options:      &qs,
+		accessRec:    opts.AccessRecording,
+		s3Compatible: !officialS3,
 	}
 
 	// Check object lock status if requested
@@ -886,7 +894,11 @@ func (rs *S3Storage) DeleteFiles(ctx context.Context, files []string) error {
 				Quiet:   aws.Bool(false),
 			},
 		}
-		_, err := rs.svc.DeleteObjects(ctx, input)
+		var optFns []func(*s3.Options)
+		if rs.s3Compatible {
+			optFns = []func(*s3.Options){withContentMD5}
+		}
+		_, err := rs.svc.DeleteObjects(ctx, input, optFns...)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1392,6 +1404,18 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 
 // Close implements ExternalStorage interface.
 func (*S3Storage) Close() {}
+
+// withContentMD5 removes all flexible checksum procecdures from an operation,
+// instead computing an MD5 checksum for the request payload.
+func withContentMD5(o *s3.Options) {
+	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+		_, _ = stack.Initialize.Remove("AWSChecksum:SetupInputContext")
+		_, _ = stack.Build.Remove("AWSChecksum:RequestMetricsTracking")
+		_, _ = stack.Finalize.Remove("AWSChecksum:ComputeInputPayloadChecksum")
+		_, _ = stack.Finalize.Remove("addInputChecksumTrailer")
+		return smithyhttp.AddContentChecksumMiddleware(stack)
+	})
+}
 
 // tidbRetryer implements aws.Retryer for TiDB-specific retry logic
 type tidbRetryer struct {

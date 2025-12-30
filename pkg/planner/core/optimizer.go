@@ -91,7 +91,7 @@ var optRuleList = []base.LogicalOptRule{
 	&AggregationEliminator{},
 	&SkewDistinctAggRewriter{},
 	&ProjectionEliminator{},
-	&MaxMinEliminator{},
+	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
@@ -633,6 +633,10 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 			failpoint.Return(false, 0)
 		}
 	})
+	defer func(begin time.Time) {
+		// if there are any network jitters, this could take a long time.
+		sctx.GetSessionVars().DurationOptimizer.TiFlashInfoFetch = time.Since(begin)
+	}(time.Now())
 	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
 	if err != nil {
 		return false, 0
@@ -979,6 +983,10 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
+	defer func(begin time.Time) {
+		logic.SCtx().GetSessionVars().DurationOptimizer.LogicalOpt = time.Since(begin)
+	}(time.Now())
+
 	var err error
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range logicalRuleList {
@@ -1017,9 +1025,15 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 }
 
 func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
+	begin := time.Now()
+	defer func() {
+		logic.SCtx().GetSessionVars().DurationOptimizer.PhysicalOpt = time.Since(begin)
+	}()
 	if _, _, err := logic.RecursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
+	// if there are too many indexes, this process might take a relatively long time, track its time cost.
+	logic.SCtx().GetSessionVars().DurationOptimizer.StatsDerive = time.Since(begin)
 
 	preparePossibleProperties(logic)
 

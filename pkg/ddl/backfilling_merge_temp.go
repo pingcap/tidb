@@ -123,7 +123,8 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	collector := &mergeTempIndexCollector{}
 
 	srcOp := NewTempIndexScanTaskSource(wctx, e.store, e.physicalTable, meta.StartKey, meta.EndKey)
-	mergeOp := NewMergeTempIndexOperator(wctx, e.store, e.physicalTable, e.idxInfo, e.job.ID, e.task.RequiredSlots, e.batchCnt, e.job.ReorgMeta)
+	mergeOp := NewMergeTempIndexOperator(wctx, e.store, e.physicalTable, e.idxInfo, e.job.ID,
+		int(e.GetResource().CPU.Capacity()), e.batchCnt, e.job.ReorgMeta)
 	sinkOp := newTempIndexResultSink(wctx, e.physicalTable, collector)
 
 	operator.Compose(srcOp, mergeOp)
