@@ -318,7 +318,7 @@ func (b *builtinUUIDTimestampSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 		switch u.Version() {
 		case 1, 6, 7:
 		default:
-			// No timestamp, return NULL
+			result.SetNull(i, true)
 			continue
 		}
 
