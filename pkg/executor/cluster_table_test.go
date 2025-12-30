@@ -40,8 +40,7 @@ import (
 )
 
 func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
-	restoreCfg := config.RestoreFunc()
-	t.Cleanup(restoreCfg)
+	t.Cleanup(config.RestoreFunc())
 
 	sm := &testkit.MockSessionManager{}
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
@@ -69,20 +68,16 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 		conf.AdvertiseAddress = host
 	})
 
-	// Wait for server to be ready by attempting to dial
+	// Wait for server to be ready using require.Eventually
 	addr := lis.Addr().String()
-	var lastErr error
-	for range 100 {
+	require.Eventually(t, func() bool {
 		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 		if err == nil {
 			conn.Close()
-			lastErr = nil
-			break
+			return true
 		}
-		lastErr = err
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.NoError(t, lastErr, "RPC server failed to start")
+		return false
+	}, 10*time.Second, 100*time.Millisecond, "RPC server failed to start")
 	return srv
 }
 
