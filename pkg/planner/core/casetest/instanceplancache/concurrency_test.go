@@ -193,15 +193,11 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	genUpdate := func() *testStmt {
 		switch rand.Intn(2) {
 		case 0: // update sbtest set k=k+1 where id=?
-<<<<<<< HEAD
-			id := rand.Intn(maxID)
-=======
 			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
 			if id == txnLeastID {
 				return nil // avoid updating duplicated row id and deadlock
 			}
 			txnLeastID = id
->>>>>>> a842030b184 (planner: fix the flaky test TestInstancePlanCacheConcurrencySysbench (#65284))
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set k=k+1 where id=%v", id),
 				prepStmt:   "prepare st from 'update prepared.sbtest set k=k+1 where id=?'",
@@ -209,15 +205,11 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 				execStmt:   "execute st using @id",
 			}
 		default: // update sbtest set c=? where id=?
-<<<<<<< HEAD
-			id := rand.Intn(maxID)
-=======
 			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
 			if id == txnLeastID {
 				return nil // avoid updating duplicated row id and deadlock
 			}
 			txnLeastID = id
->>>>>>> a842030b184 (planner: fix the flaky test TestInstancePlanCacheConcurrencySysbench (#65284))
 			c := fmt.Sprintf("%v", rand.Intn(10000))
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set c='%v' where id=%v", c, id),
@@ -240,15 +232,11 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		}
 	}
 	genDelete := func() *testStmt {
-<<<<<<< HEAD
-		id := rand.Intn(maxID)
-=======
 		id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
 		if id == txnLeastID {
 			return nil // avoid deleting duplicated row id and deadlock
 		}
 		txnLeastID = id
->>>>>>> a842030b184 (planner: fix the flaky test TestInstancePlanCacheConcurrencySysbench (#65284))
 		return &testStmt{
 			normalStmt: fmt.Sprintf("delete from normal.sbtest where id=%v", id),
 			prepStmt:   "prepare st from 'delete from prepared.sbtest where id=?'",
