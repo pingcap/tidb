@@ -139,7 +139,6 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 	// single child's schema.
 	joinedSchema := expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema())
 	for i, cond := range p.PhysicalHashJoin.EqualConditions {
-		// todo double check if it can allowLazyCopy?
 		newSf, _, err := cond.ResolveIndices(joinedSchema)
 		if err != nil {
 			return err
