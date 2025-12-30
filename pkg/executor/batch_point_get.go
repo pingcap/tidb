@@ -110,6 +110,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	var batchGetter kv.BatchGetter = e.snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
+		// When e.commitTSOffset is negative, it means _tidb_commit_ts is required.
+		// Currently PessimisticLock API does not support retunning _tidb_commit_ts, so we fallback to using Get request,
+		// and avoid using the cached value from PessimisticLock response.
 		if e.lock && e.commitTSOffset < 0 {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
 		} else if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
