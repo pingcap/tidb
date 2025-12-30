@@ -72,7 +72,10 @@ func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexI
 func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
-		return
+		// it's possible that there no table stats. In this case, we always
+		// report the tableRowCount as `math.MaxInt32`, so that it'll be recorded in the smallest
+		// non-zero bucket if the rows is greater than 0.
+		tableRowCount = math.MaxInt32
 	}
 
 	kvReq, accessRows := e.runtimeStatsColl.GetCopCountAndRows(planID)
