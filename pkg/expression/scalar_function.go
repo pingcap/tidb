@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"go.uber.org/atomic"
+	"sync/atomic"
 )
 
 var _ base.HashEquals = &ScalarFunction{}
@@ -356,6 +356,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		Function:      sf.Function.Clone(),
 		indexResolved: sf.indexResolved,
 	}
+	//c.indexResolved.Store(sf.indexResolved.Load())
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)

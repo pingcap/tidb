@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"go.uber.org/atomic"
 )
 
 var (
@@ -298,8 +297,6 @@ type Column struct {
 
 	// Index is used for execution, to tell the column's position in the given row.
 	Index int
-	// 0: unresolved, 1: resolving, 2: resolved
-	indexResolved atomic.Int32
 
 	hashcode []byte
 
@@ -659,13 +656,11 @@ func (col *Column) Clone() Expression {
 // CloneAndClearIndexResolvedFlag implements Expression interface.
 func (col *Column) CloneAndClearIndexResolvedFlag() Expression {
 	newCol := col.Clone()
-	newCol.ClearIndexResolvedFlag()
 	return newCol
 }
 
 // ClearIndexResolvedFlag implements Expression interface.
 func (col *Column) ClearIndexResolvedFlag() {
-	col.indexResolved.Store(0)
 }
 
 // IsCorrelated implements Expression interface.
@@ -714,22 +709,9 @@ func (col *Column) getIndex(schema *Schema) (int, error) {
 
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema, allowLazyCopy bool) (Expression, bool, error) {
-	if allowLazyCopy && col.indexResolved.CompareAndSwap(0, 1) {
-		err := col.resolveIndices(schema, allowLazyCopy)
-		col.indexResolved.Store(2)
-		return col, false, err
-	}
-	index, err := col.getIndex(schema)
-	// index is not changed, no need to clone a new column
-	if index != -1 && col.indexResolved.Load() == 2 && col.Index == index {
-		return col, false, nil
-	}
-	// else, clone a new column and resolve its index
-	newCol := col.CloneAndClearIndexResolvedFlag()
-	newCol.(*Column).Index = index
-	// no datarace here because newCol is a local variable
-	newCol.(*Column).indexResolved.Store(2)
-	return newCol, true, err
+	newCol := col.Clone()
+	newCol.resolveIndices(schema, allowLazyCopy)
+	return newCol, true, nil
 }
 
 func (col *Column) resolveIndices(schema *Schema, _ bool) (err error) {
