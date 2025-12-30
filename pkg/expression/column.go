@@ -66,7 +66,7 @@ func (col *CorrelatedColumn) CloneAndClearIndexResolvedFlag() Expression {
 }
 
 // ClearIndexResolvedFlag implements Expression interface.
-func (_ *CorrelatedColumn) ClearIndexResolvedFlag() {
+func (*CorrelatedColumn) ClearIndexResolvedFlag() {
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.

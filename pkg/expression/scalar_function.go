@@ -800,8 +800,8 @@ func ReHashCode(sf *ScalarFunction) {
 func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, bool, error) {
 	if sf.indexResolved.CompareAndSwap(false, true) {
 		// don't need copy
-		sf.resolveIndices(schema)
-		return sf, false, nil
+		err := sf.resolveIndices(schema)
+		return sf, false, err
 	}
 	// need copy
 	newSf := sf.CloneAndClearIndexResolvedFlag()

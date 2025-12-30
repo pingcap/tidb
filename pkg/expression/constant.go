@@ -231,7 +231,7 @@ func (c *Constant) CloneAndClearIndexResolvedFlag() Expression {
 }
 
 // ClearIndexResolvedFlag implements Expression interface.
-func (_ *Constant) ClearIndexResolvedFlag() {
+func (*Constant) ClearIndexResolvedFlag() {
 }
 
 // GetType implements Expression interface.
