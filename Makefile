@@ -701,7 +701,8 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
-	cp  $(bazel info output_path)/_coverage/_coverage_report.dat ./coverage_bazel.dat
+	$(eval $@OUTPUT_PATH := $(shell bazel info output_path))
+	cp $($@OUTPUT_PATH)/_coverage/_coverage_report.dat ./coverage_bazel.dat
 
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
@@ -710,7 +711,8 @@ bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
-	cp  $(bazel info output_path)/_coverage/_coverage_report.dat ./coverage_bazel.dat
+	$(eval $@OUTPUT_PATH := $(shell bazel info output_path))
+	cp $($@OUTPUT_PATH)/_coverage/_coverage_report.dat ./coverage_bazel.dat
 
 .PHONY: bazel_bin
 bazel_bin: ## Build importer/tidb binary files with Bazel build system
