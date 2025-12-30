@@ -246,7 +246,7 @@ func (s *TiCIShardCache) BatchLocateKeyRanges(
 			[]byte(info.StartKey), []byte(info.EndKey))
 	}
 	ss += "]"
-	logutil.BgLogger().Debug("TiCIShardCache BatchLocateKeyRanges",
+	logutil.BgLogger().Info("TiCIShardCache BatchLocateKeyRanges",
 		zap.String("keyRanges", ss),
 		zap.String("indexID", fmt.Sprintf("%d", indexID)))
 	uncachedRanges := make([]kv.KeyRange, 0, len(keyRanges))
@@ -592,7 +592,7 @@ func (mu *shardIndexMu) insertShardToCache(indexID int64, cachedShard *ShardWith
 
 // InvalidateCachedShard invalidates the cached shard with the given shardID.
 func (s *TiCIShardCache) InvalidateCachedShard(shardID uint64) {
-	logutil.BgLogger().Debug("InvalidateCachedShard", zap.Uint64("shardID", shardID))
+	logutil.BgLogger().Info("InvalidateCachedShard", zap.Uint64("shardID", shardID))
 	s.mu.Lock()
 	cachedShards, ok := s.mu.shards[shardID]
 	s.mu.shards[shardID] = nil
