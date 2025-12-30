@@ -1066,7 +1066,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 500) select n from cte;")
 		tk.MustExec("ANALYZE TABLE t all columns")
 		// Priming select to force sync load of statistics.
-		tk.MustQuery("SELECT a from t where a > 0 limit 1")
+		tk.MustQuery("SELECT count(*) FROM t WHERE a > 0")
 
 		// full scan
 		sql := fmt.Sprintf("SELECT * FROM t use index(%s) ORDER BY a", indexName)
@@ -1095,6 +1095,7 @@ func TestIndexUsageWithData(t *testing.T) {
 
 	checkIndexUsage := func(startQuery time.Time, endQuery time.Time, percentageAccess2050 bool) {
 		require.Eventually(t, func() bool {
+			tk.Session().ReportUsageStats()
 			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
 			if len(rows) != 1 {
 				return false
