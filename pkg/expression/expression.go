@@ -235,9 +235,9 @@ type Expression interface {
 	Decorrelate(schema *Schema) Expression
 
 	// ResolveIndices resolves indices by the given schema.
-	// It uses lazy copy, if the current Expression is not resolved, then it will resolve inplace,
-	// otherwise, it will copy the original expression and return the copied one.
-	// the second return value indicates whether the returned expression is a cloned one or not.
+	// Each implementation can choose to support lazy copy or not. If it uses
+	// lazy copy, and resolve the index inplace, it should return false as
+	// the second return value, otherwise return true.
 	ResolveIndices(schema *Schema) (Expression, bool, error)
 
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
