@@ -77,10 +77,6 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	fr := traceevent.GetFlightRecorder()
 	defer fr.Close()
 
-	prevCategories := traceevent.GetEnabledCategories()
-	fr.SetCategories(traceevent.AllCategories)
-	defer fr.SetCategories(prevCategories)
-
 	recorder := traceevent.NewRingBufferSink(100)
 	prevSink := traceevent.CurrentSink()
 	traceevent.SetSink(recorder)
