@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
@@ -228,6 +229,7 @@ func (e *InsertExec) updateDupRow(
 	handle kv.Handle,
 	dupKeyCheck table.DupKeyCheckMode,
 	autoColIdx int,
+	oldRowCommitTS uint64,
 ) (err error) {
 	// get the extra columns from the SELECT clause.
 	var extraCols []types.Datum
@@ -235,7 +237,7 @@ func (e *InsertExec) updateDupRow(
 		extraCols = e.Ctx().GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
 	}
 
-	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch, dupKeyCheck, autoColIdx)
+	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch, dupKeyCheck, autoColIdx, oldRowCommitTS)
 	if kv.ErrKeyExists.Equal(err) || table.ErrCheckConstraintViolated.Equal(err) {
 		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
 		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
@@ -307,7 +309,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 					oldRow = append(oldRow, types.NewUintDatum(commitTS))
 				}
 				var done bool
-				done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, r.handleKey, updateDupKeyCheck, autoColIdx, removeOldRows)
+				done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, commitTS, handle, r.handleKey, updateDupKeyCheck, autoColIdx, removeOldRows)
 				if err != nil {
 					return err
 				}
@@ -343,7 +345,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			}
 
 			var done bool
-			done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, handle, uk, updateDupKeyCheck, autoColIdx, removeOldRows)
+			done, removeOldRows, err = e.handleConflictWithOldRow(ctx, i, r, oldRow, commitTS, handle, uk, updateDupKeyCheck, autoColIdx, removeOldRows)
 			if err != nil {
 				return err
 			}
@@ -385,6 +387,7 @@ func (e *InsertExec) handleConflictWithOldRow(ctx context.Context,
 	idxInBatch int,
 	row toBeCheckedRow,
 	oldRow []types.Datum,
+	oldRowCommitTS uint64,
 	handle kv.Handle,
 	dupKeyInfo *keyValueWithDupInfo,
 	dupKeyCheck table.DupKeyCheckMode,
@@ -406,7 +409,7 @@ func (e *InsertExec) handleConflictWithOldRow(ctx context.Context,
 	}
 
 	if len(e.OnDuplicate) > 0 {
-		if err = e.updateDupRow(ctx, idxInBatch, row, oldRow, handle, dupKeyCheck, autoColIdx); err != nil {
+		if err = e.updateDupRow(ctx, idxInBatch, row, oldRow, handle, dupKeyCheck, autoColIdx, oldRowCommitTS); err != nil {
 			return false, nil, err
 		}
 		return true, removeOldRows, nil
@@ -560,22 +563,12 @@ func (e *InsertExec) doDupRowUpdate(
 	idxInBatch int,
 	dupKeyMode table.DupKeyCheckMode,
 	autoColIdx int,
+	oldRowCommitTS uint64,
 ) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
 	e.Ctx().GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
-
-	updateOriginTSCol := -1
-	if e.Table.Meta().IsActiveActive {
-		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
-		// should be set to null rather than copy the old value.
-		for _, col := range e.Table.Cols() {
-			if col.Name.Equals(&model.ExtraOriginTSName) {
-				updateOriginTSCol = col.Offset
-			}
-		}
-	}
 
 	// NOTE: In order to execute the expression inside the column assignment,
 	// we have to put the value of "oldRow" and "extraCols" before "newRow" in
@@ -595,6 +588,29 @@ func (e *InsertExec) doDupRowUpdate(
 			generated = append(generated, assign)
 		} else {
 			nonGenerated = append(nonGenerated, assign)
+		}
+	}
+
+	needActiveActiveSyncStats := false
+	updateOriginTSCol := -1
+	if e.Table.Meta().IsActiveActive {
+		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+		// should be set to null rather than copy the old value.
+		for _, col := range e.Table.Cols() {
+			if col.Name.Equals(&model.ExtraOriginTSName) {
+				updateOriginTSCol = col.Offset
+			}
+		}
+
+		// Only CDC uses this pattern:
+		// _tidb_origin_ts = IF(@cond, VALUES(_tidb_origin_ts), test._tidb_origin_ts)
+		if e.Ctx().GetSessionVars().CDCWriteSource != 0 {
+			for _, assign := range nonGenerated {
+				if assign.ColName.Equals(&model.ExtraOriginTSName) {
+					needActiveActiveSyncStats = true
+					break
+				}
+			}
 		}
 	}
 
@@ -619,6 +635,8 @@ func (e *InsertExec) doDupRowUpdate(
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	sctx := e.Ctx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	realOverwrite := false
+	originTSEqual := false
 	for _, assign := range nonGenerated {
 		var val types.Datum
 		if assign.LazyErr != nil {
@@ -639,8 +657,38 @@ func (e *InsertExec) doDupRowUpdate(
 
 		_ = errorHandler(sctx, assign, &val, nil)
 		e.evalBuffer4Dup.SetDatum(idx, val)
+		if needActiveActiveSyncStats {
+			if !e.row4Update[assign.Col.Index].Equals(val) {
+				realOverwrite = true
+			}
+			if assign.ColName.Equals(&model.ExtraOriginTSName) {
+				if newRow[updateOriginTSCol].Equals(val) {
+					originTSEqual = true
+				}
+			}
+		}
 		e.row4Update[assign.Col.Index] = val
 		assignFlag[assign.Col.Index] = true
+	}
+
+	// ActiveActiveSyncStats info is required, but no overwrite really happen, it means
+	// that all conflicts are skipped.
+	if needActiveActiveSyncStats && len(nonGenerated) > 0 && !realOverwrite {
+		// _tidb_origin_ts equal is a corner case, imagine that CDC sync duplicate rows, with same _tidb_origin_ts
+		// In this case, the skipped row is not caused by business logic, but CDC, we should not give misleading information.
+		if !originTSEqual {
+			e.Ctx().GetSessionVars().ActiveActiveConflictSkipRows.Add(1)
+			redactMode := e.Ctx().GetSessionVars().EnableRedactLog
+			oldRowOriginTS, _ := oldRow[updateOriginTSCol].ToString()
+			newRowOriginTS, _ := newRow[updateOriginTSCol].ToString()
+			logutil.BgLogger().Info("[CDC active-active] skip writing conflict row.",
+				zap.Int64("tableID", e.Table.Meta().ID),
+				zap.Stringer("table", e.Table.Meta().Name),
+				zap.Stringer("handle", redact.Stringer(redactMode, handle)),
+				zap.Uint64("old row commit ts", oldRowCommitTS),
+				zap.String("old row origin ts", oldRowOriginTS),
+				zap.String("new row origin ts", newRowOriginTS))
+		}
 	}
 
 	newData := e.row4Update[:len(e.Table.WritableCols())]
