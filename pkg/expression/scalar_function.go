@@ -351,12 +351,11 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
-		FuncName:      sf.FuncName,
-		RetType:       sf.RetType,
-		Function:      sf.Function.Clone(),
-		indexResolved: sf.indexResolved,
+		FuncName: sf.FuncName,
+		RetType:  sf.RetType,
+		Function: sf.Function.Clone(),
 	}
-	//c.indexResolved.Store(sf.indexResolved.Load())
+	c.indexResolved.Store(sf.indexResolved.Load())
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
@@ -798,22 +797,22 @@ func ReHashCode(sf *ScalarFunction) {
 }
 
 // ResolveIndices implements Expression interface.
-func (sf *ScalarFunction) ResolveIndices(schema *Schema, allowLazyCopy bool) (Expression, bool, error) {
-	if allowLazyCopy && sf.indexResolved.CompareAndSwap(false, true) {
+func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, bool, error) {
+	if sf.indexResolved.CompareAndSwap(false, true) {
 		// don't need to copy
-		sf.resolveIndices(schema, allowLazyCopy)
+		sf.resolveIndices(schema)
 		return sf, false, nil
 	}
 	// need to copy
 	newSf := sf.CloneAndClearIndexResolvedFlag()
-	err := newSf.resolveIndices(schema, allowLazyCopy)
+	err := newSf.resolveIndices(schema)
 	newSf.(*ScalarFunction).indexResolved.Store(true)
 	return newSf, true, err
 }
 
-func (sf *ScalarFunction) resolveIndices(schema *Schema, allowLazyCopy bool) error {
+func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 	for index, arg := range sf.GetArgs() {
-		newArg, cloned, err := arg.ResolveIndices(schema, allowLazyCopy)
+		newArg, cloned, err := arg.ResolveIndices(schema)
 		if err != nil {
 			return err
 		}

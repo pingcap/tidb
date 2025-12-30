@@ -295,7 +295,7 @@ func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
 		return errors.Errorf("expect PhysicalSort or NominalSort, but got %s", p.TP())
 	}
 	for _, item := range byItems {
-		item.Expr, _, err = item.Expr.ResolveIndices(p.Children()[0].Schema(), true)
+		item.Expr, _, err = item.Expr.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}

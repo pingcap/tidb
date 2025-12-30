@@ -381,12 +381,12 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	rSchema := p.Children()[1].Schema()
 	ctx := p.SCtx()
 	for i, fun := range p.EqualConditions {
-		lArg, _, err := fun.GetArgs()[0].ResolveIndices(lSchema, true)
+		lArg, _, err := fun.GetArgs()[0].ResolveIndices(lSchema)
 		if err != nil {
 			return err
 		}
 		p.LeftJoinKeys[i] = lArg.(*expression.Column)
-		rArg, _, err := fun.GetArgs()[1].ResolveIndices(rSchema, true)
+		rArg, _, err := fun.GetArgs()[1].ResolveIndices(rSchema)
 		if err != nil {
 			return err
 		}
@@ -394,12 +394,12 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 		p.EqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, fun := range p.NAEqualConditions {
-		lArg, _, err := fun.GetArgs()[0].ResolveIndices(lSchema, true)
+		lArg, _, err := fun.GetArgs()[0].ResolveIndices(lSchema)
 		if err != nil {
 			return err
 		}
 		p.LeftNAJoinKeys[i] = lArg.(*expression.Column)
-		rArg, _, err := fun.GetArgs()[1].ResolveIndices(rSchema, true)
+		rArg, _, err := fun.GetArgs()[1].ResolveIndices(rSchema)
 		if err != nil {
 			return err
 		}
@@ -407,13 +407,13 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], _, err = expr.ResolveIndices(lSchema, true)
+		p.LeftConditions[i], _, err = expr.ResolveIndices(lSchema)
 		if err != nil {
 			return err
 		}
 	}
 	for i, expr := range p.RightConditions {
-		p.RightConditions[i], _, err = expr.ResolveIndices(rSchema, true)
+		p.RightConditions[i], _, err = expr.ResolveIndices(rSchema)
 		if err != nil {
 			return err
 		}
@@ -422,7 +422,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	mergedSchema := expression.MergeSchema(lSchema, rSchema)
 
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], _, err = expr.ResolveIndices(mergedSchema, true)
+		p.OtherConditions[i], _, err = expr.ResolveIndices(mergedSchema)
 		if err != nil {
 			return err
 		}

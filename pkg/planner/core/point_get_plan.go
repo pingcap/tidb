@@ -1286,7 +1286,7 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 			allAssignmentsAreConstant = isConst
 		}
 
-		newAssign.Expr, _, err = expr.ResolveIndices(plan.Schema(), true)
+		newAssign.Expr, _, err = expr.ResolveIndices(plan.Schema())
 		if err != nil {
 			return nil, true
 		}

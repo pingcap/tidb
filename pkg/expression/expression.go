@@ -238,10 +238,10 @@ type Expression interface {
 	// It uses lazy copy, if the current Expression is not resolved, then it will resolve inplace,
 	// otherwise, it will copy the original expression and return the copied one.
 	// the second return value indicates whether the returned expression is a cloned one or not.
-	ResolveIndices(schema *Schema, allowLazyCopy bool) (Expression, bool, error)
+	ResolveIndices(schema *Schema) (Expression, bool, error)
 
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
-	resolveIndices(schema *Schema, allowLazyCopy bool) error
+	resolveIndices(schema *Schema) error
 
 	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virtual expression. It will copy the original expression and return the copied one.
 	ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool)
@@ -1152,7 +1152,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 			if e != nil {
 				columns[i].VirtualExpr = e.Clone()
 			}
-			columns[i].VirtualExpr, _, err = columns[i].VirtualExpr.ResolveIndices(mockSchema, true)
+			columns[i].VirtualExpr, _, err = columns[i].VirtualExpr.ResolveIndices(mockSchema)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

@@ -25,7 +25,7 @@ import (
 // resolveIndicesItself resolve indices for PhysicalPlan itself
 func resolveIndicesItself4PhysicalProjection(p *physicalop.PhysicalProjection) (err error) {
 	for i, expr := range p.Exprs {
-		p.Exprs[i], _, err = expr.ResolveIndices(p.Children()[0].Schema(), true)
+		p.Exprs[i], _, err = expr.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -89,7 +89,7 @@ func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
 		return err
 	}
 	for i, expr := range p.Conditions {
-		p.Conditions[i], _, err = expr.ResolveIndices(p.Children()[0].Schema(), true)
+		p.Conditions[i], _, err = expr.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -118,14 +118,14 @@ func resolveIndices4PhysicalIndexLookUpReader(pp base.PhysicalPlan) (err error) 
 		return err
 	}
 	if p.ExtraHandleCol != nil {
-		newCol, _, err := p.ExtraHandleCol.ResolveIndices(p.TablePlan.Schema(), true)
+		newCol, _, err := p.ExtraHandleCol.ResolveIndices(p.TablePlan.Schema())
 		if err != nil {
 			return err
 		}
 		p.ExtraHandleCol = newCol.(*expression.Column)
 	}
 	for i, commonHandleCol := range p.CommonHandleCols {
-		newCol, _, err := commonHandleCol.ResolveIndices(p.TablePlans[0].Schema(), true)
+		newCol, _, err := commonHandleCol.ResolveIndices(p.TablePlans[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -142,7 +142,7 @@ func resolveIndices4PhysicalSelection(pp base.PhysicalPlan) (err error) {
 		return err
 	}
 	for i, expr := range p.Conditions {
-		p.Conditions[i], _, err = expr.ResolveIndices(p.Children()[0].Schema(), true)
+		p.Conditions[i], _, err = expr.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
 			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.Children()[0].Schema())
@@ -194,13 +194,13 @@ func resolveIndices4PhysicalTopN(pp base.PhysicalPlan) (err error) {
 		return err
 	}
 	for _, item := range p.ByItems {
-		item.Expr, _, err = item.Expr.ResolveIndices(p.Children()[0].Schema(), true)
+		item.Expr, _, err = item.Expr.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
 	}
 	for i, item := range p.PartitionBy {
-		newCol, _, err := item.Col.ResolveIndices(p.Children()[0].Schema(), true)
+		newCol, _, err := item.Col.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -220,7 +220,7 @@ func resolveIndices4PhysicalLimit(pp base.PhysicalPlan) (err error) {
 		return err
 	}
 	for i, item := range p.PartitionBy {
-		newCol, _, err := item.Col.ResolveIndices(p.Children()[0].Schema(), true)
+		newCol, _, err := item.Col.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}

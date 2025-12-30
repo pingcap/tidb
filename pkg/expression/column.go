@@ -220,12 +220,12 @@ func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndices(_ *Schema, _ bool) (Expression, bool, error) {
+func (col *CorrelatedColumn) ResolveIndices(_ *Schema) (Expression, bool, error) {
 	// todo in order to follow the original behavior, maybe we should always clone a new correlated column here
 	return col, false, nil
 }
 
-func (col *CorrelatedColumn) resolveIndices(_ *Schema, _ bool) error {
+func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
 	return nil
 }
 
@@ -708,13 +708,13 @@ func (col *Column) getIndex(schema *Schema) (int, error) {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *Column) ResolveIndices(schema *Schema, allowLazyCopy bool) (Expression, bool, error) {
+func (col *Column) ResolveIndices(schema *Schema) (Expression, bool, error) {
 	newCol := col.Clone()
-	newCol.resolveIndices(schema, allowLazyCopy)
+	newCol.resolveIndices(schema)
 	return newCol, true, nil
 }
 
-func (col *Column) resolveIndices(schema *Schema, _ bool) (err error) {
+func (col *Column) resolveIndices(schema *Schema) (err error) {
 	col.Index, err = col.getIndex(schema)
 	return err
 }

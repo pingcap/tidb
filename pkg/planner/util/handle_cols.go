@@ -225,7 +225,7 @@ func (cb *CommonHandleCols) ResolveIndices(schema *expression.Schema) (HandleCol
 		columns: make([]*expression.Column, len(cb.columns)),
 	}
 	for i, col := range cb.columns {
-		newCol, _, err := col.ResolveIndices(schema, false)
+		newCol, _, err := col.ResolveIndices(schema)
 		if err != nil {
 			return nil, err
 		}
@@ -398,7 +398,7 @@ func (ib *IntHandleCols) BuildHandleByDatums(_ *stmtctx.StatementContext, row []
 
 // ResolveIndices implements the kv.HandleCols interface.
 func (ib *IntHandleCols) ResolveIndices(schema *expression.Schema) (HandleCols, error) {
-	newCol, _, err := ib.col.ResolveIndices(schema, false)
+	newCol, _, err := ib.col.ResolveIndices(schema)
 	if err != nil {
 		return nil, err
 	}

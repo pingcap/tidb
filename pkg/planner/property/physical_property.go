@@ -139,7 +139,7 @@ type MPPPartitionColumn struct {
 
 // ResolveIndices resolve index for MPPPartitionColumn
 func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
-	newColExpr, _, err := partitionCol.Col.ResolveIndices(schema, true)
+	newColExpr, _, err := partitionCol.Col.ResolveIndices(schema)
 	if err != nil {
 		return nil, err
 	}

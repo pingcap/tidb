@@ -626,11 +626,11 @@ func (c *Constant) getHashCode(canonical bool) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ *Schema, _ bool) (Expression, bool, error) {
+func (c *Constant) ResolveIndices(_ *Schema) (Expression, bool, error) {
 	return c, false, nil
 }
 
-func (c *Constant) resolveIndices(_ *Schema, _ bool) error {
+func (c *Constant) resolveIndices(_ *Schema) error {
 	return nil
 }
 

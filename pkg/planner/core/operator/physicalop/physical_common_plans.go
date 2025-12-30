@@ -346,12 +346,12 @@ func (p *Update) ResolveIndices() (err error) {
 	}
 	schema := p.SelectPlan.Schema()
 	for _, assign := range p.OrderedList {
-		newCol, _, err := assign.Col.ResolveIndices(schema, true)
+		newCol, _, err := assign.Col.ResolveIndices(schema)
 		if err != nil {
 			return err
 		}
 		assign.Col = newCol.(*expression.Column)
-		assign.Expr, _, err = assign.Expr.ResolveIndices(schema, true)
+		assign.Expr, _, err = assign.Expr.ResolveIndices(schema)
 		if err != nil {
 			return err
 		}
@@ -366,32 +366,32 @@ func (p *Insert) ResolveIndices() (err error) {
 		return err
 	}
 	for _, asgn := range p.OnDuplicate {
-		newCol, _, err := asgn.Col.ResolveIndices(p.TableSchema, true)
+		newCol, _, err := asgn.Col.ResolveIndices(p.TableSchema)
 		if err != nil {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
 		// Once the asgn.lazyErr exists, asgn.Expr here is nil.
 		if asgn.Expr != nil {
-			asgn.Expr, _, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate, true)
+			asgn.Expr, _, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
 			if err != nil {
 				return err
 			}
 		}
 	}
 	for i, expr := range p.GenCols.Exprs {
-		p.GenCols.Exprs[i], _, err = expr.ResolveIndices(p.TableSchema, true)
+		p.GenCols.Exprs[i], _, err = expr.ResolveIndices(p.TableSchema)
 		if err != nil {
 			return err
 		}
 	}
 	for _, asgn := range p.GenCols.OnDuplicates {
-		newCol, _, err := asgn.Col.ResolveIndices(p.TableSchema, true)
+		newCol, _, err := asgn.Col.ResolveIndices(p.TableSchema)
 		if err != nil {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, _, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate, true)
+		asgn.Expr, _, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
 		if err != nil {
 			return err
 		}

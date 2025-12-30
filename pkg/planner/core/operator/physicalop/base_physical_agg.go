@@ -910,20 +910,20 @@ func (p *BasePhysicalAgg) ResolveIndices() (err error) {
 	}
 	for _, aggFun := range p.AggFuncs {
 		for i, arg := range aggFun.Args {
-			aggFun.Args[i], _, err = arg.ResolveIndices(p.Children()[0].Schema(), true)
+			aggFun.Args[i], _, err = arg.ResolveIndices(p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
 		}
 		for _, byItem := range aggFun.OrderByItems {
-			byItem.Expr, _, err = byItem.Expr.ResolveIndices(p.Children()[0].Schema(), true)
+			byItem.Expr, _, err = byItem.Expr.ResolveIndices(p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
 		}
 	}
 	for i, item := range p.GroupByItems {
-		p.GroupByItems[i], _, err = item.ResolveIndices(p.Children()[0].Schema(), true)
+		p.GroupByItems[i], _, err = item.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}

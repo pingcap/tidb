@@ -191,7 +191,7 @@ func (s *ScalarSubQueryExpr) Decorrelate(*expression.Schema) expression.Expressi
 }
 
 // ResolveIndices implements the Expression interface.
-func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema, _ bool) (expression.Expression, bool, error) {
+func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Expression, bool, error) {
 	return s, false, nil
 }
 

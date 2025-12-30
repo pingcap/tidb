@@ -354,27 +354,27 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	lSchema := p.Children()[0].Schema()
 	rSchema := p.Children()[1].Schema()
 	for i, col := range p.LeftJoinKeys {
-		newKey, _, err := col.ResolveIndices(lSchema, true)
+		newKey, _, err := col.ResolveIndices(lSchema)
 		if err != nil {
 			return err
 		}
 		p.LeftJoinKeys[i] = newKey.(*expression.Column)
 	}
 	for i, col := range p.RightJoinKeys {
-		newKey, _, err := col.ResolveIndices(rSchema, true)
+		newKey, _, err := col.ResolveIndices(rSchema)
 		if err != nil {
 			return err
 		}
 		p.RightJoinKeys[i] = newKey.(*expression.Column)
 	}
 	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], _, err = expr.ResolveIndices(lSchema, true)
+		p.LeftConditions[i], _, err = expr.ResolveIndices(lSchema)
 		if err != nil {
 			return err
 		}
 	}
 	for i, expr := range p.RightConditions {
-		p.RightConditions[i], _, err = expr.ResolveIndices(rSchema, true)
+		p.RightConditions[i], _, err = expr.ResolveIndices(rSchema)
 		if err != nil {
 			return err
 		}
@@ -383,7 +383,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	mergedSchema := expression.MergeSchema(lSchema, rSchema)
 
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], _, err = expr.ResolveIndices(mergedSchema, true)
+		p.OtherConditions[i], _, err = expr.ResolveIndices(mergedSchema)
 		if err != nil {
 			return err
 		}
