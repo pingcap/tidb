@@ -671,9 +671,9 @@ func (e *InsertExec) doDupRowUpdate(
 		assignFlag[assign.Col.Index] = true
 	}
 
+	// ActiveActiveSyncStats info is required, but no overwrite really happen, it means
+	// that all conflicts are skipped.
 	if needActiveActiveSyncStats && len(nonGenerated) > 0 && !realOverwrite {
-		// ActiveActiveSyncStats info is required, but no overwrite really happen, it means
-		// that all conflicts are skipped.
 		// _tidb_origin_ts equal is a corner case, imagine that CDC sync duplicate rows, with same _tidb_origin_ts
 		// In this case, the skipped row is not caused by business logic, but CDC, we should not give misleading information.
 		if !originTSEqual {
