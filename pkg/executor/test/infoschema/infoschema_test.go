@@ -1065,6 +1065,8 @@ func TestIndexUsageWithData(t *testing.T) {
 		// insert 500 rows
 		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 500) select n from cte;")
 		tk.MustExec("ANALYZE TABLE t all columns")
+		// Priming select to force sync load of statistics.
+		tk.MustQuery("SELECT a from t where a > 0 limit")
 
 		// full scan
 		sql := fmt.Sprintf("SELECT * FROM t use index(%s) ORDER BY a", indexName)

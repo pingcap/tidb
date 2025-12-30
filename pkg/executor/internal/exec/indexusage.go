@@ -73,9 +73,8 @@ func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexI
 func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
-		// it's possible that there are no statistics for the table.
-		// Set it to zero since we cannot calculate the percentage.
-		tableRowCount = 0
+		// Index usage for pseudo stats are not reported.
+		return
 	}
 
 	kvReq, accessRows := e.runtimeStatsColl.GetCopCountAndRows(planID)
@@ -131,15 +130,20 @@ func (e *IndexUsageReporter) getTableRowCount(tableID int64) (int64, bool) {
 // getClusterIndexID returns the indexID of the clustered index. If the table doesn't have a clustered index, it returns
 // (0, false).
 func getClusterIndexID(tblInfo *model.TableInfo) (int64, bool) {
+	var idxID int64
 	if tblInfo.PKIsHandle {
-		return 0, true
+		idxID = 0
 	} else if tblInfo.IsCommonHandle {
 		for _, idx := range tblInfo.Indices {
 			if idx.Primary {
-				return idx.ID, true
+				idxID = idx.ID
+				break
 			}
 		}
+	} else {
+		// just ignore, this table is read through rowid.
+		return 0, false
 	}
-	// just ignore, this table is read through rowid (which is a non-clustered index).
-	return 0, false
+
+	return idxID, true
 }
