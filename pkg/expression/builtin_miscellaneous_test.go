@@ -142,90 +142,44 @@ func TestIsUUID(t *testing.T) {
 }
 
 func TestUUID(t *testing.T) {
-	ctx := createContext(t)
-	f, err := newFunctionForTest(ctx, ast.UUID)
-	require.NoError(t, err)
-	d, err := f.Eval(ctx, chunk.Row{})
-	require.NoError(t, err)
-	u, err := uuid.Parse(d.GetString())
-	require.NoError(t, err)
-	require.Equal(t, uuid.Version(1), u.Version(), "Must generate a UUIDv1")
-	parts := strings.Split(d.GetString(), "-")
-	require.Equal(t, 5, len(parts))
-	for i, p := range parts {
-		switch i {
-		case 0:
-			require.Equal(t, 8, len(p))
-		case 1:
-			require.Equal(t, 4, len(p))
-		case 2:
-			require.Equal(t, 4, len(p))
-		case 3:
-			require.Equal(t, 4, len(p))
-		case 4:
-			require.Equal(t, 12, len(p))
-		}
+	uuidGenFuncs := []struct {
+		funcName      string
+		expectVersion uuid.Version
+	}{
+		{ast.UUID, uuid.Version(1)},
+		{ast.UUIDv4, uuid.Version(4)},
+		{ast.UUIDv7, uuid.Version(7)},
 	}
-	_, err = funcs[ast.UUID].getFunction(ctx, datumsToConstants(nil))
-	require.NoError(t, err)
-}
-
-func TestUUIDv4(t *testing.T) {
-	ctx := createContext(t)
-	f, err := newFunctionForTest(ctx, ast.UUIDv4)
-	require.NoError(t, err)
-	d, err := f.Eval(ctx, chunk.Row{})
-	require.NoError(t, err)
-	u, err := uuid.Parse(d.GetString())
-	require.NoError(t, err)
-	require.Equal(t, uuid.Version(4), u.Version(), "Must generate a UUIDv4")
-	parts := strings.Split(d.GetString(), "-")
-	require.Equal(t, 5, len(parts))
-	for i, p := range parts {
-		switch i {
-		case 0:
-			require.Equal(t, 8, len(p))
-		case 1:
-			require.Equal(t, 4, len(p))
-		case 2:
-			require.Equal(t, 4, len(p))
-		case 3:
-			require.Equal(t, 4, len(p))
-		case 4:
-			require.Equal(t, 12, len(p))
-		}
+	for _, tf := range uuidGenFuncs {
+		t.Run(tf.funcName, func(t *testing.T) {
+			ctx := createContext(t)
+			f, err := newFunctionForTest(ctx, tf.funcName)
+			require.NoError(t, err)
+			d, err := f.Eval(ctx, chunk.Row{})
+			require.NoError(t, err)
+			u, err := uuid.Parse(d.GetString())
+			require.NoError(t, err)
+			require.Equal(t, tf.expectVersion, u.Version(), "Must generate a UUIDv%d", u.Version())
+			parts := strings.Split(d.GetString(), "-")
+			require.Equal(t, 5, len(parts))
+			for i, p := range parts {
+				switch i {
+				case 0:
+					require.Equal(t, 8, len(p))
+				case 1:
+					require.Equal(t, 4, len(p))
+				case 2:
+					require.Equal(t, 4, len(p))
+				case 3:
+					require.Equal(t, 4, len(p))
+				case 4:
+					require.Equal(t, 12, len(p))
+				}
+			}
+			_, err = funcs[tf.funcName].getFunction(ctx, datumsToConstants(nil))
+			require.NoError(t, err)
+		})
 	}
-	_, err = funcs[ast.UUIDv4].getFunction(ctx, datumsToConstants(nil))
-	require.NoError(t, err)
-}
-
-func TestUUIDv7(t *testing.T) {
-	ctx := createContext(t)
-	f, err := newFunctionForTest(ctx, ast.UUIDv7)
-	require.NoError(t, err)
-	d, err := f.Eval(ctx, chunk.Row{})
-	require.NoError(t, err)
-	u, err := uuid.Parse(d.GetString())
-	require.NoError(t, err)
-	require.Equal(t, uuid.Version(7), u.Version(), "Must generate a UUIDv7")
-	parts := strings.Split(d.GetString(), "-")
-	require.Equal(t, 5, len(parts))
-	for i, p := range parts {
-		switch i {
-		case 0:
-			require.Equal(t, 8, len(p))
-		case 1:
-			require.Equal(t, 4, len(p))
-		case 2:
-			require.Equal(t, 4, len(p))
-		case 3:
-			require.Equal(t, 4, len(p))
-		case 4:
-			require.Equal(t, 12, len(p))
-		}
-	}
-	_, err = funcs[ast.UUIDv7].getFunction(ctx, datumsToConstants(nil))
-	require.NoError(t, err)
 }
 
 func TestUUIDVersion(t *testing.T) {
