@@ -73,7 +73,7 @@ func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexI
 func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
-		// Index usage for pseudo stats are not reported.
+		// Index usage for pseudo stats is not reported.
 		return
 	}
 
