@@ -265,6 +265,8 @@ func TestUUIDTimestamp(t *testing.T) {
 		{"271a8175-dadd-5df9-b0bd-20a4a0b441e6", 0, true},                  // v5
 		{"1f0e48c1-7860-69cc-9b3f-35f89c103d4d", 1766995078.970004, false}, // v6
 		{"019b1440-87b7-7380-ab00-ce413e795004", 1765571332.023000, false}, // v7
+		{"00000000-0000-0000-0000-000000000000", 0, true},                  // Nil UUID
+		{"ffffffff-ffff-ffff-ffff-ffffffffffff", 0, true},                  // Max UUID
 	}
 	for _, tt := range tbl {
 		fc := funcs[ast.UUIDTimestamp]

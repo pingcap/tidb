@@ -282,7 +282,7 @@ func (b *builtinUUIDVersionSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 		val := buf.GetString(i)
 		u, err := uuid.Parse(val)
 		if err != nil {
-			return err
+			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_version")
 		}
 		i64s[i] = int64(u.Version())
 	}
@@ -313,29 +313,25 @@ func (b *builtinUUIDTimestampSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 		val := buf.GetString(i)
 		u, err := uuid.Parse(val)
 		if err != nil {
-			return err
+			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_timestamp")
 		}
 		switch u.Version() {
-		case 1:
-		case 6:
-		case 7:
+		case 1, 6, 7:
 		default:
 			// No timestamp, return NULL
 			continue
 		}
 
 		s, ns := u.Time().UnixTime()
-		r := new(types.MyDecimal)
-		r.FromInt((s * 1000000) + (ns / 1000))
-		err = r.Shift(-6)
+		d[i].FromInt((s * 1000000) + (ns / 1000))
+		err = d[i].Shift(-6)
 		if err != nil {
 			return err
 		}
-		err = r.Round(r, 6, types.ModeHalfUp)
+		err = d[i].Round(&d[i], 6, types.ModeHalfUp)
 		if err != nil {
 			return err
 		}
-		d[i] = *r
 	}
 	return nil
 }

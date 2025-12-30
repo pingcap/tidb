@@ -1656,7 +1656,7 @@ func (b *builtinUUIDVersionSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	}
 	u, err := uuid.Parse(val)
 	if err != nil {
-		return 0, isNull, err
+		return 0, isNull, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_version")
 	}
 	return int64(u.Version()), false, nil
 }
@@ -1702,13 +1702,11 @@ func (b *builtinUUIDTimestampSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 	}
 	u, err := uuid.Parse(val)
 	if err != nil {
-		return new(types.MyDecimal), isNull, err
+		return new(types.MyDecimal), isNull, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_timestamp")
 	}
 
 	switch u.Version() {
-	case 1:
-	case 6:
-	case 7:
+	case 1, 6, 7:
 	default:
 		// No timestamp, return NULL
 		return new(types.MyDecimal), true, nil
