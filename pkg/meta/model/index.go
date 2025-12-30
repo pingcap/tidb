@@ -44,6 +44,18 @@ const (
 	// changingIndexPrefix the prefix is used to initialize new index name created in modify column.
 	// The new name will be like "_Idx$_<old_index_name>_n".
 	changingIndexPrefix = "_Idx$_"
+
+	// GlobalIndexVersion constants define the key format versions for global indexes.
+	// GlobalIndexVersionLegacy is the legacy format (version 0) where partition ID is not in the key.
+	// This format has a bug with duplicate handles after EXCHANGE PARTITION on non-clustered tables.
+	GlobalIndexVersionLegacy uint8 = 0
+	// GlobalIndexVersionV2 is the current format (version 2) where partition ID is encoded in the key
+	// for non-unique global indexes on non-clustered tables to prevent key collisions after EXCHANGE PARTITION.
+	// For unique global indexes, the partition ID is not needed in the key since uniqueness is already enforced.
+	// For clustered tables, common handles already include partition-specific data.
+	GlobalIndexVersionV2 uint8 = 2
+	// GlobalIndexVersionCurrent is the current/latest version used for new global indexes.
+	GlobalIndexVersionCurrent = GlobalIndexVersionV2
 )
 
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
@@ -230,6 +242,7 @@ type IndexInfo struct {
 	Primary             bool               `json:"is_primary"`              // Whether the index is primary key.
 	Invisible           bool               `json:"is_invisible"`            // Whether the index is invisible.
 	Global              bool               `json:"is_global"`               // Whether the index is global.
+	GlobalIndexVersion  uint8              `json:"global_index_version,omitempty"` // Version of global index key format (0=legacy/unique/clustered, 2=v2 non-unique non-clustered with partition ID in key).
 	MVIndex             bool               `json:"mv_index"`                // Whether the index is multivalued index.
 	VectorInfo          *VectorIndexInfo   `json:"vector_index"`            // VectorInfo is the vector index information.
 	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`          // InvertedInfo is the inverted index information.

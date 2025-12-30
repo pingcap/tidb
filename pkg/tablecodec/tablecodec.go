@@ -66,13 +66,13 @@ const (
 
 	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
 	CommonHandleFlag byte = 127
-	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
+	// PartitionIDFlag is the flag used to decode the partition ID.
+	// Used in both global index values and global index keys (for V2+ non-unique indexes).
+	// In keys: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
+	// In values: PartitionIDFlag + partition_id (8 bytes)
 	PartitionIDFlag byte = 126
 	// IndexVersionFlag is the flag used to decode the index's version info.
 	IndexVersionFlag byte = 125
-	// PartitionHandleFlag is the flag used to decode a partition handle in a global non-unique index key.
-	// Format: PartitionHandleFlag + partition_id (8 bytes) + inner_handle_encoded
-	PartitionHandleFlag byte = 124
 	// RestoreDataFlag is the flag that RestoreData begin with.
 	// See rowcodec.Encoder.Encode and rowcodec.row.toBytes
 	RestoreDataFlag byte = rowcodec.CodecVer
@@ -1041,9 +1041,9 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
-	// Check if this is a PartitionHandle (for global non-unique indexes)
-	if len(keySuffix) > 0 && keySuffix[0] == PartitionHandleFlag {
-		// Format: PartitionHandleFlag + partition_id (8 bytes) + inner_handle
+	// Check if this is a PartitionHandle (for global non-unique indexes V2+)
+	if len(keySuffix) > 0 && keySuffix[0] == PartitionIDFlag {
+		// Format: PartitionIDFlag + partition_id (8 bytes) + inner_handle
 		keySuffix = keySuffix[1:] // Skip the flag
 		remain, partID, err := codec.DecodeInt(keySuffix)
 		if err != nil {
@@ -1220,6 +1220,11 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 // GenIndexKey generates index key using input physical table id
 func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
+	// Check global index version compatibility.
+	if idxInfo.Global && idxInfo.GlobalIndexVersion > model.GlobalIndexVersionCurrent {
+		return nil, false, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB.",
+			idxInfo.GlobalIndexVersion, model.GlobalIndexVersionCurrent)
+	}
 	if idxInfo.Unique {
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
@@ -1244,12 +1249,13 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 		return nil, false, err
 	}
 	if !distinct && h != nil {
-		// For PartitionHandle on global indexes, we must encode BOTH partition ID and inner handle
+		// For PartitionHandle on global indexes V2+, we must encode BOTH partition ID and inner handle
 		// in the key to prevent collisions when different partitions have duplicate handles.
 		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
-		if ph, isPartitionHandle := h.(kv.PartitionHandle); isPartitionHandle && idxInfo.Global {
-			// Encode as: PartitionHandleFlag + partition_id (8 bytes) + inner_handle_encoded
-			key = append(key, PartitionHandleFlag)
+		// Only use the new format for version >= V2. Legacy indexes (version 0) use the old format.
+		if ph, isPartitionHandle := h.(kv.PartitionHandle); isPartitionHandle && idxInfo.Global && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+			// Encode as: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
+			key = append(key, PartitionIDFlag)
 			key = codec.EncodeInt(key, ph.PartitionID)
 			if ph.Handle.IsInt() {
 				key = append(key, codec.IntHandleFlag)
@@ -1593,6 +1599,11 @@ func TempIndexValueIsUntouched(b []byte) bool {
 func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
+	// Check global index version compatibility.
+	if idxInfo.Global && idxInfo.GlobalIndexVersion > model.GlobalIndexVersionCurrent {
+		return nil, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB.",
+			idxInfo.GlobalIndexVersion, model.GlobalIndexVersionCurrent)
+	}
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueForClusteredIndexVersion1(loc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData, buf)
 	}
