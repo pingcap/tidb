@@ -1152,7 +1152,11 @@ func TestConvertTimeZoneDST(t *testing.T) {
 
 	v := types.NewTime(types.FromDate(2015, 3, 8, 2, 30, 0, 0), 0, 0)
 	err = v.ConvertTimeZone(loc, time.UTC)
-	require.NoError(t, err)
+	// Error is returned for caller to handle as warning, but time should be converted successfully
+	require.Error(t, err)
+	// The time should be adjusted to the nearest valid time and then converted to UTC
+	// 2015-03-08 02:30:00 PST (doesn't exist) -> adjusted to 03:00:00 PDT -> 10:00:00 UTC
+	require.Equal(t, "2015-03-08 10:00:00", v.String())
 }
 
 func TestTimeAdd(t *testing.T) {

@@ -362,9 +362,17 @@ func CurrentTime(tp uint8) Time {
 // The input time should be a valid timestamp.
 func (t *Time) ConvertTimeZone(from, to *gotime.Location) error {
 	if !t.IsZero() {
-		raw, err := t.AdjustedGoTime(from)
-		if err != nil {
-			return errors.Trace(err)
+		raw, goTimeErr := t.GoTime(from)
+		if goTimeErr != nil {
+			// Try with AdjustedGoTime for DST transition cases
+			raw, err := t.AdjustedGoTime(from)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// Time is adjusted successfully, but return original error for caller to handle as warning
+			converted := raw.In(to)
+			t.SetCoreTime(FromGoTime(converted))
+			return errors.Trace(goTimeErr)
 		}
 		converted := raw.In(to)
 		t.SetCoreTime(FromGoTime(converted))
