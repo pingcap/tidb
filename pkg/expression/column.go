@@ -221,7 +221,7 @@ func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 
 // ResolveIndices implements Expression interface.
 func (col *CorrelatedColumn) ResolveIndices(_ *Schema) (Expression, bool, error) {
-	// todo in order to follow the original behavior, maybe we should always clone a new correlated column here
+	// todo in order to follow the original behavior, maybe we should always clone a new correlated column here?
 	return col, false, nil
 }
 
