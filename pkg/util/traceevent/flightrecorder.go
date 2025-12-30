@@ -23,7 +23,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
@@ -36,10 +35,6 @@ type Trace struct {
 	bits   uint64
 	rand32 uint32
 }
-
-// globalHTTPFlightRecorderMutex is used in test to protect globalHTTPFlightRecorder changing.
-// When test runs parallel, and changing globalHTTPFlightRecorder, test cases become flaky.
-var globalHTTPFlightRecorderMutex sync.Mutex
 
 var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
 
@@ -466,10 +461,6 @@ func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, e
 		zap.Stringer("category", categories),
 		zap.Any("mapping", compiled.nameMapping),
 		zap.Uint64s("truthTable", ret.truthTable))
-	if intest.InTest {
-		// Avoid multiple flight recorders in test, its global variable and make tests unstable.
-		globalHTTPFlightRecorderMutex.Lock()
-	}
 	globalHTTPFlightRecorder.Store(ret)
 	return ret, nil
 }
@@ -498,10 +489,6 @@ func GetFlightRecorder() *HTTPFlightRecorder {
 // Close closes the HTTP flight recorder.
 func (*HTTPFlightRecorder) Close() {
 	globalHTTPFlightRecorder.Store(nil)
-	if intest.InTest {
-		// Avoid multiple flight recorders in test, its global variable and make tests unstable.
-		globalHTTPFlightRecorderMutex.Unlock()
-	}
 }
 
 func (r *HTTPFlightRecorder) shouldKeep(bits uint64) bool {
