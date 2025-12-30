@@ -530,6 +530,10 @@ func TestIngestUseGivenTS(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	var tblInfo *model.TableInfo
 	var idxInfo *model.IndexInfo
+	var useCloudStorage bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterLoadCloudStorageURI", func(job *model.Job) {
+		useCloudStorage = job.ReorgMeta.UseCloudStorage
+	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if idxInfo == nil {
 			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
@@ -578,6 +582,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
+	require.True(t, useCloudStorage)
 }
 
 func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
@@ -620,8 +625,9 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
 		reader, writer := pipe.GetReaderAndWriter()
-		require.EqualValues(t, 4, reader.GetWorkerPoolSize())
-		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
+		// Global sort uses equal reader and writer count.
+		require.EqualValues(t, 8, reader.GetWorkerPoolSize())
+		require.EqualValues(t, 8, writer.GetWorkerPoolSize())
 	})
 
 	// Change the batch size and concurrency during table scanning and check the modified parameters.
