@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -205,14 +204,6 @@ func TestIssue20236(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
 	defer srv.Stop()
-
-	// Mock cluster info to provide cluster topology
-	statusAddr := fmt.Sprintf("127.0.0.1:%d", config.GetGlobalConfig().Status.StatusPort)
-	instances := []string{
-		fmt.Sprintf("tidb,%s,%s,mock-version,mock-githash,1001", statusAddr, statusAddr),
-	}
-	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo", fpExpr)
 
 	logData0 := ""
 	logData1 := `
