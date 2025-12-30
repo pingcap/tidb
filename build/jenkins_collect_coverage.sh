@@ -20,7 +20,6 @@
 
 set -o pipefail
 
-bazel coverage --combined_report=lcov
 bazel_collect
 mkdir -p test_coverage
 mv bazel.xml test_coverage/bazel.xml
