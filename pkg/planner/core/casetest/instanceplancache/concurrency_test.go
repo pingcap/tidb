@@ -190,6 +190,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 		}
 	}
+	txnLeastID := 1 // used to let update/delete id keep increasing in a txn to avoid deadlock.
 	genUpdate := func() *testStmt {
 		switch rand.Intn(2) {
 		case 0: // update sbtest set k=k+1 where id=?
