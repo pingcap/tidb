@@ -1171,7 +1171,7 @@ func TestTurnOffAutoAnalyzeAfterQueueInit(t *testing.T) {
 	testKit.MustExec("alter table t add index idx1(c1)")
 
 	// Find the add index event.
-	addIndexEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddIndex)
+	addIndexEvent := findEvent(h.DDLEventCh(), model.ActionAddIndex)
 	require.NotNil(t, addIndexEvent)
 
 	// Disable the auto analyze.
@@ -1220,7 +1220,7 @@ func TestTurnOffAutoAnalyzeBeforeQueueInit(t *testing.T) {
 	testKit.MustExec("alter table t add index idx1(c1)")
 
 	// Find the add index event.
-	addIndexEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddIndex)
+	addIndexEvent := findEvent(h.DDLEventCh(), model.ActionAddIndex)
 	require.NotNil(t, addIndexEvent)
 
 	// Handle the add index event.
