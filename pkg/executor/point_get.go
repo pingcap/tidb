@@ -393,7 +393,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 				var ph kv.PartitionHandle
 				var ok bool
-				if ph, ok = partHandle.(kv.PartitionHandle); ok {
+				if ph, ok = partHandle.(kv.PartitionHandle); !ok {
 					return errors.New("global index should return PartitionHandle")
 				}
 				tblID = ph.PartitionID
