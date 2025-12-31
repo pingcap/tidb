@@ -15,11 +15,13 @@
 package sqlkiller
 
 import (
+	"context"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -42,12 +44,16 @@ const (
 	// so that errors in client can be correctly converted to tidb errors.
 )
 
+var killError = errors.New("it has been killed by the sql killer")
+
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
 	Finish    func()
 	killEvent struct {
-		ch   chan struct{}
-		desc string
+		ch       chan struct{}
+		cancelFn context.CancelCauseFunc
+		ctx      context.Context
+		desc     string
 		sync.Mutex
 		triggered bool
 	}
@@ -82,6 +88,25 @@ func (killer *SQLKiller) GetKillEventChan() <-chan struct{} {
 	return killer.killEvent.ch
 }
 
+func (killer *SQLKiller) GetKillEventCtx(parent context.Context) context.Context {
+	killer.killEvent.Lock()
+	defer killer.killEvent.Unlock()
+
+	if killer.killEvent.ctx != nil {
+		return killer.killEvent.ctx
+	}
+	if parent == nil {
+		killer.killEvent.ctx, killer.killEvent.cancelFn = context.WithCancelCause(context.Background())
+	} else {
+		killer.killEvent.ctx, killer.killEvent.cancelFn = context.WithCancelCause(parent)
+	}
+	if killer.killEvent.triggered {
+		killer.killEvent.cancelFn(killError)
+	}
+
+	return killer.killEvent.ctx
+}
+
 func (killer *SQLKiller) triggerKillEvent() {
 	killer.killEvent.Lock()
 	defer killer.killEvent.Unlock()
@@ -93,6 +118,9 @@ func (killer *SQLKiller) triggerKillEvent() {
 	if killer.killEvent.ch != nil {
 		close(killer.killEvent.ch)
 	}
+	if killer.killEvent.ctx != nil && killer.killEvent.cancelFn != nil {
+		killer.killEvent.cancelFn(killError)
+	}
 	killer.killEvent.triggered = true
 }
 
@@ -102,6 +130,9 @@ func (killer *SQLKiller) resetKillEvent() {
 
 	if !killer.killEvent.triggered && killer.killEvent.ch != nil {
 		close(killer.killEvent.ch)
+	}
+	if !killer.killEvent.triggered && killer.killEvent.ctx != nil && killer.killEvent.cancelFn != nil {
+		killer.killEvent.cancelFn(errors.New("sql killer: killed by reseting sql killer"))
 	}
 	killer.killEvent.ch = nil
 	killer.killEvent.triggered = false

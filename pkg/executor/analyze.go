@@ -101,6 +101,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
+	ctx = e.Ctx().GetSessionVars().SQLKiller.GetKillEventCtx(ctx)
 
 	// Filter the locked tables.
 	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
@@ -503,7 +504,8 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	return err
 }
 
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
+// ctx must be from SQLKiller.GetKillEventCtx
+func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	defer func() {
@@ -524,24 +526,33 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 	}()
 	for {
 		var ok bool
-		task, ok = <-taskCh
-		if !ok {
-			break
+		select {
+		case task, ok = <-taskCh:
+			if !ok {
+				return
+			}
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
-		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
 			select {
+			case <-ctx.Done():
+				return
 			case <-e.errExitCh:
 				return
-			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
+			default:
+				statsHandle.StartAnalyzeJob(task.job)
+				resultsCh <- analyzeColumnsPushDownEntry(ctx, e.gp, task.colExec)
 			}
 		case idxTask:
 			select {
+			case <-ctx.Done():
+				return
 			case <-e.errExitCh:
 				return
-			case resultsCh <- analyzeIndexPushdown(task.idxExec):
+			default:
+				statsHandle.StartAnalyzeJob(task.job)
+				resultsCh <- analyzeIndexPushdown(ctx, task.idxExec)
 			}
 		}
 	}

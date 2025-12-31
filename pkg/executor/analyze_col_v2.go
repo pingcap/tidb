@@ -54,7 +54,7 @@ type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
 }
 
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics.AnalyzeResults {
+func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -94,8 +94,8 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
-	e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
-	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
+	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
+	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ctx, gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
@@ -200,6 +200,7 @@ func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID
 }
 
 func (e *AnalyzeColumnsExecV2) buildSamplingStats(
+	ctx context.Context,
 	gp *gp.Pool,
 	ranges []*ranger.Range,
 	needExtStats bool,
@@ -235,7 +236,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
 	mergeTaskCh := make(chan []byte, 1)
-	taskEg, taskCtx := errgroup.WithContext(context.Background())
+	taskEg, taskCtx := errgroup.WithContext(ctx)
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() (err error) {
 		defer func() {
@@ -250,7 +251,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(mergeResultCh, mergeTaskCh, l, id)
+			e.subMergeWorker(ctx, mergeResultCh, mergeTaskCh, l, id)
 		})
 	}
 	// Merge the result from collectors.
@@ -356,7 +357,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	// Start workers to build stats.
 	for range samplingStatsConcurrency {
 		e.samplingBuilderWg.Run(func() {
-			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
+			e.subBuildWorker(ctx, buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
 		})
 	}
 	// Generate tasks for building stats.
@@ -435,7 +436,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 }
 
 // handleNDVForSpecialIndexes deals with the logic to analyze the index containing the virtual column when the mode is full sampling.
-func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult, samplingStatsConcurrency int) {
+func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(ctx context.Context, indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult, samplingStatsConcurrency int) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -457,7 +458,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
 	subIndexWorkerWg.Add(samplingStatsConcurrency)
 	for range samplingStatsConcurrency {
-		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
+		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(ctx, taskCh, resultsCh) })
 	}
 	for _, task := range tasks {
 		taskCh <- task
@@ -469,21 +470,27 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 	}
 	var err error
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+LOOP:
 	for panicCnt < samplingStatsConcurrency {
-		results, ok := <-resultsCh
-		if !ok {
-			break
-		}
-		if results.Err != nil {
-			err = results.Err
-			statsHandle.FinishAnalyzeJob(results.Job, err, statistics.TableAnalysisJob)
-			if isAnalyzeWorkerPanic(err) {
-				panicCnt++
+		select {
+		case results, ok := <-resultsCh:
+			if !ok {
+				break LOOP
 			}
-			continue
+			if results.Err != nil {
+				err = results.Err
+				statsHandle.FinishAnalyzeJob(results.Job, err, statistics.TableAnalysisJob)
+				if isAnalyzeWorkerPanic(err) {
+					panicCnt++
+				}
+				continue LOOP
+			}
+			statsHandle.FinishAnalyzeJob(results.Job, nil, statistics.TableAnalysisJob)
+			totalResult.results[results.Ars[0].Hist[0].ID] = results
+		case <-ctx.Done():
+			err = ctx.Err()
+			break LOOP
 		}
-		statsHandle.FinishAnalyzeJob(results.Job, nil, statistics.TableAnalysisJob)
-		totalResult.results[results.Ars[0].Hist[0].ID] = results
 	}
 	if err != nil {
 		totalResult.err = err
@@ -492,7 +499,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 }
 
 // subIndexWorker receive the task for each index and return the result for them.
-func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
+func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(ctx context.Context, taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	defer func() {
@@ -507,10 +514,15 @@ func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, re
 	}()
 	for {
 		var ok bool
-		task, ok = <-taskCh
-		if !ok {
-			break
+		select {
+		case task, ok = <-taskCh:
+			if !ok {
+				return
+			}
+		case <-ctx.Done():
+			return
 		}
+
 		statsHandle.StartAnalyzeJob(task.job)
 		if task.taskType != idxTask {
 			resultsCh <- &statistics.AnalyzeResults{
@@ -520,7 +532,7 @@ func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, re
 			continue
 		}
 		task.idxExec.job = task.job
-		resultsCh <- analyzeIndexNDVPushDown(task.idxExec)
+		resultsCh <- analyzeIndexNDVPushDown(ctx, task.idxExec)
 	}
 }
 
@@ -589,7 +601,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	return tasks
 }
 
-func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
+func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
 	// Only close the resultCh in the first worker.
 	closeTheResultCh := index == 0
 	defer func() {
@@ -626,12 +638,11 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	for {
-		data, ok := <-taskCh
+	select {
+	case data, ok := <-taskCh:
 		if !ok {
 			break
 		}
-
 		// Unmarshal the data.
 		dataSize := int64(cap(data))
 		colResp := &tipb.AnalyzeColumnsResp{}
@@ -664,15 +675,23 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
 		e.memTracker.Release(dataSize + colRespSize)
 		subCollector.DestroyAndPutToPool()
+	case <-ctx.Done():
+		err := ctx.Err()
+		if err != nil {
+			resultCh <- &samplingMergeResult{err: err}
+			return
+		}
+		if intest.InTest {
+			panic("this ctx should be canncelled with the error")
+		}
 	}
-
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
-func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExecV2) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze subBuildWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- getAnalyzePanicErr(r)
 		}
@@ -826,6 +845,8 @@ workLoop:
 			resultCh <- nil
 			releaseCollectorMemory()
 		case <-exitCh:
+			return
+		case <-ctx.Done():
 			return
 		}
 	}
