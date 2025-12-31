@@ -758,6 +758,7 @@ bazel_golangcilinter:
 .PHONY: bazel_brietest
 bazel_brietest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
+	--test_env=BRIETEST_TMPDIR --sandbox_writable_path=$(CURDIR) \
 		-- //tests/realtikvtest/brietest/...
 
 .PHONY: bazel_pessimistictest
