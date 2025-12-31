@@ -561,9 +561,45 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	dbName := db.Name.L
 	tableName := ti.Name.L
 	execSQL := func(ctx context.Context, sql string) error {
-		if err := rc.db.Session().Execute(ctx, fmt.Sprintf("SET SESSION %s = %d", vardef.TiDBMemQuotaQuery, kv.TxnTotalSizeLimit.Load())); err != nil {
+		ectx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
+		rows, _, err := ectx.ExecRestrictedSQL(
+			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+			nil,
+			"SELECT @@GLOBAL.tidb_mem_quota_query",
+		)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		originalValue := rows[0].GetString(0)
+		log.Info("original value", zap.String("original value", originalValue))
+		if err := rc.db.Session().Execute(ctx, fmt.Sprintf("SET GLOBAL %s = %d", vardef.TiDBMemQuotaQuery, kv.TxnTotalSizeLimit.Load())); err != nil {
+			return errors.Trace(err)
+		}
+		rows, _, err = ectx.ExecRestrictedSQL(
+			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+			nil,
+			"SELECT @@GLOBAL.tidb_mem_quota_query",
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newValue := rows[0].GetString(0)
+		log.Info("new value", zap.String("new value", newValue))
+		defer func() {
+			if err := rc.db.Session().Execute(ctx, fmt.Sprintf("SET GLOBAL %s = %d", vardef.TiDBMemQuotaQuery, originalValue)); err != nil {
+				log.Warn("failed to set back original value", zap.Error(err))
+			}
+			rows, _, err = ectx.ExecRestrictedSQL(
+				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+				nil,
+				"SELECT @@GLOBAL.tidb_mem_quota_query",
+			)
+			if err != nil {
+				log.Warn("failed to get original value", zap.Error(err))
+			}
+			afterSetBackValue := rows[0].GetString(0)
+			log.Info("after set back value", zap.String("value", afterSetBackValue))
+		}()
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.Session().Execute(ctx, sql); err != nil {
 			log.Warn("failed to execute SQL restore system database",
