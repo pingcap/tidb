@@ -60,23 +60,11 @@ func (*baseCountDistinct) ResetPartialResult(PartialResult) {
 	panic("Not implemented")
 }
 
-func (*baseCountDistinct) MergePartialResult(_ AggFuncUpdateContext, _, _ PartialResult) (int64, error) {
-	panic("Not implemented")
-}
-
 func (*baseCountDistinct) AppendFinalResult2Chunk(AggFuncUpdateContext, PartialResult, *chunk.Chunk) error {
 	panic("Not implemented")
 }
 
 func (*baseCountDistinct) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
-	panic("Not implemented")
-}
-
-func (*baseCountDistinct) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
-	panic("Not implemented")
-}
-
-func (*baseCountDistinct) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
 	panic("Not implemented")
 }
 
@@ -240,8 +228,7 @@ func (*countPartialWithDistinct4Decimal) MergePartialResult(_ AggFuncUpdateConte
 			continue
 		}
 
-		memDelta += d.valSet.Insert(val)
-		memDelta += int64(len(val))
+		memDelta += d.valSet.Insert(val) + int64(len(val))
 	}
 	return
 }
@@ -281,8 +268,7 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpda
 		if p.valSet.Exist(decStr) {
 			continue
 		}
-		memDelta += p.valSet.Insert(decStr)
-		memDelta += int64(len(decStr))
+		memDelta += p.valSet.Insert(decStr) + int64(len(decStr))
 	}
 
 	return memDelta, nil
@@ -382,8 +368,7 @@ func (*countPartialWithDistinct4String) MergePartialResult(_ AggFuncUpdateContex
 			continue
 		}
 
-		memDelta += d.valSet.Insert(val)
-		memDelta += int64(len(val))
+		memDelta += d.valSet.Insert(val) + int64(len(val))
 	}
 	return
 }

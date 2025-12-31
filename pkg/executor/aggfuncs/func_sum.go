@@ -329,18 +329,6 @@ func (*baseSumDistinct) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, P
 	panic("Not implemented")
 }
 
-func (*baseSumDistinct) MergePartialResult(_ AggFuncUpdateContext, _, _ PartialResult) (int64, error) {
-	panic("Not implemented")
-}
-
-func (*baseSumDistinct) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
-	panic("Not implemented")
-}
-
-func (*baseSumDistinct) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
-	panic("Not implemented")
-}
-
 type baseSumDistinct4Float64 struct {
 	baseSumDistinct
 }
@@ -437,8 +425,7 @@ func (*sum4PartialDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, s
 			continue
 		}
 
-		memDelta += d.valSet.Insert(key, val)
-		memDelta += int64(len(key) + types.MyDecimalStructSize)
+		memDelta += d.valSet.Insert(key, val) + int64(len(key) + types.MyDecimalStructSize)
 
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&d.val, val, newSum); err != nil {
