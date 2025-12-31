@@ -586,7 +586,7 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		newValue := rows[0].GetString(0)
 		log.Info("new value", zap.String("new value", newValue))
 		defer func() {
-			if err := rc.db.Session().Execute(ctx, fmt.Sprintf("SET GLOBAL %s = %d", vardef.TiDBMemQuotaQuery, originalValue)); err != nil {
+			if err := rc.db.Session().Execute(ctx, fmt.Sprintf("SET GLOBAL %s = %s", vardef.TiDBMemQuotaQuery, originalValue)); err != nil {
 				log.Warn("failed to set back original value", zap.Error(err))
 			}
 			rows, _, err = ectx.ExecRestrictedSQL(
