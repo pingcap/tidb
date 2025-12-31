@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -392,44 +393,44 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 	tk1.MustExec("begin")
 	tk1.MustQuery("select * from softdelete where id = 2 for update").Check(testkit.Rows("2 2"))
 
-	var done bool
+	var done atomic.Bool
 	go func() {
 		// delete this row, it should be blocked because of the for update lock
 		tk.MustExec("delete from softdelete where id = 2")
-		done = true
+		done.Store(true)
 	}()
 
 	// check the goroutine logic is block
-	require.Never(t, func() bool { return done }, 100*time.Millisecond, 5*time.Millisecond)
+	require.Never(t, func() bool { return done.Load() }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
-	require.Eventually(t, func() bool { return done }, 100*time.Millisecond, time.Millisecond)
+	require.Eventually(t, func() bool { return done.Load() }, 100*time.Millisecond, time.Millisecond)
 
 	// test again, this time, id = 2 is soft deleted, check for update lock's behavior
 	tk1.MustExec("begin")
 	tk1.MustQuery("select * from softdelete where id = 2 for update").Check(testkit.Rows())
 
-	done = false
+	done.Store(false)
 	go func() {
 		tk.MustExec("insert into softdelete values (2, 22)")
-		done = true
+		done.Store(true)
 	}()
 
 	// check the goroutine logic is block
-	require.Never(t, func() bool { return done }, 100*time.Millisecond, 5*time.Millisecond)
+	require.Never(t, func() bool { return done.Load() }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
-	require.Eventually(t, func() bool { return done }, 100*time.Millisecond, time.Millisecond)
+	require.Eventually(t, func() bool { return done.Load() }, 100*time.Millisecond, time.Millisecond)
 
 	// the third test, record id = 5 does not exist, but for update should lock it
 	tk1.MustExec("begin")
 	tk1.MustQuery("select * from softdelete where id = 5 for update").Check(testkit.Rows())
 
-	done = false
+	done.Store(false)
 	go func() {
 		tk.MustExec("insert into softdelete values (5, 5)")
-		done = true
+		done.Store(true)
 	}()
 
 	// check the goroutine logic is block
-	require.Never(t, func() bool { return done }, 100*time.Millisecond, 5*time.Millisecond)
+	require.Never(t, func() bool { return done.Load() }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
 }
