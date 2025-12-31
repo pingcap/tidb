@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -63,9 +64,12 @@ const (
 	registerTimeout        = 5 * time.Second
 )
 
-// NewTaskRegisterWithTTL is the ctor for TaskRegister.
-// It is exported for testing.
-var NewTaskRegisterWithTTL = utils.NewTaskRegisterWithTTL
+var (
+	// NewTaskRegisterWithTTL is the ctor for TaskRegister.
+	// It is exported for testing.
+	NewTaskRegisterWithTTL   = utils.NewTaskRegisterWithTTL
+	errGetCrossKSSessionPool = errors.New("failed to get cross keyspace session pool")
+)
 
 type taskInfo struct {
 	store  kv.Storage
@@ -148,12 +152,11 @@ type importScheduler struct {
 	// It may be changed when we switch to a new task or switch to a new owner.
 	currTaskID            atomic.Int64
 	disableTiKVImportMode atomic.Bool
-
-	store kv.Storage
 	// below fields are only used when the task keyspace doesn't equal to current
 	// instance keyspace.
-	taskKS         string
-	taskKSSessPool util.SessionPool
+	taskKS string
+	// the task manager for accessing import job in task keyspace.
+	taskKSTaskMgr scheduler.TaskManager
 }
 
 var _ scheduler.Extension = (*importScheduler)(nil)
@@ -168,18 +171,16 @@ func NewImportScheduler(
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := &importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
-		store:         param.Store,
 		taskKS:        task.Keyspace,
 	}
 	return sch
 }
 
 // NewImportSchedulerForTest creates a new import scheduler for test.
-func NewImportSchedulerForTest(globalSort bool, task *proto.Task, param scheduler.Param, store kv.Storage) scheduler.Scheduler {
+func NewImportSchedulerForTest(globalSort bool, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	return &importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), task, param),
 		GlobalSort:    globalSort,
-		store:         store,
 		taskKS:        tidb.GetGlobalKeyspaceName(),
 	}
 }
@@ -195,16 +196,6 @@ func (sch *importScheduler) Init() (err error) {
 	taskMeta := &TaskMeta{}
 	if err = json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
-	}
-
-	if task.Keyspace != sch.store.GetKeyspace() {
-		if err = sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
-			var err2 error
-			sch.taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(task.Keyspace)
-			return err2
-		}); err != nil {
-			return errors.Annotatef(err, "get session pool for keyspace %s failed", task.Keyspace)
-		}
 	}
 
 	sch.GlobalSort = taskMeta.Plan.CloudStorageURI != ""
@@ -260,7 +251,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.store.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.TaskStore.(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToImportMode(ctx)
@@ -268,7 +259,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.store, taskID: task.ID, logger: sch.GetLogger()})
+	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.TaskStore, taskID: task.ID, logger: sch.GetLogger()})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
@@ -404,7 +395,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      nodeCnt,
-		Store:                sch.store,
+		Store:                sch.TaskStore,
 		ThreadCnt:            task.GetRuntimeSlots(),
 	}
 	logicalPlan := &LogicalPlan{Logger: logger}
@@ -469,6 +460,9 @@ func (*importScheduler) GetEligibleInstances(_ context.Context, task *proto.Task
 
 // IsRetryableErr implements scheduler.Extension interface.
 func (*importScheduler) IsRetryableErr(err error) bool {
+	if goerrors.Is(err, errGetCrossKSSessionPool) {
+		return true
+	}
 	return common.IsRetryableError(err)
 }
 
@@ -519,7 +513,7 @@ func (sch *importScheduler) switchTiKV2NormalMode(ctx context.Context, task *pro
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.store.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.TaskStore.(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToNormalMode(ctx)
@@ -743,10 +737,25 @@ func (sch *importScheduler) cancelJob(ctx context.Context, task *proto.Task,
 }
 
 func (sch *importScheduler) getTaskMgrForAccessingImportJob() (scheduler.TaskManager, error) {
-	if sch.taskKS == sch.store.GetKeyspace() {
-		return sch.GetTaskMgr(), nil
+	if sch.taskKSTaskMgr != nil {
+		return sch.taskKSTaskMgr, nil
 	}
-	return storage.NewTaskManager(sch.taskKSSessPool), nil
+
+	if kv.IsUserKS(sch.TaskStore) {
+		var taskKSSessPool util.SessionPool
+		taskKS := sch.GetTask().Keyspace
+		if err := sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
+			var err2 error
+			taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(taskKS)
+			return err2
+		}); err != nil {
+			return nil, errors.Annotatef(errGetCrossKSSessionPool, "keyspace %s", taskKS)
+		}
+		sch.taskKSTaskMgr = storage.NewTaskManager(taskKSSessPool)
+	} else {
+		sch.taskKSTaskMgr = sch.GetTaskMgr()
+	}
+	return sch.taskKSTaskMgr, nil
 }
 
 func redactSensitiveInfo(task *proto.Task, taskMeta *TaskMeta) {

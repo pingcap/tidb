@@ -164,14 +164,15 @@ type Param struct {
 	serverID       string
 	allocatedSlots bool
 	nodeRes        *proto.NodeResource
-	Store          kv.Storage
+	// store of the task, this store corresponds to the task keyspace in nextgen.
+	TaskStore kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
 func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
 	return Param{
-		taskMgr: taskMgr,
-		Store:   store,
+		taskMgr:   taskMgr,
+		TaskStore: store,
 	}
 }
 
