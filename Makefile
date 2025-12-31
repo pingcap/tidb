@@ -697,6 +697,7 @@ bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 .PHONY: bazel_coverage_test
 bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+		--combined_report=lcov \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
@@ -704,6 +705,7 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+		--combined_report=lcov \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
