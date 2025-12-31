@@ -1002,12 +1002,17 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 
 		// filter key/value by partitition id
 		if iter.index.Global {
-			_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+			// DecodeIndexHandle returns PartitionHandle for global indexes
+			partHandle, err := tablecodec.DecodeIndexHandle(key, value, len(iter.index.Columns))
 			if err != nil {
 				return nil, err
 			}
-			if _, exists := iter.partitionIDMap[pid]; !exists {
-				continue
+			if ph, ok := partHandle.(kv.PartitionHandle); ok {
+				if _, exists := iter.partitionIDMap[ph.PartitionID]; !exists {
+					continue
+				}
+			} else {
+				return nil, errors.New("global index should return PartitionHandle")
 			}
 		}
 

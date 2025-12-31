@@ -37,10 +37,10 @@ For non-unique global indexes, this creates key collisions without the fix.
 
 | Table Type | Index Type | Key Contains | Value Contains | Notes |
 |------------|------------|--------------|----------------|-------|
-| **Non-Clustered** | Unique (distinct=true) | `[prefix][logicalTblID][idxID][indexed_values]` | `[partition_id][handle]` | Handle in value, partition ID in value |
-| **Non-Clustered** | **Non-Unique (distinct=false)** | `[prefix][logicalTblID][idxID][indexed_values][PartitionIDFlag][partition_id][handle]` | `[partition_id]` | **FIX**: Both partition_id and handle in key! |
-| **Clustered** | Unique (distinct=true) | `[prefix][logicalTblID][idxID][indexed_values]` | `[partition_id][commonhandle]` | CommonHandle in value, partition ID in value |
-| **Clustered** | **Non-Unique (distinct=false)** | `[prefix][logicalTblID][idxID][indexed_values][PartitionIDFlag][partition_id][commonhandle]` | `[partition_id]` | **FIX**: Both partition_id and commonhandle in key! |
+| **Non-Clustered** | Unique (distinct=true, V0) | `[prefix][logicalTblID][idxID][indexed_values]` | `[partition_id][handle]` | Handle in value, partition ID in value |
+| **Non-Clustered** | **Non-Unique (distinct=false, V2)** | `[prefix][logicalTblID][idxID][indexed_values][PartitionIDFlag][partition_id][handle]` | `[handle]` | **FIX**: partition_id and handle in key; partition ID **NOT** in value (optimization) |
+| **Clustered** | Unique (distinct=true, V0) | `[prefix][logicalTblID][idxID][indexed_values]` | `[partition_id][commonhandle]` | CommonHandle in value, partition ID in value |
+| **Clustered** | **Non-Unique (distinct=false, NOT AFFECTED)** | `[prefix][logicalTblID][idxID][indexed_values][commonhandle]` | `[commonhandle]` | **NOT AFFECTED**: Clustered tables use V0, partition ID is NOT needed in key or value |
 
 ---
 
@@ -78,11 +78,11 @@ Value: [10] + [125,1] + [126] + partition_id(119) + [3] + handle(1) + padding
 
 ---
 
-### 2. Non-Clustered Table, Non-Unique Global Index (THE FIX)
+### 2. Non-Clustered Table, Non-Unique Global Index (THE FIX - V2)
 
 **Scenario**: `PRIMARY KEY (a) NONCLUSTERED`, `INDEX idx_b (b) GLOBAL`
 
-#### Key Format (WITH FIX):
+#### Key Format (V2 - WITH FIX):
 ```
 [TablePrefix] + [LogicalTableID] + [IndexID] + EncodeKey(indexed_values) +
 [PartitionIDFlag] + [partition_id] + [IntHandleFlag] + [handle]
@@ -92,12 +92,13 @@ Value: [10] + [125,1] + [126] + partition_id(119) + [3] + handle(1) + padding
 - **IntHandleFlag**: 3 (1 byte)
 - **handle**: 8 bytes (the `_tidb_rowid`, encoded with EncodeInt)
 
-#### Value Format:
+#### Value Format (V2 - OPTIMIZED):
 ```
-[tailLen] + [PartitionIDFlag] + [partition_id] + [padding]
+[tailLen] + [padding]
 ```
-- Partition ID also in value for consistency
-- Value is simpler since handle is in key
+- **Partition ID is NOT in value** for V2 indexes (already in key)
+- Value is minimal since partition ID and handle are both in key
+- Saves ~9 bytes per index entry
 
 **Why This Fix is Needed**:
 
@@ -115,17 +116,17 @@ Partition p2, row (b=2, _tidb_rowid=1): Key = [...][b=2][124][p2_id][3][1]
                                         └→ Different keys! ✓
 ```
 
-**Example**:
+**Example** (V2):
 ```
 Partition p0 (ID=119), row (b=2, _tidb_rowid=1):
-  Key:   't' + table_id(118) + index_id(2) + encode(b=2) + [124] + partition_id(119) + [3] + handle(1)
-  Value: [9] + [126] + partition_id(119) + padding
+  Key:   't' + table_id(118) + index_id(2) + encode(b=2) + [126] + partition_id(119) + [3] + handle(1)
+  Value: [0] + padding
 
 Partition p2 (ID=116), row (b=2, _tidb_rowid=1):
-  Key:   't' + table_id(118) + index_id(2) + encode(b=2) + [124] + partition_id(116) + [3] + handle(1)
-  Value: [9] + [126] + partition_id(116) + padding
+  Key:   't' + table_id(118) + index_id(2) + encode(b=2) + [126] + partition_id(116) + [3] + handle(1)
+  Value: [0] + padding
 
-→ Different keys prevent collision!
+→ Different keys prevent collision! Partition ID not duplicated in value.
 ```
 
 ---
@@ -159,35 +160,39 @@ Value: [20] + [125,1] + [127] + handleLen(10) + encode(a=1,b=2) + [126] + partit
 
 ---
 
-### 4. Clustered Table, Non-Unique Global Index (THE FIX)
+### 4. Clustered Table, Non-Unique Global Index (NOT AFFECTED)
 
 **Scenario**: `PRIMARY KEY (a, b)`, `INDEX idx_c (c) GLOBAL`
 
-#### Key Format (WITH FIX):
+**Note**: Clustered tables are **NOT AFFECTED** by the duplicate `_tidb_rowid` issue because:
+1. The primary key always includes the partitioning column (table definition requirement)
+2. The common handle is always unique across partitions
+3. No collisions can occur, so V0 format is used
+
+#### Key Format (V0 - Original):
 ```
-[TablePrefix] + [LogicalTableID] + [IndexID] + EncodeKey(indexed_values) +
-[PartitionIDFlag] + [partition_id] + [commonhandle]
+[TablePrefix] + [LogicalTableID] + [IndexID] + EncodeKey(indexed_values) + [commonhandle]
 ```
-- **PartitionIDFlag** | **126 (1 byte) ← **NEW FLAG**
-- **partition_id**: 8 bytes
 - **commonhandle**: Encoded primary key columns (variable length)
+- **NO partition_id** in key (not needed for uniqueness)
 
-#### Value Format:
+#### Value Format (V0 - Original):
 ```
-[tailLen] + [PartitionIDFlag] + [partition_id] + [padding]
+[tailLen] + [padding]
 ```
+- **NO partition_id** in value (not needed)
 
-**Example**:
+**Example** (V0):
 ```
 Partition p0 (ID=119), row (a=1, b=2, c=100):
-  Key:   't' + table_id(118) + index_id(2) + encode(c=100) + [124] + partition_id(119) + encode(a=1,b=2)
-  Value: [9] + [126] + partition_id(119) + padding
+  Key:   't' + table_id(118) + index_id(2) + encode(c=100) + encode(a=1,b=2)
+  Value: [0] + padding
 
-Partition p2 (ID=116), row (a=1, b=2, c=100):
-  Key:   't' + table_id(118) + index_id(2) + encode(c=100) + [124] + partition_id(116) + encode(a=1,b=2)
-  Value: [9] + [126] + partition_id(116) + padding
+Partition p2 (ID=116), row (a=5, b=10, c=100):
+  Key:   't' + table_id(118) + index_id(2) + encode(c=100) + encode(a=5,b=10)
+  Value: [0] + padding
 
-→ Different keys prevent collision (even though commonhandle is same)!
+→ Different keys because common handles are different (a=1,b=2 vs a=5,b=10)!
 ```
 
 ---
@@ -259,25 +264,38 @@ Result: All 6 keys stored! All rows indexed!
 ## Implementation Files
 
 1. **pkg/tablecodec/tablecodec.go**:
-   - `PartitionIDFlag` constant - Reused for both key and value encoding
-   - `GenIndexKey()` - Encodes partition ID + handle in key for V2+ global indexes
+   - `PartitionIDFlag` constant (126) - Reused for both key and value encoding
+   - `GenIndexKey()` - Encodes partition ID + handle in key for V2 global indexes
    - `decodeHandleInIndexKey()` - Decodes partition ID + handle from key
+   - `DecodeIndexHandle()` - Returns handle and partition ID separately (supports both V0 and V2)
+   - `genIndexValueVersion0()` - Skips partition ID in value for V2 indexes (optimization)
 
 2. **pkg/ddl/index.go**:
-   - `fetchRowColVals()` - Wraps handles with PartitionHandle for global indexes (line 2447-2468)
+   - `fetchRowColVals()` - Wraps handles with PartitionHandle for global indexes
+   - Sets `GlobalIndexVersion = 2` for non-unique non-clustered global indexes
 
-3. **pkg/table/tables/index.go**:
-   - `GenIndexValue()` - Extracts partition ID from PartitionHandle for value (line 207-216)
+3. **pkg/executor/** (point_get.go, batch_point_get.go, mem_reader.go):
+   - Use `DecodeIndexHandle()` to extract partition ID from key (V2) or value (V0)
+
+4. **pkg/meta/model/index.go**:
+   - `GlobalIndexVersion` field stores version metadata
 
 ---
 
 ## Summary
 
-The key insight is that for **non-unique global indexes on partitioned tables**:
+The key insight is that for **non-unique global indexes on non-clustered partitioned tables** (V2):
 
 - ✅ **KEY must contain**: `[indexed_values][PartitionIDFlag][partition_id][handle]`
-- ✅ **VALUE must contain**: `[partition_id]`
+- ✅ **VALUE contains**: `[handle]` only (partition_id is NOT duplicated - optimization)
 
-This prevents key collisions when different partitions have duplicate handles (like after EXCHANGE PARTITION), ensuring all rows are properly indexed.
+This prevents key collisions when different partitions have duplicate `_tidb_rowid` values (like after EXCHANGE PARTITION), ensuring all rows are properly indexed.
 
-For unique global indexes, the handle can remain in the value since the indexed values themselves enforce uniqueness.
+### Version Summary:
+
+- **V0 (Legacy)**: Used for unique indexes and all indexes on clustered tables. Partition ID in value only.
+- **V2 (Current)**: Used for non-unique indexes on non-clustered tables. Partition ID in key, NOT in value (saves ~9 bytes per entry).
+
+### Why Clustered Tables Are Not Affected:
+
+For clustered tables, the primary key (common handle) always includes the partitioning column, making it unique across partitions. No risk of collisions, so V0 format is sufficient.

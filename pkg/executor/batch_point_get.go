@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
@@ -319,9 +319,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if e.tblInfo.Partition != nil {
 				var pid int64
 				if e.idxInfo.Global {
-					_, pid, err = codec.DecodeInt(tablecodec.SplitIndexValue(handleVal).PartitionID)
+					// DecodeIndexHandle returns PartitionHandle for global indexes
+					partHandle, err := tablecodec.DecodeIndexHandle(key, handleVal, len(e.idxInfo.Columns))
 					if err != nil {
 						return err
+					}
+					if ph, ok := partHandle.(kv.PartitionHandle); ok {
+						pid = ph.PartitionID
+					} else {
+						return errors.New("global index should return PartitionHandle")
 					}
 					if e.singlePartID != 0 && e.singlePartID != pid {
 						continue
