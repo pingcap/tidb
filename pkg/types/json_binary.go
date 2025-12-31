@@ -720,9 +720,9 @@ func CreateBinaryJSONWithCheck(in any) (BinaryJSON, error) {
 func CalculateBinaryJSONSize(in any) int64 {
 	switch x := in.(type) {
 	case nil:
-		return int64(size.SizeOfByte)
+		return size.SizeOfByte
 	case bool:
-		return int64(size.SizeOfByte)
+		return size.SizeOfByte
 	case int64, uint64, float64:
 		return 8
 	case json.Number:
