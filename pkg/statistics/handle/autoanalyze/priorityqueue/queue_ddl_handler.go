@@ -43,7 +43,7 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 		// If auto analyze is enabled but the priority queue is not initialized,
 		// it means the priority queue initialization is not finished yet.
 		// So we should retry later.
-		if vardef.RunAutoAnalyze.Load() {
+		if variable.RunAutoAnalyze.Load() {
 			return notifier.ErrNotReadyRetryLater
 		}
 		// NOTE: If auto analyze is disabled and the priority queue is not initialized,

@@ -91,7 +91,7 @@ func (r *Refresher) UpdateConcurrency() {
 // Usually, this is done by the caller through `util.CallWithSCtx`.
 func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
+	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
 		if err := r.jobs.Initialize(r.ctx); err != nil {
