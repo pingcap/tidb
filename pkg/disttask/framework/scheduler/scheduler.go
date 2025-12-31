@@ -117,7 +117,7 @@ func (s *BaseScheduler) Init() error {
 	if s.TaskStore.GetKeyspace() != s.GetTask().Keyspace {
 		// shouldn't happen normally, but since keyspace mismatch might cause
 		// correctness error, we check it at runtime too.
-		return errors.New("task keyspace mismatch")
+		return errors.New("store keyspace mismatch with task")
 	}
 	return nil
 }
