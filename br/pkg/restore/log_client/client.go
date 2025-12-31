@@ -824,6 +824,7 @@ func (rc *LogClient) RestoreKVFiles(
 	var applyWg sync.WaitGroup
 	eg, ectx := errgroup.WithContext(ctx)
 	applyFunc := func(files []*LogDataFileInfo, kvCount int64, size uint64) {
+		cnt := 0
 		if len(files) == 0 {
 			return
 		}
@@ -841,6 +842,9 @@ func (rc *LogClient) RestoreKVFiles(
 			skipFile += len(files)
 		} else {
 			applyWg.Add(1)
+			cnt += 1
+			i := cnt
+			ectx := logutil.ContextWithField(ectx, zap.Int("sn", i))
 			rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer applyWg.Done()
@@ -851,8 +855,11 @@ func (rc *LogClient) RestoreKVFiles(
 
 					if err == nil {
 						filenames := make([]string, 0, len(files))
+						maxTs, minTs := uint64(0), uint64(math.MaxUint64)
 						for _, f := range files {
-							filenames = append(filenames, f.Path+", ")
+							maxTs = max(f.MaxTs, maxTs)
+							minTs = min(f.MinTs, minTs)
+							filenames = append(filenames, f.Path)
 							if rc.logRestoreManager.checkpointRunner != nil {
 								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.logRestoreManager.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
@@ -860,7 +867,8 @@ func (rc *LogClient) RestoreKVFiles(
 								}
 							}
 						}
-						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+						logutil.CL(ectx).Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+							zap.Uint64("min-ts", minTs), zap.Uint64("max-ts", maxTs), zap.String("cf", files[0].Cf),
 							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 					}
 				}()
