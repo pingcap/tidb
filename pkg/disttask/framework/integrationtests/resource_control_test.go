@@ -97,7 +97,7 @@ func (c *resourceCtrlCaseContext) runTaskAsync(prefix string, slotsArr []int) {
 	scope := handle.GetTargetScope()
 	for i, slots := range slotsArr {
 		taskKey := fmt.Sprintf("%s-%d", prefix, i)
-		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, "", slots, scope, 0, nil)
+		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, c.Store.GetKeyspace(), slots, scope, 0, nil)
 		require.NoError(c.T, err)
 		c.taskWG.RunWithLog(func() {
 			task := testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)

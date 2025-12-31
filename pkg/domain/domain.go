@@ -1061,16 +1061,13 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil)
-		}
-	})
-
 	taskManager := storage.NewTaskManager(do.dxfSessionPool)
 	storage.SetTaskManager(taskManager)
+	failpoint.Inject("MockDisableDistTask", func() {
+		failpoint.Return(nil)
+	})
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	if kv.IsUserKS(do.store) {
 		sp, err := do.GetKSSessPool(keyspace.System)
 		if err != nil {
@@ -1935,7 +1932,7 @@ func (do *Domain) UpdateTableStatsLoop() error {
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.NewOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
+	do.statsOwner.SetListener(owner.NewListenersWrapper(do.ddlNotifier))
 	if config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
 		err := do.statsOwner.CampaignOwner()
 		if err != nil {
@@ -2303,6 +2300,12 @@ func (do *Domain) autoAnalyzeWorker() {
 			// This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
 			if vardef.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
+			} else if !vardef.RunAutoAnalyze.Load() || !do.statsOwner.IsOwner() {
+				// Once the auto analyze is disabled or this instance is not the owner,
+				// we close the priority queue to release resources.
+				// This would guarantee that when auto analyze is re-enabled or this instance becomes the owner again,
+				// the priority queue would be re-initialized.
+				statsHandle.ClosePriorityQueue()
 			}
 		case <-do.exit:
 			return

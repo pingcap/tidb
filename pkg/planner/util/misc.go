@@ -20,6 +20,7 @@ import (
 	"iter"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -305,7 +306,7 @@ func FilterPathByIsolationRead(ctx base.PlanContext, paths []*AccessPath, tblNam
 	engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 	if len(paths) == 0 {
 		helpMsg := ""
-		if engineVals == "tiflash" {
+		if strings.Contains(engineVals, "tiflash") {
 			helpMsg = ". Please check tiflash replica"
 			if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
 				helpMsg += " or check if the query is not readonly and sql mode is strict"
