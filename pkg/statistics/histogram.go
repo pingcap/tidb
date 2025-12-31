@@ -1028,6 +1028,48 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
+// calculateLeftOverlapPercent calculates the percentage for an out-of-range overlap
+// on the left side of the histogram. The predicate range [l, r] overlaps with
+// the region (boundL, histL), and we calculate the percentage of the shaded area.
+func calculateLeftOverlapPercent(l, r, boundL, histL, histWidth float64) float64 {
+	if l >= histL || r <= boundL {
+		return 0
+	}
+	actualL := math.Max(l, boundL)
+	actualR := math.Min(r, histL)
+	histWidthSq := math.Pow(histWidth, 2)
+	return (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / histWidthSq
+}
+
+// calculateRightOverlapPercent calculates the percentage for an out-of-range overlap
+// on the right side of the histogram. The predicate range [l, r] overlaps with
+// the region (histR, boundR), and we calculate the percentage of the shaded area.
+func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float64 {
+	if l >= boundR || r <= histR {
+		return 0
+	}
+	actualL := math.Max(l, histR)
+	actualR := math.Min(r, boundR)
+	histWidthSq := math.Pow(histWidth, 2)
+	return (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / histWidthSq
+}
+
+// calculateTimeAdjustmentRight calculates the time decay adjustment percentage
+// when the predicate is entirely on the right side of the histogram envelope.
+func calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth float64) float64 {
+	adjRight := histR + predWidth
+	histWidthSq := math.Pow(histWidth, 2)
+	return (math.Pow(boundR-histR, 2) - math.Pow(boundR-adjRight, 2)) / histWidthSq
+}
+
+// calculateTimeAdjustmentLeft calculates the time decay adjustment percentage
+// when the predicate is entirely on the left side of the histogram envelope.
+func calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth float64) float64 {
+	adjLeft := histL - predWidth
+	histWidthSq := math.Pow(histWidth, 2)
+	return (math.Pow(histL-boundL, 2) - math.Pow(adjLeft-boundL, 2)) / histWidthSq
+}
+
 // OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
 // The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
@@ -1116,7 +1158,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
 	// Maybe it's better to do this transformation in the ranger like the normal negative value.
-	// TODO - Refactor this logic to avoid duplication.
 	if unsigned {
 		if l < 0 {
 			l = 0
@@ -1144,10 +1185,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
-	if histWidth <= 0 {
-		histInvalid = true
-	}
-	if math.IsInf(histWidth, 1) {
+	if histWidth <= 0 || math.IsInf(histWidth, 1) {
 		histInvalid = true
 	}
 	boundL := histL - histWidth
@@ -1156,69 +1194,42 @@ func (hg *Histogram) OutOfRangeRowCount(
 	var leftPercent, rightPercent, timeAdjLeft, timeAdjRight, estRows float64
 
 	// Step 7: Calculate the percentage on the left/right that we are searching.
-	// TODO: Simplify the setting/resetting of actualL and actualR, and refactor
-	// this logic to avoid duplication.
-	// keep l and r unchanged, use actualL and actualR to calculate.
-	actualL := l
-	actualR := r
 	// Only attempt to calculate the ranges if the histogram is valid
 	if !histInvalid {
-		// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
-		if actualL < histL && actualR > boundL {
-			// make sure boundL <= actualL < actualR <= histL
-			if actualL < boundL {
-				actualL = boundL
-			}
-			if actualR > histL {
-				actualR = histL
-			}
-			// Calculate the percentage of "the shaded area" on the left side.
-			leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
-		}
+		// Calculate left overlap percentage if the range overlaps with (boundL, histL)
+		leftPercent = calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
 
-		actualL = l
-		actualR = r
-		// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
-		if actualL < boundR && actualR > histR {
-			// make sure histR <= actualL < actualR <= boundR
-			if actualL < histR {
-				actualL = histR
-			}
-			if actualR > boundR {
-				actualR = boundR
-			}
-			// Calculate the percentage of "the shaded area" on the right side.
-			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
-		}
+		// Calculate right overlap percentage if the range overlaps with (histR, boundR)
+		rightPercent = calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
+
 		/*
-				Time decay scenario:
-				│  \
-			    │    \
-			    |   |xx\
-				│   |xx| \
-				│   |xx|  \
-			    ┴──────────┴─────
-			    ▲   ▲  ▲   ▲
-				│   │  │   │
-			histR   │  │ boundR
-			        │  │
-			   lDatum  rDatum
-			   Over time, if statistics are NOT recollected - that is, histR stays
-			   the same, but the predicate range moves to the right - the percentage
-			   of the shaded area on the left side will decrease.
-			   The following formula is used to recalculate the percentage of the
-			   shaded area if the predicate range was close to the histogram range.
+					Time decay scenario:
+					│  \
+					│    \
+					|   |xx\
+					│   |xx| \
+					│   |xx|  \
+					┴──────────┴─────
+					▲   ▲  ▲   ▲
+					│   │  │   │
+				histR   │  │ boundR
+					    │  │
+					lDatum  rDatum
+			Over time, if statistics are NOT recollected - that is, histR stays
+			the same, but the predicate range moves to the right - the percentage
+			of the shaded area on the left side will decrease.
+			The following formula is used to recalculate the percentage of the
+			shaded area if the predicate range was close to the histogram range.
 		*/
-		// Predicate entirely on the right side of the histogram envelope.
+		// Calculate percentage assuming time decay is not present.
 		if l > histR {
+			// Predicate entirely on the right side of the histogram envelope.
 			entirelyOutOfRange = true
-			adjRight := histR + predWidth
-			timeAdjRight = (math.Pow(boundR-histR, 2) - math.Pow(boundR-adjRight, 2)) / math.Pow(histWidth, 2)
+			timeAdjRight = calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth)
 		} else if r < histL {
 			entirelyOutOfRange = true
 			// Predicate entirely on the left side of the histogram envelope.
-			adjLeft := histL - predWidth
-			timeAdjLeft = (math.Pow(histL-boundL, 2) - math.Pow(adjLeft-boundL, 2)) / math.Pow(histWidth, 2)
+			timeAdjLeft = calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth)
 		}
 	}
 
@@ -1228,7 +1239,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
 
-	// Calculate estRows using totalPercent (average) - this matches old avgRowCount calculation
+	// Calculate estRows using totalPercent (average)
 	if totalPercent > 0 {
 		estRows = (addedRows * 0.5) * totalPercent
 	} else {
