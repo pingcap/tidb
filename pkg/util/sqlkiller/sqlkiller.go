@@ -44,7 +44,7 @@ const (
 	// so that errors in client can be correctly converted to tidb errors.
 )
 
-var killError = errors.New("it has been killed by the sql killer")
+var errKilled = errors.New("it has been killed by the sql killer")
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
@@ -88,6 +88,7 @@ func (killer *SQLKiller) GetKillEventChan() <-chan struct{} {
 	return killer.killEvent.ch
 }
 
+// GetKillEventCtx returns a context which will be canceled when the kill signal is sent.
 func (killer *SQLKiller) GetKillEventCtx(parent context.Context) context.Context {
 	killer.killEvent.Lock()
 	defer killer.killEvent.Unlock()
@@ -101,7 +102,7 @@ func (killer *SQLKiller) GetKillEventCtx(parent context.Context) context.Context
 		killer.killEvent.ctx, killer.killEvent.cancelFn = context.WithCancelCause(parent)
 	}
 	if killer.killEvent.triggered {
-		killer.killEvent.cancelFn(killError)
+		killer.killEvent.cancelFn(errKilled)
 	}
 
 	return killer.killEvent.ctx
@@ -119,7 +120,7 @@ func (killer *SQLKiller) triggerKillEvent() {
 		close(killer.killEvent.ch)
 	}
 	if killer.killEvent.ctx != nil && killer.killEvent.cancelFn != nil {
-		killer.killEvent.cancelFn(killError)
+		killer.killEvent.cancelFn(errKilled)
 	}
 	killer.killEvent.triggered = true
 }
