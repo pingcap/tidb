@@ -495,13 +495,23 @@ func TestFix56408(t *testing.T) {
 func TestLoadDataForSoftDeleteTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	testLoadDataForSoftDeleteTable1(t, tk)
+	testLoadDataForSoftDeleteTable2(t, tk)
+	testLoadDataForSoftDeleteTable3(t, tk)
+}
+
+func testLoadDataForSoftDeleteTable1(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("USE test; DROP TABLE IF EXISTS softdelete;")
 	tk.MustExec("create table softdelete (id int primary key, v int) softdelete retention 7 day")
 	ctx := tk.Session().(sessionctx.Context)
 	deleteSQL := "delete from softdelete"
 	selectSQL := "select * from softdelete"
-
 	loadSQLs := []string{
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n'",
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' IGNORE INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n'",
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n'",
+
+		// Again with specify columns
 		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (id, v)",
 		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' IGNORE INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (id, v)",
 		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (id, v)",
@@ -510,9 +520,17 @@ func TestLoadDataForSoftDeleteTable(t *testing.T) {
 		{"1|11", "2|22", "3|33", "4|44", "5|55", "6|66"},
 		{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
 		{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
+
+		{"1|11", "2|22", "3|33", "4|44", "5|55", "6|66"},
+		{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
+		{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
 	}
 	expectedMsgs := []string{
 		"Records: 6  Deleted: 4  Skipped: 0  Warnings: 0",
+		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
+		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
+
+		"Records: 6  Deleted: 6  Skipped: 0  Warnings: 0",
 		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
 		"Records: 6  Deleted: 4  Skipped: 6  Warnings: 2",
 	}
@@ -525,6 +543,88 @@ func TestLoadDataForSoftDeleteTable(t *testing.T) {
 			// 3, 4 softdeleted
 			// 5, 6 new record
 			{[]byte("1 11\n2 22\n3 33\n4 44\n5 55\n6 66"),
+				expecteds[i],
+				expectedMsgs[i],
+			},
+		}
+		checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	}
+}
+
+func testLoadDataForSoftDeleteTable2(t *testing.T, tk *testkit.TestKit) {
+	tk.MustExec("USE test; DROP TABLE IF EXISTS softdelete;")
+	tk.MustExec("create table softdelete (id int primary key, v int) active_active='on' softdelete retention 7 day")
+	ctx := tk.Session().(sessionctx.Context)
+	tk.MustExec("set @@tidb_translate_softdelete_sql='off'")
+	deleteSQL := "delete from softdelete"
+	selectSQL := "select _tidb_origin_ts, id, v from softdelete"
+
+	// Specify _tidb_origin_ts column
+	loadSQLs := []string{
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' IGNORE INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (_tidb_origin_ts, id, v)",
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (_tidb_origin_ts, id, v)",
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (_tidb_origin_ts, id, v)",
+	}
+	expecteds := [][]string{
+		{"<nil>|1|1", "<nil>|2|2", "333|3|33", "444|4|44", "555|5|55", "666|6|66"},
+		{"<nil>|1|1", "<nil>|2|2", "333|3|33", "444|4|44", "555|5|55", "666|6|66"},
+		{"111|1|11", "222|2|22", "333|3|33", "444|4|44", "555|5|55", "666|6|66"},
+	}
+	expectedMsgs := []string{
+		"Records: 6  Deleted: 0  Skipped: 2  Warnings: 2",
+		"Records: 6  Deleted: 0  Skipped: 2  Warnings: 2",
+		"Records: 6  Deleted: 2  Skipped: 0  Warnings: 0",
+	}
+
+	for i, loadSQL := range loadSQLs {
+		tk.MustExec("insert into softdelete VALUES (1,1),(2,2),(3,3),(4,4)")
+		tk.MustExec("delete from softdelete where id in (3, 4)")
+		tests := []testCase{
+			// 1, 2 duplicate
+			// 3, 4 softdeleted
+			// 5, 6 new record
+			{[]byte("111 1 11\n222 2 22\n333 3 33\n444 4 44\n555 5 55\n666 6 66"),
+				expecteds[i],
+				expectedMsgs[i],
+			},
+		}
+		checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	}
+}
+
+func testLoadDataForSoftDeleteTable3(t *testing.T, tk *testkit.TestKit) {
+	tk.MustExec("USE test; DROP TABLE IF EXISTS softdelete;")
+	tk.MustExec("create table softdelete (id int primary key, v int) active_active='on' softdelete retention 7 day")
+	ctx := tk.Session().(sessionctx.Context)
+	tk.MustExec("set @@tidb_translate_softdelete_sql='off'")
+	deleteSQL := "delete from softdelete"
+	selectSQL := "select id, v, _tidb_softdelete_time from softdelete"
+
+	// Specify _tidb_softdelete_time column
+	loadSQLs := []string{
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' IGNORE INTO TABLE softdelete fields terminated by '|' lines terminated by '\n' (id, _tidb_softdelete_time, v)",
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' INTO TABLE softdelete fields terminated by '|' lines terminated by '\n' (id, _tidb_softdelete_time, v)",
+		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE softdelete fields terminated by '|' lines terminated by '\n' (id, _tidb_softdelete_time, v)",
+	}
+	expecteds := [][]string{
+		{"1|1|<nil>", "2|2|<nil>", "3|33|2025-12-31 20:07:06.312350", "4|44|2025-12-31 20:07:06.312350", "5|55|2025-12-31 20:07:06.312350", "6|66|2025-12-31 20:07:06.312350"},
+		{"1|1|<nil>", "2|2|<nil>", "3|33|2025-12-31 20:07:06.312350", "4|44|2025-12-31 20:07:06.312350", "5|55|2025-12-31 20:07:06.312350", "6|66|2025-12-31 20:07:06.312350"},
+		{"1|11|2025-12-31 20:07:06.312350", "2|22|2025-12-31 20:07:06.312350", "3|33|2025-12-31 20:07:06.312350", "4|44|2025-12-31 20:07:06.312350", "5|55|2025-12-31 20:07:06.312350", "6|66|2025-12-31 20:07:06.312350"},
+	}
+	expectedMsgs := []string{
+		"Records: 6  Deleted: 0  Skipped: 2  Warnings: 2",
+		"Records: 6  Deleted: 0  Skipped: 2  Warnings: 2",
+		"Records: 6  Deleted: 2  Skipped: 0  Warnings: 0",
+	}
+
+	for i, loadSQL := range loadSQLs {
+		tk.MustExec("insert into softdelete VALUES (1,1),(2,2),(3,3),(4,4)")
+		tk.MustExec("delete from softdelete where id in (3, 4)")
+		tests := []testCase{
+			// 1, 2 duplicate
+			// 3, 4 softdeleted
+			// 5, 6 new record
+			{[]byte("1|2025-12-31 20:07:06.312350|11\n2|2025-12-31 20:07:06.312350|22\n3|2025-12-31 20:07:06.312350|33\n4|2025-12-31 20:07:06.312350|44\n5|2025-12-31 20:07:06.312350|55\n6|2025-12-31 20:07:06.312350|66"),
 				expecteds[i],
 				expectedMsgs[i],
 			},

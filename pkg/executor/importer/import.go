@@ -1007,6 +1007,9 @@ func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []st
 		fieldMapping := &FieldMapping{
 			Column: v,
 		}
+		if model.IsInternalColumn(v.ColumnInfo.Name) {
+			continue
+		}
 		mappings = append(mappings, fieldMapping)
 		names = append(names, v.Name.O)
 	}
