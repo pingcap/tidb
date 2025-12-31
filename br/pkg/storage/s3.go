@@ -1103,10 +1103,19 @@ func (rs *S3Storage) open(
 			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
 		}
 		objectSize := *(result.ContentLength)
-		r = RangeInfo{
-			Start: 0,
-			End:   objectSize - 1,
-			Size:  objectSize,
+		// Handle empty objects (size=0) to avoid End=-1
+		if objectSize == 0 {
+			r = RangeInfo{
+				Start: 0,
+				End:   0,
+				Size:  0,
+			}
+		} else {
+			r = RangeInfo{
+				Start: 0,
+				End:   objectSize - 1,
+				Size:  objectSize,
+			}
 		}
 	} else {
 		r, err = ParseRangeInfo(result.ContentRange)
