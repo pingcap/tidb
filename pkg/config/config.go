@@ -52,7 +52,7 @@ const (
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit        = 100 * 1024 * 1024
+	DefTxnTotalSizeLimit        = 10 * 1024 * 1024 * 1024
 	SuperLargeTxnSize    uint64 = 100 * 1024 * 1024 * 1024 * 1024 // 100T, we expect a txn can never be this large
 	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
 	DefMaxIndexLength = 3072

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -560,6 +561,9 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	dbName := db.Name.L
 	tableName := ti.Name.L
 	execSQL := func(ctx context.Context, sql string) error {
+		if err := rc.db.Session().Execute(ctx, fmt.Sprintf("SET SESSION %s = %d", vardef.TiDBMemQuotaQuery, kv.TxnTotalSizeLimit.Load())); err != nil {
+			return errors.Trace(err)
+		}
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.Session().Execute(ctx, sql); err != nil {
 			log.Warn("failed to execute SQL restore system database",
