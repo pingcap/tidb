@@ -68,7 +68,7 @@ func TestOnTaskError(t *testing.T) {
 			executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
 		tm, err := storage.GetTaskManager()
 		require.NoError(t, err)
-		taskID, err := tm.CreateTask(c.Ctx, taskKey, proto.TaskTypeExample, "", 1, scope, 2, proto.ExtraParams{ManualRecovery: true}, nil)
+		taskID, err := tm.CreateTask(c.Ctx, taskKey, proto.TaskTypeExample, c.Store.GetKeyspace(), 1, scope, 2, proto.ExtraParams{ManualRecovery: true}, nil)
 		require.NoError(t, err)
 		require.Eventually(t, func() bool {
 			task, err := tm.GetTaskByID(c.Ctx, taskID)
