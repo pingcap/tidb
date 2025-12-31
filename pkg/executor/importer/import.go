@@ -1517,7 +1517,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		}
 	}
 	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
-	e.ThreadCnt = cal.CalcConcurrency()
+	e.ThreadCnt = cal.CalcRequiredSlots()
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",

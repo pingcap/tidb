@@ -5779,7 +5779,8 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 
 	table, ok := is.TableByID(e.ctx, args.TableID)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(
+			schema.Name, fmt.Sprintf("TableID: %d", args.TableID))
 	}
 
 	ok = validateTableMode(table.Meta().Mode, args.TableMode)

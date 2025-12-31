@@ -271,6 +271,9 @@ func TestString(t *testing.T) {
 		{ActionAlterTablePlacement, "alter table placement"},
 		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},
+		{ActionAlterTableAffinity, "alter table affinity"},
+		{ActionAlterTableSoftDeleteInfo, "alter soft delete info"},
+		{ActionModifySchemaSoftDeleteAndActiveActive, "modify schema soft delete and active active"},
 	}
 
 	for _, v := range acts {
