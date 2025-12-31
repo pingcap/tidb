@@ -324,11 +324,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					if err != nil {
 						return err
 					}
-					if ph, ok := partHandle.(kv.PartitionHandle); ok {
-						pid = ph.PartitionID
-					} else {
+					var ph kv.PartitionHandle
+					var ok bool
+					if ph, ok = partHandle.(kv.PartitionHandle); !ok {
 						return errors.New("global index should return PartitionHandle")
 					}
+					pid = ph.PartitionID
 					if e.singlePartID != 0 && e.singlePartID != pid {
 						continue
 					}

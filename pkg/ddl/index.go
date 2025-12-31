@@ -3431,9 +3431,9 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	}
 
 	// Debug logging to understand partition iteration
-	var defIDs []int64
-	for _, def := range pi.Definitions {
-		defIDs = append(defIDs, def.ID)
+	defIDs := make([]int64, len(pi.Definitions))
+	for i, def := range pi.Definitions {
+		defIDs[i] = def.ID
 	}
 	logutil.DDLLogger().Info("[DEBUG] getNextPartitionInfo called",
 		zap.Int64("currPhysicalTableID", currPhysicalTableID),

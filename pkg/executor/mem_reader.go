@@ -1007,12 +1007,13 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			if err != nil {
 				return nil, err
 			}
-			if ph, ok := partHandle.(kv.PartitionHandle); ok {
-				if _, exists := iter.partitionIDMap[ph.PartitionID]; !exists {
-					continue
-				}
-			} else {
+			var ph kv.PartitionHandle
+			var ok bool
+			if ph, ok = partHandle.(kv.PartitionHandle); ok {
 				return nil, errors.New("global index should return PartitionHandle")
+			}
+			if _, exists := iter.partitionIDMap[ph.PartitionID]; !exists {
+				continue
 			}
 		}
 

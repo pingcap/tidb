@@ -1256,7 +1256,7 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	// Check global index version compatibility.
 	if idxInfo.Global && idxInfo.GlobalIndexVersion > model.GlobalIndexVersionCurrent {
-		return nil, false, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB.",
+		return nil, false, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB",
 			idxInfo.GlobalIndexVersion, model.GlobalIndexVersionCurrent)
 	}
 	if idxInfo.Unique {
@@ -1635,7 +1635,7 @@ func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	// Check global index version compatibility.
 	if idxInfo.Global && idxInfo.GlobalIndexVersion > model.GlobalIndexVersionCurrent {
-		return nil, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB.",
+		return nil, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB",
 			idxInfo.GlobalIndexVersion, model.GlobalIndexVersionCurrent)
 	}
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {

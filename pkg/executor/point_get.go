@@ -391,11 +391,12 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if err != nil {
 					return err
 				}
-				if ph, ok := partHandle.(kv.PartitionHandle); ok {
-					tblID = ph.PartitionID
-				} else {
+				var ph kv.PartitionHandle
+				var ok bool
+				if ph, ok = partHandle.(kv.PartitionHandle); ok {
 					return errors.New("global index should return PartitionHandle")
 				}
+				tblID = ph.PartitionID
 				pi := e.tblInfo.GetPartitionInfo()
 				if !matchPartitionNames(tblID, e.partitionNames, pi) {
 					return nil
