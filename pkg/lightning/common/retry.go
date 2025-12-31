@@ -147,7 +147,7 @@ func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
 	switch err {
-	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
+	case nil, context.Canceled, io.EOF, sql.ErrNoRows:
 		return false
 	case mysql.ErrInvalidConn, driver.ErrBadConn, ErrWriteTooSlow:
 		return true
