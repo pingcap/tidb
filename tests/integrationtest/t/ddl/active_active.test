@@ -19,7 +19,34 @@ show create table t2;
 create table t3 (id int primary key, name varchar(50)) active_active = 'OFF';
 show create table t3;
 create table t4 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+
+ALTER TABLE t4 ADD INDEX i1(_tidb_origin_ts);
+ALTER TABLE t4 ADD INDEX i2(_tidb_softdelete_time);
+-- error 1846
+ALTER TABLE t4 ADD UNIQUE INDEX i3(_tidb_softdelete_time);
+-- error 1846
+ALTER TABLE t4 ADD UNIQUE INDEX i3(_tidb_origin_ts);
+-- error 1846
+ALTER TABLE t4 ADD UNIQUE INDEX i3(_tidb_commit_ts);
+-- error 1846
+ALTER TABLE t4 ADD UNIQUE INDEX i3(name);
+-- error 1072
+ALTER TABLE t4 ADD INDEX i3(_tidb_commit_ts);
+-- error 1846
+ALTER TABLE t4 ADD CONSTRAINT UNIQUE(_tidb_commit_ts);
 show create table t4;
+
+-- error 8200
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON';
+-- error 8200
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
+
+# Alter table should fail
+-- error 8200
+alter table t3 active_active = 'ON';
+
+# Invalid value
+-- error 1064
 
 -- error 8200
 create table t5 (id int primary key, name varchar(50)) active_active = 'ON';

@@ -3434,7 +3434,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 	if oldColName.L == newColName.L {
 		return nil
 	}
-	if model.IsInternalColumn(newColName) {
+	if model.IsSoftDeleteOrActiveActiveColumn(newColName) {
 		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 
@@ -4708,6 +4708,8 @@ func checkCreateGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexNa
 
 func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
+	isUnique := true
+
 	if indexOption != nil && indexOption.PrimaryKeyTp == ast.PrimaryKeyTypeClustered {
 		return dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
 			"Please consider adding NONCLUSTERED primary key instead")
@@ -4743,7 +4745,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA, isUnique)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4786,7 +4788,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
-			Unique:                  true,
+			Unique:                  isUnique,
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
@@ -4873,6 +4875,7 @@ func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 
 func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	isUnique := false
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -4924,7 +4927,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType)
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType, isUnique)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4945,6 +4948,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
+			Unique:                  isUnique,
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
@@ -5052,7 +5056,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA, unique)
 	if err != nil {
 		return errors.Trace(err)
 	}

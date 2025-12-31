@@ -1078,7 +1078,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col == nil || col.Hidden || model.IsInternalColumn(col.Name) {
+		if col == nil || col.Hidden || model.IsSoftDeleteOrActiveActiveColumn(col.Name) {
 			continue
 		}
 		if needAddComma {
@@ -1195,6 +1195,15 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
 	for _, idx := range tableInfo.Indices {
 		if idx.State == model.StatePublic {
+			softDeleteColumn := slices.ContainsFunc(idx.Columns, func(s *model.IndexColumn) bool {
+				return model.IsSoftDeleteColumn(s.Name)
+			})
+			activeActiveColumn := slices.ContainsFunc(idx.Columns, func(s *model.IndexColumn) bool {
+				return model.IsActiveActiveColumn(s.Name)
+			})
+			if softDeleteColumn || activeActiveColumn {
+				continue
+			}
 			publicIndices = append(publicIndices, idx)
 		}
 	}

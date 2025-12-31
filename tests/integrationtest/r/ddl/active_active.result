@@ -43,6 +43,20 @@ t3	CREATE TABLE `t3` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create table t4 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+ALTER TABLE t4 ADD INDEX i1(_tidb_origin_ts);
+ALTER TABLE t4 ADD INDEX i2(_tidb_softdelete_time);
+ALTER TABLE t4 ADD UNIQUE INDEX i3(_tidb_softdelete_time);
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
+ALTER TABLE t4 ADD UNIQUE INDEX i3(_tidb_origin_ts);
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
+ALTER TABLE t4 ADD UNIQUE INDEX i3(_tidb_commit_ts);
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
+ALTER TABLE t4 ADD UNIQUE INDEX i3(name);
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
+ALTER TABLE t4 ADD INDEX i3(_tidb_commit_ts);
+Error 1072 (42000): column does not exist: _tidb_commit_ts
+ALTER TABLE t4 ADD CONSTRAINT UNIQUE(_tidb_commit_ts);
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
 show create table t4;
 Table	Create Table
 t4	CREATE TABLE `t4` (
@@ -50,6 +64,12 @@ t4	CREATE TABLE `t4` (
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON';
+Error 8200 (HY000): Unsupported ActiveActive enabled but SoftDelete disabled
+create table t5 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
+Error 8200 (HY000): Unsupported ACTIVE_ACTIVE = 'ON' but SOFTDELETE = 'OFF'
+alter table t3 active_active = 'ON';
+Error 8200 (HY000): This type of ALTER TABLE is currently unsupported
 create table t5 (id int primary key, name varchar(50)) active_active = 'ON';
 Error 8200 (HY000): Unsupported ActiveActive enabled but SoftDelete disabled
 create table t5 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
