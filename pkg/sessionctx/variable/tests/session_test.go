@@ -17,6 +17,8 @@ package tests
 import (
 	"context"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
@@ -850,4 +852,71 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	err = sv.SetSessionFromHook(vars, "OFF")
 	require.NoError(t, err)
 	require.False(t, vars.OptPartialOrderedIndexForTopN)
+}
+
+func TestSetTiDBCloudStorageURI(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	mock := variable.NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	cloudStorageURI := variable.GetSysVar(vardef.TiDBCloudStorageURI)
+	require.Len(t, vardef.CloudStorageURI.Load(), 0)
+	defer func() {
+		vardef.CloudStorageURI.Store("")
+	}()
+
+	// Default empty
+	require.Len(t, cloudStorageURI.Value, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Set to noop
+	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
+	err := mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, noopURI)
+	require.NoError(t, err)
+	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.Equal(t, noopURI, val)
+	require.Equal(t, noopURI, vardef.CloudStorageURI.Load())
+
+	// Set to s3, should fail
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, "s3://blackhole")
+	require.Error(t, err, "unreachable storage URI")
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer s.Close()
+
+	// Set to s3, should return uri without variable
+	s3URI := "s3://tiflow-test/?access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, s3URI)
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.True(t, strings.HasPrefix(val, "s3://tiflow-test/"))
+	require.Contains(t, val, "access-key=xxxxxx")
+	require.Contains(t, val, "secret-access-key=xxxxxx")
+	require.Contains(t, val, "session-token=xxxxxx")
+	require.Equal(t, s3URI, vardef.CloudStorageURI.Load())
+
+	// ks3 is like s3
+	ks3URI := "ks3://tiflow-test/?region=test&access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, ks3URI)
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.True(t, strings.HasPrefix(val, "ks3://tiflow-test/"))
+	require.Contains(t, val, "access-key=xxxxxx")
+	require.Contains(t, val, "secret-access-key=xxxxxx")
+	require.Contains(t, val, "session-token=xxxxxx")
+	require.Equal(t, ks3URI, vardef.CloudStorageURI.Load())
+
+	// Set to empty, should return no error
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, "")
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.Len(t, val, 0)
+	cancel()
 }

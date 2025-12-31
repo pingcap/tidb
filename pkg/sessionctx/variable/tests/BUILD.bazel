@@ -9,7 +9,7 @@ go_test(
         "variable_test.go",
     ],
     flaky = True,
-    shard_count = 42,
+    shard_count = 43,
     deps = [
         "//pkg/config",
         "//pkg/executor",
