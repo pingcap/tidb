@@ -777,3 +777,77 @@ func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = ON")
 	require.True(t, vars.OptPartialOrderedIndexForTopN)
 }
+
+func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
+	// Test that the variable exists and has correct properties
+	sv := variable.GetSysVar(vardef.TiDBOptPartialOrderedIndexForTopN)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.IsHintUpdatableVerified)
+	require.Equal(t, vardef.TypeBool, sv.Type)
+	require.Equal(t, "OFF", sv.Value) // Default is false
+
+	// Test validation
+	vars := variable.NewSessionVars(nil)
+	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+
+	// Test allowed values: 0, 1, ON, OFF (case-insensitive)
+	val, err := sv.Validate(vars, "ON", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "on", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "OFF", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	val, err = sv.Validate(vars, "off", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	val, err = sv.Validate(vars, "1", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "0", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	// Test disallowed values
+	_, err = sv.Validate(vars, "true", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "false", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "2", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "-1", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "yes", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "no", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	// Test SetSession function
+	err = sv.SetSessionFromHook(vars, "ON")
+	require.NoError(t, err)
+	require.True(t, vars.OptPartialOrderedIndexForTopN)
+
+	err = sv.SetSessionFromHook(vars, "OFF")
+	require.NoError(t, err)
+	require.False(t, vars.OptPartialOrderedIndexForTopN)
+}

@@ -1951,3 +1951,127 @@ func TestTiDBOptSelectivityFactor(t *testing.T) {
 	warn := vars.StmtCtx.GetWarnings()[0].Err
 	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
 }
+
+func TestSynonyms(t *testing.T) {
+	sysVar := GetSysVar(vardef.TxnIsolation)
+	require.NotNil(t, sysVar)
+
+	vars := NewSessionVars(nil)
+
+	// It does not permit SERIALIZABLE by default.
+	_, err := sysVar.Validate(vars, "SERIALIZABLE", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
+
+	// Enable Skip isolation check
+	require.Nil(t, GetSysVar(vardef.TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"))
+
+	// Serializable is now permitted.
+	_, err = sysVar.Validate(vars, "SERIALIZABLE", vardef.ScopeSession)
+	require.NoError(t, err)
+
+	// Currently TiDB returns a warning because of SERIALIZABLE, but in future
+	// it may also return a warning because TxnIsolation is deprecated.
+
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", warn.Error())
+
+	require.Nil(t, sysVar.SetSessionFromHook(vars, "SERIALIZABLE"))
+
+	// When we set TxnIsolation, it also updates TransactionIsolation.
+	require.Equal(t, "SERIALIZABLE", vars.systems[vardef.TxnIsolation])
+	require.Equal(t, vars.systems[vardef.TxnIsolation], vars.systems[vardef.TransactionIsolation])
+}
+
+func TestScope(t *testing.T) {
+	sv := SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.True(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeGlobal, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.False(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeSession, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.True(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeNone, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.False(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
+	require.True(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeInstance, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.False(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+	require.True(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeSession, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.Error(t, sv.validateScope(vardef.ScopeGlobal))
+}
+
+// TestSkipInitIsUsed ensures that no new variables are added with skipInit: true.
+// This feature is deprecated, and if you need to run code to differentiate between init and "SET" (rare),
+// you can instead check if s.StmtCtx.StmtType == "Set".
+// The reason it is deprecated is that the behavior is typically wrong:
+// it means session settings won't inherit from global and don't apply until you first set
+// them in each session. This is a very weird behavior.
+// See: https://github.com/pingcap/tidb/issues/35051
+func TestSkipInitIsUsed(t *testing.T) {
+	for _, sv := range GetSysVars() {
+		if sv.skipInit {
+			// skipInit only ever applied to session scope, so if anyone is setting it on
+			// a variable without session, that doesn't make sense.
+			require.True(t, sv.HasSessionScope(), fmt.Sprintf("skipInit has no effect on a variable without session scope: %s", sv.Name))
+			// Since SetSession is the "init function" there is no init function to skip.
+			require.NotNil(t, sv.SetSession, fmt.Sprintf("skipInit has no effect on variables without an init (setsession) func: %s", sv.Name))
+			// Skipinit has no use on noop funcs, since noop funcs always skipinit.
+			require.False(t, sv.IsNoop, fmt.Sprintf("skipInit has no effect on noop variables: %s", sv.Name))
+
+			// Test for variables that have a default of "0" or "OFF"
+			// If it is session-only scoped there is likely no bug now.
+			// If it is also global-scoped, then there is a bug as soon as the global changes.
+			if !(sv.Name == vardef.RandSeed1 || sv.Name == vardef.RandSeed2) {
+				// The bug is because the tests might not realize the SetSession func was not called on init,
+				// because it would initialize some session field to the empty value anyway.
+				require.NotEqual(t, "0", sv.Value, fmt.Sprintf("default value is zero: %s", sv.Name))
+				require.NotEqual(t, "OFF", sv.Value, fmt.Sprintf("default value is OFF: %s", sv.Name))
+			}
+
+			// Many of these variables might allow skipInit to be removed,
+			// they need to be checked first. The purpose of this test is to make
+			// sure we don't introduce any new variables with skipInit, which seems
+			// to be a problem.
+			switch sv.Name {
+			case vardef.TiDBSnapshot,
+				vardef.TiDBEnableChunkRPC,
+				vardef.TxnIsolationOneShot,
+				vardef.TiDBDDLReorgPriority,
+				vardef.TiDBSlowQueryFile,
+				vardef.TiDBWaitSplitRegionFinish,
+				vardef.TiDBWaitSplitRegionTimeout,
+				vardef.TiDBMetricSchemaStep,
+				vardef.TiDBMetricSchemaRangeDuration,
+				vardef.RandSeed1,
+				vardef.RandSeed2,
+				vardef.CollationDatabase,
+				vardef.CollationConnection,
+				vardef.CharsetDatabase,
+				vardef.CharacterSetConnection,
+				vardef.CharacterSetServer,
+				vardef.TiDBOptTiFlashConcurrencyFactor,
+				vardef.TiDBOptSeekFactor:
+				continue
+			}
+			require.Equal(t, false, sv.skipInit, fmt.Sprintf("skipInit should not be set on new system variables. variable %s is in violation", sv.Name))
+		}
+	}
+}
