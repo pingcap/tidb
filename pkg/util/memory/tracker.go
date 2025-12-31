@@ -1202,6 +1202,10 @@ func (t *Tracker) DetachMemArbitrator() bool {
 		m.cleanSmallBudget()
 	}
 
+	if m.state.Load() == memArbitratorStateDown {
+		return false
+	}
+
 	switch m.state.Swap(memArbitratorStateDown) {
 	case memArbitratorStateSmallBudget:
 		globalArbitrator.metrics.pools.small.Add(-1)

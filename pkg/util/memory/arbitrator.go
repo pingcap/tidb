@@ -1021,8 +1021,8 @@ type heapController struct {
 	}
 	memRisk struct {
 		startTime struct {
-			t    time.Time
-			nano atomic.Int64
+			t         time.Time
+			unixMilli atomic.Int64
 		}
 		lastMemStats struct {
 			startTime     time.Time
@@ -2583,8 +2583,8 @@ func (m *MemArbitrator) recordDebugProfile() (f DebugFields) {
 		zap.Int64("pending-alloc-size", m.WaitingAllocSize()),
 		zap.Int64("digest-cache-num", m.digestProfileCache.num.Load()),
 	)
-	if memRisk := m.heapController.memRisk.startTime.nano.Load(); memRisk != 0 {
-		f.append(zap.Time("mem-risk-start", time.Unix(0, memRisk)))
+	if t := m.heapController.memRisk.startTime.unixMilli.Load(); t != 0 {
+		f.append(zap.Time("mem-risk-start", time.UnixMilli(t)))
 	}
 	return
 }
@@ -2800,7 +2800,7 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 
 		if newKillNum, reclaiming := m.killTopnEntry(memToReclaim); newKillNum != 0 {
 			m.heapController.memRisk.startTime.t = m.innerTime() // restart oom check
-			m.heapController.memRisk.startTime.nano.Store(m.heapController.memRisk.startTime.t.UnixNano())
+			m.heapController.memRisk.startTime.unixMilli.Store(m.heapController.memRisk.startTime.t.UnixMilli())
 
 			{ // warning
 				profile := m.recordDebugProfile()
@@ -3200,7 +3200,7 @@ func (m *MemArbitrator) AtOOMRisk() bool {
 }
 
 func (m *MemArbitrator) atMemRisk() bool {
-	return m.heapController.memRisk.startTime.nano.Load() != 0
+	return m.heapController.memRisk.startTime.unixMilli.Load() != 0
 }
 
 func (m *MemArbitrator) intoOOMRisk() {
@@ -3221,7 +3221,7 @@ func (m *MemArbitrator) memRisk() int64 {
 func (m *MemArbitrator) intoMemRisk() {
 	now := m.innerTime()
 	m.heapController.memRisk.startTime.t = now
-	m.heapController.memRisk.startTime.nano.Store(now.UnixNano())
+	m.heapController.memRisk.startTime.unixMilli.Store(now.UnixMilli())
 	m.heapController.memRisk.lastMemStats.heapTotalFree = m.heapController.heapTotalFree.Load()
 	m.heapController.memRisk.lastMemStats.startTime = now
 	m.execMetrics.Risk.Mem++
@@ -3263,7 +3263,7 @@ func (m *MemArbitrator) intoMemRisk() {
 }
 
 func (m *MemArbitrator) setMemSafe() {
-	m.heapController.memRisk.startTime.nano.Store(0)
+	m.heapController.memRisk.startTime.unixMilli.Store(0)
 	m.heapController.memRisk.oomRisk = false
 }
 

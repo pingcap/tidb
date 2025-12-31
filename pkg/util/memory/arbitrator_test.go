@@ -2241,9 +2241,9 @@ func TestMemArbitrator(t *testing.T) {
 		}
 
 		{ // mock set oom check start
-			m.heapController.memRisk.startTime.nano.Store(time.Now().UnixNano())
+			m.heapController.memRisk.startTime.unixMilli.Store(time.Now().UnixMilli())
 			require.False(t, m.executeTick(defMax))
-			m.heapController.memRisk.startTime.nano.Store(0)
+			m.heapController.memRisk.startTime.unixMilli.Store(0)
 		}
 
 		type mockTimeline struct {
@@ -2546,7 +2546,7 @@ func TestMemArbitrator(t *testing.T) {
 			kill2++
 		}
 		m.refreshRuntimeMemStats()
-		debugNow := time.Unix(0, 1024)
+		debugNow := now()
 		mockNow = func() time.Time {
 			return debugNow
 		}

@@ -1097,5 +1097,6 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, m.awaitFreePoolUsed().quota == 0)
 
 		RemovePoolFromGlobalMemArbitrator(t1.SessionID.Load())
+		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 0)
 	}
 }
