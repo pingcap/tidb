@@ -770,7 +770,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						}
 						logger.Info("Sending batch download SST request.",
 							zap.Uint64("store_id", peer.GetStoreId()),
-							logutil.BreifSSTMetas("ssts", maps.Values(req.Ssts)),
+							logutil.BriefSSTMetas("ssts", maps.Values(req.Ssts)),
 							logutil.Region(regionInfo.Region),
 						)
 						return importer.importClient.BatchDownloadSST(dctx, peer.GetStoreId(), req)

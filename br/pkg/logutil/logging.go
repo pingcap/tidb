@@ -225,7 +225,7 @@ func (m zapSSTMetasMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 }
 
 // Describes the overall range of the SST metas and their size.
-func BreifSSTMetas(key string, sstMetas []*import_sstpb.SSTMeta) zap.Field {
+func BriefSSTMetas(key string, sstMetas []*import_sstpb.SSTMeta) zap.Field {
 	var (
 		startKey, endKey []byte
 		total            int
