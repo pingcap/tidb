@@ -78,7 +78,7 @@ func (*LoadStatsExec) Open(context.Context) error {
 }
 
 // Update updates the stats of the corresponding table according to the data.
-func (e *LoadStatsInfo) w(data []byte) error {
+func (e *LoadStatsInfo) Update(data []byte) error {
 	jsonTbl := &util.JSONTable{}
 	if err := json.Unmarshal(data, jsonTbl); err != nil {
 		return errors.Trace(err)
