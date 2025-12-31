@@ -1066,21 +1066,18 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
-	if realtimeRowCount <= 0 {
-		realtimeRowCount = int64(hg.TotalRowCount())
-	}
 	// If modifyCount is low, it may be caused by a delay in updates to modifyCount.
 	// Assume a minimum worst case of 1% of the total row count.
 	// TODO: Remove modifyCount as it provides little value here.
 	maxAddedRows := addedRows
+	onePercentChange := float64(realtimeRowCount) / outOfRangeBetweenRate
 	if addedRows == 0 || modifyCount == 0 {
-		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+		maxAddedRows = max(maxAddedRows, onePercentChange)
 	}
-	// Adjust the added rows downward if modifications are dominated by deletes.
-	// TODO: This is a temporary fix to address the issue where there have been
-	// a large number of deletes - leading to an overestimation of out-of-range.
+	// If the realtime row count has decreased, it means there have been
+	// more deletes than inserts. We need to adjust the added rows downward.
 	if realtimeRowCount < int64(hg.TotalRowCount()) {
-		addedRows *= float64(realtimeRowCount) / hg.TotalRowCount()
+		addedRows = min(addedRows, onePercentChange)
 	}
 
 	// Step 2: Calculate "one value"
@@ -1193,18 +1190,32 @@ func (hg *Histogram) OutOfRangeRowCount(
 			// Calculate the percentage of "the shaded area" on the right side.
 			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 		}
-		// Recalculate the out-of-range percentage to account for time decay (stale histogram).
-		// We do this by moving the predicate range closer to the histogram range, and
-		// recalculating the percentage of the shaded area.
-		actualL = l
-		actualR = r
+		/*
+				Time decay scenario:
+				│  \
+			    │    \
+			    |   |xx\
+				│   |xx| \
+				│   |xx|  \
+			    ┴──────────┴─────
+			    ▲   ▲  ▲   ▲
+				│   │  │   │
+			histR   │  │ boundR
+			        │  │
+			   lDatum  rDatum
+			   Over time, if statistics are NOT recollected - that is, histR stays
+			   the same, but the predicate range moves to the right - the percentage
+			   of the shaded area on the left side will decrease.
+			   The following formula is used to recalculate the percentage of the
+			   shaded area if the predicate range was close to the histogram range.
+		*/
 		// Predicate entirely on the right side of the histogram envelope.
-		if actualL > histR {
+		if l > histR {
 			entirelyOutOfRange = true
 			adjLeft := histR
 			adjRight := adjLeft + predWidth
 			timeAdjRight = (math.Pow(boundR-adjLeft, 2) - math.Pow(boundR-adjRight, 2)) / math.Pow(histWidth, 2)
-		} else if actualR < histL {
+		} else if r < histL {
 			entirelyOutOfRange = true
 			// Predicate entirely on the left side of the histogram envelope.
 			adjRight := histL
@@ -1226,8 +1237,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 		estRows = oneValue
 	}
 
-	// Update maxTotalPercent for entirelyOutOfRange cases (matching old behavior)
-	if entirelyOutOfRange {
+	// Update maxTotalPercent for entirelyOutOfRange cases
+	// This is currently limited to datetime datatype, since it's the most
+	// likely to be affected by time decay.
+	if entirelyOutOfRange && lDatum.Kind() == types.KindMinNotNull {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// For max estimate, use the sum (not average) to account for worst case
 		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 1.0)
