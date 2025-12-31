@@ -1212,15 +1212,13 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// Predicate entirely on the right side of the histogram envelope.
 		if l > histR {
 			entirelyOutOfRange = true
-			adjLeft := histR
-			adjRight := adjLeft + predWidth
-			timeAdjRight = (math.Pow(boundR-adjLeft, 2) - math.Pow(boundR-adjRight, 2)) / math.Pow(histWidth, 2)
+			adjRight := histR + predWidth
+			timeAdjRight = (math.Pow(boundR-histR, 2) - math.Pow(boundR-adjRight, 2)) / math.Pow(histWidth, 2)
 		} else if r < histL {
 			entirelyOutOfRange = true
 			// Predicate entirely on the left side of the histogram envelope.
-			adjRight := histL
-			adjLeft := adjRight - predWidth
-			timeAdjLeft = (math.Pow(adjRight-boundL, 2) - math.Pow(adjLeft-boundL, 2)) / math.Pow(histWidth, 2)
+			adjLeft := histL - predWidth
+			timeAdjLeft = (math.Pow(histL-boundL, 2) - math.Pow(adjLeft-boundL, 2)) / math.Pow(histWidth, 2)
 		}
 	}
 
