@@ -565,7 +565,7 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 				}
 			}
 			if dbMatch && tableMatch && qbMatch {
-				newPlans := append(plans[:i], plans[i+1:]...)
+				newPlans := slices.Delete(plans, i, i+1)
 				return joinGroup, newPlans, true
 			}
 		}
@@ -596,7 +596,7 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 
 	if groupIdx != -1 {
 		matched := plans[groupIdx]
-		newPlans := append(plans[:groupIdx], plans[groupIdx+1:]...)
+		newPlans := slices.Delete(plans, groupIdx, groupIdx+1)
 		return matched, newPlans, true
 	}
 
