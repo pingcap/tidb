@@ -507,9 +507,9 @@ func TestLoadDataForSoftDeleteTable(t *testing.T) {
 		"LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' INTO TABLE softdelete fields terminated by ' ' lines terminated by '\n' (id, v)",
 	}
 	expecteds := [][]string{
-		[]string{"1|11", "2|22", "3|33", "4|44", "5|55", "6|66"},
-		[]string{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
-		[]string{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
+		{"1|11", "2|22", "3|33", "4|44", "5|55", "6|66"},
+		{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
+		{"1|1", "2|2", "3|33", "4|44", "5|55", "6|66"},
 	}
 	expectedMsgs := []string{
 		"Records: 6  Deleted: 4  Skipped: 0  Warnings: 0",
