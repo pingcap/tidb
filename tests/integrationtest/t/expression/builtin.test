@@ -1668,3 +1668,7 @@ SET sql_mode = 'NO_ZERO_IN_DATE';
 SELECT DATE(test_date) FROM t;
 show warnings;
 drop table if exists t;
+
+# Issue 59420
+SELECT GET_FORMAT(TIME, 'usa'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'UsA'), GET_FORMAT(time, 'UsA'), GET_FORMAT(TIme, 'UsA');
+SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
