@@ -23,6 +23,7 @@ test:ci --test_timeout=150,300,900,3600
 test:ci --flaky_test_attempts=3
 test --test_env=HTTPS_PROXY --test_env=https_proxy
 test --test_env=HTTP_PROXY --test_env=http_proxy
+test --test_env=BRIETEST_TMPDIR
 test:race --test_timeout=1200,6000,18000,72000
 
 try-import /data/bazel
