@@ -411,15 +411,12 @@ func BuildIndexInfo(
 		}
 		idxInfo.Global = indexOption.Global
 		// Set global index version for new global indexes.
-		// Version 2 is only needed for non-clustered tables with non-unique global indexes
+		// Version 1 is only needed for non-clustered tables with non-unique global indexes
 		// to prevent collisions after EXCHANGE PARTITION due to duplicate _tidb_rowid values.
 		// Clustered tables and unique indexes don't have this issue and use version 0.
-		if indexOption.Global {
-			if !idxInfo.Unique && !tblInfo.IsCommonHandle {
-				idxInfo.GlobalIndexVersion = model.GlobalIndexVersionCurrent
-			} else {
-				idxInfo.GlobalIndexVersion = 0
-			}
+		idxInfo.GlobalIndexVersion = 0
+		if indexOption.Global && !idxInfo.Unique && !tblInfo.HasClusteredIndex() {
+			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
 		}
 
 		conditionString, err := CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
@@ -2455,26 +2452,22 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				return false, nil
 			}
 
-			// For global indexes V2+ on partitioned tables, we need to wrap the handle
+			// For global indexes V1+ on partitioned tables, we need to wrap the handle
 			// with the partition ID to create a PartitionHandle.
 			// This is critical for non-clustered tables after EXCHANGE PARTITION,
 			// where duplicate _tidb_rowid values exist across partitions.
 			// Legacy indexes (version 0) don't use PartitionHandle in the key.
 			actualHandle := handle
-			hasGlobalIndexV2 := false
+			hasGlobalIndexV1 := false
 			for _, index := range w.indexes {
-				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV2 {
-					hasGlobalIndexV2 = true
+				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+					hasGlobalIndexV1 = true
 					break
 				}
 			}
-			if hasGlobalIndexV2 {
-				// Wrap the handle with partition ID for global indexes V2+
+			if hasGlobalIndexV1 {
+				// Wrap the handle with partition ID for global indexes V1+
 				actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
-				logutil.DDLLogger().Info("[DEBUG] Wrapping handle with partition ID for global index V2",
-					zap.Int64("partitionID", taskRange.physicalTable.GetPhysicalID()),
-					zap.String("originalHandle", handle.String()),
-					zap.String("wrappedHandle", actualHandle.String()))
 			}
 
 			// Decode one row, generate records of this row.
@@ -2487,7 +2480,6 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				if index.Meta().HasCondition() {
 					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
 				}
-				// Use actualHandle (which may be a PartitionHandle for global indexes)
 				idxRecord, err1 := w.getIndexRecord(index.Meta(), actualHandle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
@@ -2915,18 +2907,11 @@ func (w *worker) addTableIndex(
 				if !ok {
 					return fmt.Errorf("unexpected error, can't cast %T to table.PhysicalTable", t)
 				}
-				logutil.DDLLogger().Info("[DEBUG] Processing table-level for global index",
-					zap.Int64("tableID", tbl.Meta().ID),
-					zap.Int64("physicalTableID", reorgInfo.PhysicalTableID))
 			} else {
 				p = tbl.GetPartition(reorgInfo.PhysicalTableID)
 				if p == nil {
 					return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 				}
-				logutil.DDLLogger().Info("[DEBUG] Processing partition for global index",
-					zap.Int64("tableID", tbl.Meta().ID),
-					zap.Int64("partitionID", reorgInfo.PhysicalTableID),
-					zap.Int64("physicalTableID", p.GetPhysicalID()))
 			}
 			err = w.addPhysicalTableIndex(ctx, p, reorgInfo)
 			if err != nil {

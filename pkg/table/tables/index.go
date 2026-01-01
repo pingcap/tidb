@@ -16,7 +16,6 @@ package tables
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -155,27 +154,6 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 				idxTblID = pi.NewTableID
 			}
 		}
-
-		// Debug logging for global index key generation
-		handleType := "unknown"
-		var partID int64
-		var innerHandle string
-		if ph, ok := h.(kv.PartitionHandle); ok {
-			handleType = "PartitionHandle"
-			partID = ph.PartitionID
-			innerHandle = ph.Handle.String()
-		} else if h != nil {
-			handleType = fmt.Sprintf("%T", h)
-			innerHandle = h.String()
-		}
-		logutil.BgLogger().Info("[DEBUG] GenIndexKey for global index",
-			zap.String("indexName", c.idxInfo.Name.O),
-			zap.Int64("idxTblID", idxTblID),
-			zap.Int64("phyTblID", c.phyTblID),
-			zap.String("handleType", handleType),
-			zap.Int64("partitionID", partID),
-			zap.String("innerHandle", innerHandle),
-			zap.Reflect("indexedValues", indexedValues))
 	}
 
 	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
@@ -214,8 +192,9 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 				zap.String("innerHandle", innerHandle.String()))
 		}
 	}
-
 	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, innerHandle, partitionID, restoredData, buf)
+
+	//idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }

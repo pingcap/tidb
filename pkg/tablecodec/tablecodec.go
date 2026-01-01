@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -67,8 +68,8 @@ const (
 	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
 	CommonHandleFlag byte = 127
 	// PartitionIDFlag is the flag used to decode the partition ID.
-	// Used in both global index values and global index keys (for V2+ non-unique indexes).
-	// In keys: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
+	// Used in both global index values and global index keys (for V1+ non-unique indexes).
+	// In keys: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded (IntHandle)
 	// In values: PartitionIDFlag + partition_id (8 bytes)
 	PartitionIDFlag byte = 126
 	// IndexVersionFlag is the flag used to decode the index's version info.
@@ -1220,11 +1221,6 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 // GenIndexKey generates index key using input physical table id
 func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
-	// Check global index version compatibility.
-	if idxInfo.Global && idxInfo.GlobalIndexVersion > model.GlobalIndexVersionCurrent {
-		return nil, false, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB",
-			idxInfo.GlobalIndexVersion, model.GlobalIndexVersionCurrent)
-	}
 	if idxInfo.Unique {
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
@@ -1249,11 +1245,13 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 		return nil, false, err
 	}
 	if !distinct && h != nil {
+		ph, isPartitionHandle := h.(kv.PartitionHandle)
 		// For PartitionHandle on global indexes V2+, we must encode BOTH partition ID and inner handle
 		// in the key to prevent collisions when different partitions have duplicate handles.
 		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
 		// Only use the new format for version >= V2. Legacy indexes (version 0) use the old format.
-		if ph, isPartitionHandle := h.(kv.PartitionHandle); isPartitionHandle && idxInfo.Global && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+		//if isPartitionHandle && idxInfo.Global && !tblInfo.HasClusteredIndex() && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+		if isPartitionHandle && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
 			// Encode as: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
 			key = append(key, PartitionIDFlag)
 			key = codec.EncodeInt(key, ph.PartitionID)
@@ -1264,9 +1262,10 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 				key = append(key, ph.Handle.Encoded()...)
 			}
 		} else {
+			intest.Assert(idxInfo.GlobalIndexVersion == 0, "GenIndexKey should use PartitionHandle!")
 			// Extract inner handle for non-global indexes or non-PartitionHandle
 			innerHandle := h
-			if ph, ok := h.(kv.PartitionHandle); ok {
+			if isPartitionHandle {
 				innerHandle = ph.Handle
 			}
 
@@ -1599,11 +1598,6 @@ func TempIndexValueIsUntouched(b []byte) bool {
 func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
-	// Check global index version compatibility.
-	if idxInfo.Global && idxInfo.GlobalIndexVersion > model.GlobalIndexVersionCurrent {
-		return nil, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB",
-			idxInfo.GlobalIndexVersion, model.GlobalIndexVersionCurrent)
-	}
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueForClusteredIndexVersion1(loc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData, buf)
 	}

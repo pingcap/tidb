@@ -624,17 +624,15 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 				return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(idxUpdate.Name)
 			}
 			dupCheck[strings.ToLower(idxUpdate.Name)] = struct{}{}
+			tbInfo.Indices[idxOffset].GlobalIndexVersion = 0
 			if idxUpdate.Option != nil && idxUpdate.Option.Global {
 				tbInfo.Indices[idxOffset].Global = true
-				// Only use V2 for non-clustered tables with non-unique global indexes
-				if !tbInfo.Indices[idxOffset].Unique && !tbInfo.IsCommonHandle {
-					tbInfo.Indices[idxOffset].GlobalIndexVersion = model.GlobalIndexVersionCurrent
-				} else {
-					tbInfo.Indices[idxOffset].GlobalIndexVersion = 0
+				// Only use V1 for non-clustered tables with non-unique global indexes
+				if !tbInfo.Indices[idxOffset].Unique && !tbInfo.HasClusteredIndex() {
+					tbInfo.Indices[idxOffset].GlobalIndexVersion = model.GlobalIndexVersionV1
 				}
 			} else {
 				tbInfo.Indices[idxOffset].Global = false
-				tbInfo.Indices[idxOffset].GlobalIndexVersion = 0
 			}
 			updateIndexes = append(updateIndexes, model.UpdateIndexInfo{IndexName: idxUpdate.Name, Global: tbInfo.Indices[idxOffset].Global})
 			tbInfo.Partition.DDLUpdateIndexes = updateIndexes
@@ -3300,15 +3298,10 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			tblInfo.Partition.DDLChangedIndex[index.ID] = false
 			tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
 			newIndex.Global = newGlobal
-			if newGlobal {
-				// Only use V2 for non-clustered tables with non-unique global indexes
-				if !newIndex.Unique && !tblInfo.IsCommonHandle {
-					newIndex.GlobalIndexVersion = model.GlobalIndexVersionCurrent
-				} else {
-					newIndex.GlobalIndexVersion = 0
-				}
-			} else {
-				newIndex.GlobalIndexVersion = 0
+			newIndex.GlobalIndexVersion = 0
+			if newGlobal && !newIndex.Unique && !tblInfo.HasClusteredIndex() {
+				// Only use V1 for non-clustered tables with non-unique global indexes
+				newIndex.GlobalIndexVersion = model.GlobalIndexVersionV1
 			}
 			tblInfo.Indices = append(tblInfo.Indices, newIndex)
 		}

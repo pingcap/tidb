@@ -17,6 +17,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
+        "//pkg/util/intest",
         "//pkg/util/rowcodec",
         "//pkg/util/stringutil",
         "@com_github_pingcap_errors//:errors",
