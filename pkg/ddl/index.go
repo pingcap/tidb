@@ -3430,15 +3430,6 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		return 0, nil, nil, nil
 	}
 
-	// Debug logging to understand partition iteration
-	var defIDs []int64
-	for _, def := range pi.Definitions {
-		defIDs = append(defIDs, def.ID)
-	}
-	logutil.DDLLogger().Info("[DEBUG] getNextPartitionInfo called",
-		zap.Int64("currPhysicalTableID", currPhysicalTableID),
-		zap.Int64s("partitionDefinitionIDs", defIDs))
-
 	// This will be used in multiple different scenarios/ALTER TABLE:
 	// ADD INDEX - no change in partitions, just use pi.Definitions (1)
 	// REORGANIZE PARTITION - copy data from partitions to be dropped (2)
