@@ -108,7 +108,7 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	// also check if this last bucket end value is underrepresented
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
-		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
+		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount, c.TopN.TotalCount()) {
 		return statistics.DefaultRowEst(histCnt), nil
 	}
 	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
@@ -214,8 +214,9 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		cnt.MultiplyAll(increaseFactor)
 
-		// handling the out-of-range part (unless the row count is already greater than the realtime row count)
-		if cnt.Est < float64(realtimeRowCount) && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
+		// handling the out-of-range part
+		// Unless the row count already covers the realtime row count
+		if cnt.Est < float64(realtimeRowCount)*0.99 && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
 			histNDV := c.NDV
 			// Exclude the TopN
 			if c.StatsVer == statistics.Version2 {

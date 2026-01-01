@@ -282,8 +282,9 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		count.MultiplyAll(increaseFactor)
 
-		// handling the out-of-range part (unless the row count is already greater than the realtime row count)
-		if count.Est < float64(realtimeRowCount) && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
+		// handling the out-of-range part
+		// Unless the row count already covers the realtime row count
+		if count.Est < float64(realtimeRowCount)*0.99 && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
@@ -425,7 +426,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	// also check if this last bucket end value is underrepresented
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
-		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
+		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount, idx.TopN.TotalCount()) {
 		return statistics.DefaultRowEst(histCnt)
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)

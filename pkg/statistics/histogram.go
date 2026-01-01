@@ -712,9 +712,15 @@ func (hg *Histogram) TotalRowCount() float64 {
 }
 
 // AbsRowCountDifference returns the absolute difference between the realtime row count
-// and the histogram's total row count, representing data changes since the last ANALYZE.
-func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64) float64 {
-	return math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
+// and the histogram's total row count (optionally including TopN), representing data changes since the last ANALYZE.
+// topNCount is the TopN total count to include in the histogram row count (pass 0 to exclude TopN).
+func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64, topNCount uint64) (float64, bool) {
+	histRowCount := hg.NotNullCount() + float64(hg.NullCount) + float64(topNCount)
+	isNegative := false
+	if realtimeRowCount < int64(histRowCount) {
+		isNegative = true
+	}
+	return math.Abs(float64(realtimeRowCount) - histRowCount), isNegative
 }
 
 // NotNullCount indicates the count of non-null values in column histogram and single-column index histogram,
@@ -1107,7 +1113,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
-	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, 0)
 	// If modifyCount is low, it may be caused by a delay in updates to modifyCount.
 	// Assume a minimum worst case of 1% of the total row count.
 	// TODO: Remove modifyCount as it provides little value here.
@@ -1118,7 +1124,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 	// If the realtime row count has decreased, it means there have been
 	// more deletes than inserts. We need to adjust the added rows downward.
-	if realtimeRowCount < int64(hg.TotalRowCount()) {
+	if isNegative {
 		addedRows = min(addedRows, onePercentChange)
 	}
 
