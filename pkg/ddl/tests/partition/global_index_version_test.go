@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -37,18 +38,32 @@ func TestGlobalIndexVersionMetadata(t *testing.T) {
 		b INT,
 		PRIMARY KEY (a) NONCLUSTERED
 	) PARTITION BY RANGE (a) (
-		PARTITION p0 VALUES LESS THAN (10),
-		PARTITION p1 VALUES LESS THAN (20)
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
 	)`)
 
-	// Create a global index
-	tk.MustExec("CREATE INDEX idx_b ON tp(b) GLOBAL")
+	tk.MustExec(`CREATE TABLE t (a INT, b INT,PRIMARY KEY (a) NONCLUSTERED)`)
+	tk.MustExec(`insert into tp (a,b) values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`insert into t (a,b) values (101,1),(102,2),(103,3)`)
+	tk.MustExec(`ALTER TABLE tp EXCHANGE PARTITION p1 WITH TABLE t`)
+	tk.MustExec(`delete from tp where a in (2,103)`)
+	tk.MustQuery(`select *,_tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"1 1 1",
+		"101 1 1", // Duplicate _tidb_rowid!
+		"102 2 2",
+		"3 3 3"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/SetGlobalIndexVersion", "return(0)"))
+	tk.MustExec(`create index idx_b on tp(b) global`)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/SetGlobalIndexVersion"))
+	tk.MustQuery(`select count(*) from tp use index(idx_b)`).Check(testkit.Rows("3"))
+	tk.MustQuery(`select count(*) from tp ignore index(idx_b)`).Check(testkit.Rows("4"))
+	tk.MustContainErrMsg(`admin check table tp`, "[admin:8223]data inconsistency in table: tp, index: idx_b, handle:")
 
 	// Get the table info and verify the index version
 	dom := domain.GetDomain(tk.Session())
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
 	require.NoError(t, err)
-
 	tblInfo := tbl.Meta()
 	require.NotNil(t, tblInfo)
 
@@ -64,8 +79,8 @@ func TestGlobalIndexVersionMetadata(t *testing.T) {
 	require.True(t, globalIdx.Global, "Index should be global")
 
 	// Verify the version is set to GlobalIndexVersionCurrent (2)
-	require.Equal(t, model.GlobalIndexVersionV1, globalIdx.GlobalIndexVersion,
-		"Global index should have version %d", model.GlobalIndexVersionV1)
+	require.Equal(t, model.GlobalIndexVersionLegacy, globalIdx.GlobalIndexVersion,
+		"Global index should have version %d", model.GlobalIndexVersionLegacy)
 
 	// Create a non-global index and verify it has version 0
 	tk.MustExec("CREATE INDEX idx_a ON tp(a)")
@@ -85,6 +100,31 @@ func TestGlobalIndexVersionMetadata(t *testing.T) {
 	require.False(t, localIdx.Global, "Index should not be global")
 	require.Equal(t, uint8(0), localIdx.GlobalIndexVersion,
 		"Local index should have version 0")
+
+	tk.MustExec(`drop index idx_b on tp`)
+	tk.MustExec(`create index idx_b on tp(b) global`)
+	tk.MustQuery(`select count(*) from tp use index(idx_b)`).Check(testkit.Rows("4"))
+	tk.MustQuery(`select count(*) from tp ignore index(idx_b)`).Check(testkit.Rows("4"))
+	tk.MustExec(`admin check table tp`)
+
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	require.NotNil(t, tblInfo)
+
+	// Find the new global index
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.O == "idx_b" {
+			globalIdx = idx
+			break
+		}
+	}
+	require.NotNil(t, globalIdx, "Global index idx_b not found")
+	require.True(t, globalIdx.Global, "Index should be global")
+
+	// Verify the version is set to GlobalIndexVersionCurrent (2)
+	require.Equal(t, model.GlobalIndexVersionV1, globalIdx.GlobalIndexVersion,
+		"Global index should have version %d", model.GlobalIndexVersionV1)
 }
 
 // TestLegacyGlobalIndexStillWorks tests that indexes with version=0 (legacy) still function.

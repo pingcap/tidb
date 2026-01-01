@@ -630,6 +630,11 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 				// Only use V1 for non-clustered tables with non-unique global indexes
 				if !tbInfo.Indices[idxOffset].Unique && !tbInfo.HasClusteredIndex() {
 					tbInfo.Indices[idxOffset].GlobalIndexVersion = model.GlobalIndexVersionV1
+					failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
+						if valInt, ok := val.(int); ok {
+							tbInfo.Indices[idxOffset].GlobalIndexVersion = uint8(valInt)
+						}
+					})
 				}
 			} else {
 				tbInfo.Indices[idxOffset].Global = false
@@ -3302,6 +3307,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			if newGlobal && !newIndex.Unique && !tblInfo.HasClusteredIndex() {
 				// Only use V1 for non-clustered tables with non-unique global indexes
 				newIndex.GlobalIndexVersion = model.GlobalIndexVersionV1
+				failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
+					if valInt, ok := val.(int); ok {
+						newIndex.GlobalIndexVersion = uint8(valInt)
+					}
+				})
 			}
 			tblInfo.Indices = append(tblInfo.Indices, newIndex)
 		}

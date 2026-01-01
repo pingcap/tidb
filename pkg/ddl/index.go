@@ -417,6 +417,11 @@ func BuildIndexInfo(
 		idxInfo.GlobalIndexVersion = 0
 		if indexOption.Global && !idxInfo.Unique && !tblInfo.HasClusteredIndex() {
 			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
+			failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
+				if valInt, ok := val.(int); ok {
+					idxInfo.GlobalIndexVersion = uint8(valInt)
+				}
+			})
 		}
 
 		conditionString, err := CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
