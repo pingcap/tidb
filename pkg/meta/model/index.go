@@ -253,7 +253,7 @@ type IndexInfo struct {
 	// 1 = not used
 	// 2=v2 non-unique non-clustered with partition ID in key and value.
 	// 3=v3 non-unique non-clustered with partition ID in key only (TODO).
-	GlobalIndexVersion  uint8              `json:"global_index_version,omitempty"`
+	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
