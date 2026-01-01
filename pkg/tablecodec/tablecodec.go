@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1245,39 +1244,28 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 		return nil, false, err
 	}
 	if !distinct && h != nil {
-		ph, isPartitionHandle := h.(kv.PartitionHandle)
-		// For PartitionHandle on global indexes V2+, we must encode BOTH partition ID and inner handle
+		// For PartitionHandle on global indexes V1+, we must encode BOTH partition ID and inner handle
 		// in the key to prevent collisions when different partitions have duplicate handles.
 		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
-		// Only use the new format for version >= V2. Legacy indexes (version 0) use the old format.
-		//if isPartitionHandle && idxInfo.Global && !tblInfo.HasClusteredIndex() && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
-		if isPartitionHandle && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+		// Only use the new format for version >= V1. Legacy indexes (version 0) use the old format.
+		if idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+			ph, ok := h.(kv.PartitionHandle)
+			if !ok || tblInfo.HasClusteredIndex() {
+				return nil, false, errors.New("clustered index or not a partition handle in GlobalIndexVersionV1+")
+			}
 			// Encode as: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
 			key = append(key, PartitionIDFlag)
 			key = codec.EncodeInt(key, ph.PartitionID)
-			if ph.Handle.IsInt() {
-				key = append(key, codec.IntHandleFlag)
-				key = codec.EncodeInt(key, ph.Handle.IntValue())
-			} else {
-				key = append(key, ph.Handle.Encoded()...)
-			}
-		} else {
-			intest.Assert(idxInfo.GlobalIndexVersion == 0, "GenIndexKey should use PartitionHandle!")
-			// Extract inner handle for non-global indexes or non-PartitionHandle
-			innerHandle := h
-			if isPartitionHandle {
-				innerHandle = ph.Handle
-			}
+		}
 
-			if innerHandle.IsInt() {
-				// We choose the efficient path here instead of calling `codec.EncodeKey`
-				// because the int handle must be an int64, and it must be comparable.
-				// This remains correct until codec.encodeSignedInt is changed.
-				key = append(key, codec.IntHandleFlag)
-				key = codec.EncodeInt(key, innerHandle.IntValue())
-			} else {
-				key = append(key, innerHandle.Encoded()...)
-			}
+		if h.IsInt() {
+			// We choose the efficient path here instead of calling `codec.EncodeKey`
+			// because the int handle must be an int64, and it must be comparable.
+			// This remains correct until codec.encodeSignedInt is changed.
+			key = append(key, codec.IntHandleFlag)
+			key = codec.EncodeInt(key, h.IntValue())
+		} else {
+			key = append(key, h.Encoded()...)
 		}
 	}
 	return
