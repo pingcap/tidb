@@ -155,7 +155,9 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 				idxTblID = pi.NewTableID
 			}
 		}
-		if c.idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 &&
+
+		if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
+			c.idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 &&
 			c.phyTblID != c.tblInfo.ID {
 			fullHandle = kv.NewPartitionHandle(c.phyTblID, h)
 		}
