@@ -242,13 +242,18 @@ type IndexInfo struct {
 	Primary             bool               `json:"is_primary"`              // Whether the index is primary key.
 	Invisible           bool               `json:"is_invisible"`            // Whether the index is invisible.
 	Global              bool               `json:"is_global"`               // Whether the index is global.
-	GlobalIndexVersion  uint8              `json:"global_index_version,omitempty"` // Version of global index key format (0=legacy/unique/clustered, 2=v2 non-unique non-clustered with partition ID in key).
 	MVIndex             bool               `json:"mv_index"`                // Whether the index is multivalued index.
 	VectorInfo          *VectorIndexInfo   `json:"vector_index"`            // VectorInfo is the vector index information.
 	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`          // InvertedInfo is the inverted index information.
 	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
 	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
 	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
+	// Version of global index key format, currently only used non-clustered, non-unique global indexes.
+	// 0=legacy/unique/clustered,
+	// 1 = not used
+	// 2=v2 non-unique non-clustered with partition ID in key and value.
+	// 3=v3 non-unique non-clustered with partition ID in key only (TODO).
+	GlobalIndexVersion  uint8              `json:"global_index_version,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
