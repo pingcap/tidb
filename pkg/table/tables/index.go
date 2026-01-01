@@ -145,6 +145,7 @@ func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) erro
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	idxTblID := c.phyTblID
+	fullHandle := h
 	if c.idxInfo.Global {
 		idxTblID = c.tblInfo.ID
 		pi := c.tblInfo.GetPartitionInfo()
@@ -154,13 +155,17 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 				idxTblID = pi.NewTableID
 			}
 		}
+		if c.idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 &&
+			c.phyTblID != c.tblInfo.ID {
+			fullHandle = kv.NewPartitionHandle(c.phyTblID, h)
+		}
 	}
 
 	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
 		return
 	}
 
-	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
+	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, fullHandle, buf)
 	err = ec.HandleError(err)
 	return
 }
@@ -186,15 +191,9 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 		if ph, ok := h.(kv.PartitionHandle); ok {
 			partitionID = ph.PartitionID
 			innerHandle = ph.Handle
-			logutil.BgLogger().Info("[DEBUG] GenIndexValue extracting partition ID from PartitionHandle",
-				zap.String("indexName", c.idxInfo.Name.O),
-				zap.Int64("partitionID", partitionID),
-				zap.String("innerHandle", innerHandle.String()))
 		}
 	}
 	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, innerHandle, partitionID, restoredData, buf)
-
-	//idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
