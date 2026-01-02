@@ -1064,16 +1064,26 @@ func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float6
 // when the predicate is entirely on the right side of the histogram envelope.
 func calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth float64) float64 {
 	adjRight := histR + predWidth
+	adjRight = math.Min(adjRight, boundR)
 	histWidthSq := math.Pow(histWidth, 2)
-	return (math.Pow(boundR-histR, 2) - math.Pow(boundR-adjRight, 2)) / histWidthSq
+	numerator := (math.Pow(boundR-histR, 2) - math.Pow(boundR-adjRight, 2))
+	if numerator < 0 {
+		return 0
+	}
+	return numerator / histWidthSq
 }
 
 // calculateTimeAdjustmentLeft calculates the time decay adjustment percentage
 // when the predicate is entirely on the left side of the histogram envelope.
 func calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth float64) float64 {
 	adjLeft := histL - predWidth
+	adjLeft = math.Max(adjLeft, boundL)
 	histWidthSq := math.Pow(histWidth, 2)
-	return (math.Pow(histL-boundL, 2) - math.Pow(adjLeft-boundL, 2)) / histWidthSq
+	numerator := (math.Pow(histL-boundL, 2) - math.Pow(adjLeft-boundL, 2))
+	if numerator < 0 {
+		return 0
+	}
+	return numerator / histWidthSq
 }
 
 // OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
@@ -1129,7 +1139,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Step 2: Calculate "one value"
-	// oneValue assumes "one value qualifes", and is used as a lower bound.
+	// oneValue assumes "one value qualifies", and is used as a lower bound.
 	// outOfRangeBetweenRate (100) avoids an artificially low NDV.
 	// TODO: If we have a large number of added rows, the NDV maybe underestimated.
 	histNDV = max(histNDV, int64(outOfRangeBetweenRate))
@@ -1255,7 +1265,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Update maxTotalPercent for entirelyOutOfRange cases
 	// This is currently limited to datetime datatype, since it's the most
 	// likely to be affected by time decay.
-	if entirelyOutOfRange && lDatum.Kind() == types.KindMinNotNull {
+	if entirelyOutOfRange && lDatum.Kind() == types.KindMysqlTime {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// For max estimate, use the sum (not average) to account for worst case
 		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 1.0)
@@ -1264,7 +1274,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Always apply maxTotalPercent to maxAddedRows (matching old behavior where addedRows was always scaled)
 	maxAddedRows *= maxTotalPercent
 
-	// Step 9: Evaluate the skew ratio to determine it's impact on the returned estimate.
+	// Step 9: Evaluate the skew ratio to determine its impact on the returned estimate.
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 	result = CalculateSkewRatioCounts(estRows, maxAddedRows, skewRatio)

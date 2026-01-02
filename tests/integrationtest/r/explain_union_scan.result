@@ -17,14 +17,14 @@ Limit	root		offset:0, count:10
 └─HashJoin	root		left outer join, left side:Limit, equal:[eq(explain_union_scan.city.province_id, explain_union_scan.city.province_id)]
   ├─Limit(Build)	root		offset:0, count:10
   │ └─IndexJoin	root		inner join, inner:UnionScan, outer key:explain_union_scan.city.id, inner key:explain_union_scan.city.id, equal cond:eq(explain_union_scan.city.id, explain_union_scan.city.id)
-  │   ├─UnionScan(Build)	root		
-  │   │ └─TableReader	root		data:TableFullScan
-  │   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false
-  │   └─UnionScan(Probe)	root		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
+  │   ├─UnionScan(Build)	root		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
+  │   │ └─TableReader	root		data:Selection
+  │   │   └─Selection	cop[tikv]		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
+  │   │     └─TableFullScan	cop[tikv]	table:t1	keep order:false
+  │   └─UnionScan(Probe)	root		
   │     └─IndexLookUp	root		
-  │       ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:PRIMARY(id)	range: decided by [eq(explain_union_scan.city.id, explain_union_scan.city.id)], keep order:false
-  │       └─Selection(Probe)	cop[tikv]		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
-  │         └─TableRowIDScan	cop[tikv]	table:t1	keep order:false
+  │       ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:PRIMARY(id)	range: decided by [eq(explain_union_scan.city.id, explain_union_scan.city.id)], keep order:false
+  │       └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false
   └─UnionScan(Probe)	root		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100), not(isnull(explain_union_scan.city.province_id))
     └─TableReader	root		data:Selection
       └─Selection	cop[tikv]		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100), not(isnull(explain_union_scan.city.province_id))
