@@ -241,6 +241,132 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	}
 }
 
+func TestOutOfRangeEstimationForTimeDecay(t *testing.T) {
+	// Goal of this test is to demonstrate the time decay effect
+	// the estimated result. The count should be decreasing over time,
+	// and the maximum estimate should stay relatively constant.
+	// The estimate should also get to a point where it no longer declines.
+	// Create mock table info
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeDatetime),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: -1,
+					},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Create mock statistics table with 3000 rows
+	statsTbl := mockStatsTable(tblInfo, 3000)
+
+	// Generate mock histogram data for column 'a' with datetime values
+	// Base date: 2020-01-01, generate 600 days (from day 0 to day 599)
+	// Then adjust to start from day 300 (2020-10-27) to day 899 (2022-06-19)
+	baseDate := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	colValues := generateDateTimeDatum(600, baseDate)
+
+	// Adjust the values to be in range starting from day 300
+	for i := range colValues {
+		dt := baseDate.AddDate(0, 0, i+300)
+		timeVal := types.NewTime(types.FromGoTime(dt), mysql.TypeDatetime, types.DefaultFsp)
+		colValues[i] = types.NewTimeDatum(timeVal)
+	}
+
+	// Create column statistics with uniform distribution
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeDatetime)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
+	sctx := mock.NewContext()
+
+	// Test a specific range first - should be out of range
+	// Date after the histogram range: 2022-06-20 (day 900)
+	testDate := baseDate.AddDate(0, 0, 900)
+	countEst, err := getColumnRowCount(sctx, col, getDateTimeRange(testDate, testDate), statsTbl.RealtimeCount, 0, false)
+	require.NoError(t, err)
+	count := countEst.Est
+	// Because the mock data is uniform distribution, the result should be predictable
+	require.Truef(t, count < 5.5, "expected: around 5.0, got: %v", count)
+	require.Truef(t, count > 4.5, "expected: around 5.0, got: %v", count)
+
+	// Check MinEst and MaxEst bounds for out-of-range case
+	require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for out-of-range case, MinEst: %v, Est: %v", countEst.MinEst, countEst.Est)
+	require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for out-of-range case, MaxEst: %v, Est: %v", countEst.MaxEst, countEst.Est)
+	require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for out-of-range case, got: %v", countEst.MinEst)
+	require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for out-of-range case, MaxEst: %v, MinEst: %v", countEst.MaxEst, countEst.MinEst)
+
+	var input []struct {
+		Start string // Date string like "2020-01-01 00:00:00"
+		End   string // Date string like "2020-01-01 00:00:00"
+	}
+	var output []struct {
+		Start  string
+		End    string
+		Count  float64
+		MinEst float64
+		MaxEst float64
+	}
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+
+	// Use the mock table row count
+	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
+	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
+
+	// Parse date string format: "2006-01-02 15:04:05"
+	dateLayout := "2006-01-02 15:04:05"
+	for i, ran := range input {
+		startDate, err := time.Parse(dateLayout, ran.Start)
+		require.NoError(t, err, "Failed to parse start date: %s", ran.Start)
+		endDate, err := time.Parse(dateLayout, ran.End)
+		require.NoError(t, err, "Failed to parse end date: %s", ran.End)
+
+		countEst, err = getColumnRowCount(sctx, col, getDateTimeRange(startDate, endDate), increasedTblRowCount, modifyCount, false)
+		count = countEst.Est
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].Count = math.Round(count)            // Round to nearest whole number
+			output[i].MinEst = math.Round(countEst.MinEst) // Round to nearest whole number
+			output[i].MaxEst = math.Round(countEst.MaxEst) // Round to nearest whole number
+		})
+		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+
+		// Check MinEst and MaxEst bounds
+		require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for [%v, %v], MinEst: %v, Est: %v", ran.Start, ran.End, countEst.MinEst, countEst.Est)
+		require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for [%v, %v], MaxEst: %v, Est: %v", ran.Start, ran.End, countEst.MaxEst, countEst.Est)
+		require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for [%v, %v], got: %v", ran.Start, ran.End, countEst.MinEst)
+		require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for [%v, %v], MaxEst: %v, MinEst: %v", ran.Start, ran.End, countEst.MaxEst, countEst.MinEst)
+	}
+}
+
 // TestRiskRangeSkewRatio tests that tidb_opt_risk_range_skew_ratio affects cardinality estimation
 // for out-of-range queries. When the ratio is increased, the estimated count should be higher.
 // This test specifically uses out-of-range queries where MaxEst > Est is expected.
@@ -1143,6 +1269,30 @@ func getRange(start, end int64) ranger.Ranges {
 	ran := &ranger.Range{
 		LowVal:    []types.Datum{types.NewIntDatum(start)},
 		HighVal:   []types.Datum{types.NewIntDatum(end)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	return []*ranger.Range{ran}
+}
+
+// generateDateTimeDatum generates a slice of datetime datums starting from a base date.
+// num specifies how many datums to generate, each separated by one day.
+func generateDateTimeDatum(num int, baseDate time.Time) []types.Datum {
+	ret := make([]types.Datum, num)
+	for i := range num {
+		dt := baseDate.AddDate(0, 0, i)
+		timeVal := types.NewTime(types.FromGoTime(dt), mysql.TypeDatetime, types.DefaultFsp)
+		ret[i] = types.NewTimeDatum(timeVal)
+	}
+	return ret
+}
+
+// getDateTimeRange creates a ranger.Ranges for datetime values.
+func getDateTimeRange(start, end time.Time) ranger.Ranges {
+	startTime := types.NewTime(types.FromGoTime(start), mysql.TypeDatetime, types.DefaultFsp)
+	endTime := types.NewTime(types.FromGoTime(end), mysql.TypeDatetime, types.DefaultFsp)
+	ran := &ranger.Range{
+		LowVal:    []types.Datum{types.NewTimeDatum(startTime)},
+		HighVal:   []types.Datum{types.NewTimeDatum(endTime)},
 		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 	return []*ranger.Range{ran}

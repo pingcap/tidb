@@ -171,6 +171,123 @@
     ]
   },
   {
+    "Name": "TestOutOfRangeEstimationForTimeDecay",
+    "Cases": [
+      {
+        "Start": "2020-01-01 00:00:00",
+        "End": "2025-01-01 00:00:00",
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
+      },
+      {
+        "Start": "2023-01-01 00:00:00",
+        "End": "2023-02-01 00:00:00",
+        "Count": 33,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-02-01 00:00:00",
+        "End": "2023-03-01 00:00:00",
+        "Count": 28,
+        "MinEst": 9,
+        "MaxEst": 144
+      },
+      {
+        "Start": "2023-03-01 00:00:00",
+        "End": "2023-04-01 00:00:00",
+        "Count": 29,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-04-01 00:00:00",
+        "End": "2023-05-01 00:00:00",
+        "Count": 26,
+        "MinEst": 9,
+        "MaxEst": 154
+      },
+      {
+        "Start": "2023-05-01 00:00:00",
+        "End": "2023-06-01 00:00:00",
+        "Count": 25,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-06-01 00:00:00",
+        "End": "2023-07-01 00:00:00",
+        "Count": 22,
+        "MinEst": 9,
+        "MaxEst": 154
+      },
+      {
+        "Start": "2023-07-01 00:00:00",
+        "End": "2023-08-01 00:00:00",
+        "Count": 21,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-08-01 00:00:00",
+        "End": "2023-09-01 00:00:00",
+        "Count": 19,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-09-01 00:00:00",
+        "End": "2023-10-01 00:00:00",
+        "Count": 17,
+        "MinEst": 9,
+        "MaxEst": 154
+      },
+      {
+        "Start": "2023-10-01 00:00:00",
+        "End": "2023-11-01 00:00:00",
+        "Count": 15,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-11-01 00:00:00",
+        "End": "2023-12-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 154
+      },
+      {
+        "Start": "2023-12-01 00:00:00",
+        "End": "2024-01-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2024-01-01 00:00:00",
+        "End": "2024-02-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2024-02-01 00:00:00",
+        "End": "2024-03-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 149
+      },
+      {
+        "Start": "2024-03-01 00:00:00",
+        "End": "2024-04-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 159
+      }
+    ]
+  },
+  {
     "Name": "TestOutOfRangeEstimationAfterDelete",
     "Cases": [
       {
@@ -1083,9 +1200,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 1.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  lt(test.t.d, 9950)",
-          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 1.01 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1228,9 +1345,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 1.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  lt(test.t.d, 9950)",
-          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 1.01 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1253,7 +1370,7 @@
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─TableReader 1.00 root  data:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─Selection 99510.00 cop[tikv]  lt(test.t.d, 9950)",
+          "    └─Selection 99500.00 cop[tikv]  lt(test.t.d, 9950)",
           "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
