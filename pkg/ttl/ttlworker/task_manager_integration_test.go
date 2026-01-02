@@ -65,13 +65,14 @@ func TestParallelLockNewTask(t *testing.T) {
 	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "test-id", store)
 
 	// insert and lock a new task
-	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", cache.TTLJobTypeTTL, testTable.Meta().ID, 1, nil, nil, now, now)
 	require.NoError(t, err)
 	_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
 	require.NoError(t, err)
 	_, err = m.LockScanTask(se, &cache.TTLTask{
 		ScanID:  1,
 		JobID:   "test-job",
+		JobType: cache.TTLJobTypeTTL,
 		TableID: testTable.Meta().ID,
 	}, now)
 	require.NoError(t, err)
@@ -88,7 +89,7 @@ func TestParallelLockNewTask(t *testing.T) {
 	testStart := time.Now()
 	for time.Since(testStart) < testDuration {
 		now := se.Now()
-		sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
+		sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", cache.TTLJobTypeTTL, testTable.Meta().ID, 1, nil, nil, now, now)
 		require.NoError(t, err)
 		_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
 		require.NoError(t, err)

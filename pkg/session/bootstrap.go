@@ -539,6 +539,7 @@ const (
 	// CreateTiDBTTLTaskTable is a table about parallel ttl tasks
 	CreateTiDBTTLTaskTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_task (
 		job_id varchar(64) NOT NULL,
+		job_type varchar(32) NOT NULL DEFAULT 'ttl',
 		table_id bigint(64) NOT NULL,
 		scan_id int NOT NULL,
 		scan_range_start BLOB,
@@ -552,11 +553,13 @@ const (
 		state text,
 		created_time timestamp NOT NULL,
 		primary key(job_id, scan_id),
+		key idx_job_type (job_type),
 		key(created_time));`
 
 	// CreateTiDBTTLJobHistoryTable is a table that stores ttl job's history
 	CreateTiDBTTLJobHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
 		job_id varchar(64) PRIMARY KEY,
+		job_type varchar(32) NOT NULL DEFAULT 'ttl',
 		table_id bigint(64) NOT NULL,
         parent_table_id bigint(64) NOT NULL,
     	table_schema varchar(64) NOT NULL,
@@ -574,6 +577,26 @@ const (
     	key(parent_table_id, create_time),
     	key(create_time)
 	);`
+
+	// CreateTiDBSoftDeleteTableStatusTable is a table about softdelete job schedule
+	CreateTiDBSoftDeleteTableStatusTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_softdelete_table_status (
+		table_id bigint(64) PRIMARY KEY,
+		parent_table_id bigint(64),
+		table_statistics text DEFAULT NULL,
+		last_job_id varchar(64) DEFAULT NULL,
+		last_job_start_time timestamp NULL DEFAULT NULL,
+		last_job_finish_time timestamp NULL DEFAULT NULL,
+		last_job_ttl_expire timestamp NULL DEFAULT NULL,
+		last_job_summary text DEFAULT NULL,
+		current_job_id varchar(64) DEFAULT NULL,
+		current_job_owner_id varchar(64) DEFAULT NULL,
+		current_job_owner_addr varchar(256) DEFAULT NULL,
+		current_job_owner_hb_time timestamp,
+		current_job_start_time timestamp NULL DEFAULT NULL,
+		current_job_ttl_expire timestamp NULL DEFAULT NULL,
+		current_job_state text DEFAULT NULL,
+		current_job_status varchar(64) DEFAULT NULL,
+		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 
 	// CreateTiDBGlobalTaskTable is a table about global task.
 	CreateTiDBGlobalTaskTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
@@ -1154,6 +1177,7 @@ var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.TiDBTTLTableStatusTableID, Name: "tidb_ttl_table_status", SQL: CreateTiDBTTLTableStatusTable},
 	{ID: metadef.TiDBTTLTaskTableID, Name: "tidb_ttl_task", SQL: CreateTiDBTTLTaskTable},
 	{ID: metadef.TiDBTTLJobHistoryTableID, Name: "tidb_ttl_job_history", SQL: CreateTiDBTTLJobHistoryTable},
+	{ID: metadef.TiDBSoftDeleteTableStatusTableID, Name: "tidb_softdelete_table_status", SQL: CreateTiDBSoftDeleteTableStatusTable},
 	{ID: metadef.TiDBGlobalTaskTableID, Name: "tidb_global_task", SQL: CreateTiDBGlobalTaskTable},
 	{ID: metadef.TiDBGlobalTaskHistoryTableID, Name: "tidb_global_task_history", SQL: CreateTiDBGlobalTaskHistoryTable},
 	{ID: metadef.TiDBImportJobsTableID, Name: "tidb_import_jobs", SQL: CreateTiDBImportJobsTable},
@@ -1179,14 +1203,14 @@ type versionedBootstrapSchema struct {
 }
 
 const (
-	// 52 is the number of system tables as we do this change.
+	// 53 is the number of system tables as we do this change.
 	// as tablesInSystemDatabase is shared with classic kernel, it's simple to
 	// use a slice to hold all system tables in classic kernel. but in nextgen,
 	// we need to make those tables versioned, as we don't create system tables
 	// through DDL, we need this version to avoid create tables again.
 	// if we add more system tables later, we should increase the version, and
 	// add another versionedBootstrapSchema entry.
-	tableCountInFirstVerOnNextGen = 52
+	tableCountInFirstVerOnNextGen = 53
 )
 
 // used in nextgen, to create system tables directly through meta kv, without

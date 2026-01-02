@@ -110,6 +110,7 @@ func (l *defaultDelRateLimiter) reset() (newLimit int64) {
 type ttlDeleteTask struct {
 	jobID      string
 	scanID     int64
+	jobType    cache.TTLJobType
 	tbl        *cache.PhysicalTable
 	expire     time.Time
 	rows       [][]types.Datum
@@ -137,7 +138,15 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		}
 	}()
 
-	se := newTableSession(rawSe, t.tbl, t.expire)
+	se, err := newTableSession(rawSe, t.tbl, t.expire, t.jobType)
+	if err != nil {
+		t.statistics.IncErrorRows(len(leftRows))
+		t.taskLogger(logutil.Logger(ctx)).Warn(
+			"create ttl table session failed",
+			zap.Error(err),
+		)
+		return
+	}
 	for len(leftRows) > 0 && ctx.Err() == nil {
 		maxBatch := vardef.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
@@ -149,7 +158,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			leftRows = leftRows[maxBatch:]
 		}
 
-		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, delBatch, t.expire)
+		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, t.jobType, delBatch, t.expire)
 		if err != nil {
 			t.statistics.IncErrorRows(len(delBatch))
 			t.taskLogger(logutil.Logger(ctx)).Warn(

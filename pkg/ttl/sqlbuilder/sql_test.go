@@ -45,7 +45,7 @@ func TestEscape(t *testing.T) {
 		KeyColumns: []*model.ColumnInfo{
 			{Name: ast.NewCIStr("col1\"';123`456"), FieldType: *types.NewFieldType(mysql.TypeString)},
 		},
-		TimeColumn: &model.ColumnInfo{
+		TTLTimeColumn: &model.ColumnInfo{
 			Name:      ast.NewCIStr("time\"';123`456"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
@@ -55,8 +55,8 @@ func TestEscape(t *testing.T) {
 	}
 
 	buildSelect := func(d []types.Datum) string {
-		b := sqlbuilder.NewSQLBuilder(tb)
-		require.NoError(t, b.WriteSelect())
+		b := sqlbuilder.NewSQLBuilder(tb, cache.TTLJobTypeTTL)
+		require.NoError(t, b.WriteSelectColumns(tb.KeyColumns))
 		require.NoError(t, b.WriteCommonCondition(tb.KeyColumns, ">", d))
 		require.NoError(t, b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 		s, err := b.Build()
@@ -65,7 +65,7 @@ func TestEscape(t *testing.T) {
 	}
 
 	buildDelete := func(ds ...[]types.Datum) string {
-		b := sqlbuilder.NewSQLBuilder(tb)
+		b := sqlbuilder.NewSQLBuilder(tb, cache.TTLJobTypeTTL)
 		require.NoError(t, b.WriteDelete())
 		require.NoError(t, b.WriteInCondition(tb.KeyColumns, ds...))
 		require.NoError(t, b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -155,7 +155,7 @@ func TestEscape(t *testing.T) {
 		require.Equal(t, 1, len(tbName.PartitionNames))
 		require.Equal(t, tb.PartitionDef.Name.O, tbName.PartitionNames[0].O)
 		require.Equal(t, tb.KeyColumns[0].Name.O, keyColumnName)
-		require.Equal(t, tb.TimeColumn.Name.O, timeColumnName)
+		require.Equal(t, tb.TTLTimeColumn.Name.O, timeColumnName)
 		for i, row := range c.ds {
 			require.Equal(t, row[0].GetString(), values[i])
 		}
@@ -389,6 +389,71 @@ func TestFormatSQLDatum(t *testing.T) {
 	}
 }
 
+func TestSoftDeleteScanQueryGeneratorPaging(t *testing.T) {
+	idCol := &model.ColumnInfo{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLonglong), State: model.StatePublic, Offset: 1}
+	timeCol := model.NewExtraSoftDeleteTimeColInfo()
+	timeCol.State = model.StatePublic
+	timeCol.Offset = 0
+	tbl := &cache.PhysicalTable{
+		Schema: ast.NewCIStr("test"),
+		TableInfo: &model.TableInfo{
+			Name:    ast.NewCIStr("t"),
+			Columns: []*model.ColumnInfo{timeCol, idCol},
+		},
+		KeyColumns:           []*model.ColumnInfo{idCol},
+		KeyColumnTypes:       []*types.FieldType{&idCol.FieldType},
+		SoftDeleteTimeColumn: timeCol,
+	}
+
+	expire := time.Unix(100, 0).In(time.UTC)
+	g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeSoftDelete, tbl, expire, nil, nil)
+	require.NoError(t, err)
+
+	// first batch
+	sql1, err := g.NextSQL(nil, 2)
+	require.NoError(t, err)
+	require.Contains(t, sql1, "ORDER BY `id` ASC")
+	require.Contains(t, sql1, "LIMIT 2")
+
+	// full batch, should continue and include continuation key
+	row1 := []types.Datum{types.NewDatum(int64(10))}
+	row2 := []types.Datum{types.NewDatum(int64(20))}
+	sql2, err := g.NextSQL([][]types.Datum{row1, row2}, 2)
+	require.NoError(t, err)
+	require.Contains(t, sql2, "`_tidb_softdelete_time` < FROM_UNIXTIME(100)")
+	require.Contains(t, sql2, "WHERE `id` >")
+
+	// last batch is smaller than limit, generator should be exhausted
+	row3 := []types.Datum{types.NewDatum(int64(30))}
+	sql3, err := g.NextSQL([][]types.Datum{row3}, 2)
+	require.NoError(t, err)
+	require.Equal(t, "", sql3)
+}
+
+func TestSoftDeleteCleanupSQL(t *testing.T) {
+	idCol := &model.ColumnInfo{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLonglong), State: model.StatePublic, Offset: 1}
+	timeCol := model.NewExtraSoftDeleteTimeColInfo()
+	timeCol.State = model.StatePublic
+	timeCol.Offset = 0
+	tbl := &cache.PhysicalTable{
+		Schema: ast.NewCIStr("test"),
+		TableInfo: &model.TableInfo{
+			Name:    ast.NewCIStr("t"),
+			Columns: []*model.ColumnInfo{timeCol, idCol},
+		},
+		KeyColumns:           []*model.ColumnInfo{idCol},
+		KeyColumnTypes:       []*types.FieldType{&idCol.FieldType},
+		SoftDeleteTimeColumn: timeCol,
+	}
+
+	expire := time.Unix(100, 0).In(time.UTC)
+	sql, err := sqlbuilder.BuildDeleteSQL(tbl, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire)
+	require.NoError(t, err)
+	require.Contains(t, sql, "DELETE LOW_PRIORITY FROM `test`.`t`")
+	require.Contains(t, sql, "WHERE `id` IN (1)")
+	require.Contains(t, sql, "AND `_tidb_softdelete_time` < FROM_UNIXTIME(100)")
+}
+
 func TestSQLBuilder(t *testing.T) {
 	must := func(err error) {
 		require.NoError(t, err)
@@ -410,7 +475,7 @@ func TestSQLBuilder(t *testing.T) {
 		KeyColumns: []*model.ColumnInfo{
 			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
-		TimeColumn: &model.ColumnInfo{
+		TTLTimeColumn: &model.ColumnInfo{
 			Name:      ast.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
@@ -425,7 +490,7 @@ func TestSQLBuilder(t *testing.T) {
 			{Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 			{Name: ast.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
-		TimeColumn: &model.ColumnInfo{
+		TTLTimeColumn: &model.ColumnInfo{
 			Name:      ast.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
@@ -436,66 +501,66 @@ func TestSQLBuilder(t *testing.T) {
 		TableInfo: &model.TableInfo{
 			Name: ast.NewCIStr("tp"),
 		},
-		KeyColumns: t1.KeyColumns,
-		TimeColumn: t1.TimeColumn,
+		KeyColumns:    t1.KeyColumns,
+		TTLTimeColumn: t1.TTLTimeColumn,
 		PartitionDef: &model.PartitionDefinition{
 			Name: ast.NewCIStr("p1"),
 		},
 	}
 
 	// test build select queries
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1`")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1'")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("c3")))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1' AND `id` <= 'c3'")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	shLoc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(shLoc)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("c3")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1' AND `id` <= 'c3' AND `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteOrderBy(t1.KeyColumns, false))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` ORDER BY `id` ASC")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteOrderBy(t1.KeyColumns, true))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` ORDER BY `id` DESC")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteOrderBy(t1.KeyColumns, false))
 	must(b.WriteLimit(128))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` ORDER BY `id` ASC LIMIT 128")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("';``~?%\"\n")))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > '\\';``~?%\\\"\\n'")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1';'")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("a2\"")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -503,21 +568,21 @@ func TestSQLBuilder(t *testing.T) {
 	must(b.WriteLimit(128))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1\\';\\'' AND `id` <= 'a2\\\"' AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 128")
 
-	b = sqlbuilder.NewSQLBuilder(t2)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t2, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t2.KeyColumns))
 	must(b.WriteCommonCondition(t2.KeyColumns, ">", d("x1", 20)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE (`a`, `b`) > ('x1', 20)")
 
-	b = sqlbuilder.NewSQLBuilder(t2)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t2, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t2.KeyColumns))
 	must(b.WriteCommonCondition(t2.KeyColumns, "<=", d("x2", 21)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteOrderBy(t2.KeyColumns, false))
 	must(b.WriteLimit(100))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE (`a`, `b`) <= ('x2', 21) AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b` ASC LIMIT 100")
 
-	b = sqlbuilder.NewSQLBuilder(t2)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(t2, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(t2.KeyColumns))
 	must(b.WriteCommonCondition(t2.KeyColumns[0:1], "=", d("x3")))
 	must(b.WriteCommonCondition(t2.KeyColumns[1:2], ">", d(31)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -526,51 +591,51 @@ func TestSQLBuilder(t *testing.T) {
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE `a` = 'x3' AND `b` > 31 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b` ASC LIMIT 100")
 
 	// test build delete queries
-	b = sqlbuilder.NewSQLBuilder(t1)
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	_, err = b.Build()
 	require.EqualError(t, err, "expire condition not write")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t1.KeyColumns, d("a")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN ('a') AND `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t1.KeyColumns, d("a"), d("b")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN ('a', 'b') AND `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t2.KeyColumns, d("a", 1)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteLimit(100))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1)) AND `time` < FROM_UNIXTIME(0) LIMIT 100")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t2.KeyColumns, d("a", 1), d("b", 2)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteLimit(100))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1), ('b', 2)) AND `time` < FROM_UNIXTIME(0) LIMIT 100")
 
-	b = sqlbuilder.NewSQLBuilder(t1)
+	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t2.KeyColumns, d("a", 1), d("b", 2)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1), ('b', 2)) AND `time` < FROM_UNIXTIME(0)")
 
 	// test select partition table
-	b = sqlbuilder.NewSQLBuilder(tp)
-	must(b.WriteSelect())
+	b = sqlbuilder.NewSQLBuilder(tp, cache.TTLJobTypeTTL)
+	must(b.WriteSelectColumns(tp.KeyColumns))
 	must(b.WriteCommonCondition(tp.KeyColumns, ">", d("a1")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` > 'a1' AND `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(tp)
+	b = sqlbuilder.NewSQLBuilder(tp, cache.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(tp.KeyColumns, d("a"), d("b")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -586,7 +651,7 @@ func TestScanQueryGenerator(t *testing.T) {
 		KeyColumns: []*model.ColumnInfo{
 			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
-		TimeColumn: &model.ColumnInfo{
+		TTLTimeColumn: &model.ColumnInfo{
 			Name:      ast.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
@@ -602,7 +667,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			{Name: ast.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 			{Name: ast.NewCIStr("c"), FieldType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).Build()},
 		},
-		TimeColumn: &model.ColumnInfo{
+		TTLTimeColumn: &model.ColumnInfo{
 			Name:      ast.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
@@ -838,7 +903,7 @@ func TestScanQueryGenerator(t *testing.T) {
 	}
 
 	for i, c := range cases {
-		g, err := sqlbuilder.NewScanQueryGenerator(c.tbl, c.expire, c.rangeStart, c.rangeEnd)
+		g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeTTL, c.tbl, c.expire, c.rangeStart, c.rangeEnd)
 		require.NoError(t, err, fmt.Sprintf("%d", i))
 		for j, p := range c.path {
 			msg := fmt.Sprintf("%d-%d", i, j)
@@ -870,7 +935,7 @@ func TestBuildDeleteSQL(t *testing.T) {
 		KeyColumns: []*model.ColumnInfo{
 			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
-		TimeColumn: &model.ColumnInfo{
+		TTLTimeColumn: &model.ColumnInfo{
 			Name:      ast.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
@@ -885,7 +950,7 @@ func TestBuildDeleteSQL(t *testing.T) {
 			{Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 			{Name: ast.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
-		TimeColumn: &model.ColumnInfo{
+		TTLTimeColumn: &model.ColumnInfo{
 			Name:      ast.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
@@ -924,7 +989,7 @@ func TestBuildDeleteSQL(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		sql, err := sqlbuilder.BuildDeleteSQL(c.tbl, c.rows, c.expire)
+		sql, err := sqlbuilder.BuildDeleteSQL(c.tbl, cache.TTLJobTypeTTL, c.rows, c.expire)
 		require.NoError(t, err)
 		require.Equal(t, c.sql, sql)
 	}
