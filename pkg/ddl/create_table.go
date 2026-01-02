@@ -1315,6 +1315,43 @@ func BuildTableInfo(
 		existedColsMap[v.Name.L] = struct{}{}
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
+
+	// Pre-scan constraints to determine table clustering before building indexes.
+	// This ensures HasClusteredIndex() returns the correct value when building global indexes.
+	for _, constr := range constraints {
+		if constr.Tp == ast.ConstraintPrimaryKey {
+			var isSingleIntPK bool
+
+			// Check if it's a simple single-column (non-expression) PK
+			if len(constr.Keys) == 1 && constr.Keys[0].Expr == nil {
+				// Find the column
+				colName := constr.Keys[0].Column.Name.L
+				for _, col := range tbInfo.Columns {
+					if col.Name.L == colName {
+						// Check if it's a single integer column
+						switch col.GetType() {
+						case mysql.TypeLong, mysql.TypeLonglong,
+							mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+							isSingleIntPK = true
+						}
+						break
+					}
+				}
+			}
+			// Expression-based or multi-column PKs: isSingleIntPK remains false
+
+			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
+				if isSingleIntPK {
+					tbInfo.PKIsHandle = true
+				} else {
+					tbInfo.IsCommonHandle = true
+					tbInfo.CommonHandleVersion = 1
+				}
+			}
+			break // Only one PRIMARY KEY possible
+		}
+	}
+
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
 		if constr.Tp != ast.ConstraintColumnar {
