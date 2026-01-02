@@ -256,12 +256,12 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
 		return
 	}
-	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), col)
+	tb, err := cache.NewPhysicalTable(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), true, false)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
-	generator, err := sqlbuilder.NewScanQueryGenerator(tb, expiredTime, nil, nil)
+	generator, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeTTL, tb, expiredTime, nil, nil)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -295,7 +295,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 				endIndex = len(leftRows)
 			}
 			delBatch := leftRows[startIndex:endIndex]
-			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
+			sql, err := sqlbuilder.BuildDeleteSQL(tb, cache.TTLJobTypeTTL, delBatch, expiredTime)
 			if err != nil {
 				logutil.BgLogger().Error(
 					"build delete SQL failed when deleting system table",

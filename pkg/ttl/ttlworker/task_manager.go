@@ -327,6 +327,7 @@ loop:
 	for _, t := range tasks {
 		logger := logutil.Logger(m.ctx).With(
 			zap.String("jobID", t.JobID),
+			zap.String("jobType", string(t.JobType)),
 			zap.Int64("scanID", t.ScanID),
 			zap.Int64("tableID", t.TableID),
 		)

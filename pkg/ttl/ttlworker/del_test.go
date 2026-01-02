@@ -38,6 +38,7 @@ func newMockDeleteTask(tbl *cache.PhysicalTable, rows [][]types.Datum, expire ti
 	task := &ttlDeleteTask{
 		tbl:        tbl,
 		expire:     expire,
+		jobType:    cache.TTLJobTypeTTL,
 		rows:       rows,
 		statistics: &ttlStatistics{},
 	}

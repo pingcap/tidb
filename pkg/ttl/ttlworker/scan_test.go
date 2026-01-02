@@ -156,6 +156,7 @@ func TestScanWorkerSchedule(t *testing.T) {
 		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
+			JobType:    cache.TTLJobTypeTTL,
 			ExpireTime: time.UnixMilli(0),
 		},
 		statistics: &ttlStatistics{},
@@ -206,6 +207,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
+			JobType:    cache.TTLJobTypeTTL,
 			ExpireTime: time.UnixMilli(0),
 		},
 		statistics: &ttlStatistics{},
@@ -248,6 +250,7 @@ func TestScanResultWhenWorkerStop(t *testing.T) {
 		TTLTask:    &cache.TTLTask{},
 		statistics: &ttlStatistics{},
 	}
+	task.TTLTask.JobType = cache.TTLJobTypeTTL
 	require.NoError(t, w.Schedule(task))
 	select {
 	case <-executeCh:
@@ -285,6 +288,7 @@ func newMockScanTask(t *testing.T, sqlCnt int) *mockScanTask {
 			ctx: context.Background(),
 			tbl: tbl,
 			TTLTask: &cache.TTLTask{
+				JobType:        cache.TTLJobTypeTTL,
 				ExpireTime:     time.UnixMilli(0),
 				ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
 			},
@@ -479,6 +483,7 @@ func TestScanTaskCheck(t *testing.T) {
 	task := &ttlScanTask{
 		ctx: ctx,
 		TTLTask: &cache.TTLTask{
+			JobType:    cache.TTLJobTypeTTL,
 			ExpireTime: time.Unix(101, 0).Add(time.Minute),
 		},
 		tbl:        tbl,
@@ -495,6 +500,7 @@ func TestScanTaskCheck(t *testing.T) {
 	task = &ttlScanTask{
 		ctx: ctx,
 		TTLTask: &cache.TTLTask{
+			JobType:    cache.TTLJobTypeTTL,
 			ExpireTime: time.Unix(100, 0).Add(time.Minute),
 		},
 		tbl:        tbl,
@@ -512,6 +518,7 @@ func TestScanTaskCancelStmt(t *testing.T) {
 		ctx: context.Background(),
 		tbl: newMockTTLTbl(t, "t1"),
 		TTLTask: &cache.TTLTask{
+			JobType:        cache.TTLJobTypeTTL,
 			ExpireTime:     time.UnixMilli(0),
 			ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
 		},
