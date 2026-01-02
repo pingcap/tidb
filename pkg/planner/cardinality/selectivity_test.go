@@ -898,7 +898,7 @@ func TestSelectivity(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
 	require.NoError(t, err)
-	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.3")
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
 		longExpr += fmt.Sprintf(" and a > %d ", i)
@@ -907,51 +907,71 @@ func TestSelectivity(t *testing.T) {
 		exprs                    string
 		selectivity              float64
 		selectivityAfterIncrease float64
+		rowEstimate              float64
+		rowEstimateAfterIncrease float64
 	}{
 		{
 			exprs:                    "a > 0 and a < 2",
 			selectivity:              0.01851851851,
 			selectivityAfterIncrease: 0.01851851851,
+			rowEstimate:              10.0,  // 0.01851851851 * 540
+			rowEstimateAfterIncrease: 100.0, // 0.01851851851 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and a < 2",
 			selectivity:              0.01851851851,
 			selectivityAfterIncrease: 0.01851851851,
+			rowEstimate:              10.0,  // 0.01851851851 * 540
+			rowEstimateAfterIncrease: 100.0, // 0.01851851851 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
 			selectivity:              0.018017832647462276,
 			selectivityAfterIncrease: 0.018518518518518517,
+			rowEstimate:              9.729629629629629, // 0.018017832647462276 * 540
+			rowEstimateAfterIncrease: 100.0,             // 0.018518518518518517 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
 			selectivity:              0.006358024691358024,
 			selectivityAfterIncrease: 0.0061913580246913584,
+			rowEstimate:              3.433333333333333, // 0.006358024691358024 * 540
+			rowEstimateAfterIncrease: 33.43333333333333, // 0.0061913580246913584 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
 			selectivity:              0.012530864197530862,
 			selectivityAfterIncrease: 0.012364197530864197,
+			rowEstimate:              6.766666666666666, // 0.012530864197530862 * 540
+			rowEstimateAfterIncrease: 66.76666666666666, // 0.012364197530864197 * 5400
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
 			selectivity:              0.11111111111,
 			selectivityAfterIncrease: 0.11111111111,
+			rowEstimate:              60.0,  // 0.11111111111 * 540
+			rowEstimateAfterIncrease: 600.0, // 0.11111111111 * 5400
 		},
 		{
 			exprs:                    "b > 1",
 			selectivity:              0.9729629629629629,
 			selectivityAfterIncrease: 1,
+			rowEstimate:              525.4,  // 0.9729629629629629 * 540
+			rowEstimateAfterIncrease: 5400.0, // 1 * 5400
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              0.001851851851851852,
-			selectivityAfterIncrease: 0.000464537037037037,
+			selectivityAfterIncrease: 0.00048753703703703714,
+			rowEstimate:              1.0,                // 0.001851851851851852 * 540
+			rowEstimateAfterIncrease: 2.6326999999999997, // 0.00048753703703703714 * 5400
 		},
 		{
 			exprs:                    longExpr,
 			selectivity:              0.001,
 			selectivityAfterIncrease: 0.001,
+			rowEstimate:              0.54, // 0.001 * 540
+			rowEstimateAfterIncrease: 5.4,  // 0.001 * 5400
 		},
 	}
 
@@ -974,16 +994,35 @@ func TestSelectivity(t *testing.T) {
 		ds := sel.Children()[0].(*logicalop.DataSource)
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo, ds.Schema().Columns)
+		originalRealtimeCount := float64(histColl.RealtimeCount)
 
 		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
 
+		// Verify row estimate: rowEstimate = selectivity * RealtimeCount
+		rowEst := ratio * originalRealtimeCount
+		require.Truef(t, math.Abs(rowEst-tt.rowEstimate) < eps*originalRealtimeCount, "for %s, rowEstimate needed: %v, got: %v", tt.exprs, tt.rowEstimate, rowEst)
+
+		// Simulate table growth: increase RealtimeCount by 10x and set ModifyCount to 90% of new count
+		// This simulates a scenario where the table has grown significantly since the last ANALYZE.
+		// Note: selectivityAfterIncrease can be lower than selectivity because:
+		// 1. Selectivity = estimated_row_count / RealtimeCount
+		// 2. When RealtimeCount increases, estimated counts are scaled by GetIncreaseFactor, but this
+		//    scaling may not be perfectly proportional, especially when new rows don't match filter conditions well
+		// 3. For multi-column conditions, selectivities are multiplied, which can amplify small differences
+		// 4. Out-of-range estimates may behave differently with large ModifyCount values
+		// 5. The floor selectivity (1/RealtimeCount) decreases as RealtimeCount increases
 		histColl.RealtimeCount *= 10
 		histColl.ModifyCount = histColl.RealtimeCount * 9
+		increasedRealtimeCount := float64(histColl.RealtimeCount)
 		ratio, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
+
+		// Verify row estimate after increase: rowEstimateAfterIncrease = selectivityAfterIncrease * (RealtimeCount * 10)
+		rowEstAfterIncrease := ratio * increasedRealtimeCount
+		require.Truef(t, math.Abs(rowEstAfterIncrease-tt.rowEstimateAfterIncrease) < eps*increasedRealtimeCount, "for %s, rowEstimateAfterIncrease needed: %v, got: %v", tt.exprs, tt.rowEstimateAfterIncrease, rowEstAfterIncrease)
 	}
 }
 

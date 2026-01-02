@@ -623,18 +623,20 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 		if sctx != nil {
 			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
-			if skewRatio > 0 {
-				// Worst case skew is if the range includes all the rows in the bucket
-				skewEstimate := hg.Buckets[bktIndexA].Count
-				if bktIndexA > 0 {
-					skewEstimate -= hg.Buckets[bktIndexA-1].Count
-				}
-				// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
-				if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
-					skewEstimate -= hg.Buckets[bktIndexA].Repeat
-				}
-				return CalculateSkewRatioCounts(rangeEst, float64(skewEstimate), skewRatio)
+			// Worst case skew is if the range includes all the rows in the bucket
+			skewEstimate := hg.Buckets[bktIndexA].Count
+			if bktIndexA > 0 {
+				skewEstimate -= hg.Buckets[bktIndexA-1].Count
 			}
+			// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
+			if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
+				skewEstimate -= hg.Buckets[bktIndexA].Repeat
+			}
+			if skewRatio > 0 {
+				// Dilute the skewRatio to avoid overestimation.
+				skewRatio = max(skewRatio*0.1, 0.05)
+			}
+			return CalculateSkewRatioCounts(rangeEst, float64(skewEstimate), skewRatio)
 		}
 	}
 	return DefaultRowEst(rangeEst)
@@ -1111,7 +1113,7 @@ func calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth float64) fl
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	realtimeRowCount, modifyCount, histNDV int64,
+	realtimeRowCount, histNDV int64,
 ) (result RowEstimate) {
 	if hg.Len() == 0 {
 		return DefaultRowEst(0)
@@ -1124,12 +1126,11 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, 0)
-	// If modifyCount is low, it may be caused by a delay in updates to modifyCount.
+	// If addedRows == zero, it may be caused by a delay in updates to modifyCount.
 	// Assume a minimum worst case of 1% of the total row count.
-	// TODO: Remove modifyCount as it provides little value here.
 	maxAddedRows := addedRows
 	onePercentChange := float64(realtimeRowCount) / outOfRangeBetweenRate
-	if addedRows == 0 || modifyCount == 0 {
+	if addedRows == 0 {
 		maxAddedRows = max(maxAddedRows, onePercentChange)
 	}
 	// If the realtime row count has decreased, it means there have been
@@ -1192,7 +1193,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// This should never happen.
 		return DefaultRowEst(0)
 	} else if predWidth == 0 {
-		// TODO: Temporarily set histInvalid=true so that we can still return a
+		// Set histInvalid=true so that we can still return a
 		// minimum of oneValue, and return the max as worst case.
 		histInvalid = true
 	}
@@ -1237,15 +1238,19 @@ func (hg *Histogram) OutOfRangeRowCount(
 			The following formula is used to recalculate the percentage of the
 			shaded area if the predicate range was close to the histogram range.
 		*/
-		// Calculate percentage assuming time decay is not present.
-		if l > histR {
-			// Predicate entirely on the right side of the histogram envelope.
-			entirelyOutOfRange = true
-			timeAdjRight = calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth)
-		} else if r < histL {
-			entirelyOutOfRange = true
-			// Predicate entirely on the left side of the histogram envelope.
-			timeAdjLeft = calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth)
+		// Time decay is limited to datetime datatype, since it's the most
+		// likely to be affected by time decay.
+		if lDatum.Kind() == types.KindMysqlTime {
+			// Calculate percentage assuming time decay is not present.
+			if l > histR {
+				// Predicate entirely on the right side of the histogram envelope.
+				entirelyOutOfRange = true
+				timeAdjRight = calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth)
+			} else if r < histL {
+				// Predicate entirely on the left side of the histogram envelope.
+				entirelyOutOfRange = true
+				timeAdjLeft = calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth)
+			}
 		}
 	}
 
@@ -1263,9 +1268,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Update maxTotalPercent for entirelyOutOfRange cases
-	// This is currently limited to datetime datatype, since it's the most
-	// likely to be affected by time decay.
-	if entirelyOutOfRange && lDatum.Kind() == types.KindMysqlTime {
+	if entirelyOutOfRange {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// For max estimate, use the sum (not average) to account for worst case
 		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 1.0)
@@ -1277,6 +1280,11 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Step 9: Evaluate the skew ratio to determine its impact on the returned estimate.
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
+	// If the skew ratio > 0, we want to allow the ratio to scale from min to max.
+	// If the skew ratio is 0, we want to use the oneValue as the estimate.
+	if skewRatio > 0 {
+		estRows = min(estRows, oneValue)
+	}
 	result = CalculateSkewRatioCounts(estRows, maxAddedRows, skewRatio)
 	result.Est = max(result.Est, oneValue)
 	result.MinEst = 1
