@@ -95,7 +95,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		for i := range 4 * proto.MaxConcurrentTask {
 			taskKey := fmt.Sprintf("task-%03d", i)
 			taskMeta := make([]byte, *taskMetaSize)
-			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, "", 1, "", 0, taskMeta)
+			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, c.Store.GetKeyspace(), 1, "", 0, taskMeta)
 			require.NoError(c.T, err)
 		}
 		// task has 2 steps, each step has 1 subtask，wait in serial to reduce WaitTask check overhead.

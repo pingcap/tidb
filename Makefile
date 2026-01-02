@@ -360,7 +360,15 @@ tools/bin/revive:
 
 .PHONY: tools/bin/failpoint-ctl
 tools/bin/failpoint-ctl:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@9b3b6e3
+	$(eval FP_GITHASH := 9b3b6e3)
+	$(eval FP_PKG := github.com/pingcap/failpoint/failpoint-ctl)
+	$(eval FP_BIN := $(CURDIR)/tools/bin/failpoint-ctl)
+	@if [ ! -x "$(FP_BIN)" ] || [ "$$($(GO) version -m $(FP_BIN) 2>/dev/null | grep -o '$(FP_GITHASH)' || echo unknown)" != "$(FP_GITHASH)" ]; then \
+		echo "Installing $(FP_PKG)@$(FP_GITHASH)"; \
+		GOBIN=$$(pwd)/tools/bin $(GO) install $(FP_PKG)@$(FP_GITHASH) || { echo "failed to install $(FP_PKG)@$(FP_GITHASH)"; exit 1; }; \
+	else \
+		echo "Using existing $(FP_PKG)@$(FP_GITHASH)"; \
+	fi
 
 .PHONY: tools/bin/errdoc-gen
 tools/bin/errdoc-gen:
@@ -689,6 +697,7 @@ bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 .PHONY: bazel_coverage_test
 bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+		--combined_report=lcov \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
@@ -696,6 +705,7 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+		--combined_report=lcov \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...

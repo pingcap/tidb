@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -95,11 +96,15 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	}
 	bytes, err := json.Marshal(meta)
 	s.NoError(err)
+	taskKS := ""
+	if kerneltype.IsNextGen() {
+		taskKS = "user_keyspace"
+	}
 	sch := importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
-			Meta: bytes,
-		}, scheduler.Param{}),
-		store: &StoreWithoutKS{},
+			TaskBase: proto.TaskBase{Keyspace: taskKS},
+			Meta:     bytes,
+		}, scheduler.Param{TaskStore: &StoreWithKS{ks: taskKS}}),
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*importScheduler).GlobalSort)
@@ -109,12 +114,22 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	s.NoError(err)
 	sch = importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
-			Meta: bytes,
-		}, scheduler.Param{}),
-		store: &StoreWithoutKS{},
+			TaskBase: proto.TaskBase{Keyspace: taskKS},
+			Meta:     bytes,
+		}, scheduler.Param{TaskStore: &StoreWithKS{ks: taskKS}}),
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*importScheduler).GlobalSort)
+
+	if kerneltype.IsNextGen() {
+		sch = importScheduler{
+			BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
+				TaskBase: proto.TaskBase{Keyspace: taskKS},
+				Meta:     bytes,
+			}, scheduler.Param{TaskStore: &StoreWithKS{}}),
+		}
+		s.ErrorContains(sch.Init(), "store keyspace mismatch with task")
+	}
 }
 
 func (s *importIntoSuite) TestGetNextStep() {
@@ -150,6 +165,7 @@ func (s *importIntoSuite) TestGetStepOfEncode() {
 func (s *importIntoSuite) TestIsRetryable() {
 	ext := &importScheduler{}
 	require.True(s.T(), ext.IsRetryableErr(drivererr.ErrRegionUnavailable))
+	require.True(s.T(), ext.IsRetryableErr(errors.Annotatef(errGetCrossKSSessionPool, "test")))
 }
 
 func TestIsImporting2TiKV(t *testing.T) {

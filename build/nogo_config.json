@@ -700,7 +700,8 @@
       "pkg/store/": "store code",
       "pkg/ttl/": "ttl code",
       "pkg/bindinfo/": "bindinfo code",
-      "pkg/domain/": "domain code"
+      "pkg/domain/": "domain code",
+      "pkg/sessionctx/variable/tests": "variable tests"
     }
   },
   "unconvert": {

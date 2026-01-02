@@ -94,7 +94,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(manager, store), store)
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(manager, store))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -258,7 +258,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 
 	// to encode-sort stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(manager, store), store)
+	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(manager, store))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
