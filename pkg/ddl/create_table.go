@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -1316,19 +1315,7 @@ func BuildTableInfo(
 		existedColsMap[v.Name.L] = struct{}{}
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
-	// First handle the Primary Key constraint, so we know if it is clustered or not
-	sortedConstraints := make([]*ast.Constraint, len(constraints))
-	copy(sortedConstraints, constraints)
-	sort.Slice(sortedConstraints, func(i, j int) bool {
-		switch {
-		case sortedConstraints[i].Tp == sortedConstraints[j].Tp:
-			return false
-		case sortedConstraints[i].Tp == ast.ConstraintPrimaryKey:
-			return true
-		}
-		return false
-	})
-	for _, constr := range sortedConstraints {
+	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
 		if constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
