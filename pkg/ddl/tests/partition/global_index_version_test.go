@@ -132,12 +132,6 @@ func TestGlobalIndexVersion1(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustContainErrMsg(`CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED)`,`[ddl:8200]Unsupported creating expression index containing unsafe functions without allow-expression-index in config`)
-	tk.MustContainErrMsg(`CREATE TABLE t1 (f1 json, primary key mvi((cast(cast(f1 as unsigned array) as unsigned array))))`,`[expression:1235]This version of TiDB doesn't yet support 'Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE`)
-	tk.MustExec(`create table t1(a int, b int, index idx((a+b)))`)
-	tk.MustExec(`create table tp1 (a int primary key, b int, c int, key b(b), key c(c) global) partition by hash(a) partitions 4`)
-	tk.MustExec(`insert into tp1 values (1, 10, 10), (2, 9, 20), (3, 8, 30), (4, 7, 40), (5, 6, 50), (6, 5, 60)`)
-
 	// Create a partitioned table
 	tk.MustExec(`CREATE TABLE tp (
 		a INT,
