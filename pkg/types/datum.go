@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 	"unsafe"
 
@@ -2420,6 +2421,23 @@ func SortDatums(ctx Context, datums []Datum) error {
 	return err
 }
 
+// Check if a string is considered printable
+//
+// Checks
+// 1. Must be valid UTF-8
+// 2. Must not contain control characters like NUL (0x0) and backspace (0x8)
+func isPrintable(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	n := len(datums)
@@ -2456,9 +2474,14 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 			str = str[:logDatumLen]
 		}
 		if datum.Kind() == KindString {
-			builder.WriteString(`"`)
-			builder.WriteString(str)
-			builder.WriteString(`"`)
+			if isPrintable(str) {
+				builder.WriteString(`"`)
+				builder.WriteString(str)
+				builder.WriteString(`"`)
+			} else {
+				// Print as hex-literal instead
+				fmt.Fprintf(builder, "0x%X", str)
+			}
 		} else {
 			builder.WriteString(str)
 		}

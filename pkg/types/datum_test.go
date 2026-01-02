@@ -790,3 +790,21 @@ func BenchmarkDatumTruncatedStringify(b *testing.B) {
 		_ = d2.TruncatedStringify()
 	}
 }
+
+func TestIsPrintable(t *testing.T) {
+	testcases := []struct {
+		input string
+		valid bool
+	}{
+		{string([]byte{0x61, 0x62, 0x63}), true},             // abc
+		{string([]byte{0x61, 0x0, 0x62, 0x63}), false},       // a<NUL>bc
+		{string([]byte{0x61, 0x62, 0x63, 0xc3, 0xa9}), true}, // abcé
+		{string([]byte{0x61, 0x62, 0x63, 0xc3}), false},      // abc<half char>
+	}
+
+	for _, tc := range testcases {
+		r := isPrintable(tc.input)
+		require.Equal(t, tc.valid, r, "%v (0x%X) expected printable: %v (but got %v)",
+			tc.input, tc.input, tc.valid, r)
+	}
+}
