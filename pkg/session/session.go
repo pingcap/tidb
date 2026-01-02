@@ -3566,7 +3566,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 
-	// We should make the load bind-info loop before other loops which has internal SQL.
+	// We should make the load bind-info loop before some other internal SQLs.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
 	// LoadBindInfoLoop inits global bind-info handler.
 	err = dom.LoadBindInfoLoop(ses[1], ses[2])
