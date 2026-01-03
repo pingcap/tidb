@@ -643,12 +643,11 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 }
 
 // CalculateSkewRatioCounts calculates the default, min, and max skew estimates given a skew ratio.
-func CalculateSkewRatioCounts(estimate, skewEstimate, skewRatio float64) RowEstimate {
-	skewDiff := skewEstimate - estimate
+func CalculateSkewRatioCounts(minEstimate, maxEstimate, skewRatio float64) RowEstimate {
+	skewDiff := maxEstimate - minEstimate
 	// Add a "ratio" of the skewEstimate to adjust the default row estimate.
-	skewAmt := max(0, skewDiff*skewRatio)
-	maxSkewAmt := min(skewDiff, 2*skewAmt)
-	return RowEstimate{estimate + skewAmt, estimate, estimate + maxSkewAmt}
+	skewAmt := skewDiff * skewRatio
+	return RowEstimate{minEstimate + skewAmt, minEstimate, maxEstimate}
 }
 
 // RowEstimate stores the min, default, and max row count estimates.
@@ -1285,12 +1284,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// If the skew ratio > 0, we want to allow the ratio to scale from min to max.
 	// If the skew ratio is 0, we want to use the oneValue as the estimate.
 	if skewRatio > 0 {
-		estRows = min(estRows, oneValue)
+		result = CalculateSkewRatioCounts(1, maxAddedRows, skewRatio)
+	} else {
+		result.Est = max(estRows, oneValue)
+		result.MinEst = 1
+		result.MaxEst = max(result.Est, maxAddedRows)
 	}
-	result = CalculateSkewRatioCounts(estRows, maxAddedRows, skewRatio)
-	result.Est = max(result.Est, oneValue)
-	result.MinEst = 1
-	result.MaxEst = max(result.Est, maxAddedRows)
 
 	return result
 }
