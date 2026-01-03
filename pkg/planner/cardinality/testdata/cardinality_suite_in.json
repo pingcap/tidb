@@ -247,6 +247,23 @@
     ]
   },
   {
+    "Name": "TestOutOfRangeEstimationForLongCommonPrefix",
+    "Cases": [
+      {
+        "Start": "very_long_common_prefix_that_will_cause_predWidth_zero_9999",
+        "End": "very_long_common_prefix_that_will_cause_predWidth_zero_9999"
+      },
+      {
+        "Start": "very_long_common_prefix_that_will_cause_predWidth_zero_8000",
+        "End": "very_long_common_prefix_that_will_cause_predWidth_zero_9000"
+      },
+      {
+        "Start": "very_long_common_prefix_that_will_cause_predWidth_zero_",
+        "End": "very_long_common_prefix_that_will_cause_predWidth_zero_"
+      }
+    ]
+  },
+  {
     "name": "TestColumnIndexNullEstimation",
     "cases": [
       "explain select b from t where b is null",

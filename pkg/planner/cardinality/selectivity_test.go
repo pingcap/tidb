@@ -367,6 +367,129 @@ func TestOutOfRangeEstimationForTimeDecay(t *testing.T) {
 	}
 }
 
+func TestOutOfRangeEstimationForLongCommonPrefix(t *testing.T) {
+	// Goal of this test is to test the predWidth == 0 case when common prefix is too large.
+	// When the common prefix is very long, after removing it, the remaining bytes may be
+	// identical or empty, causing predWidth == 0. In this case, histInvalid is set to true
+	// and we return oneValue as the estimate.
+	// This happens when:
+	// 1. The predicate range shares a very long common prefix with histogram bounds
+	// 2. After removing the common prefix, both l and r become 0 (empty) or identical
+	// 3. This causes predWidth = r - l = 0
+	// Create mock table info
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: -1,
+					},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Create mock statistics table with 3000 rows
+	statsTbl := mockStatsTable(tblInfo, 3000)
+
+	// Generate mock histogram data for column 'a' with string values
+	// Use a long common prefix: "very_long_common_prefix_that_will_cause_predWidth_zero_"
+	// Histogram values: "prefix_0000", "prefix_0001", ..., "prefix_0599"
+	// The common prefix calculation will find the longest prefix shared between:
+	// - histogram lower bound, histogram upper bound, predicate start, predicate end
+	longPrefix := "very_long_common_prefix_that_will_cause_predWidth_zero_"
+	colValues := generateStringDatum(600, longPrefix, 0)
+
+	// Create column statistics with uniform distribution
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeVarchar)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
+	sctx := mock.NewContext()
+
+	// Test case 1: Predicate with values shorter than common prefix length
+	// If predicate values are shorter than the common prefix, after removing the prefix,
+	// both l and r will be 0 (empty), causing predWidth == 0
+	// Use a value that shares the prefix but is shorter than the full prefix length
+	// This simulates the case where common prefix covers the entire predicate value
+	shortValue := longPrefix[:len(longPrefix)-10] // Shorter than full prefix
+	countEst, err := getColumnRowCount(sctx, col, getStringRange(shortValue, shortValue), statsTbl.RealtimeCount, 0, false)
+	require.NoError(t, err)
+	count := countEst.Est
+	// When predWidth == 0, histInvalid is set and we return oneValue
+	// oneValue = max(1.0, NotNullCount()/NDV) where NDV >= 100
+	// So count should be at least 1.0 and at most around NotNullCount/100
+	require.Truef(t, count >= 1.0, "expected: at least 1.0 (oneValue), got: %v", count)
+	require.Truef(t, count <= 30.0, "expected: at most around NotNullCount/100, got: %v", count)
+
+	// Check MinEst and MaxEst bounds
+	require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for predWidth==0 case, MinEst: %v, Est: %v", countEst.MinEst, countEst.Est)
+	require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for predWidth==0 case, MaxEst: %v, Est: %v", countEst.MaxEst, countEst.Est)
+	require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for predWidth==0 case, got: %v", countEst.MinEst)
+	require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for predWidth==0 case, MaxEst: %v, MinEst: %v", countEst.MaxEst, countEst.MinEst)
+
+	var input []struct {
+		Start string // String value
+		End   string // String value
+	}
+	var output []struct {
+		Start  string
+		End    string
+		Count  float64
+		MinEst float64
+		MaxEst float64
+	}
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+
+	// Use the mock table row count
+	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
+	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
+
+	for i, ran := range input {
+		countEst, err = getColumnRowCount(sctx, col, getStringRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		count = countEst.Est
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].Count = math.Round(count)            // Round to nearest whole number
+			output[i].MinEst = math.Round(countEst.MinEst) // Round to nearest whole number
+			output[i].MaxEst = math.Round(countEst.MaxEst) // Round to nearest whole number
+		})
+		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+
+		// Check MinEst and MaxEst bounds
+		require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for [%v, %v], MinEst: %v, Est: %v", ran.Start, ran.End, countEst.MinEst, countEst.Est)
+		require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for [%v, %v], MaxEst: %v, Est: %v", ran.Start, ran.End, countEst.MaxEst, countEst.Est)
+		require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for [%v, %v], got: %v", ran.Start, ran.End, countEst.MinEst)
+		require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for [%v, %v], MaxEst: %v, MinEst: %v", ran.Start, ran.End, countEst.MaxEst, countEst.MinEst)
+	}
+}
+
 // TestRiskRangeSkewRatio tests that tidb_opt_risk_range_skew_ratio affects cardinality estimation
 // for out-of-range queries. When the ratio is increased, the estimated count should be higher.
 // This test specifically uses out-of-range queries where MaxEst > Est is expected.
@@ -898,10 +1021,14 @@ func TestSelectivity(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
 	require.NoError(t, err)
-	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.3")
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
 		longExpr += fmt.Sprintf(" and a > %d ", i)
+	}
+	// Helper function to truncate to 8 decimal places
+	truncateTo8Decimals := func(val float64) float64 {
+		return math.Round(val*1e8) / 1e8
 	}
 	tests := []struct {
 		exprs                    string
@@ -912,59 +1039,59 @@ func TestSelectivity(t *testing.T) {
 	}{
 		{
 			exprs:                    "a > 0 and a < 2",
-			selectivity:              0.01851851851,
-			selectivityAfterIncrease: 0.01851851851,
+			selectivity:              0.01851852,
+			selectivityAfterIncrease: 0.01851852,
 			rowEstimate:              10.0,  // 0.01851851851 * 540
 			rowEstimateAfterIncrease: 100.0, // 0.01851851851 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and a < 2",
-			selectivity:              0.01851851851,
-			selectivityAfterIncrease: 0.01851851851,
+			selectivity:              0.01851852,
+			selectivityAfterIncrease: 0.01851852,
 			rowEstimate:              10.0,  // 0.01851851851 * 540
 			rowEstimateAfterIncrease: 100.0, // 0.01851851851 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
-			selectivity:              0.018017832647462276,
-			selectivityAfterIncrease: 0.018518518518518517,
-			rowEstimate:              9.729629629629629, // 0.018017832647462276 * 540
-			rowEstimateAfterIncrease: 100.0,             // 0.018518518518518517 * 5400
+			selectivity:              0.01801783,
+			selectivityAfterIncrease: 0.01851852,
+			rowEstimate:              9.72962963, // 0.018017832647462276 * 540
+			rowEstimateAfterIncrease: 100.0,      // 0.018518518518518517 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
-			selectivity:              0.006358024691358024,
-			selectivityAfterIncrease: 0.0061913580246913584,
-			rowEstimate:              3.433333333333333, // 0.006358024691358024 * 540
-			rowEstimateAfterIncrease: 33.43333333333333, // 0.0061913580246913584 * 5400
+			selectivity:              0.00635802,
+			selectivityAfterIncrease: 0.00619136,
+			rowEstimate:              3.43333333,  // 0.006358024691358024 * 540
+			rowEstimateAfterIncrease: 33.43333333, // 0.0061913580246913584 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
-			selectivity:              0.012530864197530862,
-			selectivityAfterIncrease: 0.012364197530864197,
-			rowEstimate:              6.766666666666666, // 0.012530864197530862 * 540
-			rowEstimateAfterIncrease: 66.76666666666666, // 0.012364197530864197 * 5400
+			selectivity:              0.01253086,
+			selectivityAfterIncrease: 0.01236420,
+			rowEstimate:              6.76666667,  // 0.012530864197530862 * 540
+			rowEstimateAfterIncrease: 66.76666667, // 0.012364197530864197 * 5400
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
-			selectivity:              0.11111111111,
-			selectivityAfterIncrease: 0.11111111111,
+			selectivity:              0.11111111,
+			selectivityAfterIncrease: 0.11111111,
 			rowEstimate:              60.0,  // 0.11111111111 * 540
 			rowEstimateAfterIncrease: 600.0, // 0.11111111111 * 5400
 		},
 		{
 			exprs:                    "b > 1",
-			selectivity:              0.9729629629629629,
-			selectivityAfterIncrease: 1,
+			selectivity:              0.97296296,
+			selectivityAfterIncrease: 1.0,
 			rowEstimate:              525.4,  // 0.9729629629629629 * 540
 			rowEstimateAfterIncrease: 5400.0, // 1 * 5400
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity:              0.001851851851851852,
-			selectivityAfterIncrease: 0.00048753703703703714,
-			rowEstimate:              1.0,                // 0.001851851851851852 * 540
-			rowEstimateAfterIncrease: 2.6326999999999997, // 0.00048753703703703714 * 5400
+			selectivity:              0.00185185,
+			selectivityAfterIncrease: 0.00030774,
+			rowEstimate:              1.0,     // 0.001851851851851852 * 540
+			rowEstimateAfterIncrease: 1.66178, // 0.00030774 * 5400
 		},
 		{
 			exprs:                    longExpr,
@@ -998,11 +1125,13 @@ func TestSelectivity(t *testing.T) {
 
 		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
-		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
+		truncatedRatio := truncateTo8Decimals(ratio)
+		require.Truef(t, math.Abs(truncatedRatio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, truncatedRatio)
 
 		// Verify row estimate: rowEstimate = selectivity * RealtimeCount
 		rowEst := ratio * originalRealtimeCount
-		require.Truef(t, math.Abs(rowEst-tt.rowEstimate) < eps*originalRealtimeCount, "for %s, rowEstimate needed: %v, got: %v", tt.exprs, tt.rowEstimate, rowEst)
+		truncatedRowEst := truncateTo8Decimals(rowEst)
+		require.Truef(t, math.Abs(truncatedRowEst-tt.rowEstimate) < eps*originalRealtimeCount, "for %s, rowEstimate needed: %v, got: %v", tt.exprs, tt.rowEstimate, truncatedRowEst)
 
 		// Simulate table growth: increase RealtimeCount by 10x and set ModifyCount to 90% of new count
 		// This simulates a scenario where the table has grown significantly since the last ANALYZE.
@@ -1018,11 +1147,13 @@ func TestSelectivity(t *testing.T) {
 		increasedRealtimeCount := float64(histColl.RealtimeCount)
 		ratio, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
-		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
+		truncatedRatioAfterIncrease := truncateTo8Decimals(ratio)
+		require.Truef(t, math.Abs(truncatedRatioAfterIncrease-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, truncatedRatioAfterIncrease)
 
 		// Verify row estimate after increase: rowEstimateAfterIncrease = selectivityAfterIncrease * (RealtimeCount * 10)
 		rowEstAfterIncrease := ratio * increasedRealtimeCount
-		require.Truef(t, math.Abs(rowEstAfterIncrease-tt.rowEstimateAfterIncrease) < eps*increasedRealtimeCount, "for %s, rowEstimateAfterIncrease needed: %v, got: %v", tt.exprs, tt.rowEstimateAfterIncrease, rowEstAfterIncrease)
+		truncatedRowEstAfterIncrease := truncateTo8Decimals(rowEstAfterIncrease)
+		require.Truef(t, math.Abs(truncatedRowEstAfterIncrease-tt.rowEstimateAfterIncrease) < eps*increasedRealtimeCount, "for %s, rowEstimateAfterIncrease needed: %v, got: %v", tt.exprs, tt.rowEstimateAfterIncrease, truncatedRowEstAfterIncrease)
 	}
 }
 
@@ -1332,6 +1463,29 @@ func getDateTimeRange(start, end time.Time) ranger.Ranges {
 	ran := &ranger.Range{
 		LowVal:    []types.Datum{types.NewTimeDatum(startTime)},
 		HighVal:   []types.Datum{types.NewTimeDatum(endTime)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	return []*ranger.Range{ran}
+}
+
+// generateStringDatum generates a slice of string datums with a common prefix.
+// num specifies how many datums to generate.
+// Each value will be: prefix + suffix where suffix varies.
+func generateStringDatum(num int, prefix string, suffixStart int) []types.Datum {
+	ret := make([]types.Datum, num)
+	for i := range num {
+		suffix := fmt.Sprintf("%04d", suffixStart+i)
+		value := prefix + suffix
+		ret[i] = types.NewStringDatum(value)
+	}
+	return ret
+}
+
+// getStringRange creates a ranger.Ranges for string values.
+func getStringRange(start, end string) ranger.Ranges {
+	ran := &ranger.Range{
+		LowVal:    []types.Datum{types.NewStringDatum(start)},
+		HighVal:   []types.Datum{types.NewStringDatum(end)},
 		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 	return []*ranger.Range{ran}

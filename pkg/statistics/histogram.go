@@ -1202,6 +1202,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
+	// If we find that the histogram width is too small or too large - we still may need to consider
+	// the impact of modifications to the table
 	if histWidth <= 0 || math.IsInf(histWidth, 1) {
 		histInvalid = true
 	}
