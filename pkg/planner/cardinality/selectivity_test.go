@@ -666,13 +666,13 @@ func TestOutOfRangeEstimationForLongCommonPrefix(t *testing.T) {
 	// The actual histNDV passed to OutOfRangeRowCount is: col.NDV - TopN.Num()
 	// Then it's adjusted: histNDV = max(histNDV, 100)
 	// Since we have no TopN in the test, histNDV = col.NDV = 600 (600 unique values)
-	actualHistNDV := int64(col.Histogram.NDV)
+	actualHistNDV := col.Histogram.NDV
 	if col.TopN != nil {
 		actualHistNDV -= int64(col.TopN.Num())
 	}
 	// Apply the same adjustment as in OutOfRangeRowCount
 	actualHistNDV = int64(math.Max(float64(actualHistNDV), 100.0))
-	expectedOneValue := math.Max(1.0, float64(col.Histogram.NotNullCount())/float64(actualHistNDV))
+	expectedOneValue := math.Max(1.0, col.Histogram.NotNullCount()) / float64(actualHistNDV)
 
 	// The estimate should be close to oneValue (may differ slightly due to risk ratio)
 	// If risk ratio is 0, Est should equal oneValue
