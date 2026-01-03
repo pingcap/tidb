@@ -18,8 +18,13 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+=======
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+>>>>>>> 007466b0893 (planner: remove fix control 47400 (#64796))
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -329,8 +334,13 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 		}
 		rowCount += cnt
 	}
+<<<<<<< HEAD
 	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
 	return rowCount, nil
+=======
+	totalCount.Clamp(1.0, float64(realtimeRowCount))
+	return totalCount, nil
+>>>>>>> 007466b0893 (planner: remove fix control 47400 (#64796))
 }
 
 // betweenRowCountOnColumn estimates the row count for interval [l, r).

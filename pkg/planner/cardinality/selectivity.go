@@ -26,7 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+=======
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+>>>>>>> 007466b0893 (planner: remove fix control 47400 (#64796))
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -434,11 +438,16 @@ OUTER:
 		}
 	}
 
+<<<<<<< HEAD
 	if sc.EnableOptimizerCETrace {
 		// Tracing for the expression estimation results after applying the default selectivity.
 		totalExpr := expression.ComposeCNFCondition(ctx.GetExprCtx(), remainedExprs...)
 		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
 	}
+=======
+	// Don't allow the result to be less than 1 row
+	ret = max(ret, 1.0/float64(coll.RealtimeCount))
+>>>>>>> 007466b0893 (planner: remove fix control 47400 (#64796))
 	return ret, nodes, nil
 }
 

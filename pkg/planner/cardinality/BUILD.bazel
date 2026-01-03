@@ -25,7 +25,10 @@ go_library(
         "//pkg/planner/context",
         "//pkg/planner/property",
         "//pkg/planner/util",
+<<<<<<< HEAD
         "//pkg/planner/util/debugtrace",
+=======
+>>>>>>> 007466b0893 (planner: remove fix control 47400 (#64796))
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
         "//pkg/tablecodec",

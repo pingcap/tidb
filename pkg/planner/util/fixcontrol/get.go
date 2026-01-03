@@ -44,6 +44,12 @@ const (
 	Fix45798 uint64 = 45798
 	// Fix46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
 	Fix46177 uint64 = 46177
+<<<<<<< HEAD
+=======
+	// Fix47400 controls whether to allow a rowEst below 1
+	// Deprecated: This fix control has been deprecated
+	Fix47400 uint64 = 47400
+>>>>>>> 007466b0893 (planner: remove fix control 47400 (#64796))
 	// Fix49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
 	// This fix-control is test-only.
 	Fix49736 uint64 = 49736

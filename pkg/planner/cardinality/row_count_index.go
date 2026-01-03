@@ -24,8 +24,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+=======
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+>>>>>>> 007466b0893 (planner: remove fix control 47400 (#64796))
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -362,7 +366,11 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 		}
 		totalCount += count
 	}
+<<<<<<< HEAD
 	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
+=======
+	totalCount.Clamp(1.0, float64(realtimeRowCount))
+>>>>>>> 007466b0893 (planner: remove fix control 47400 (#64796))
 	return totalCount, nil
 }
 
