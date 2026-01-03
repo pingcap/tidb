@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -44,9 +45,16 @@ func batchCheckTemporaryUniqueKey(
 	idxRecords []*temporaryIndexRecord,
 ) error {
 	if !currentIndex.Unique {
-		// non-unique key need no check, just overwrite it,
-		// because in most case, backfilling indices is not exists.
-		return nil
+		// Check if this is a non-unique global index on a non-clustered partitioned table
+		// In this case, we need to check for duplicate _tidb_rowid collisions
+		needCheckCollision := currentIndex.Global && !tbl.Meta().HasClusteredIndex() && tbl.Meta().GetPartitionInfo() != nil
+		if !needCheckCollision {
+			// non-unique key need no check, just overwrite it,
+			// because in most case, backfilling indices is not exists.
+			return nil
+		}
+		// For non-unique global index on non-clustered partitioned table,
+		// we need to check for _tidb_rowid collisions
 	}
 
 	batchVals, err := txn.BatchGet(context.Background(), originIdxKeys)
@@ -58,6 +66,21 @@ func batchCheckTemporaryUniqueKey(
 		keyStr := string(key)
 		if val, found := batchVals[keyStr]; found {
 			// Found a value in the original index key.
+			// For non-unique global index on non-clustered partitioned table, check for _tidb_rowid collision
+			if !currentIndex.Unique && currentIndex.Global && !tbl.Meta().HasClusteredIndex() && tbl.Meta().GetPartitionInfo() != nil {
+				idxColLen := len(currentIndex.Columns)
+				h, err := tablecodec.DecodeIndexHandle(key, val, idxColLen)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !h.Equal(idxRecords[i].handle) {
+					// Different handles with same index key - this is a _tidb_rowid collision
+					return dbterror.ErrGlobalIndexDuplicateRowID
+				}
+				// Same handle, skip this record as it's already backfilled
+				idxRecords[i].skip = true
+				continue
+			}
 			matchDeleted, err := checkTempIndexKey(txn, idxRecords[i], val, tbl)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) {

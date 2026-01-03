@@ -86,6 +86,8 @@ var (
 	ErrUnsupportedAlterCacheForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table cache for tables in system database is currently unsupported", nil))
 	// ErrUnsupportedAddPartialIndex the partial index condition is not supported
 	ErrUnsupportedAddPartialIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add partial index: %s"), nil))
+	// ErrGlobalIndexDuplicateRowID means cannot create global index due to duplicate _tidb_rowid across partitions
+	ErrGlobalIndexDuplicateRowID = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Cannot create non-unique global index on non-clustered partitioned table: duplicate _tidb_rowid values detected across partitions. This typically occurs after EXCHANGE PARTITION operations. Please use ALTER TABLE REORGANIZE PARTITION or ALTER TABLE FORCE to regenerate row IDs first.", nil))
 	// ErrModifyColumnReferencedByPartialCondition is used when a column is referenced by a partial index condition.
 	ErrModifyColumnReferencedByPartialCondition = ClassDDL.NewStd(mysql.ErrModifyColumnReferencedByPartialCondition)
 	// ErrBlobKeyWithoutLength is used when BLOB is used as key but without a length.

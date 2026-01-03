@@ -2516,13 +2516,20 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	for i, record := range idxRecords {
 		idx := w.indexes[i%len(w.indexes)]
 		if !idx.Meta().Unique {
-			// non-unique key need not to check, use `nil` as a placeholder to keep
-			// `idxRecords[i]` belonging to `indexes[i%len(indexes)]`.
-			w.batchCheckKeys = append(w.batchCheckKeys, nil)
-			w.batchCheckValues = append(w.batchCheckValues, nil)
-			w.distinctCheckFlags = append(w.distinctCheckFlags, false)
-			w.recordIdx = append(w.recordIdx, 0)
-			continue
+			// Check if this is a non-unique global index on a non-clustered partitioned table
+			// In this case, we need to check for duplicate _tidb_rowid collisions
+			needCheckCollision := idx.Meta().Global && !w.table.Meta().HasClusteredIndex() && w.table.Meta().GetPartitionInfo() != nil
+			if !needCheckCollision {
+				// non-unique key need not to check, use `nil` as a placeholder to keep
+				// `idxRecords[i]` belonging to `indexes[i%len(indexes)]`.
+				w.batchCheckKeys = append(w.batchCheckKeys, nil)
+				w.batchCheckValues = append(w.batchCheckValues, nil)
+				w.distinctCheckFlags = append(w.distinctCheckFlags, false)
+				w.recordIdx = append(w.recordIdx, 0)
+				continue
+			}
+			// For non-unique global index on non-clustered partitioned table,
+			// we need to check for _tidb_rowid collisions
 		}
 		// skip by default.
 		idxRecords[i].skip = true
@@ -2562,16 +2569,29 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	// 1. unique-key/primary-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
 	// 3. non-unique-key is duplicate, skip it.
+	// 4. non-unique global index on non-clustered partitioned table: check for _tidb_rowid collision
 	for i, key := range w.batchCheckKeys {
 		if len(key) == 0 {
 			continue
 		}
 		idx := w.indexes[i%len(w.indexes)]
+		idxMeta := idx.Meta()
 		val, found := batchVals[string(key)]
 		if found {
 			if w.distinctCheckFlags[i] {
-				if err := w.checkHandleExists(idx.Meta(), key, val, idxRecords[w.recordIdx[i]].handle); err != nil {
+				if err := w.checkHandleExists(idxMeta, key, val, idxRecords[w.recordIdx[i]].handle); err != nil {
 					return errors.Trace(err)
+				}
+			} else if !idxMeta.Unique && idxMeta.Global && !w.table.Meta().HasClusteredIndex() && w.table.Meta().GetPartitionInfo() != nil {
+				// Check for _tidb_rowid collision in non-unique global index on non-clustered partitioned table
+				idxColLen := len(idxMeta.Columns)
+				h, err := tablecodec.DecodeIndexHandle(key, val, idxColLen)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !h.Equal(idxRecords[w.recordIdx[i]].handle) {
+					// Different handles with same index key - this is a _tidb_rowid collision
+					return dbterror.ErrGlobalIndexDuplicateRowID
 				}
 			}
 		} else if w.distinctCheckFlags[i] {
