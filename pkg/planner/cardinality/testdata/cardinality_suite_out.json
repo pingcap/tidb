@@ -284,6 +284,148 @@
         "Count": 13,
         "MinEst": 9,
         "MaxEst": 159
+      },
+      {
+        "Start": "2022-01-01 00:00:00",
+        "End": "9999-12-31 00:00:00",
+        "Count": 1275,
+        "MinEst": 1275,
+        "MaxEst": 1275
+      }
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimationForRiskRangeSkewRatio",
+    "Cases": [
+      {
+        "Start": "2020-01-01 00:00:00",
+        "End": "2025-01-01 00:00:00",
+        "CountRatio0": 4500,
+        "CountRatio01": 4500,
+        "CountRatio05": 4500,
+        "CountRatio10": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
+      },
+      {
+        "Start": "2023-01-01 00:00:00",
+        "End": "2023-02-01 00:00:00",
+        "CountRatio0": 33,
+        "CountRatio01": 27,
+        "CountRatio05": 86,
+        "CountRatio10": 159,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-02-01 00:00:00",
+        "End": "2023-03-01 00:00:00",
+        "CountRatio0": 28,
+        "CountRatio01": 26,
+        "CountRatio05": 78,
+        "CountRatio10": 144,
+        "MinEst": 9,
+        "MaxEst": 144
+      },
+      {
+        "Start": "2023-03-01 00:00:00",
+        "End": "2023-04-01 00:00:00",
+        "CountRatio0": 29,
+        "CountRatio01": 27,
+        "CountRatio05": 86,
+        "CountRatio10": 159,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-04-01 00:00:00",
+        "End": "2023-05-01 00:00:00",
+        "CountRatio0": 26,
+        "CountRatio01": 27,
+        "CountRatio05": 83,
+        "CountRatio10": 154,
+        "MinEst": 9,
+        "MaxEst": 154
+      },
+      {
+        "Start": "2023-05-01 00:00:00",
+        "End": "2023-06-01 00:00:00",
+        "CountRatio0": 25,
+        "CountRatio01": 27,
+        "CountRatio05": 86,
+        "CountRatio10": 159,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-06-01 00:00:00",
+        "End": "2023-07-01 00:00:00",
+        "CountRatio0": 22,
+        "CountRatio01": 27,
+        "CountRatio05": 83,
+        "CountRatio10": 154,
+        "MinEst": 9,
+        "MaxEst": 154
+      },
+      {
+        "Start": "2023-07-01 00:00:00",
+        "End": "2023-08-01 00:00:00",
+        "CountRatio0": 21,
+        "CountRatio01": 27,
+        "CountRatio05": 86,
+        "CountRatio10": 159,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-08-01 00:00:00",
+        "End": "2023-09-01 00:00:00",
+        "CountRatio0": 19,
+        "CountRatio01": 27,
+        "CountRatio05": 86,
+        "CountRatio10": 159,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-09-01 00:00:00",
+        "End": "2023-10-01 00:00:00",
+        "CountRatio0": 17,
+        "CountRatio01": 27,
+        "CountRatio05": 83,
+        "CountRatio10": 154,
+        "MinEst": 9,
+        "MaxEst": 154
+      },
+      {
+        "Start": "2023-10-01 00:00:00",
+        "End": "2023-11-01 00:00:00",
+        "CountRatio0": 15,
+        "CountRatio01": 27,
+        "CountRatio05": 86,
+        "CountRatio10": 159,
+        "MinEst": 9,
+        "MaxEst": 159
+      },
+      {
+        "Start": "2023-11-01 00:00:00",
+        "End": "2023-12-01 00:00:00",
+        "CountRatio0": 13,
+        "CountRatio01": 27,
+        "CountRatio05": 83,
+        "CountRatio10": 154,
+        "MinEst": 9,
+        "MaxEst": 154
+      },
+      {
+        "Start": "2022-01-01 00:00:00",
+        "End": "9999-12-31 00:00:00",
+        "CountRatio0": 1275,
+        "CountRatio01": 1275,
+        "CountRatio05": 1275,
+        "CountRatio10": 1275,
+        "MinEst": 1275,
+        "MaxEst": 1275
       }
     ]
   },
