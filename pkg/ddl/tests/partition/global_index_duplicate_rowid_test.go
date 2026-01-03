@@ -37,18 +37,22 @@ import (
 // This is a regression test for issue #65289.
 func TestGlobalIndexDuplicateRowIDDetection(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 
 	// Test with tidb_ddl_enable_fast_reorg OFF (temp index path)
 	t.Run("FastReorgOFF", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_exchange_partition=1")
 		tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=0")
+		tk.MustExec("set @@global.tidb_enable_dist_task=0")
 		testGlobalIndexDuplicateRowID(t, tk)
 	})
 
 	// Test with tidb_ddl_enable_fast_reorg ON (direct backfill path)
 	t.Run("FastReorgON", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_exchange_partition=1")
 		tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=1")
 		testGlobalIndexDuplicateRowID(t, tk)
 	})
@@ -106,13 +110,16 @@ func testGlobalIndexDuplicateRowID(t *testing.T, tk *testkit.TestKit) {
 // correctly when there are no duplicate _tidb_rowid values (no false positives).
 func TestGlobalIndexNoDuplicateRowID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
 
 	// Test with both fast reorg settings
 	for _, fastReorg := range []int{0, 1} {
 		t.Run(fmt.Sprintf("FastReorg%d", fastReorg), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
 			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_enable_fast_reorg=%d", fastReorg))
+			if fastReorg == 0 {
+				tk.MustExec("set @@global.tidb_enable_dist_task=0")
+			}
 			tk.MustExec("drop table if exists t_part")
 
 			// Create a non-clustered partitioned table
@@ -144,13 +151,16 @@ func TestGlobalIndexNoDuplicateRowID(t *testing.T) {
 // (they don't use _tidb_rowid, so no collision can occur).
 func TestGlobalIndexClusteredTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 
 	for _, fastReorg := range []int{0, 1} {
 		t.Run(fmt.Sprintf("FastReorg%d", fastReorg), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_exchange_partition=1")
 			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_enable_fast_reorg=%d", fastReorg))
+			if fastReorg == 0 {
+				tk.MustExec("set @@global.tidb_enable_dist_task=0")
+			}
 			tk.MustExec("drop table if exists t_part, t_normal")
 
 			// Create a CLUSTERED partitioned table (uses PK as handle, not _tidb_rowid)
@@ -191,13 +201,16 @@ func TestGlobalIndexClusteredTable(t *testing.T) {
 // (they already have duplicate checking logic).
 func TestGlobalIndexUniqueIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 
 	for _, fastReorg := range []int{0, 1} {
 		t.Run(fmt.Sprintf("FastReorg%d", fastReorg), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_exchange_partition=1")
 			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_enable_fast_reorg=%d", fastReorg))
+			if fastReorg == 0 {
+				tk.MustExec("set @@global.tidb_enable_dist_task=0")
+			}
 			tk.MustExec("drop table if exists t_part, t_normal")
 
 			// Create a non-clustered partitioned table
@@ -237,13 +250,16 @@ func TestGlobalIndexUniqueIndex(t *testing.T) {
 // TestGlobalIndexLocalIndex verifies that local (non-global) indexes are not affected.
 func TestGlobalIndexLocalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 
 	for _, fastReorg := range []int{0, 1} {
 		t.Run(fmt.Sprintf("FastReorg%d", fastReorg), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_exchange_partition=1")
 			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_enable_fast_reorg=%d", fastReorg))
+			if fastReorg == 0 {
+				tk.MustExec("set @@global.tidb_enable_dist_task=0")
+			}
 			tk.MustExec("drop table if exists t_part, t_normal")
 
 			// Create a non-clustered partitioned table
@@ -288,6 +304,7 @@ func TestGlobalIndexConcurrentDMLDuringMerge(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=0") // Force temp index path
+	tk.MustExec("set @@global.tidb_enable_dist_task=0")
 
 	tk.MustExec("drop table if exists t_part, t_normal")
 
@@ -350,6 +367,7 @@ func TestGlobalIndexConcurrentMergeWithRetry(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=0") // Force temp index path
+	tk.MustExec("set @@global.tidb_enable_dist_task=0")
 
 	tk.MustExec("drop table if exists t_part, t_normal")
 
@@ -402,6 +420,7 @@ func TestGlobalIndexParallelPartitionScans(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=0") // Force temp index path
+	tk.MustExec("set @@global.tidb_enable_dist_task=0")
 
 	tk.MustExec("drop table if exists t_part, t_normal1, t_normal2")
 
@@ -481,6 +500,7 @@ func TestGlobalIndexMergeStateTransition(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=0") // Force temp index path
+	tk.MustExec("set @@global.tidb_enable_dist_task=0")
 
 	tk.MustExec("drop table if exists t_part, t_normal")
 
@@ -532,14 +552,15 @@ func TestGlobalIndexMergeStateTransition(t *testing.T) {
 // different batch sizes during temp index merge.
 func TestGlobalIndexMergeBatchProcessing(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=0") // Force temp index path
 
 	// Test with different batch sizes
 	for _, batchSize := range []int{1, 10, 100} {
 		t.Run(fmt.Sprintf("BatchSize%d", batchSize), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_exchange_partition=1")
+			tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=0") // Force temp index path
+			tk.MustExec("set @@global.tidb_enable_dist_task=0")
 			tk.MustExec("drop table if exists t_part, t_normal")
 
 			tk.MustExec(`CREATE TABLE t_part (
