@@ -537,7 +537,7 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			continue
 		}
 		if idx.TopN == nil {
-			idx.TopN = statistics.NewTopN(512)
+			idx.TopN = statistics.NewTopN(110)
 		}
 		affectedIndexes[idx] = struct{}{}
 		data := make([]byte, len(row.GetBytes(2)))
