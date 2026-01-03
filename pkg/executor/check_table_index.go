@@ -445,13 +445,17 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	}
 	handleColumns := strings.Join(pkCols, ",")
 
-	indexColNames := make([]string, len(idxInfo.Columns))
-	for i, col := range idxInfo.Columns {
+	indexColNames := make([]string, 0, len(idxInfo.Columns))
+	for _, col := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if col.Offset == -1 {
+			continue
+		}
 		tblCol := tblMeta.Columns[col.Offset]
 		if tblCol.IsVirtualGenerated() && tblCol.Hidden {
-			indexColNames[i] = tblCol.GeneratedExprString
+			indexColNames = append(indexColNames, tblCol.GeneratedExprString)
 		} else {
-			indexColNames[i] = ColumnName(col.Name.O)
+			indexColNames = append(indexColNames, ColumnName(col.Name.O))
 		}
 	}
 	indexColumns := strings.Join(indexColNames, ",")

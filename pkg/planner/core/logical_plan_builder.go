@@ -4506,6 +4506,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			continue
 		}
 		for _, indexCol := range index.Columns {
+			// Skip virtual partition ID column (Offset == -1) for global index V1+
+			if indexCol.Offset == -1 {
+				continue
+			}
 			colInfo := tbl.Cols()[indexCol.Offset]
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				b.optFlag |= rule.FlagGcSubstitute

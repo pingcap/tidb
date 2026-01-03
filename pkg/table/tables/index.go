@@ -128,15 +128,22 @@ func (c *index) TableMeta() *model.TableInfo {
 
 func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) error {
 	var err error
-	for i, idxCol := range c.idxInfo.Columns {
-		tblCol := c.tblInfo.Columns[idxCol.Offset]
-		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
+	valIdx := 0
+	for _, idxCol := range c.idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if idxCol.Offset == -1 {
 			continue
 		}
-		indexedValues[i], err = table.CastColumnValueWithStrictMode(indexedValues[i], tblCol.ChangingFieldType)
+		tblCol := c.tblInfo.Columns[idxCol.Offset]
+		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
+			valIdx++
+			continue
+		}
+		indexedValues[valIdx], err = table.CastColumnValueWithStrictMode(indexedValues[valIdx], tblCol.ChangingFieldType)
 		if err != nil {
 			return err
 		}
+		valIdx++
 	}
 	return nil
 }
@@ -217,14 +224,26 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 	var buf []byte
 	for !jsonIsNull {
 		val := make([]types.Datum, 0, len(indexedValues))
-		for i, v := range indexedValues {
-			if !c.tblInfo.Columns[c.idxInfo.Columns[i].Offset].FieldType.IsArray() {
+		// Map indexedValues index to IndexColumn, skipping virtual columns
+		valIdx := 0
+		for _, idxCol := range c.idxInfo.Columns {
+			if idxCol.Offset == -1 {
+				// Skip virtual partition ID column
+				continue
+			}
+			if valIdx >= len(indexedValues) {
+				break
+			}
+			v := indexedValues[valIdx]
+			if !c.tblInfo.Columns[idxCol.Offset].FieldType.IsArray() {
 				val = append(val, v)
+				valIdx++
 			} else {
 				// if the datum type is not JSON, it must come from cleanup index.
 				if v.IsNull() || v.Kind() != types.KindMysqlJSON {
 					val = append(val, v)
 					jsonIsNull = true
+					valIdx++
 					continue
 				}
 				elemCount := v.GetMysqlJSON().GetElemCount()
@@ -244,6 +263,7 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 					val = append(val, types.NewDatum(binaryJSON.GetValue()))
 					break
 				}
+				valIdx++
 			}
 		}
 		vals = append(vals, val)
@@ -844,7 +864,15 @@ func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum,
 }
 
 func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.IndexRowLayoutOption) ([]types.Datum, error) {
-	needLength := len(idxInfo.Columns)
+	// Count non-virtual columns (exclude partition ID column with Offset=-1)
+	nonVirtualColCount := 0
+	for _, ic := range idxInfo.Columns {
+		if ic.Offset != -1 {
+			nonVirtualColCount++
+		}
+	}
+
+	needLength := nonVirtualColCount
 	if vals == nil || cap(vals) < needLength {
 		vals = make([]types.Datum, needLength)
 	}
@@ -852,20 +880,33 @@ func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.In
 	// If the context has extra info, use the extra layout info to get index columns.
 	if len(opt) != 0 {
 		intest.Assert(len(opt) == len(idxInfo.Columns), "offsets length is not equal to index columns length, offset len: %d, index len: %d", len(opt), len(idxInfo.Columns))
-		for i, offset := range opt {
-			if offset < 0 || offset > len(r) {
+		valIdx := 0
+		for _, offset := range opt {
+			if offset == -1 {
+				// Skip virtual partition ID column
+				continue
+			}
+			if offset > len(r) {
 				return nil, table.ErrIndexOutBound.GenWithStackByArgs(idxInfo.Name, offset, r)
 			}
-			vals[i] = r[offset]
+			vals[valIdx] = r[offset]
+			valIdx++
 		}
 		return vals, nil
 	}
 	// Otherwise use the full column layout.
-	for i, ic := range idxInfo.Columns {
-		if ic.Offset < 0 || ic.Offset >= len(r) {
+	valIdx := 0
+	for _, ic := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+.
+		// The partition ID will be provided separately when encoding the index key.
+		if ic.Offset == -1 {
+			continue
+		}
+		if ic.Offset >= len(r) {
 			return nil, table.ErrIndexOutBound.GenWithStackByArgs(ic.Name, ic.Offset, r)
 		}
-		vals[i] = r[ic.Offset]
+		vals[valIdx] = r[ic.Offset]
+		valIdx++
 	}
 	return vals, nil
 }
@@ -873,6 +914,10 @@ func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.In
 // FindChangingCol finds the changing column in idxInfo.
 func FindChangingCol(cols []*table.Column, idxInfo *model.IndexInfo) *table.Column {
 	for _, ic := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if ic.Offset == -1 {
+			continue
+		}
 		if col := cols[ic.Offset]; col.ChangeStateInfo != nil {
 			return col
 		}
@@ -894,6 +939,10 @@ func IsIndexWritable(idx table.Index) bool {
 func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []rowcodec.ColInfo {
 	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if idxCol.Offset == -1 {
+			continue
+		}
 		col := tblInfo.Columns[idxCol.Offset]
 		ft := model.GetIdxChangingFieldType(idxCol, col).Clone()
 		colInfo = append(colInfo, rowcodec.ColInfo{
@@ -909,6 +958,12 @@ func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *mode
 func BuildFieldTypesForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []*types.FieldType {
 	tps := make([]*types.FieldType, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if idxCol.Offset == -1 {
+			// For the virtual partition ID column, add an int64 field type
+			tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+			continue
+		}
 		col := tblInfo.Columns[idxCol.Offset]
 		tps = append(tps, rowcodec.FieldTypeFromModelColumn(col))
 	}

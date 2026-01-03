@@ -667,6 +667,10 @@ func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
 	pkIdx := FindPrimaryIndex(tbl)
 	pkColIDs := make([]int64, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
+		// Skip virtual partition ID column (Offset == -1), though it shouldn't appear in primary index
+		if idxCol.Offset == -1 {
+			continue
+		}
 		pkColIDs = append(pkColIDs, tbl.Columns[idxCol.Offset].ID)
 	}
 	return pkColIDs
@@ -679,6 +683,10 @@ func PrimaryPrefixColumnIDs(tbl *model.TableInfo) (prefixCols []int64) {
 			continue
 		}
 		for _, col := range idx.Columns {
+			// Skip virtual partition ID column (Offset == -1), though it shouldn't appear in primary index
+			if col.Offset == -1 {
+				continue
+			}
 			if col.Length > 0 && tbl.Columns[col.Offset].GetFlen() > col.Length {
 				prefixCols = append(prefixCols, tbl.Columns[col.Offset].ID)
 			}
@@ -1058,6 +1066,10 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 func containFullColInHandle(meta *model.TableInfo, col *table.Column) (containFullCol bool, idxInHandle int) {
 	pkIdx := FindPrimaryIndex(meta)
 	for i, idxCol := range pkIdx.Columns {
+		// Skip virtual partition ID column (Offset == -1), though it shouldn't appear in primary index
+		if idxCol.Offset == -1 {
+			continue
+		}
 		if meta.Columns[idxCol.Offset].ID == col.ID {
 			idxInHandle = i
 			containFullCol = idxCol.Length == types.UnspecifiedLength
@@ -1524,6 +1536,10 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 	if col.IsCommonHandleColumn(info) {
 		pkIdx := FindPrimaryIndex(info)
 		for _, idxCol := range pkIdx.Columns {
+			// Skip virtual partition ID column (Offset == -1), though it shouldn't appear in primary index
+			if idxCol.Offset == -1 {
+				continue
+			}
 			if info.Columns[idxCol.Offset].ID != col.ID {
 				continue
 			}
@@ -1772,6 +1788,10 @@ func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum
 	rsData := make([]types.Datum, 0, 4)
 	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
+		// Skip virtual partition ID column (Offset == -1), though it shouldn't appear in primary index
+		if pkIdxCol.Offset == -1 {
+			continue
+		}
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
 		if !types.NeedRestoredData(&pkCol.FieldType) {
 			continue

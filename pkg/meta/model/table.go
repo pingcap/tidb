@@ -642,6 +642,10 @@ func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldT
 
 // ColumnNeedRestoredData checks whether a single index column needs restored data.
 func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
+	// Skip virtual partition ID column (Offset == -1) for global index V1+
+	if idxCol.Offset == -1 {
+		return false
+	}
 	col := colInfos[idxCol.Offset]
 	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
 }

@@ -217,7 +217,10 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 			Name: p.Index.Name.O,
 		}
 		for _, idxCol := range p.Index.Columns {
-			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
+			// Handle virtual partition ID column (Offset == -1) for global index V1+
+			if idxCol.Offset == -1 {
+				index.Cols = append(index.Cols, idxCol.Name.O)
+			} else if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
 				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
 			} else {
 				index.Cols = append(index.Cols, idxCol.Name.O)
@@ -364,9 +367,18 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 	indexCols := make([]*expression.Column, len(p.IdxCols), len(p.Index.Columns)+1)
 	copy(indexCols, p.IdxCols)
 
+	exprColIdx := len(p.IdxCols)
 	for i := len(p.IdxCols); i < len(p.Index.Columns); i++ {
-		if idxExprCols[i] != nil {
-			indexCols = append(indexCols, idxExprCols[i])
+		// Handle virtual partition ID column (Offset == -1) for global index V1+
+		if p.Index.Columns[i].Offset == -1 {
+			indexCols = append(indexCols, &expression.Column{
+				ID:       -1, // Virtual column has no actual column ID
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+			})
+		} else if exprColIdx < len(idxExprCols) && idxExprCols[exprColIdx] != nil {
+			indexCols = append(indexCols, idxExprCols[exprColIdx])
+			exprColIdx++
 		} else {
 			// TODO: try to reuse the col generated when building the DataSource.
 			indexCols = append(indexCols, &expression.Column{
@@ -374,6 +386,7 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 				RetType:  &p.Table.Columns[p.Index.Columns[i].Offset].FieldType,
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 			})
+			exprColIdx++
 		}
 	}
 	p.NeedCommonHandle = p.Table.IsCommonHandle
@@ -514,7 +527,12 @@ func (p *PhysicalIndexScan) NeedExtraOutputCol() bool {
 	if p.Table.Partition == nil {
 		return false
 	}
-	// has global index, should return pid
+	// For global index V1+, partition ID is already encoded as an indexed column,
+	// so we don't need an extra output column.
+	if p.Index.Global && p.Index.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+		return false
+	}
+	// For legacy global index (V0), should return pid as extra output column
 	if p.Index.Global {
 		return true
 	}

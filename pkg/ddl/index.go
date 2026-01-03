@@ -422,6 +422,13 @@ func BuildIndexInfo(
 					idxInfo.GlobalIndexVersion = uint8(valInt)
 				}
 			})
+			// Add virtual partition ID column to the index so TiKV knows to decode it from the key.
+			// Use Offset=-1 to indicate this is a virtual column not present in the table.
+			idxInfo.Columns = append(idxInfo.Columns, &model.IndexColumn{
+				Name:   ast.NewCIStr("_tidb_pid"),
+				Offset: -1,
+				Length: types.UnspecifiedLength,
+			})
 		}
 
 		conditionString, err := CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
@@ -763,6 +770,10 @@ func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, job *model.Job,
 func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffset := make(map[int]struct{}, 0)
 	for _, col := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if col.Offset == -1 {
+			continue
+		}
 		if tblInfo.Columns[col.Offset].Hidden {
 			hiddenColOffset[col.Offset] = struct{}{}
 		}
@@ -779,6 +790,10 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 		}
 	}
 	for _, col := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if col.Offset == -1 {
+			continue
+		}
 		tblInfo.Columns[col.Offset].State = model.StatePublic
 		if _, needMove := hiddenColOffset[col.Offset]; needMove {
 			tblInfo.MoveColumnInfo(col.Offset, firstNonPublicPos)
@@ -2129,6 +2144,10 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffs := make([]int, 0)
 	for _, indexColumn := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if indexColumn.Offset == -1 {
+			continue
+		}
 		col := tblInfo.Columns[indexColumn.Offset]
 		if col.Hidden {
 			hiddenColOffs = append(hiddenColOffs, col.Offset)
@@ -2389,6 +2408,16 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	var err error
 	for j, v := range idxInfo.Columns {
+		// Handle virtual partition ID column (Offset == -1) for global index V1+
+		if v.Offset == -1 {
+			// Extract partition ID from PartitionHandle
+			if ph, ok := handle.(kv.PartitionHandle); ok {
+				idxVal[j] = types.NewIntDatum(ph.PartitionID)
+			} else {
+				return nil, errors.New("global index V1+ requires PartitionHandle")
+			}
+			continue
+		}
 		col := cols[v.Offset]
 		idxColumnVal, ok := w.rowMap[col.ID]
 		if ok {

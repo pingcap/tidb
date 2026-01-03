@@ -5527,6 +5527,10 @@ func validateCommentLength(ec errctx.Context, sqlMode mysql.SQLMode, name string
 func validateGlobalIndexWithGeneratedColumns(ec errctx.Context, tblInfo *model.TableInfo, indexName string, indexColumns []*model.IndexColumn) {
 	// Auto analyze is not effective when a global index contains prefix columns or virtual generated columns.
 	for _, col := range indexColumns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if col.Offset == -1 {
+			continue
+		}
 		colInfo := tblInfo.Columns[col.Offset]
 		isPrefixCol := col.Length != types.UnspecifiedLength
 		if colInfo.IsVirtualGenerated() || isPrefixCol {
