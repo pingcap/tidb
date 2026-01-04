@@ -5578,6 +5578,13 @@ func (b *PlanBuilder) buildDMLSelectPlan(
 		return nil, 0, err
 	}
 
+	// For UPDATE statements translated from RECOVER VALUES, we shouldn't apply the soft delete filter no matter
+	// whether @@tidb_translate_softdelete_sql is true or false. This is implemented by setting DisableSoftDeleteFilter
+	// to true in DataSource.
+	// Note that this flag only affects this DataSource, consider this case:
+	// RECOVER VALUES FROM t1 WHERE t1.a IN (SELECT t2.a FROM t2 WHERE t2.b > 0);
+	// In this case, t1 should have the soft delete filter disabled, but t2 should add the soft delete filter or not
+	// according to @@tidb_translate_softdelete_sql.
 	if b.ctx.GetSessionVars().StmtCtx.InRecoverValuesStmt {
 		ds, ok := p.(*logicalop.DataSource)
 		intest.Assert(ok, "expected DataSource in RECOVER VALUES plan")
