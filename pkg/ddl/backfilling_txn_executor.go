@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -339,12 +340,13 @@ func (b *txnBackfillExecutor) close(force bool) {
 	close(b.resultCh)
 }
 
-func expectedIngestWorkerCnt(concurrency, avgRowSize int, useGlobalSort bool) (readerCnt, writerCnt int) {
+func expectedIngestWorkerCnt(concurrency, avgRowSize int, isNextgen bool) (readerCnt, writerCnt int) {
+	failpoint.InjectCall("expectedIngestWorkerCnt", isNextgen)
 	workerCnt := concurrency
-	// Testing showed that in a global sort environment,
-	// reader ration does not significantly impact the performance of add indexes.
-	// We disable this ration in global sort for better memory management.
-	if useGlobalSort {
+	// Testing showed that in a nextgen cluster,
+	// reader ratio does not significantly impact the performance of add indexes.
+	// We disable this ratio in nextgen cluster for better memory management.
+	if isNextgen {
 		return workerCnt, workerCnt
 	}
 	if avgRowSize == 0 {
