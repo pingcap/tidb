@@ -8185,4 +8185,3 @@ func TestRecoverValuesStmt(t *testing.T) {
 	}
 	RunTest(t, cases, false)
 }
-
