@@ -5,4 +5,7 @@ filters:
   "(OWNERS|bootstrap\\.go|upgrade\\.go)$":
     approvers:
       - sig-critical-approvers-tidb-server
+  "(OWNERS|bootstrap\\.go|upgrade\\.go)$":
+    approvers:
+      - sig-approvers-ddl
 
