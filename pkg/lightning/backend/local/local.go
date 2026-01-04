@@ -1327,7 +1327,6 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 func (local *Backend) ImportEngine(
 	ctx context.Context,
 	engineUUID uuid.UUID,
-	engineID int32,
 	regionSplitSize, regionSplitKeys int64,
 ) error {
 	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)

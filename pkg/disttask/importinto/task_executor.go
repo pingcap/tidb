@@ -590,15 +590,6 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}
 	ticiWriteEnabled := decideTiCIWriteEnabled(e.logger, e.taskID, subtask.ID, sm.KVGroup, plan)
 
-	// We specify engineID as a tag so that the callee can determine
-	// whether the call is from a data engine or an index engine.
-	var engineID int32
-	if sm.KVGroup == dataKVGroup {
-		engineID = int32(common.DataEngineID)
-	} else {
-		engineID = int32(common.IndexEngineID)
-	}
-
 	localBackend := e.tableImporter.Backend()
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
@@ -633,7 +624,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
-	err = localBackend.ImportEngine(ctx, engineUUID, engineID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}

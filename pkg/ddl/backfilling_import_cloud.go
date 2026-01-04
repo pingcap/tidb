@@ -134,7 +134,6 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	_, engineUUID := backend.MakeUUID(e.ptbl.Meta().Name.L, idxID)
-	engineID := int32(common.IndexEngineID)
 
 	ticiHeaderCommitTS := uint64(0)
 	if currentIdx != nil && currentIdx.GetColumnarIndexType() == model.ColumnarIndexTypeHybrid {
@@ -173,7 +172,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	err = localBackend.ImportEngine(ctx, engineUUID, engineID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
 	})
