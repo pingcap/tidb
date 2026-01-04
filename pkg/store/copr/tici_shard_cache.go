@@ -359,8 +359,10 @@ func (s *TiCIShardCache) attachRangesToLocations(shards []*ShardLocation, keyRan
 				start = shard.StartKey
 			}
 			end := kr.EndKey
+			rangefullcovered := true
 			if len(end) == 0 || (len(shard.EndKey) > 0 && bytes.Compare(shard.EndKey, end) < 0) {
 				end = shard.EndKey
+				rangefullcovered = false
 			}
 
 			if _, ok := rangesByShard[shard.ShardWithAddr]; !ok {
@@ -368,15 +370,11 @@ func (s *TiCIShardCache) attachRangesToLocations(shards []*ShardLocation, keyRan
 			}
 			rangesByShard[shard.ShardWithAddr] = append(rangesByShard[shard.ShardWithAddr], kv.KeyRange{StartKey: start, EndKey: end})
 
-			if len(kr.EndKey) == 0 || (len(end) > 0 && bytes.Compare(end, kr.EndKey) >= 0) {
+			if rangefullcovered {
 				break
 			}
 
 			kr.StartKey = end
-			if len(shard.EndKey) == 0 || bytes.Compare(kr.StartKey, shard.EndKey) < 0 {
-				// current shard still has remaining space for this request
-				continue
-			}
 			shardIdx++
 		}
 	}

@@ -82,8 +82,8 @@ func (m *mockClient) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	for _, keyRange := range keyRanges {
 		for i, shard := range m.shards {
 			if shard.Contains(keyRange.StartKey) || shard.ContainsByEnd(keyRange.EndKey) ||
-				(bytes.Compare(keyRange.StartKey, shard.StartKey) == -1 &&
-					bytes.Compare(shard.EndKey, keyRange.EndKey) == -1 && len(shard.StartKey) > 0 && len(shard.EndKey) > 0) {
+				((bytes.Compare(keyRange.StartKey, shard.StartKey) == -1 || len(keyRange.StartKey) == 0) &&
+					(bytes.Compare(shard.EndKey, keyRange.EndKey) == -1 || len(keyRange.EndKey) == 0) && len(shard.StartKey) > 0 && len(shard.EndKey) > 0) {
 				need[i] = true
 			}
 		}
@@ -291,7 +291,7 @@ func TestShardCacheRandomRangesNoOverlapOrMissing(t *testing.T) {
 		cur := ranges[0]
 		for i := 1; i < len(ranges); i++ {
 			if bytes.Compare(cur.EndKey, ranges[i].StartKey) >= 0 {
-				if bytes.Compare(cur.EndKey, ranges[i].EndKey) < 0 {
+				if (bytes.Compare(cur.EndKey, ranges[i].EndKey) < 0) || len(ranges[i].EndKey) == 0 {
 					cur.EndKey = ranges[i].EndKey
 				}
 			} else {
@@ -358,4 +358,35 @@ func TestShardCacheRandomRangesNoOverlapOrMissing(t *testing.T) {
 		require.NoError(t, err)
 		assertNoOverlapAndMissing(ranges, locs)
 	}
+
+	// test (-inf, someKey), (someKey, +inf), and (-inf, +inf)
+	ranges := []kv.KeyRange{
+		{
+			StartKey: []byte(""),
+			EndKey:   []byte("m"),
+		},
+	}
+	locs, err := cache.BatchLocateKeyRanges(ctx, 0, 0, ranges)
+	require.NoError(t, err)
+	assertNoOverlapAndMissing(ranges, locs)
+
+	ranges = []kv.KeyRange{
+		{
+			StartKey: []byte("m"),
+			EndKey:   []byte(""),
+		},
+	}
+	locs, err = cache.BatchLocateKeyRanges(ctx, 0, 0, ranges)
+	require.NoError(t, err)
+	assertNoOverlapAndMissing(ranges, locs)
+
+	ranges = []kv.KeyRange{
+		{
+			StartKey: []byte(""),
+			EndKey:   []byte(""),
+		},
+	}
+	locs, err = cache.BatchLocateKeyRanges(ctx, 0, 0, ranges)
+	require.NoError(t, err)
+	assertNoOverlapAndMissing(ranges, locs)
 }
