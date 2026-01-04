@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
@@ -763,6 +764,9 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 			return nil
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
+	}
+	if isReservedSchemaObjInNextGen(old.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop '%s' database", old.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
 	err = checkDatabaseHasForeignKeyReferred(e.ctx, is, old.Name, fkCheck)
@@ -2393,7 +2397,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
-
+	if isReservedSchemaObjInNextGen(meta.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change system table '%s.%s' to partitioned table", schema.Name.L, meta.Name.L))
+	}
 	if t.Meta().Affinity != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER TABLE PARTITIONING of a table with AFFINITY option")
 	}
@@ -3095,7 +3101,9 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-
+	if isReservedSchemaObjInNextGen(ntMeta.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.O))
+	}
 	err = checkExchangePartition(ptMeta, ntMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -4134,7 +4142,10 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func isUndroppableTable(schema, table string) bool {
+func isUndroppableTable(schema, table string, tableInfo *model.TableInfo) bool {
+	if isReservedSchemaObjInNextGen(tableInfo.ID) {
+		return true
+	}
 	if schema == mysql.WorkloadSchema {
 		return true
 	}
@@ -4219,8 +4230,8 @@ func (e *executor) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
-			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
+		if isUndroppableTable(tn.Schema.L, tn.Name.L, tableInfo.Meta()) {
+			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
 		case tableObject:
@@ -4359,6 +4370,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
+	if isReservedSchemaObjInNextGen(tblInfo.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Truncate system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
+	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
 	referredFK := checkTableHasForeignKeyReferred(e.infoCache.GetLatest(), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
 	if referredFK != nil {
@@ -4438,6 +4452,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
 			return err
 		}
+		if isReservedSchemaObjInNextGen(tbl.Meta().ID) {
+			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdent.Name.L))
+		}
 	}
 
 	job := &model.Job{
@@ -4487,6 +4504,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			}
 			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
+			}
+			if isReservedSchemaObjInNextGen(t.Meta().ID) {
+				return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdents[i].Name.L))
 			}
 		}
 
@@ -5779,11 +5799,15 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 			schema.Name, fmt.Sprintf("TableID: %d", args.TableID))
 	}
 
-	ok = validateTableMode(table.Meta().Mode, args.TableMode)
-	if !ok {
-		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
+	tblInfo := table.Meta()
+	if isReservedSchemaObjInNextGen(tblInfo.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change table mode of system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
 	}
-	if table.Meta().Mode == args.TableMode {
+	ok = validateTableMode(tblInfo.Mode, args.TableMode)
+	if !ok {
+		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tblInfo.Mode, args.TableMode, tblInfo.Name.O)
+	}
+	if tblInfo.Mode == args.TableMode {
 		return nil
 	}
 
@@ -5799,7 +5823,7 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
 				Database: schema.Name.L,
-				Table:    table.Meta().Name.L,
+				Table:    tblInfo.Name.L,
 			},
 		},
 	}
@@ -7171,4 +7195,8 @@ func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIS
 	}
 
 	return nil
+}
+
+func isReservedSchemaObjInNextGen(id int64) bool {
+	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
 }
