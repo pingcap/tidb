@@ -561,6 +561,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSetOpr(ctx, x)
 	case *ast.UpdateStmt:
 		return b.buildUpdate(ctx, x)
+	case *ast.RecoverValuesStmt:
+		return b.buildRecoverValues(ctx, x)
 	case *ast.ShowStmt:
 		return b.buildShow(ctx, x)
 	case *ast.DoStmt:

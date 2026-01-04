@@ -1,0 +1,43 @@
+# Test RECOVER VALUES statement
+
+# Test basic RECOVER VALUES with WHERE clause
+create table t1 (id int primary key, name varchar(50)) softdelete retention 7 day;
+insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');
+set tidb_translate_softdelete_sql = true;
+delete from t1 where id = 1;
+delete from t1 where id = 2;
+# Verify rows are soft deleted
+select id, name from t1 order by id;
+select count(*) from t1;
+# Recover one row
+recover values from t1 where id = 1;
+select id, name from t1 order by id;
+drop table t1;
+
+# Test RECOVER VALUES without WHERE clause (recovers all)
+create table t2 (id int primary key, val int) softdelete retention 7 day;
+insert into t2 values (1, 10), (2, 20), (3, 30);
+delete from t2;
+select count(*) from t2;
+recover values from t2;
+select id, val from t2 order by id;
+drop table t2;
+
+# Test RECOVER VALUES on non-softdelete table should error
+create table t3 (id int primary key, name varchar(50));
+insert into t3 values (1, 'a');
+-- error 1235
+recover values from t3 where id = 1;
+drop table t3;
+
+# Test RECOVER VALUES with complex WHERE clause
+create table t4 (id int primary key, category varchar(20), val int) softdelete retention 7 day;
+insert into t4 values (1, 'A', 100), (2, 'A', 200), (3, 'B', 150), (4, 'B', 250);
+delete from t4 where category = 'A';
+delete from t4 where val > 200;
+select id, category, val from t4 order by id;
+
+# Recover only category A items
+recover values from t4 where category = 'A';
+select id, category, val from t4 order by id;
+drop table t4;

@@ -1,0 +1,49 @@
+create table t1 (id int primary key, name varchar(50)) softdelete retention 7 day;
+insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');
+set tidb_translate_softdelete_sql = true;
+delete from t1 where id = 1;
+delete from t1 where id = 2;
+select id, name from t1 order by id;
+id	name
+3	c
+select count(*) from t1;
+count(*)
+1
+recover values from t1 where id = 1;
+select id, name from t1 order by id;
+id	name
+1	a
+3	c
+drop table t1;
+create table t2 (id int primary key, val int) softdelete retention 7 day;
+insert into t2 values (1, 10), (2, 20), (3, 30);
+delete from t2;
+select count(*) from t2;
+count(*)
+0
+recover values from t2;
+select id, val from t2 order by id;
+id	val
+1	10
+2	20
+3	30
+drop table t2;
+create table t3 (id int primary key, name varchar(50));
+insert into t3 values (1, 'a');
+recover values from t3 where id = 1;
+Error 1235 (42000): This version of TiDB doesn't yet support 'RECOVER VALUES on table without soft delete enabled'
+drop table t3;
+create table t4 (id int primary key, category varchar(20), val int) softdelete retention 7 day;
+insert into t4 values (1, 'A', 100), (2, 'A', 200), (3, 'B', 150), (4, 'B', 250);
+delete from t4 where category = 'A';
+delete from t4 where val > 200;
+select id, category, val from t4 order by id;
+id	category	val
+3	B	150
+recover values from t4 where category = 'A';
+select id, category, val from t4 order by id;
+id	category	val
+1	A	100
+2	A	200
+3	B	150
+drop table t4;

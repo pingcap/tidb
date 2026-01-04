@@ -1114,6 +1114,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemSensitive = true
 		ResetDeleteStmtCtx(sc, stmt, vars)
 		errLevels = sc.ErrLevels()
+	case *ast.RecoverValuesStmt:
+		sc.MemSensitive = true
+		ResetRecoverValuesStmtCtx(sc, vars)
+		errLevels = sc.ErrLevels()
 	case *ast.InsertStmt:
 		sc.MemSensitive = true
 		sc.InInsertStmt = true
@@ -1290,6 +1294,31 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
 			!strictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
+}
+
+// ResetRecoverValuesStmtCtx resets statement context for RecoverValuesStmt.
+// Since it's essentially an UPDATE statement, it's the same as ResetUpdateStmtCtx, only an extra flag
+// InRecoverValuesStmt is set. Besides, due to the RecoverValuesStmt doesn't have some fields like IgnoreErr,
+// those fields are ignored.
+func ResetRecoverValuesStmtCtx(sc *stmtctx.StatementContext, vars *variable.SessionVars) {
+	sc.InRecoverValuesStmt = true
+	strictSQLMode := vars.SQLMode.HasStrictMode()
+	sc.InUpdateStmt = true
+	errLevels := sc.ErrLevels()
+	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, false)
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode)
+	errLevels[errctx.ErrGroupNoDefault] = errLevels[errctx.ErrGroupBadNull]
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+		!strictSQLMode,
+	)
+	errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.ResolveErrLevel(false, false)
+	sc.SetErrLevels(errLevels)
+	sc.SetTypeFlags(sc.TypeFlags().
+		WithTruncateAsWarning(!strictSQLMode).
+		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
+			!strictSQLMode || vars.SQLMode.HasAllowInvalidDatesMode()))
 }
 
 // ResetDeleteStmtCtx resets statement context for DeleteStmt.

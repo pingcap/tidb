@@ -1061,6 +1061,7 @@ import (
 	RenameUserStmt             "rename user statement"
 	ReplaceIntoStmt            "REPLACE INTO statement"
 	RecoverTableStmt           "recover table statement"
+	RecoverValuesStmt          "recover values statement"
 	RevokeStmt                 "Revoke statement"
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
@@ -3087,6 +3088,26 @@ RecoverTableStmt:
 			Table:  $3.(*ast.TableName),
 			JobNum: $4.(int64),
 		}
+	}
+
+/*******************************************************************
+ *
+ *  Recover Values Statement
+ *
+ *  Example:
+ *      RECOVER VALUES FROM t1 WHERE id = 1;
+ *
+ *******************************************************************/
+RecoverValuesStmt:
+	"RECOVER" "VALUES" "FROM" TableName WhereClauseOptional
+	{
+		x := &ast.RecoverValuesStmt{
+			Table: $4.(*ast.TableName),
+		}
+		if $5 != nil {
+			x.Where = $5.(ast.ExprNode)
+		}
+		$$ = x
 	}
 
 /*******************************************************************
@@ -12642,6 +12663,7 @@ Statement:
 |	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
+|	RecoverValuesStmt
 |	ReleaseSavepointStmt
 |	RevokeStmt
 |	RevokeRoleStmt

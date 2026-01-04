@@ -218,6 +218,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "TruncateTable"
 	case *UpdateStmt:
 		return "Update"
+	case *RecoverValuesStmt:
+		return "RecoverValues"
 	case *GrantStmt:
 		return "Grant"
 	case *RevokeStmt:

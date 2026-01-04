@@ -5496,6 +5496,55 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	return b.buildUpdatePlan(ctx, p, oldSchemaLen, utlr.updatableTableList, update.List, update.IgnoreErr)
 }
 
+// buildRecoverValues builds an execution plan for RECOVER VALUES statement.
+// RECOVER VALUES FROM <table> WHERE <expr> is semantically equivalent to
+// UPDATE <table> SET _tidb_softdelete_time = NULL WHERE <expr>
+// but only works on tables with soft delete enabled.
+func (b *PlanBuilder) buildRecoverValues(ctx context.Context, recoverStmt *ast.RecoverValuesStmt) (base.Plan, error) {
+	// Get the table info to verify it's a soft delete table
+	dbName := recoverStmt.Table.Schema
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	tbl, err := b.is.TableByName(ctx, dbName, recoverStmt.Table.Name)
+	if err != nil {
+		return nil, err
+	}
+	tableInfo := tbl.Meta()
+
+	// Check if the table has soft delete enabled
+	if tableInfo.SoftdeleteInfo == nil {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"RECOVER VALUES on table without soft delete enabled")
+	}
+
+	// Build an equivalent UPDATE statement:
+	// UPDATE <table> SET _tidb_softdelete_time = NULL WHERE <expr>
+	tableRef := &ast.TableRefsClause{
+		TableRefs: &ast.Join{
+			Left: &ast.TableSource{
+				Source: recoverStmt.Table,
+			},
+		},
+	}
+
+	// Create the assignment: _tidb_softdelete_time = NULL
+	assignment := &ast.Assignment{
+		Column: &ast.ColumnName{
+			Name: model.ExtraSoftDeleteTimeName,
+		},
+		Expr: ast.NewValueExpr(nil, "", ""),
+	}
+
+	updateStmt := &ast.UpdateStmt{
+		TableRefs: tableRef,
+		List:      []*ast.Assignment{assignment},
+		Where:     recoverStmt.Where,
+	}
+
+	return b.buildUpdate(ctx, updateStmt)
+}
+
 // buildDMLSelectPlan builds the common select plan for DML statements (UPDATE, DELETE).
 // It handles WITH clause, builds the result set from TableRefs, WHERE clause, pessimistic lock,
 // ORDER BY, and LIMIT.
