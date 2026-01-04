@@ -513,7 +513,7 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 }
 
 func TestAlreadyExistsDefaultResourceGroup(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/managerAlreadyCreateSomeGroups", `return(1)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/managerAlreadyCreateSomeGroups", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/managerAlreadyCreateSomeGroups"))
 	}()

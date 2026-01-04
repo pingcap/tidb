@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -214,9 +213,6 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	return builder.String(), params
 }
 
-// hasDeletedExpiredRows just test mark for delete expired rows once.
-var hasDeletedExpiredRows = atomic.Bool{}
-
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
 		tableName = "tidb_runaway_queries"
@@ -238,9 +234,6 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		deleteSize = 2
 		batchSize = 5 * deleteSize
 	})
-	if hasDeletedExpiredRows.Load() {
-		return
-	}
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
