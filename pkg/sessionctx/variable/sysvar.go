@@ -2935,6 +2935,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.SQLRequirePrimaryKey, Value: vardef.Off, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PrimaryKeyRequired = TiDBOptOn(val)
 		return nil
+	}, RequireDynamicPrivileges: func(isGlobal bool, sem bool) []string {
+		return []string{"SYSTEM_VARIABLES_ADMIN"}
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableAnalyzeSnapshot, Value: BoolToOnOff(vardef.DefTiDBEnableAnalyzeSnapshot), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAnalyzeSnapshot = TiDBOptOn(val)
