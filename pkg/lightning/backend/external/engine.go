@@ -873,7 +873,7 @@ func (m *MemoryIngestData) GetTS() uint64 {
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
 	// Make sure data is not released.
-	intest.Assert(len(m.kvs) > 0)
+	intest.Assert(!m.released.Load(), "data shouldn't be released when IncRef")
 }
 
 // DecRef implements IngestData.DecRef.

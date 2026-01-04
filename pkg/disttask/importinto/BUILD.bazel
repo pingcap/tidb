@@ -4,6 +4,7 @@ go_library(
     name = "importinto",
     srcs = [
         "clean_up.go",
+        "collect_conflicts.go",
         "conflict_resolution.go",
         "encode_and_sort_operator.go",
         "job.go",
@@ -93,6 +94,7 @@ go_test(
     name = "importinto_test",
     timeout = "short",
     srcs = [
+        "collect_conflicts_test.go",
         "conflict_resolution_test.go",
         "encode_and_sort_operator_test.go",
         "job_testkit_test.go",
@@ -107,7 +109,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 22,
+    shard_count = 23,
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
@@ -144,6 +146,7 @@ go_test(
         "//pkg/store",
         "//pkg/store/driver/error",
         "//pkg/store/mockstore",
+        "//pkg/table",
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

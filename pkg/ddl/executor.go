@@ -5566,7 +5566,7 @@ func validateTableAffinity(tblInfo *model.TableInfo, affinity *model.TableAffini
 	default:
 		// this should not happen, the affinity level should have been normalized and checked in the parser stage.
 		intest.Assert(false)
-		return errors.Errorf("invalid affinity level: %s", level)
+		return errors.Errorf("invalid affinity level: %s for table %s (ID: %d)", level, tblInfo.Name.O, tblInfo.ID)
 	}
 
 	return nil
