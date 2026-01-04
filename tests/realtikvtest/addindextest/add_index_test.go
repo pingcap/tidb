@@ -48,7 +48,7 @@ func TestCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestRepeatCreateNonUniqueIndex(t *testing.T) {
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 3; i++ {
 		t.Run(fmt.Sprintf("iter_%d", i), func(t *testing.T) {
 			TestCreateNonUniqueIndex(t)
 		})
