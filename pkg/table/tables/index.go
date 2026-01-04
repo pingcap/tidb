@@ -163,10 +163,22 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 			}
 		}
 
-		if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
-			c.idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 &&
-			c.phyTblID != c.tblInfo.ID {
-			fullHandle = kv.NewPartitionHandle(c.phyTblID, h)
+		// For global index V1+ on partitioned tables, the handle MUST be a PartitionHandle
+		// because we need the partition ID to encode in the index key
+		if c.idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 && pi != nil {
+			// If handle is not already a PartitionHandle, try to create one using phyTblID
+			if _, ok := fullHandle.(kv.PartitionHandle); !ok {
+				// For partition-level index objects, phyTblID is the partition ID
+				// For table-level index objects (global indexes), phyTblID is the main table ID
+				// In the latter case, we can't create a PartitionHandle without knowing which partition
+				if c.phyTblID != c.tblInfo.ID {
+					// This is a partition-level index object, use phyTblID as partition ID
+					fullHandle = kv.NewPartitionHandle(c.phyTblID, h)
+				}
+				// If phyTblID == tblInfo.ID, this means we're using the main table's index object
+				// and the handle should already be a PartitionHandle from the caller
+				// If it's not, GenIndexKey will fail with an appropriate error
+			}
 		}
 	}
 
