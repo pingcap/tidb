@@ -1275,8 +1275,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 1.0)
 	}
 
-	// Always apply maxTotalPercent to maxAddedRows (matching old behavior where addedRows was always scaled)
-	maxAddedRows *= maxTotalPercent
+	if maxTotalPercent > 0 {
+		// Always apply maxTotalPercent to maxAddedRows (matching old behavior where addedRows was always scaled)
+		maxAddedRows *= maxTotalPercent
+	}
 
 	// Step 9: Evaluate the skew ratio to determine its impact on the returned estimate.
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio

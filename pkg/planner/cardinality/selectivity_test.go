@@ -1292,24 +1292,24 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
-			selectivity:              0.01801783,
+			selectivity:              0.01791221,
 			selectivityAfterIncrease: 0.01851852,
-			rowEstimate:              9.72962963, // 0.018017832647462276 * 540
+			rowEstimate:              9.67259259, // 0.01791221 * 540
 			rowEstimateAfterIncrease: 100.0,      // 0.018518518518518517 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
-			selectivity:              0.00635802,
-			selectivityAfterIncrease: 0.00619136,
-			rowEstimate:              3.43333333,  // 0.006358024691358024 * 540
-			rowEstimateAfterIncrease: 33.43333333, // 0.0061913580246913584 * 5400
+			selectivity:              0.0062524,
+			selectivityAfterIncrease: 0.01117524,
+			rowEstimate:              3.3762963,  // 0.0062524 * 540
+			rowEstimateAfterIncrease: 60.3462963, // 0.01117524 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
-			selectivity:              0.01253086,
-			selectivityAfterIncrease: 0.01236420,
-			rowEstimate:              6.76666667,  // 0.012530864197530862 * 540
-			rowEstimateAfterIncrease: 66.76666667, // 0.012364197530864197 * 5400
+			selectivity:              0.01242524,
+			selectivityAfterIncrease: 0.01734808,
+			rowEstimate:              6.70962963,  // 0.01242524 * 540
+			rowEstimateAfterIncrease: 93.67962963, // 0.01734808 * 5400
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
@@ -1320,17 +1320,17 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "b > 1",
-			selectivity:              0.97296296,
+			selectivity:              0.96725926,
 			selectivityAfterIncrease: 1.0,
-			rowEstimate:              525.4,  // 0.9729629629629629 * 540
+			rowEstimate:              522.32, // 0.96725926 * 540
 			rowEstimateAfterIncrease: 5400.0, // 1 * 5400
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              0.00185185,
-			selectivityAfterIncrease: 0.00030774,
-			rowEstimate:              1.0,     // 0.001851851851851852 * 540
-			rowEstimateAfterIncrease: 1.66178, // 0.00030774 * 5400
+			selectivityAfterIncrease: 0.08297482,
+			rowEstimate:              1.0,          // 0.001851851851851852 * 540
+			rowEstimateAfterIncrease: 448.06401667, // 0.08297482 * 5400
 		},
 		{
 			exprs:                    longExpr,
