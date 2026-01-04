@@ -8175,3 +8175,14 @@ func TestPartialIndex(t *testing.T) {
 	}
 	RunTest(t, cases, false)
 }
+
+func TestRecoverValuesStmt(t *testing.T) {
+	cases := []testCase{
+		{"recover values from t where a > 1", true, "RECOVER VALUES FROM `t` WHERE `a`>1"},
+		{"recover values from t3", true, "RECOVER VALUES FROM `t3`"},
+		{"recover values from t, t1 where a > 1", false, ""},
+		{"recover values from t123 where a > (select b from t)", true, "RECOVER VALUES FROM `t123` WHERE `a`>(SELECT `b` FROM `t`)"},
+	}
+	RunTest(t, cases, false)
+}
+

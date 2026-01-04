@@ -1,15 +1,11 @@
-# Test RECOVER VALUES statement
-
 # Test basic RECOVER VALUES with WHERE clause
 create table t1 (id int primary key, name varchar(50)) softdelete retention 7 day;
 insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');
 set tidb_translate_softdelete_sql = true;
 delete from t1 where id = 1;
 delete from t1 where id = 2;
-# Verify rows are soft deleted
 select id, name from t1 order by id;
 select count(*) from t1;
-# Recover one row
 recover values from t1 where id = 1;
 select id, name from t1 order by id;
 drop table t1;
@@ -36,8 +32,30 @@ insert into t4 values (1, 'A', 100), (2, 'A', 200), (3, 'B', 150), (4, 'B', 250)
 delete from t4 where category = 'A';
 delete from t4 where val > 200;
 select id, category, val from t4 order by id;
-
-# Recover only category A items
 recover values from t4 where category = 'A';
 select id, category, val from t4 order by id;
 drop table t4;
+
+# Test RECOVER VALUES with subqueries in WHERE clause
+create table t5 (id int primary key, a int) softdelete retention 7 day;
+insert into t5 values (2, 20), (3, 30);
+delete from t5 where a < 25;
+select * from t5;
+create table t6 (id int primary key, b int) softdelete retention 7 day;
+insert into t6 values (11, 20), (22, 30);
+delete from t6;
+select * from t6;
+select min(a) from t5;
+# The semantic of the subquery should respect @@tidb_translate_softdelete_sql
+# By default, it's true, so it's `recover values from t6 where b = 30;`
+recover values from t6 where b = (select min(a) from t5);
+select * from t6;
+delete from t6;
+set tidb_translate_softdelete_sql = false;
+select min(a) from t5;
+# Now, the semantic of the subquery is false, so it's `recover values from t6 where b = 20;`
+recover values from t6 where b = (select min(a) from t5);
+set tidb_translate_softdelete_sql = true;
+select * from t6;
+drop table t5;
+drop table t6;

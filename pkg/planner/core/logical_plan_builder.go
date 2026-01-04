@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -5512,14 +5513,13 @@ func (b *PlanBuilder) buildRecoverValues(ctx context.Context, recoverStmt *ast.R
 	}
 	tableInfo := tbl.Meta()
 
-	// Check if the table has soft delete enabled
+	// RECOVER VALUES only works on soft delete tables
 	if tableInfo.SoftdeleteInfo == nil {
 		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
 			"RECOVER VALUES on table without soft delete enabled")
 	}
 
-	// Build an equivalent UPDATE statement:
-	// UPDATE <table> SET _tidb_softdelete_time = NULL WHERE <expr>
+	// Build an equivalent UPDATE statement ast to reuse the logic.
 	tableRef := &ast.TableRefsClause{
 		TableRefs: &ast.Join{
 			Left: &ast.TableSource{
@@ -5527,21 +5527,17 @@ func (b *PlanBuilder) buildRecoverValues(ctx context.Context, recoverStmt *ast.R
 			},
 		},
 	}
-
-	// Create the assignment: _tidb_softdelete_time = NULL
 	assignment := &ast.Assignment{
 		Column: &ast.ColumnName{
 			Name: model.ExtraSoftDeleteTimeName,
 		},
 		Expr: ast.NewValueExpr(nil, "", ""),
 	}
-
 	updateStmt := &ast.UpdateStmt{
 		TableRefs: tableRef,
 		List:      []*ast.Assignment{assignment},
 		Where:     recoverStmt.Where,
 	}
-
 	return b.buildUpdate(ctx, updateStmt)
 }
 
@@ -5580,6 +5576,14 @@ func (b *PlanBuilder) buildDMLSelectPlan(
 	p, err = b.buildResultSetNode(ctx, tableRefs, false)
 	if err != nil {
 		return nil, 0, err
+	}
+
+	if b.ctx.GetSessionVars().StmtCtx.InRecoverValuesStmt {
+		ds, ok := p.(*logicalop.DataSource)
+		intest.Assert(ok, "expected DataSource in RECOVER VALUES plan")
+		if ok {
+			ds.DisableSoftDeleteFilter = true
+		}
 	}
 
 	oldSchemaLen = p.Schema().Len()

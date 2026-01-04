@@ -3093,7 +3093,7 @@ RecoverTableStmt:
 /*******************************************************************
  *
  *  Recover Values Statement
- *
+ *  (Only works for softdelete tables)
  *  Example:
  *      RECOVER VALUES FROM t1 WHERE id = 1;
  *
