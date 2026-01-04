@@ -655,15 +655,7 @@ func (r *Registry) StopHeartbeatManager() {
 
 // resolveRestoreTS determines which restoredTS to use, handling conflicts with existing tasks
 // when restoredTS is not user-specified. Returns: (resolvedRestoreTS, error)
-func (r *Registry) resolveRestoreTS(ctx context.Context,
-	info RegistrationInfo, isRestoredTSUserSpecified bool) (uint64, error) {
-	// if restoredTS is user-specified, use it directly without any conflict resolution
-	if isRestoredTSUserSpecified {
-		log.Info("restoredTS is user-specified, using it directly",
-			zap.Uint64("restored_ts", info.RestoredTS))
-		return info.RestoredTS, nil
-	}
-
+func (r *Registry) resolveRestoreTS(ctx context.Context, info RegistrationInfo, isRestoredTSUserSpecified bool) (uint64, error) {
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
 
 	// look for tasks with same filter, startTS, cluster, sysTable, cmd
@@ -701,11 +693,11 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 
 	// if restoredTS values are different and user explicitly specified it, use current restoredTS
 	if isRestoredTSUserSpecified && existingRestoredTS != info.RestoredTS {
-		log.Info("existing task has different restoredTS than user-specified, using current restoredTS",
-			zap.Uint64("existing_task_id", conflictingTaskID),
+		log.Error("existing task has different restoredTS from user-specified",
 			zap.Uint64("existing_restored_ts", existingRestoredTS),
-			zap.Uint64("current_restored_ts", info.RestoredTS))
-		return info.RestoredTS, nil
+			zap.Uint64("user_specified_restored_ts", info.RestoredTS))
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"existing task has different restoredTS(%d) from user-specified(%d)", existingRestoredTS, info.RestoredTS)
 	}
 
 	// if existing task is paused, reuse its restoredTS

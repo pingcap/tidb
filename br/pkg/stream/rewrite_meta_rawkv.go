@@ -143,7 +143,7 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 	dbMap, exist := sr.DbReplaceMap[dbID]
 	if !exist {
 		if sr.fromPitrIdMap {
-			log.Warn("failed to find db id:%v in maps, but it is from pitr id map.", zap.Int64("dbID", dbID))
+			log.Warn("failed to find db id in maps, but it is from pitr id map.", zap.Int64("dbID", dbID))
 			return nil, nil
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
@@ -168,7 +168,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 	dbMap, exist := sr.DbReplaceMap[dbInfo.ID]
 	if !exist {
 		if sr.fromPitrIdMap {
-			log.Warn("failed to find db id:%v in maps, but it is from pitr id map.", zap.Int64("dbID", dbInfo.ID))
+			log.Warn("failed to find db id in maps, but it is from pitr id map.", zap.Int64("dbID", dbInfo.ID))
 			return nil, nil
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbInfo.ID)
@@ -255,7 +255,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	dbReplace, exist := sr.DbReplaceMap[dbID]
 	if !exist {
 		if sr.fromPitrIdMap {
-			log.Warn("failed to find db id:%v in maps, but it is from pitr id map.", zap.Int64("dbID", dbID))
+			log.Warn("failed to find db id in maps, but it is from pitr id map.", zap.Int64("dbID", dbID))
 			return nil, nil
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
@@ -267,7 +267,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	tableReplace, exist := dbReplace.TableMap[tableID]
 	if !exist {
 		if sr.fromPitrIdMap {
-			log.Warn("failed to find table id:%v in maps, but it is from pitr id map.", zap.Int64("tableID", tableID))
+			log.Warn("failed to find table id in maps, but it is from pitr id map.", zap.Int64("dbID", dbID), zap.Int64("tableID", tableID))
 			return nil, nil
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableID)
@@ -302,7 +302,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	dbReplace, exist = sr.DbReplaceMap[dbID]
 	if !exist {
 		if sr.fromPitrIdMap {
-			log.Warn("failed to find db id:%v in maps, but it is from pitr id map.", zap.Int64("dbID", dbID))
+			log.Warn("failed to find db id in maps, but it is from pitr id map.", zap.Int64("dbID", dbID))
 			return nil, nil
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
@@ -314,7 +314,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	tableReplace, exist = dbReplace.TableMap[tableInfo.ID]
 	if !exist {
 		if sr.fromPitrIdMap {
-			log.Warn("failed to find table id:%v in maps, but it is from pitr id map.", zap.Int64("tableID", tableInfo.ID))
+			log.Warn("failed to find table id in maps, but it is from pitr id map.", zap.Int64("dbID", dbID), zap.Int64("tableID", tableInfo.ID))
 			return nil, nil
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableInfo.ID)
