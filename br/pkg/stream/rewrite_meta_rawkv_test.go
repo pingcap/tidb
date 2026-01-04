@@ -553,6 +553,41 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 	require.False(t, tableInfo.TTLInfo.Enable)
 }
 
+func TestFromPitrIdMap(t *testing.T) {
+	dbReplace := map[int64]*DBReplace{
+		1: {
+			DbID: 1,
+			Name: "test_db",
+			TableMap: map[int64]*TableReplace{
+				100: {
+					TableID: 100,
+					Name:    "test_table",
+				},
+			},
+		},
+	}
+	dbInfo := &model.DBInfo{
+		ID:   2,
+		Name: ast.NewCIStr("test_db2"),
+	}
+	dbInfoValue, err := json.Marshal(dbInfo)
+	require.Nil(t, err)
+	tableInfo := &model.TableInfo{
+		ID:   101,
+		Name: ast.NewCIStr("test_table2"),
+	}
+	tableInfoValue, err := json.Marshal(tableInfo)
+	require.Nil(t, err)
+
+	sr := NewSchemasReplace(dbReplace, true, nil, 0, nil, false)
+	_, err = sr.rewriteDBInfo(dbInfoValue)
+	require.Nil(t, err)
+	_, err = sr.rewriteTableInfo(tableInfoValue, 1)
+	require.Nil(t, err)
+	_, err = sr.rewriteTableInfo(tableInfoValue, 2)
+	require.Nil(t, err)
+}
+
 // db:70->80 -
 //           | - t0:71->81 -
 //           |             | - p0:72->82
