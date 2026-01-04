@@ -256,14 +256,14 @@ func newBatchPointGetPlan(
 	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(
-				ctx.GetSessionVars().CurrentDB,
-				dbName,
-				tblAlias,
-				idxInfo,
-				tblHints,
-				indexHints,
-			) {
+			idxInfo.HasCondition() || !indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias,
+			idxInfo,
+			tblHints,
+			indexHints,
+		) {
 			continue
 		}
 		if len(idxInfo.Columns) != len(whereColNames) || idxInfo.HasPrefixIndex() {

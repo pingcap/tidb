@@ -23,7 +23,6 @@ import (
 )
 
 type PreCondChecker struct {
-	canEliminated []bool
 }
 
 // CheckConstraints checks whether the filters can meet the constraints from the predefined predicates in index meta.
@@ -113,7 +112,10 @@ func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFun
 	if len(rangesFromFilters) == 0 || err != nil {
 		return false
 	}
-	unionedRange, err := ranger.UnionRanges(rangerctx, append(rangesFromFilters, ranges...), false)
+	unionedBuff := make([]*ranger.Range, len(rangesFromFilters)+len(ranges))
+	copy(unionedBuff, rangesFromFilters)
+	copy(unionedBuff[len(rangesFromFilters):], ranges)
+	unionedRange, err := ranger.UnionRanges(rangerctx, unionedBuff, false)
 	if err != nil {
 		return false
 	}
@@ -143,4 +145,75 @@ func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Colum
 		}
 	}
 	return true
+}
+
+// AlwaysMeetConstraints checks whether the filters always meet the constraints from the predefined predicates in index meta.
+// This check is only applied to the pre condition that is single IS NULL.
+// e.g. for partial index idx(b) where a IS NULL, if the filter is b = ? and a is null/a > 10, then we can guarantee that a IS NULL is always true.
+// Because the `IsNullRejected` has correctness issues. So we implement a simpler version here.
+func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []expression.Expression) bool {
+	if len(prePredicates) != 1 {
+		return false
+	}
+	sf, ok := prePredicates[0].(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.IsNull {
+		return false
+	}
+	col, ok := sf.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return false
+	}
+	// When the index is chosen, the givenfilters can not be empty.
+	for _, filter := range filters {
+		sf, ok := filter.(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		if checkIsNullRejected(sctx, col, sf) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkIsNullRejected(sctx planctx.PlanContext, targetCol *expression.Column, filter *expression.ScalarFunction) bool {
+	if filter.FuncName.L == ast.LogicOr {
+		leavesAllRejected := true
+		for _, arg := range filter.GetArgs() {
+			sf, ok := arg.(*expression.ScalarFunction)
+			if !ok || !checkIsNullRejected(sctx, targetCol, sf) {
+				leavesAllRejected = false
+				break
+			}
+		}
+		return leavesAllRejected
+	}
+	if filter.FuncName.L == ast.LogicAnd {
+		for _, arg := range filter.GetArgs() {
+			sf, ok := arg.(*expression.ScalarFunction)
+			if ok && checkIsNullRejected(sctx, targetCol, sf) {
+				return true
+			}
+		}
+		return false
+	}
+	if filter.FuncName.L == ast.IsNull {
+		col, ok := filter.GetArgs()[0].(*expression.Column)
+		if ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol) {
+			return true
+		}
+	}
+	if _, ok := expression.CompareOpMap[filter.FuncName.L]; ok {
+		if filter.FuncName.L == ast.NullEQ {
+			return false
+		}
+		col, ok := filter.GetArgs()[0].(*expression.Column)
+		if !ok {
+			col, ok = filter.GetArgs()[1].(*expression.Column)
+		}
+		if ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol) {
+			return true
+		}
+	}
+	return false
 }

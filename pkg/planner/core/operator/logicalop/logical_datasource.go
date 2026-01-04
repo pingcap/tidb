@@ -734,6 +734,9 @@ func (ds *DataSource) CheckPartialIndexes() {
 		if path.Forced {
 			partialIndexUsedHint = true
 		}
+		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
+			path.PreMatchCanBeFalse = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
+		}
 	}
 	// 1. No partial index,
 	// 2. Or no partial index is removed and no partial index is used by hint.

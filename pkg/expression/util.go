@@ -893,12 +893,14 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 }
 
 var CompareOpMap = map[string]struct{}{
-	ast.LT: {},
-	ast.GE: {},
-	ast.GT: {},
-	ast.LE: {},
-	ast.EQ: {},
-	ast.NE: {},
+	ast.LT:     {},
+	ast.GE:     {},
+	ast.GT:     {},
+	ast.LE:     {},
+	ast.EQ:     {},
+	ast.NE:     {},
+	ast.NullEQ: {},
+	ast.In:     {},
 }
 
 func pushNotAcrossArgs(ctx BuildContext, exprs []Expression, not bool) ([]Expression, bool) {
