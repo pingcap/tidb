@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package variable_test
+package tests
 
 import (
 	"context"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
@@ -714,4 +716,207 @@ func TestUserVars(t *testing.T) {
 	dt, ok = vars.GetUserVarVal("b")
 	require.True(t, ok)
 	require.Equal(t, types.NewStringDatum("v2"), dt)
+}
+
+func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test default value
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+
+	// Test session scope
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = ON")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	// Global should not be affected
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = OFF")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+
+	// Test global scope
+	tk.MustExec("set @@global.tidb_opt_partial_ordered_index_for_topn = ON")
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	// New session should inherit global value
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+
+	// Session value should override global value
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = OFF")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	// Global should still be ON
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+
+	// Test different value formats (only 0, 1, ON, OFF are allowed)
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 1")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 0")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'ON'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'OFF'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'on'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'off'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("0"))
+
+	// Test disallowed values
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'true'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'false'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 2"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = -1"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'yes'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'no'"))
+
+	// Verify the field is accessible in SessionVars
+	vars := tk.Session().GetSessionVars()
+	require.False(t, vars.OptPartialOrderedIndexForTopN)
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = ON")
+	require.True(t, vars.OptPartialOrderedIndexForTopN)
+}
+
+func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
+	// Test that the variable exists and has correct properties
+	sv := variable.GetSysVar(vardef.TiDBOptPartialOrderedIndexForTopN)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.IsHintUpdatableVerified)
+	require.Equal(t, vardef.TypeBool, sv.Type)
+	require.Equal(t, "OFF", sv.Value) // Default is false
+
+	// Test validation
+	vars := variable.NewSessionVars(nil)
+	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+
+	// Test allowed values: 0, 1, ON, OFF (case-insensitive)
+	val, err := sv.Validate(vars, "ON", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "on", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "OFF", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	val, err = sv.Validate(vars, "off", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	val, err = sv.Validate(vars, "1", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	val, err = sv.Validate(vars, "0", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	// Test disallowed values
+	_, err = sv.Validate(vars, "true", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "false", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "2", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "-1", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "yes", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "no", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	// Test SetSession function
+	err = sv.SetSessionFromHook(vars, "ON")
+	require.NoError(t, err)
+	require.True(t, vars.OptPartialOrderedIndexForTopN)
+
+	err = sv.SetSessionFromHook(vars, "OFF")
+	require.NoError(t, err)
+	require.False(t, vars.OptPartialOrderedIndexForTopN)
+}
+
+func TestSetTiDBCloudStorageURI(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	mock := variable.NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	cloudStorageURI := variable.GetSysVar(vardef.TiDBCloudStorageURI)
+	require.Len(t, vardef.CloudStorageURI.Load(), 0)
+	defer func() {
+		vardef.CloudStorageURI.Store("")
+	}()
+
+	// Default empty
+	require.Len(t, cloudStorageURI.Value, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Set to noop
+	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
+	err := mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, noopURI)
+	require.NoError(t, err)
+	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.Equal(t, noopURI, val)
+	require.Equal(t, noopURI, vardef.CloudStorageURI.Load())
+
+	// Set to s3, should fail
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, "s3://blackhole")
+	require.Error(t, err, "unreachable storage URI")
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer s.Close()
+
+	// Set to s3, should return uri without variable
+	s3URI := "s3://tiflow-test/?access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, s3URI)
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.True(t, strings.HasPrefix(val, "s3://tiflow-test/"))
+	require.Contains(t, val, "access-key=xxxxxx")
+	require.Contains(t, val, "secret-access-key=xxxxxx")
+	require.Contains(t, val, "session-token=xxxxxx")
+	require.Equal(t, s3URI, vardef.CloudStorageURI.Load())
+
+	// ks3 is like s3
+	ks3URI := "ks3://tiflow-test/?region=test&access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, ks3URI)
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.True(t, strings.HasPrefix(val, "ks3://tiflow-test/"))
+	require.Contains(t, val, "access-key=xxxxxx")
+	require.Contains(t, val, "secret-access-key=xxxxxx")
+	require.Contains(t, val, "session-token=xxxxxx")
+	require.Equal(t, ks3URI, vardef.CloudStorageURI.Load())
+
+	// Set to empty, should return no error
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, "")
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.Len(t, val, 0)
+	cancel()
 }

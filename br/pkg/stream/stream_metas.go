@@ -1173,7 +1173,14 @@ func (m MigrationExt) applyMetaEditTo(ctx context.Context, medit *pb.MetaEdit, m
 					medit.DeleteLogicalFiles[idx].Spans,
 					dfi.RangeOffset,
 					func(s *pb.Span, u uint64) int {
-						return int(s.Offset - u)
+						// Use comparison instead of subtraction to avoid uint64 underflow
+						// and int overflow issues
+						if s.Offset < u {
+							return -1
+						} else if s.Offset > u {
+							return 1
+						}
+						return 0
 					})
 				if ok && medit.DeleteLogicalFiles[idx].Spans[received].Length != dfi.RangeLength {
 					err = errors.Annotatef(

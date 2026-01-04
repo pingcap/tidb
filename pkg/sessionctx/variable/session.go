@@ -1623,6 +1623,8 @@ type SessionVars struct {
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
+	// OptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	OptPartialOrderedIndexForTopN bool
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator
@@ -2374,6 +2376,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
 		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:     vardef.DefTiDBIndexLookUpPushDownPolicy,
+		OptPartialOrderedIndexForTopN: vardef.DefTiDBOptPartialOrderedIndexForTopN,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))

@@ -77,6 +77,7 @@ go_test(
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
         "//pkg/domain/infosync",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/sessionctx",
         "//pkg/testkit",

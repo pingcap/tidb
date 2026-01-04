@@ -26,10 +26,20 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	mockScheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+type storeWithKS struct {
+	kv.Storage
+	ks string
+}
+
+func (s *storeWithKS) GetKeyspace() string {
+	return s.ks
+}
 
 // GetTestSchedulerExt return scheduler.Extension for testing.
 func GetTestSchedulerExt(ctrl *gomock.Controller) Extension {
@@ -146,7 +156,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	defer ctrl.Finish()
 
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
+	mgr := NewManager(context.Background(), &storeWithKS{}, taskMgr, "1", proto.NodeResourceForTest)
 	RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param Param) Scheduler {
 			mockScheduler := NewBaseScheduler(ctx, task, param)
@@ -201,7 +211,7 @@ func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
 	defer ctrl.Finish()
 
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
+	mgr := NewManager(context.Background(), &storeWithKS{}, taskMgr, "1", proto.NodeResourceForTest)
 	taskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{CPUCount: 8}}, nil)
 	mgr.nodeMgr.refreshNodes(mgr.ctx, mgr.taskMgr, mgr.slotMgr)
 	RegisterSchedulerFactory(proto.TaskTypeExample,

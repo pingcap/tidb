@@ -121,7 +121,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k1", proto.TaskTypeExample, "", 3, scope, 0, []byte("init"))
+				task, err := handle.SubmitTask(c.Ctx, "k1", proto.TaskTypeExample, c.Store.GetKeyspace(), 3, scope, 0, []byte("init"))
 				require.NoError(t, err)
 				require.Equal(t, 3, task.RequiredSlots)
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
@@ -172,7 +172,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 				<-modifySyncCh
 			})
 		})
-		task, err := handle.SubmitTask(c.Ctx, "k2", proto.TaskTypeExample, "", 3, scope, 0, nil)
+		task, err := handle.SubmitTask(c.Ctx, "k2", proto.TaskTypeExample, c.Store.GetKeyspace(), 3, scope, 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.RequiredSlots)
 		// finish StepOne
@@ -221,7 +221,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 				}
 			},
 		)
-		task, err := handle.SubmitTask(c.Ctx, "k2-2", proto.TaskTypeExample, "", 3, scope, 0, nil)
+		task, err := handle.SubmitTask(c.Ctx, "k2-2", proto.TaskTypeExample, c.Store.GetKeyspace(), 3, scope, 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.RequiredSlots)
 		for range 5 {
@@ -245,7 +245,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k3", proto.TaskTypeExample, "", 3, scope, 0, nil)
+				task, err := handle.SubmitTask(c.Ctx, "k3", proto.TaskTypeExample, c.Store.GetKeyspace(), 3, scope, 0, nil)
 				require.NoError(t, err)
 				require.Equal(t, 3, task.RequiredSlots)
 				found, err := c.TaskMgr.PauseTask(c.Ctx, task.Key)
@@ -291,7 +291,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k4", proto.TaskTypeExample, "", 3, scope, 0, nil)
+				task, err := handle.SubmitTask(c.Ctx, "k4", proto.TaskTypeExample, c.Store.GetKeyspace(), 3, scope, 0, nil)
 				require.NoError(t, err)
 				require.Equal(t, 3, task.RequiredSlots)
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
@@ -345,7 +345,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k5", proto.TaskTypeExample, "", 3, scope, 0, []byte("init"))
+				task, err := handle.SubmitTask(c.Ctx, "k5", proto.TaskTypeExample, c.Store.GetKeyspace(), 3, scope, 0, []byte("init"))
 				require.NoError(t, err)
 				require.Equal(t, 3, task.RequiredSlots)
 				require.EqualValues(t, []byte("init"), task.Meta)
@@ -377,7 +377,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		defer resetRuntimeInfoFn()
 		defer testModifyWhenSubtaskRun.Store(false)
 		testModifyWhenSubtaskRun.Store(true)
-		task, err := handle.SubmitTask(c.Ctx, "k6", proto.TaskTypeExample, "", 3, scope, 0, []byte("init"))
+		task, err := handle.SubmitTask(c.Ctx, "k6", proto.TaskTypeExample, c.Store.GetKeyspace(), 3, scope, 0, []byte("init"))
 		require.NoError(t, err)
 		require.Equal(t, 3, task.RequiredSlots)
 		require.EqualValues(t, []byte("init"), task.Meta)
@@ -409,7 +409,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 		defer resetRuntimeInfoFn()
 		defer testModifyWhenSubtaskRun.Store(false)
 		testModifyWhenSubtaskRun.Store(true)
-		task, err := handle.SubmitTask(c.Ctx, "k7", proto.TaskTypeExample, "", 9, scope, 0, []byte("init"))
+		task, err := handle.SubmitTask(c.Ctx, "k7", proto.TaskTypeExample, c.Store.GetKeyspace(), 9, scope, 0, []byte("init"))
 		require.NoError(t, err)
 		require.Equal(t, 9, task.RequiredSlots)
 		require.EqualValues(t, []byte("init"), task.Meta)
@@ -455,7 +455,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 				<-modifySyncCh
 			})
 		})
-		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, "", 3, scope, 1, nil)
+		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, c.Store.GetKeyspace(), 3, scope, 1, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.RequiredSlots)
 		require.EqualValues(t, 1, task.MaxNodeCount)
@@ -504,7 +504,7 @@ func TestModifyTaskMaxNodeCountForSubtaskBalance(t *testing.T) {
 				<-modifySyncCh
 			})
 		})
-		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, "", 3, scope, 1, nil)
+		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, c.Store.GetKeyspace(), 3, scope, 1, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.RequiredSlots)
 		require.EqualValues(t, 1, task.MaxNodeCount)

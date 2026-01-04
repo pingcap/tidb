@@ -113,7 +113,12 @@ func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseS
 }
 
 // Init implements the Scheduler interface.
-func (*BaseScheduler) Init() error {
+func (s *BaseScheduler) Init() error {
+	if s.TaskStore.GetKeyspace() != s.GetTask().Keyspace {
+		// shouldn't happen normally, but since keyspace mismatch might cause
+		// correctness error, we check it at runtime too.
+		return errors.New("store keyspace mismatch with task")
+	}
 	return nil
 }
 

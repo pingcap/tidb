@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -350,6 +351,19 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		return
 	}
 
+	taskStore := sm.store
+	if task.Keyspace != sm.store.GetKeyspace() {
+		if err = sm.taskMgr.WithNewSession(func(se sessionctx.Context) error {
+			var err2 error
+			taskStore, err2 = se.GetSQLServer().GetKSStore(task.Keyspace)
+			return err2
+		}); err != nil {
+			sm.logger.Warn("get task store failed", zap.Int64("task-id", basicTask.ID),
+				zap.String("task-key", basicTask.Key), zap.Error(err))
+			return
+		}
+	}
+
 	schedulerFactory := getSchedulerFactory(task.Type)
 	scheduler := schedulerFactory(sm.ctx, task, Param{
 		taskMgr:        sm.taskMgr,
@@ -358,7 +372,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		serverID:       sm.serverID,
 		allocatedSlots: allocateSlots,
 		nodeRes:        sm.nodeRes,
-		Store:          sm.store,
+		TaskStore:      taskStore,
 	})
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))
