@@ -59,3 +59,58 @@ set tidb_translate_softdelete_sql = true;
 select * from t6;
 drop table t5;
 drop table t6;
+
+# Test RECOVER VALUES privilege checking (should require UPDATE privilege like UPDATE statement)
+create table t7 (id int primary key, name varchar(50)) softdelete retention 7 day;
+insert into t7 values (1, 'a'), (2, 'b'), (3, 'c');
+delete from t7;
+select id, name from t7 order by id;
+
+CREATE USER 'recover_no_priv'@'localhost';
+CREATE USER 'recover_select_only'@'localhost';
+CREATE USER 'recover_update_priv'@'localhost';
+CREATE USER 'recover_update_select'@'localhost';
+
+GRANT SELECT ON softdelete__recover_values.t7 TO 'recover_select_only'@'localhost';
+GRANT UPDATE ON softdelete__recover_values.t7 TO 'recover_update_priv'@'localhost';
+GRANT SELECT, UPDATE ON softdelete__recover_values.t7 TO 'recover_update_select'@'localhost';
+
+# User with no privileges should fail
+connect (recover_no_priv,localhost,recover_no_priv,,);
+connection recover_no_priv;
+-- error 1142
+recover values from softdelete__recover_values.t7 where id = 1;
+disconnect recover_no_priv;
+
+# User with only SELECT privilege should fail
+connect (recover_select_only,localhost,recover_select_only,,);
+connection recover_select_only;
+-- error 8121
+recover values from softdelete__recover_values.t7 where id = 1;
+-- error 8121
+recover values from softdelete__recover_values.t7;
+disconnect recover_select_only;
+
+# User with UPDATE privilege should fail
+connect (recover_update_priv,localhost,recover_update_priv,,);
+connection recover_update_priv;
+-- error 1142
+recover values from softdelete__recover_values.t7 where id = 1;
+-- error 1142
+recover values from softdelete__recover_values.t7;
+disconnect recover_update_priv;
+
+# User with UPDATE and SELECT privilege should succeed
+connect (recover_update_select,localhost,recover_update_select,,);
+connection recover_update_select;
+recover values from softdelete__recover_values.t7 where id = 1;
+select id, name from softdelete__recover_values.t7 order by id;
+recover values from softdelete__recover_values.t7;
+disconnect recover_update_select;
+
+connection default;
+select id, name from t7 order by id;
+drop table t7;
+DROP USER 'recover_no_priv'@'localhost';
+DROP USER 'recover_select_only'@'localhost';
+DROP USER 'recover_update_priv'@'localhost';

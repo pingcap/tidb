@@ -5533,10 +5533,31 @@ func (b *PlanBuilder) buildRecoverValues(ctx context.Context, recoverStmt *ast.R
 		},
 		Expr: ast.NewValueExpr(nil, "", ""),
 	}
+
+	// Append an extra _tidb_softdelete_time IS NOT NULL condition.
+	softDeleteNotNull := &ast.IsNullExpr{
+		Expr: &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{
+				Name: model.ExtraSoftDeleteTimeName,
+			},
+		},
+		Not: true,
+	}
+	var whereClause ast.ExprNode
+	if recoverStmt.Where != nil {
+		whereClause = &ast.BinaryOperationExpr{
+			Op: opcode.LogicAnd,
+			L:  softDeleteNotNull,
+			R:  recoverStmt.Where,
+		}
+	} else {
+		whereClause = softDeleteNotNull
+	}
+
 	updateStmt := &ast.UpdateStmt{
 		TableRefs: tableRef,
 		List:      []*ast.Assignment{assignment},
-		Where:     recoverStmt.Where,
+		Where:     whereClause,
 	}
 	return b.buildUpdate(ctx, updateStmt)
 }

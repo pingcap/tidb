@@ -77,3 +77,39 @@ id	b
 11	20
 drop table t5;
 drop table t6;
+create table t7 (id int primary key, name varchar(50)) softdelete retention 7 day;
+insert into t7 values (1, 'a'), (2, 'b'), (3, 'c');
+delete from t7;
+select id, name from t7 order by id;
+id	name
+CREATE USER 'recover_no_priv'@'localhost';
+CREATE USER 'recover_select_only'@'localhost';
+CREATE USER 'recover_update_priv'@'localhost';
+CREATE USER 'recover_update_select'@'localhost';
+GRANT SELECT ON softdelete__recover_values.t7 TO 'recover_select_only'@'localhost';
+GRANT UPDATE ON softdelete__recover_values.t7 TO 'recover_update_priv'@'localhost';
+GRANT SELECT, UPDATE ON softdelete__recover_values.t7 TO 'recover_update_select'@'localhost';
+recover values from softdelete__recover_values.t7 where id = 1;
+Error 1142 (42000): SELECT command denied to user 'recover_no_priv'@'localhost' for table 't7'
+recover values from softdelete__recover_values.t7 where id = 1;
+Error 8121 (HY000): privilege check for 'Update' fail
+recover values from softdelete__recover_values.t7;
+Error 8121 (HY000): privilege check for 'Update' fail
+recover values from softdelete__recover_values.t7 where id = 1;
+Error 1142 (42000): SELECT command denied to user 'recover_update_priv'@'localhost' for table 't7'
+recover values from softdelete__recover_values.t7;
+Error 1142 (42000): SELECT command denied to user 'recover_update_priv'@'localhost' for table 't7'
+recover values from softdelete__recover_values.t7 where id = 1;
+select id, name from softdelete__recover_values.t7 order by id;
+id	name
+1	a
+recover values from softdelete__recover_values.t7;
+select id, name from t7 order by id;
+id	name
+1	a
+2	b
+3	c
+drop table t7;
+DROP USER 'recover_no_priv'@'localhost';
+DROP USER 'recover_select_only'@'localhost';
+DROP USER 'recover_update_priv'@'localhost';

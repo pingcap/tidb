@@ -125,7 +125,8 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
 
-	// Add soft delete filter if the table has soft delete enabled and it's not in a RECOVER VALUES statement.
+	// Add soft delete filter for softdelete tables if @@tidb_translate_softdelete_sql is on
+	// and ds.DisableSoftDeleteFilter is false (for supporting the RECOVER VALUES statement).
 	if ds.TableInfo.SoftdeleteInfo != nil &&
 		ds.SCtx().GetSessionVars().SoftDeleteRewrite &&
 		!ds.DisableSoftDeleteFilter {
