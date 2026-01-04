@@ -25,8 +25,8 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"

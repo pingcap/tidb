@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
-	dist_store "github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	dist_store "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
