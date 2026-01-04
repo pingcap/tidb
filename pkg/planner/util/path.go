@@ -482,6 +482,9 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 	return false
 }
 
+// IsUndetermined checks if the path is undetermined.
+// The undetermined path is the one that may not be always valid.
+// e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.
 func (path *AccessPath) IsUndetermined() bool {
 	if path.IsTablePath() || path.Index == nil {
 		return false

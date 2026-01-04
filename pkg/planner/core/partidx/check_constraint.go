@@ -82,7 +82,7 @@ func canBeImpliedFromExprs(
 		if !ok {
 			return false
 		}
-		return implIsNotNull(rangerctx, col, sf, filters)
+		return implIsNotNull(rangerctx, col, filters)
 	}
 
 	if _, ok := expression.CompareOpMap[sf.FuncName.L]; !ok {
@@ -130,7 +130,7 @@ func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFun
 	return true
 }
 
-func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Column, pre *expression.ScalarFunction, filters []expression.Expression) bool {
+func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Column, filters []expression.Expression) bool {
 	columnConds := ranger.ExtractAccessConditionsForColumn(rangerctx, filters, targetCol)
 	if len(columnConds) == 0 {
 		return false
@@ -156,10 +156,14 @@ func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []ex
 		return false
 	}
 	sf, ok := prePredicates[0].(*expression.ScalarFunction)
-	if !ok || sf.FuncName.L != ast.IsNull {
+	if !ok || sf.FuncName.L != ast.UnaryNot {
 		return false
 	}
-	col, ok := sf.GetArgs()[0].(*expression.Column)
+	innerSf, ok := sf.GetArgs()[0].(*expression.ScalarFunction)
+	if !ok || innerSf.FuncName.L != ast.IsNull {
+		return false
+	}
+	col, ok := innerSf.GetArgs()[0].(*expression.Column)
 	if !ok {
 		return false
 	}
