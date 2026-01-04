@@ -226,9 +226,10 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 		for _, tableId := range tableIds {
 			if tracker.ContainsTableId(tableId) || tracker.ContainsPartitionId(tableId) {
 				return errors.Errorf(
-					"cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) before snapshot backup(at %d). "+
-						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup.",
-					tableId, tableNameByTableId(tableId), restoredTs, restoreCommitTs, startTs)
+					"cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) after snapshot backup(at %d). "+
+						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup(BackupTS > %d) "+
+						"or older restored ts(RestoreTS < %d).",
+					tableId, tableNameByTableId(tableId), restoredTs, restoreCommitTs, startTs, restoreCommitTs, restoreStartTs)
 			}
 			// the meta kv may not be backed by log restore
 			if checkTableIdLost(tableId) {

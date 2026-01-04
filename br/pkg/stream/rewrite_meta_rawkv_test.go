@@ -30,6 +30,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 	}
 	return NewSchemasReplace(
 		dbMap,
+		false,
 		nil,
 		9527,
 		midr.mockRecordDeleteRange,
@@ -292,6 +293,7 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 
 	sr := NewSchemasReplace(
 		dbMap,
+		false,
 		nil,
 		0,
 		nil,
@@ -445,6 +447,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 
 	sr := NewSchemasReplace(
 		tm.DBReplaceMap,
+		false,
 		nil,
 		0,
 		nil,
