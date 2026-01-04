@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
 
@@ -80,7 +82,8 @@ type tableMetaValue struct {
 // 4. after all above steps, it uses the genGenGlobalIDs method to generate a batch of ids in one call and replace
 // the dummy ids, it builds the final state of the db replace map
 type TableMappingManager struct {
-	DBReplaceMap map[UpstreamID]*DBReplace
+	DBReplaceMap  map[UpstreamID]*DBReplace
+	fromPitrIdMap bool
 
 	// used during scanning log to identify already seen id mapping. For example after exchange partition, the
 	// exchanged-in table already had an id mapping can be identified in the partition so don't allocate a new id.
@@ -100,9 +103,18 @@ type TableMappingManager struct {
 	PreallocatedRange [2]int64
 }
 
+func (tm *TableMappingManager) SetFromPiTRIDMap() {
+	tm.fromPitrIdMap = true
+}
+
+func (tm *TableMappingManager) IsFromPiTRIDMap() bool {
+	return tm.fromPitrIdMap
+}
+
 func NewTableMappingManager() *TableMappingManager {
 	return &TableMappingManager{
 		DBReplaceMap:          make(map[UpstreamID]*DBReplace),
+		fromPitrIdMap:         false,
 		globalIdMap:           make(map[UpstreamID]DownstreamID),
 		tempIDCounter:         InitialTempId,
 		tempDefaultKVTableMap: make(map[tableMetaKey]*tableMetaValue),
@@ -313,12 +325,16 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
 
 	if dbValue, exists := tm.tempDefaultKVDbMap[idx]; exists {
 		dbValue.count--
-		if dbValue.count <= 0 {
-			delete(tm.tempDefaultKVDbMap, idx)
+		if dbValue.count < 0 {
+			log.Warn("write cf kvs are more than default cf kvs for database",
+				zap.Int64("db-id", dbId),
+				zap.Uint64("start-ts", startTs),
+				zap.Uint64("commit-ts", commitTs),
+				zap.String("value", base64.StdEncoding.EncodeToString(value)))
 		}
 		return tm.parseDBValueAndUpdateIdMapping(dbId, dbValue.name, commitTs, collector)
 	}
-	log.Error("default cf kv is lost when processing write cf kv for database",
+	log.Warn("default cf kv is lost when processing write cf kv for database",
 		zap.Int64("db-id", dbId),
 		zap.Uint64("start-ts", startTs),
 		zap.Uint64("commit-ts", commitTs),
@@ -485,8 +501,13 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(
 	}
 	if tableValue, exists := tm.tempDefaultKVTableMap[idx]; exists {
 		tableValue.count--
-		if tableValue.count <= 0 {
-			delete(tm.tempDefaultKVTableMap, idx)
+		if tableValue.count < 0 {
+			log.Warn("write cf kvs are more than default cf kvs for table",
+				zap.Int64("db-id", dbId),
+				zap.Int64("table-id", tableId),
+				zap.Uint64("start-ts", startTs),
+				zap.Uint64("commit-ts", commitTs),
+				zap.String("value", base64.StdEncoding.EncodeToString(value)))
 		}
 		return tm.parseTableValueAndUpdateIdMapping(dbId, tableId, commitTs, tableValue.info, collector)
 	}
@@ -625,6 +646,26 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 
 func (tm *TableMappingManager) IsEmpty() bool {
 	return len(tm.DBReplaceMap) == 0
+}
+
+// CheckExistingDBAndTables checks if there are any existing database/tables with the same name in the cluster.
+func (tm *TableMappingManager) CheckExistingDBAndTables(ctx context.Context, schema infoschema.InfoSchema) error {
+	for dbId, dbReplace := range tm.DBReplaceMap {
+		dbNameCtr := ast.NewCIStr(dbReplace.Name)
+		if !dbReplace.FilteredOut && dbReplace.DbID < 0 {
+			if schema.SchemaExists(dbNameCtr) {
+				return errors.Errorf("found existing database(upstream id: %d) with the same name: %s", dbId, dbReplace.Name)
+			}
+		}
+		for tableId, tableReplace := range dbReplace.TableMap {
+			if !tableReplace.FilteredOut && tableReplace.TableID < 0 {
+				if schema.TableExists(dbNameCtr, ast.NewCIStr(tableReplace.Name)) {
+					return errors.Errorf("found existing table(upstream id: %d, table id: %d) with the same name: %s", dbId, tableId, tableReplace.Name)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (tm *TableMappingManager) ReplaceTemporaryIDs(

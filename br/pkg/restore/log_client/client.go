@@ -231,6 +231,10 @@ type LogClient struct {
 	restoreStat  restoreStatistics
 }
 
+func (rc *LogClient) SetRestoreID(restoreID uint64) {
+	rc.restoreID = restoreID
+}
+
 type restoreStatistics struct {
 	// restoreSSTKVSize is the total size (Original KV length) of KV pairs restored from SST files.
 	restoreSSTKVSize uint64
@@ -994,7 +998,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	hasFullBackupStorageConfig,
 	loadSavedIDMap bool,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-	tableMappingManger *stream.TableMappingManager,
+	tableMappingManager *stream.TableMappingManager,
 ) error {
 	var (
 		err        error
@@ -1033,7 +1037,8 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 
 	stream.LogDBReplaceMap("base db replace info", dbReplaces)
 	if len(dbReplaces) != 0 {
-		tableMappingManger.MergeBaseDBReplace(dbReplaces)
+		tableMappingManager.SetFromPiTRIDMap()
+		tableMappingManager.MergeBaseDBReplace(dbReplaces)
 	}
 	return nil
 }
