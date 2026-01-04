@@ -11,7 +11,7 @@ go_test(
         "multi_schema_change_test.go",
         "pitr_test.go",
     ],
-    shard_count = 30,
+    shard_count = 31,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
