@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -54,12 +55,24 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 	}
 
 	mgr := backend.MakeEngineManager(bc.backend)
-	cfg := generateLocalEngineConfig(bc.GetImportTS())
+	baseCfg := generateLocalEngineConfig(bc.GetImportTS())
 
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
 	for i, indexID := range indexIDs {
-		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tbl.Meta().Name.L, int32(indexID))
+		cfg := *baseCfg
+		indexInfo := tbl.Meta().FindIndexByID(indexID)
+		if indexInfo != nil && indexInfo.IsTiCIIndex() {
+			cfg.TiCIWriteEnabled = true
+			if !bc.ticiWriterGroupInitialized {
+				taskID := strconv.FormatInt(bc.jobID, 10)
+				if err := bc.backend.InitTiCIWriterGroup(bc.ctx, tbl.Meta(), bc.schemaName, taskID); err != nil {
+					return nil, err
+				}
+				bc.ticiWriterGroupInitialized = true
+			}
+		}
+		openedEngine, err := mgr.OpenEngine(bc.ctx, &cfg, tbl.Meta().Name.L, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
 				zap.Int64("job ID", bc.jobID),

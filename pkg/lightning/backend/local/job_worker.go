@@ -62,7 +62,7 @@ type regionJobBaseWorker struct {
 	// job.
 	regenerateJobsFn func(
 		ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
-		regionSplitSize, regionSplitKeys int64,
+		regionSplitSize, regionSplitKeys int64, ticiWriteEnabled bool, ticiHeaderCommitTS uint64,
 	) ([]*regionJob, error)
 }
 
@@ -110,6 +110,8 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 					[]engineapi.Range{job.keyRange},
 					job.regionSplitSize,
 					job.regionSplitKeys,
+					job.ticiWriteEnabled,
+					job.ticiHeaderCommitTS,
 				)
 				if err2 != nil {
 					// Don't need to put the job back to retry, because regenerateJobsFn
@@ -193,6 +195,9 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				return nil
 			}
 			if res.emptyJob {
+				job.convertStageTo(ingested)
+			} else if res.skipIngest {
+				job.writeResult = res
 				job.convertStageTo(ingested)
 			} else {
 				job.writeResult = res
@@ -290,7 +295,7 @@ type objStoreRegionJobWorker struct {
 	bufPool        *membuf.Pool
 	collector      execute.Collector
 
-	ticiWriteGroup *tici.DataWriterGroup // TiCI writer group
+	ticiWriteGroup ticiWriteGroup // TiCI writer group
 }
 
 func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
@@ -309,11 +314,6 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		return &tikvWriteResult{emptyJob: true}, nil
 	}
 
-	writeCli, err := w.ingestCli.WriteClient(ctx, job.ingestData.GetTS())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer writeCli.Close()
 	dataCommitTS := job.ingestData.GetTS()
 	intest.AssertFunc(func() bool {
 		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
@@ -330,17 +330,100 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		return nil, errors.New("data commitTS is 0")
 	}
 
+	ticiWriteGroup := w.ticiWriteGroup
+	if !job.ticiWriteEnabled {
+		ticiWriteGroup = nil
+	}
 	var ticiFileWriter *tici.FileWriter
-	if w.ticiWriteGroup != nil {
+	if ticiWriteGroup != nil {
 		// Initialize TICI file writers for each full-text index in the group.
-		if ticiFileWriter, err = w.ticiWriteGroup.CreateFileWriter(ctx); err != nil {
+		if ticiFileWriter, err = ticiWriteGroup.CreateFileWriter(ctx); err != nil {
 			return nil, errors.Annotatef(err, "failed to create tici file writer, startKey=%s endKey=%s", hex.EncodeToString(firstKey), hex.EncodeToString(lastKey))
 		}
+		ticiHeaderCommitTS := dataCommitTS
+		if job.ticiHeaderCommitTS != 0 {
+			ticiHeaderCommitTS = job.ticiHeaderCommitTS
+		}
+		if ticiHeaderCommitTS == 0 {
+			return nil, errors.New("tici header commitTS is 0")
+		}
 		// Write headers for all tici file writers.
-		if err = w.ticiWriteGroup.WriteHeader(ctx, ticiFileWriter, dataCommitTS); err != nil {
+		if err = ticiWriteGroup.WriteHeader(ctx, ticiFileWriter, ticiHeaderCommitTS); err != nil {
 			return nil, errors.Annotate(err, "failed to write header to tici file writer")
 		}
 	}
+	if ticiWriteGroup != nil {
+		pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
+		size := int64(0)
+		totalCount := int64(0)
+		totalSize := int64(0)
+
+		iter := job.ingestData.NewIter(ctx, job.keyRange.Start, job.keyRange.End, w.bufPool)
+		//nolint: errcheck
+		defer iter.Close()
+
+		flushKVs := func() error {
+			if len(pairs) == 0 {
+				return nil
+			}
+			if err := ticiWriteGroup.WritePairs(ctx, ticiFileWriter, pairs, len(pairs)); err != nil {
+				return errors.Annotate(err, "failed to write pairs to tici file writer")
+			}
+
+			if w.collector != nil {
+				w.collector.Processed(size, int64(len(pairs)))
+			}
+
+			totalCount += int64(len(pairs))
+			totalSize += size
+			size = 0
+			pairs = pairs[:0]
+			iter.ReleaseBuf()
+			return nil
+		}
+
+		for iter.First(); iter.Valid(); iter.Next() {
+			k, v := iter.Key(), iter.Value()
+			pairs = append(pairs, &sst.Pair{
+				Key:   k,
+				Value: v,
+			})
+			size += int64(len(k) + len(v))
+
+			if size >= w.writeBatchSize {
+				if err := flushKVs(); err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
+
+		if iter.Error() != nil {
+			return nil, errors.Trace(iter.Error())
+		}
+
+		if err := flushKVs(); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if err := ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
+			return nil, errors.Annotate(err, "failed to close tici file writer")
+		}
+		if err := ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
+			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")
+		}
+
+		return &tikvWriteResult{
+			skipIngest: true,
+			count:      totalCount,
+			totalBytes: totalSize,
+		}, nil
+	}
+
+	writeCli, err := w.ingestCli.WriteClient(ctx, job.ingestData.GetTS())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer writeCli.Close()
 
 	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 	size := int64(0)
@@ -361,13 +444,6 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 
 		if w.collector != nil {
 			w.collector.Processed(size, int64(len(pairs)))
-		}
-
-		// If TiCI is enabled, write the batch to all TiCI writers.
-		if w.ticiWriteGroup != nil {
-			if err := w.ticiWriteGroup.WritePairs(ctx, ticiFileWriter, pairs, len(pairs)); err != nil {
-				return errors.Annotate(err, "failed to write pairs to tici file writer")
-			}
 		}
 
 		totalCount += int64(len(pairs))
@@ -406,15 +482,6 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	resp, err := writeCli.Recv()
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if w.ticiWriteGroup != nil {
-		if err := w.ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
-			return nil, errors.Annotate(err, "failed to close tici file writer")
-		}
-		if err := w.ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
-			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")
-		}
 	}
 
 	return &tikvWriteResult{

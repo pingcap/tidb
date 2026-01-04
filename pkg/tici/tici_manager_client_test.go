@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 )
 
@@ -65,6 +66,18 @@ func newTestTiCIManagerCtx(mockClient MetaServiceClient) *ManagerCtx {
 			client: mockClient,
 		},
 		ctx: context.Background(),
+	}
+}
+
+func newTestTiCIManagerCtxWithCancel(mockClient MetaServiceClient) *ManagerCtx {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &ManagerCtx{
+		metaClient: &metaClient{
+			conn:   nil, // Not used in tests
+			client: mockClient,
+		},
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
@@ -200,6 +213,36 @@ func TestFinishIndexUpload(t *testing.T) {
 		Once()
 	err = ctx.FinishIndexUpload(context.Background(), taskID)
 	assert.Error(t, err)
+}
+
+func TestFinishIndexUploadHelper(t *testing.T) {
+	mockClient := new(MockMetaServiceClient)
+	managerCtx := newTestTiCIManagerCtxWithCancel(mockClient)
+
+	originalGetEtcdClient := getEtcdClientFunc
+	originalNewManagerCtx := newManagerCtxFunc
+	getEtcdClientFunc = func() (*clientv3.Client, error) {
+		return &clientv3.Client{}, nil
+	}
+	newManagerCtxFunc = func(_ context.Context, _ *clientv3.Client) (*ManagerCtx, error) {
+		return managerCtx, nil
+	}
+	defer func() {
+		getEtcdClientFunc = originalGetEtcdClient
+		newManagerCtxFunc = originalNewManagerCtx
+	}()
+
+	taskID := "tidb-task-123"
+	mockClient.
+		On("FinishImportIndexUpload", mock.Anything, mock.MatchedBy(func(req *FinishImportIndexUploadRequest) bool {
+			return req.GetTidbTaskId() == taskID && req.GetKeyspaceId() == 0 && req.GetStatus() == ErrorCode_SUCCESS
+		})).
+		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
+		Once()
+
+	err := FinishIndexUpload(context.Background(), nil, taskID)
+	require.NoError(t, err)
+	mockClient.AssertExpectations(t)
 }
 
 func TestScanRanges(t *testing.T) {

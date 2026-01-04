@@ -145,9 +145,9 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, nodeCnt, logger)
+		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, nodeCnt, backfillMeta.ScanSnapshotTS, logger)
 	case proto.BackfillStepMergeSort:
-		metaBytes, err2 := generateMergeSortPlan(ctx, taskHandle, task, nodeCnt, backfillMeta.CloudStorageURI, logger)
+		metaBytes, err2 := generateMergeSortPlan(ctx, taskHandle, task, nodeCnt, backfillMeta.CloudStorageURI, backfillMeta.ScanSnapshotTS, logger)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -172,11 +172,12 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
+				backfillMeta.ScanSnapshotTS,
 				logger)
 		}
 		return nil, nil
 	case proto.BackfillStepMergeTempIndex:
-		return generateMergeTempIndexPlan(ctx, store, tbl, nodeCnt, backfillMeta.EleIDs, logger)
+		return generateMergeTempIndexPlan(ctx, store, tbl, nodeCnt, backfillMeta.EleIDs, backfillMeta.ScanSnapshotTS, logger)
 	default:
 		return nil, nil
 	}
@@ -305,16 +306,17 @@ func generateReadIndexPlan(
 	job *model.Job,
 	useCloud bool,
 	nodeCnt int,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	jobReorgCtx := d.jobContext(job.ID, job.ReorgMeta)
 	if tbl.Meta().Partition == nil {
-		return generatePlanForPhysicalTable(ctx, jobReorgCtx, store, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
+		return generatePlanForPhysicalTable(ctx, jobReorgCtx, store, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, scanSnapshotTS, logger)
 	}
 	defs := tbl.Meta().Partition.Definitions
 	for _, def := range defs {
 		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
-		partMeta, err := generatePlanForPhysicalTable(ctx, jobReorgCtx, store, partTbl, job, useCloud, nodeCnt, logger)
+		partMeta, err := generatePlanForPhysicalTable(ctx, jobReorgCtx, store, partTbl, job, useCloud, nodeCnt, scanSnapshotTS, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -331,6 +333,7 @@ func generatePlanForPhysicalTable(
 	job *model.Job,
 	useCloud bool,
 	nodeCnt int,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	ver, err := getValidCurrentVersion(store)
@@ -395,6 +398,7 @@ func generatePlanForPhysicalTable(
 				RowStart:        batch[0].StartKey(),
 				RowEnd:          batch[len(batch)-1].EndKey(),
 				TS:              importTS,
+				ScanSnapshotTS:  scanSnapshotTS,
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
@@ -449,6 +453,7 @@ func generateGlobalSortIngestPlan(
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	cloudStorageURI string,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	var (
@@ -504,7 +509,7 @@ func generateGlobalSortIngestPlan(
 		if i < len(eleIDs) {
 			eleID = eleIDs[i]
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, scanSnapshotTS, logger)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -548,6 +553,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	eleID int64,
 	cloudStorageURI string,
 	instanceCnt int64,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) (metaArr []*BackfillSubTaskMeta, err error) {
 	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
@@ -613,6 +619,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			RangeJobKeys:   rangeJobKeys,
 			RangeSplitKeys: regionSplitKeys,
 			TS:             importTS,
+			ScanSnapshotTS: scanSnapshotTS,
 		}
 		if eleID > 0 {
 			m.EleIDs = []int64{eleID}
@@ -632,6 +639,7 @@ func generateMergeSortPlan(
 	task *proto.Task,
 	nodeCnt int,
 	cloudStorageURI string,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
@@ -704,8 +712,9 @@ func generateMergeSortPlan(
 		}
 		for _, files := range dataFilesGroup {
 			m := &BackfillSubTaskMeta{
-				DataFiles: files,
-				EleIDs:    eleID,
+				DataFiles:      files,
+				EleIDs:         eleID,
+				ScanSnapshotTS: scanSnapshotTS,
 			}
 			metaArr = append(metaArr, m)
 		}
@@ -811,6 +820,7 @@ func generateMergeTempIndexPlan(
 	tbl table.Table,
 	nodeCnt int,
 	idxIDs []int64,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	tblInfo := tbl.Meta()
@@ -822,7 +832,7 @@ func generateMergeTempIndexPlan(
 	if tblInfo.Partition == nil {
 		allMeta := make([][]byte, 0, 16)
 		for _, idxInfo := range idxInfos {
-			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo, nodeCnt, logger)
+			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo, nodeCnt, scanSnapshotTS, logger)
 			if err != nil {
 				return nil, err
 			}
@@ -834,7 +844,7 @@ func generateMergeTempIndexPlan(
 	allMeta := make([][]byte, 0, 16)
 	for _, idxInfo := range idxInfos {
 		if idxInfo.Global {
-			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo, nodeCnt, logger)
+			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo, nodeCnt, scanSnapshotTS, logger)
 			if err != nil {
 				return nil, err
 			}
@@ -844,7 +854,7 @@ func generateMergeTempIndexPlan(
 		defs := tblInfo.Partition.Definitions
 		for _, def := range defs {
 			partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
-			partMeta, err := genMergeTempPlanForOneIndex(ctx, store, partTbl, idxInfo, nodeCnt, logger)
+			partMeta, err := genMergeTempPlanForOneIndex(ctx, store, partTbl, idxInfo, nodeCnt, scanSnapshotTS, logger)
 			if err != nil {
 				return nil, err
 			}
@@ -875,6 +885,7 @@ func genMergeTempPlanForOneIndex(
 	tbl table.PhysicalTable,
 	idxInfo *model.IndexInfo,
 	nodeCnt int,
+	scanSnapshotTS uint64,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	pid := tbl.GetPhysicalID()
@@ -920,6 +931,7 @@ func genMergeTempPlanForOneIndex(
 			batch := regionMetas[i:endIdx]
 			subTaskMeta := &BackfillSubTaskMeta{
 				PhysicalTableID: pid,
+				ScanSnapshotTS:  scanSnapshotTS,
 				SortedKVMeta: external.SortedKVMeta{
 					StartKey: batch[0].StartKey(),
 					EndKey:   batch[len(batch)-1].EndKey(),

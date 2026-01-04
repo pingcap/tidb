@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,12 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-)
-
-const (
-	// IndexEngineID is temp redefinition to avoid import cycle; will revert to common.IndexEngineID
-	// after moving tici-dependent code out of infosync.
-	IndexEngineID = -1
 )
 
 // GetFulltextIndexes returns all IndexInfo in the table that are fulltext indexes.
@@ -86,7 +79,6 @@ func NewTiCIIndexMeta(
 type DataWriterGroup struct {
 	indexMeta  *IndexMeta
 	logger     *zap.Logger // logger with table/ticiJobID fields
-	writable   atomic.Bool
 	mgrCtx     *ManagerCtx
 	etcdClient *clientv3.Client
 }
@@ -118,14 +110,6 @@ func getEtcdClient() (cli *clientv3.Client, err error) {
 
 // NewTiCIDataWriterGroup constructs a DataWriterGroup covering all full-text
 // indexes of the given table.
-//
-// NOTE: The 'writable' flag is a temporary workaround. It aligns with the
-// current import-into implementation and how data and index engines are
-// handled. The fundamental limitation is that region jobs are created and
-// executed without access to engine-level context, leaving the system unaware
-// of which engine is currently being written. Addressing this would require
-// significant changes to the import-into interface and should be considered
-// in longer-term architectural improvements.
 func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string, tidbTaskID string, keyspaceID uint32) (*DataWriterGroup, error) {
 	fulltextIndexes := GetFulltextIndexes(tblInfo)
 	if len(fulltextIndexes) == 0 {
@@ -166,7 +150,6 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 		mgrCtx:     mgrCtx,
 		etcdClient: etcdClient,
 	}
-	g.writable.Store(true)
 	return g, nil
 }
 
@@ -198,42 +181,12 @@ func newTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblI
 		logger:    logger,
 		mgrCtx:    mgrCtx,
 	}
-	g.writable.Store(true)
 	return g
-}
-
-// SetTiCIDataWriterGroupWritable sets the writable state for the TiCIDataWriterGroup.
-func SetTiCIDataWriterGroupWritable(
-	ctx context.Context,
-	g *DataWriterGroup,
-	engineUUID uuid.UUID,
-	engineID int32,
-) {
-	if g == nil {
-		// Ignore the logic if we are not dealing with full-text
-		// indexes within this engine.
-		return
-	}
-
-	writable := engineID != IndexEngineID
-	g.writable.Store(writable)
-
-	logger := logutil.Logger(ctx)
-	if logger != nil {
-		logger.Info("setting TiCIDataWriterGroup writable",
-			zap.Bool("writable", writable),
-			zap.String("engine UUID", engineUUID.String()),
-			zap.Int32("engine ID", engineID),
-		)
-	}
 }
 
 // CreateFileWriter create the ticiFileWriter according to the writers in the group.
 // cloudStoreURI is the S3 URI, logger is taken from DataWriters.
 func (g *DataWriterGroup) CreateFileWriter(ctx context.Context) (*FileWriter, error) {
-	if !g.writable.Load() {
-		return nil, nil
-	}
 	logger := logutil.Logger(ctx)
 	logger.Info("initializing TICIFileWriter for all writers in the group")
 	if g.indexMeta.storeURI == "" {
@@ -263,9 +216,6 @@ func (g *DataWriterGroup) CreateFileWriter(ctx context.Context) (*FileWriter, er
 // WriteHeader writes the header to the fileWriter according to the writers in the group.
 // commitTS is the commit timestamp to include in the header.
 func (g *DataWriterGroup) WriteHeader(ctx context.Context, fileWriter *FileWriter, commitTS uint64) error {
-	if !g.writable.Load() {
-		return nil
-	}
 	if fileWriter == nil {
 		return errors.New("TICIFileWriter is not initialized")
 	}
@@ -287,9 +237,6 @@ func (g *DataWriterGroup) WriteHeader(ctx context.Context, fileWriter *FileWrite
 // WritePairs writes a batch of KV Pairs to all writers in the group.
 // Logs detailed errors for each writer using the logger.
 func (g *DataWriterGroup) WritePairs(ctx context.Context, fileWriter *FileWriter, pairs []*sst.Pair, count int) error {
-	if !g.writable.Load() {
-		return nil
-	}
 	if fileWriter == nil {
 		return errors.New("TICIFileWriter is not initialized")
 	}
@@ -307,9 +254,6 @@ func (g *DataWriterGroup) FinishPartitionUpload(
 	fileWriter *FileWriter,
 	lowerBound, upperBound []byte,
 ) error {
-	if !g.writable.Load() {
-		return nil
-	}
 	if fileWriter == nil {
 		return errors.New("TICIFileWriter is not initialized")
 	}
@@ -340,9 +284,6 @@ func (g *DataWriterGroup) FinishPartitionUpload(
 func (g *DataWriterGroup) FinishIndexUpload(
 	ctx context.Context,
 ) error {
-	if !g.writable.Load() {
-		return nil
-	}
 	if err := g.mgrCtx.FinishIndexUpload(ctx, g.indexMeta.tidbTaskID); err != nil {
 		g.logger.Error("failed to finish index upload", zap.Error(err))
 		return err
@@ -353,9 +294,6 @@ func (g *DataWriterGroup) FinishIndexUpload(
 
 // CloseFileWriters closes the TICIFileWriter.
 func (g *DataWriterGroup) CloseFileWriters(ctx context.Context, fileWriter *FileWriter) error {
-	if !g.writable.Load() {
-		return nil
-	}
 	if fileWriter == nil {
 		return nil
 	}
@@ -367,9 +305,6 @@ func (g *DataWriterGroup) CloseFileWriters(ctx context.Context, fileWriter *File
 
 // Close closes the manager context.
 func (g *DataWriterGroup) Close() error {
-	if !g.writable.Load() {
-		return nil
-	}
 	if g.mgrCtx != nil {
 		g.mgrCtx.Close()
 	}

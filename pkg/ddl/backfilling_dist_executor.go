@@ -51,6 +51,7 @@ type BackfillTaskMeta struct {
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
 	MergeTempIndex  bool   `json:"merge_temp_index"`
+	ScanSnapshotTS  uint64 `json:"scan_snapshot_ts,omitempty"`
 
 	Version int `json:"version,omitempty"`
 }
@@ -73,6 +74,8 @@ type BackfillSubTaskMeta struct {
 	// TS is used to make sure subtasks are idempotent.
 	// TODO(tangenta): support local sort.
 	TS uint64 `json:"ts,omitempty"`
+	// ScanSnapshotTS is the snapshot ts used for add index scan.
+	ScanSnapshotTS uint64 `json:"scan_snapshot_ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
 	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty" external:"true"`
 	// EleIDs stands for the index/column IDs to backfill with distributed framework.

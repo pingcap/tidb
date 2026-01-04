@@ -1198,6 +1198,34 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
+func hybridShardingIndexColumns(idxInfo *model.IndexInfo) []*model.IndexColumn {
+	if idxInfo == nil || idxInfo.HybridInfo == nil || idxInfo.HybridInfo.Sharding == nil {
+		return nil
+	}
+	return idxInfo.HybridInfo.Sharding.Columns
+}
+
+func hybridShardingIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) ([]types.Datum, error) {
+	shardingCols := hybridShardingIndexColumns(idxInfo)
+	if len(shardingCols) == 0 {
+		return indexedValues, nil
+	}
+	indexOffsets := make(map[int]int, len(idxInfo.Columns))
+	for i, col := range idxInfo.Columns {
+		indexOffsets[col.Offset] = i
+	}
+	values := make([]types.Datum, len(shardingCols))
+	for i, col := range shardingCols {
+		pos, ok := indexOffsets[col.Offset]
+		if !ok {
+			return nil, errors.Errorf("hybrid index sharding column offset %d missing in index %s", col.Offset, idxInfo.Name.O)
+		}
+		values[i] = indexedValues[pos]
+		TruncateIndexValue(&values[i], col, tblInfo.Columns[col.Offset])
+	}
+	return values, nil
+}
+
 // GenIndexKey generates index key using input physical table id
 func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
@@ -1217,10 +1245,17 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
 	TruncateIndexValues(tblInfo, idxInfo, indexedValues)
-	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
+	keyValues := indexedValues
+	if shardingCols := hybridShardingIndexColumns(idxInfo); len(shardingCols) > 0 {
+		keyValues, err = hybridShardingIndexValues(tblInfo, idxInfo, indexedValues)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(keyValues)*9+9)
 	key = appendTableIndexPrefix(key, phyTblID)
 	key = codec.EncodeInt(key, idxInfo.ID)
-	key, err = codec.EncodeKey(loc, key, indexedValues...)
+	key, err = codec.EncodeKey(loc, key, keyValues...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1553,6 +1588,12 @@ func TempIndexValueIsUntouched(b []byte) bool {
 func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
+	if shardingCols := hybridShardingIndexColumns(idxInfo); len(shardingCols) > 0 {
+		// TODO: For hybrid indexes, we always store all index columns for now. This can be optimized later:
+		// - Sharding key columns can follow the original restored data rules.
+		// - Non-sharding columns can be forced into restored data.
+		needRestoredData = true
+	}
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueForClusteredIndexVersion1(loc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData, buf)
 	}
@@ -1603,18 +1644,21 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 	if idxInfo.Global {
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
-	if idxValNeedRestoredData || len(handleRestoredData) > 0 {
+	forceAllColumns := len(hybridShardingIndexColumns(idxInfo)) > 0
+	if idxValNeedRestoredData || len(handleRestoredData) > 0 || forceAllColumns {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
+		colIDSet := make(map[int64]struct{}, len(idxInfo.Columns)+len(handleRestoredData))
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
 			col := tblInfo.Columns[idxCol.Offset]
 			// If the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
-			if mysql.HasPriKeyFlag(col.GetFlag()) {
+			if !forceAllColumns && mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
-			if model.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
+			if forceAllColumns || model.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
 				colIds = append(colIds, col.ID)
+				colIDSet[col.ID] = struct{}{}
 				if collate.IsBinCollation(model.GetIdxChangingFieldType(idxCol, col).GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
@@ -1625,8 +1669,13 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 
 		if len(handleRestoredData) > 0 {
 			pkColIDs := TryGetCommonPkColumnRestoredIds(tblInfo)
-			colIds = append(colIds, pkColIDs...)
-			allRestoredData = append(allRestoredData, handleRestoredData...)
+			for i, colID := range pkColIDs {
+				if _, exists := colIDSet[colID]; exists {
+					continue
+				}
+				colIds = append(colIds, colID)
+				allRestoredData = append(allRestoredData, handleRestoredData[i])
+			}
 		}
 
 		rd := rowcodec.Encoder{Enable: true}

@@ -19,6 +19,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -35,6 +37,11 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+)
+
+var (
+	getEtcdClientFunc = getEtcdClient
+	newManagerCtxFunc = NewManagerCtx
 )
 
 type metaClient struct {
@@ -182,7 +189,7 @@ func (t *ManagerCtx) checkMetaClient() error {
 		if t.err != nil {
 			errMsg = t.err.Error()
 		}
-		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
+		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg), zap.Stack("stack"))
 		return errors.Errorf("meta service client is nil: %s", errMsg)
 	}
 	return nil
@@ -259,6 +266,62 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	tableID int64,
 	indexIDs []int64,
 ) (string, uint64, error) {
+	failpoint.Inject("MockGetCloudStoragePrefix", func(val failpoint.Value) {
+		mockStorageURI := "s3://mock-tici/t_{table_id}/i_{index_id}/import/mock_job"
+		mockJobID := uint64(1)
+		mockErrorMessage := ""
+		switch v := val.(type) {
+		case string:
+			if v != "" {
+				var payload struct {
+					StorageURI   string `json:"storage_uri"`
+					JobID        uint64 `json:"job_id"`
+					ErrorMessage string `json:"error_message"`
+				}
+				if err := json.Unmarshal([]byte(v), &payload); err == nil {
+					if payload.StorageURI != "" {
+						mockStorageURI = payload.StorageURI
+					}
+					if payload.JobID != 0 {
+						mockJobID = payload.JobID
+					}
+					if payload.ErrorMessage != "" {
+						mockErrorMessage = payload.ErrorMessage
+					}
+				} else if parts := strings.SplitN(v, ",", 2); len(parts) > 0 {
+					mockStorageURI = parts[0]
+					if len(parts) == 2 {
+						if parsedJobID, parseErr := strconv.ParseUint(strings.TrimSpace(parts[1]), 10, 64); parseErr == nil {
+							mockJobID = parsedJobID
+						} else {
+							mockErrorMessage = fmt.Sprintf("mock job ID parse error: %v", parseErr)
+						}
+					}
+				}
+			}
+		case uint64:
+			mockJobID = v
+		case int:
+			if v > 0 {
+				mockJobID = uint64(v)
+			}
+		}
+		if mockErrorMessage != "" {
+			logutil.BgLogger().Warn("MockGetCloudStoragePrefix failpoint triggered with error",
+				zap.String("tidbTaskID", tidbTaskID),
+				zap.Int64("tableID", tableID),
+				zap.Int64s("indexIDs", indexIDs),
+				zap.String("errorMessage", mockErrorMessage))
+			failpoint.Return("", uint64(0), fmt.Errorf("tici GetCloudStoragePrefix error: %s", mockErrorMessage))
+		}
+		logutil.BgLogger().Info("MockGetCloudStoragePrefix failpoint triggered",
+			zap.String("tidbTaskID", tidbTaskID),
+			zap.Int64("tableID", tableID),
+			zap.Int64s("indexIDs", indexIDs),
+			zap.String("ticiStorageURI", mockStorageURI),
+			zap.Uint64("ticiJobID", mockJobID))
+		failpoint.Return(mockStorageURI, mockJobID, nil)
+	})
 	// TODO: Can we set the start tso here?
 	if len(indexIDs) == 0 {
 		return "", 0, errors.New("indexIDs is invalid")
@@ -315,6 +378,28 @@ func (t *ManagerCtx) FinishPartitionUpload(
 	lowerBound, upperBound []byte,
 	storageURI string,
 ) error {
+	failpoint.Inject("MockFinishPartitionUpload", func(val failpoint.Value) {
+		mockSuccess := false
+		if v, ok := val.(bool); ok {
+			mockSuccess = v
+		}
+		if mockSuccess {
+			logutil.BgLogger().Info("MockFinishPartitionUpload failpoint triggered",
+				zap.String("tidbTaskID", tidbTaskID),
+				zap.String("storageURI", storageURI),
+				zap.String("startKey", hex.EncodeToString(lowerBound)),
+				zap.String("endKey", hex.EncodeToString(upperBound)))
+			failpoint.Return(nil)
+		}
+		err := errors.New("mock FinishPartitionUpload failed")
+		logutil.BgLogger().Warn("MockFinishPartitionUpload failpoint triggered with error",
+			zap.String("tidbTaskID", tidbTaskID),
+			zap.String("storageURI", storageURI),
+			zap.String("startKey", hex.EncodeToString(lowerBound)),
+			zap.String("endKey", hex.EncodeToString(upperBound)),
+			zap.Error(err))
+		failpoint.Return(err)
+	})
 	req := &FinishImportPartitionUploadRequest{
 		TidbTaskId: tidbTaskID,
 		KeyRange: &KeyRange{
@@ -352,6 +437,22 @@ func (t *ManagerCtx) FinishIndexUpload(
 	ctx context.Context,
 	tidbTaskID string,
 ) error {
+	failpoint.Inject("MockFinishIndexUpload", func(val failpoint.Value) {
+		mockSuccess := false
+		if v, ok := val.(bool); ok {
+			mockSuccess = v
+		}
+		if mockSuccess {
+			logutil.BgLogger().Info("MockFinishIndexUpload failpoint triggered",
+				zap.String("tidbTaskID", tidbTaskID))
+			failpoint.Return(nil)
+		}
+		err := errors.New("mock FinishIndexUpload failed")
+		logutil.BgLogger().Warn("MockFinishIndexUpload failpoint triggered with error",
+			zap.String("tidbTaskID", tidbTaskID),
+			zap.Error(err))
+		failpoint.Return(err)
+	})
 	req := &FinishImportIndexUploadRequest{
 		TidbTaskId: tidbTaskID,
 		Status:     ErrorCode_SUCCESS,
@@ -516,15 +617,18 @@ func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableI
 func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
 	failpoint.Inject("MockCreateTiCIIndexSuccess", func(val failpoint.Value) {
 		if x := val.(bool); x {
+			logutil.BgLogger().Info("MockCreateTiCIIndexSuccess failpoint triggered", zap.Bool("success", true))
 			failpoint.Return(nil)
 		}
-		failpoint.Return(dbterror.ErrInvalidDDLJob.FastGenByArgs("mock create TiCI index failed"))
+		err := dbterror.ErrInvalidDDLJob.FastGenByArgs("mock create TiCI index failed")
+		logutil.BgLogger().Warn("MockCreateTiCIIndexSuccess failpoint triggered", zap.Bool("success", false), zap.Error(err))
+		failpoint.Return(err)
 	})
-	etcdClient, err := getEtcdClient()
+	etcdClient, err := getEtcdClientFunc()
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
-	ticiManager, err := NewManagerCtx(ctx, etcdClient)
+	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
@@ -544,15 +648,18 @@ func CreateFulltextIndex(ctx context.Context, store kv.Storage, tblInfo *model.T
 func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, indexID int64) error {
 	failpoint.Inject("MockDropTiCIIndexSuccess", func(val failpoint.Value) {
 		if x := val.(bool); x {
+			logutil.BgLogger().Info("MockDropTiCIIndexSuccess failpoint triggered", zap.Bool("success", true))
 			failpoint.Return(nil)
 		}
-		failpoint.Return(errors.New("mock drop TiCI index failed"))
+		err := errors.New("mock drop TiCI index failed")
+		logutil.BgLogger().Warn("MockDropTiCIIndexSuccess failpoint triggered", zap.Bool("success", false), zap.Error(err))
+		failpoint.Return(err)
 	})
-	etcdClient, err := getEtcdClient()
+	etcdClient, err := getEtcdClientFunc()
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
-	ticiManager, err := NewManagerCtx(ctx, etcdClient)
+	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
@@ -566,6 +673,29 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 		ticiManager.SetKeyspaceID(keyspaceID)
 	}
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
+}
+
+// FinishIndexUpload notifies TiCI that all partitions for the given job in all TiDB instances
+// have been uploaded successfully.
+func FinishIndexUpload(ctx context.Context, store kv.Storage, tidbTaskID string) error {
+	etcdClient, err := getEtcdClientFunc()
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer ticiManager.Close()
+	if store != nil {
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
+	return ticiManager.FinishIndexUpload(ctx, tidbTaskID)
 }
 
 // cloneAndNormalizeTableInfo deep-clones the given model.TableInfo via JSON

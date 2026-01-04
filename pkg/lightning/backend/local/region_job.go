@@ -118,10 +118,12 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      engineapi.IngestData
-	regionSplitSize int64
-	regionSplitKeys int64
-	metrics         *metric.Common
+	ingestData         engineapi.IngestData
+	regionSplitSize    int64
+	regionSplitKeys    int64
+	metrics            *metric.Common
+	ticiWriteEnabled   bool
+	ticiHeaderCommitTS uint64
 
 	retryCount       int
 	waitUntil        time.Time
@@ -133,7 +135,10 @@ type regionJob struct {
 
 type tikvWriteResult struct {
 	// means there is no data inside this job
-	emptyJob          bool
+	emptyJob bool
+	// skipIngest indicates the write path bypassed TiKV ingest (e.g. TiCI-only).
+	// In this case sstMeta/nextGenWriteResp are intentionally left empty.
+	skipIngest        bool
 	count             int64
 	totalBytes        int64
 	remainingStartKey []byte
@@ -169,6 +174,8 @@ func newRegionJob(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 	metrics *metric.Common,
+	ticiWriteEnabled bool,
+	ticiHeaderCommitTS uint64,
 ) *regionJob {
 	log.L().Debug("new region job",
 		zap.Binary("jobStart", jobStart),
@@ -179,13 +186,15 @@ func newRegionJob(
 		zap.Binary("regionEnd", region.Region.GetEndKey()),
 		zap.Reflect("peers", region.Region.GetPeers()))
 	return &regionJob{
-		keyRange:        engineapi.Range{Start: jobStart, End: jobEnd},
-		region:          region,
-		stage:           regionScanned,
-		ingestData:      data,
-		regionSplitSize: regionSplitSize,
-		regionSplitKeys: regionSplitKeys,
-		metrics:         metrics,
+		keyRange:           engineapi.Range{Start: jobStart, End: jobEnd},
+		region:             region,
+		stage:              regionScanned,
+		ingestData:         data,
+		regionSplitSize:    regionSplitSize,
+		regionSplitKeys:    regionSplitKeys,
+		metrics:            metrics,
+		ticiWriteEnabled:   ticiWriteEnabled,
+		ticiHeaderCommitTS: ticiHeaderCommitTS,
 	}
 }
 
@@ -203,6 +212,8 @@ func newRegionJobs(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 	metrics *metric.Common,
+	ticiWriteEnabled bool,
+	ticiHeaderCommitTS uint64,
 ) []*regionJob {
 	var (
 		lenRegions   = len(sortedRegions)
@@ -232,6 +243,8 @@ func newRegionJobs(
 				regionSplitSize,
 				regionSplitKeys,
 				metrics,
+				ticiWriteEnabled,
+				ticiHeaderCommitTS,
 			))
 
 			curRegionIdx++
@@ -261,6 +274,8 @@ func newRegionJobs(
 				regionSplitSize,
 				regionSplitKeys,
 				metrics,
+				ticiWriteEnabled,
+				ticiHeaderCommitTS,
 			))
 		}
 	}
@@ -364,12 +379,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		}
 	}()
 
-	apiVersion := local.tikvCodec.GetAPIVersion()
-	clientFactory := local.importClientFactory
-	kvBatchSize := local.KVWriteBatchSize
-	bufferPool := local.engineMgr.getBufferPool()
-	writeLimiter := local.writeLimiter
-
 	begin := time.Now()
 	region := j.region.Region
 
@@ -388,6 +397,154 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 
 	firstKey = codec.EncodeBytes([]byte{}, firstKey)
 	lastKey = codec.EncodeBytes([]byte{}, lastKey)
+
+	ticiWriteGroup := local.ticiWriteGroup
+	if !j.ticiWriteEnabled {
+		ticiWriteGroup = nil
+	}
+	var ticiFileWriter *tici.FileWriter
+	dataCommitTS := j.ingestData.GetTS()
+	intest.AssertFunc(func() bool {
+		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
+		now := time.Now()
+		if timeOfTS.Sub(now) > time.Hour {
+			return false
+		}
+		if now.Sub(timeOfTS) > 24*time.Hour {
+			return false
+		}
+		return true
+	}, "TS used in import should in [now-1d, now+1h], but got %d", dataCommitTS)
+	if dataCommitTS == 0 {
+		return nil, errors.New("data commitTS is 0")
+	}
+	if ticiWriteGroup != nil {
+		ticiHeaderCommitTS := dataCommitTS
+		if j.ticiHeaderCommitTS != 0 {
+			ticiHeaderCommitTS = j.ticiHeaderCommitTS
+		}
+		if ticiHeaderCommitTS == 0 {
+			return nil, errors.New("tici header commitTS is 0")
+		}
+		// Initialize TICI file writers for each full-text index in the group.
+		if ticiFileWriter, err = ticiWriteGroup.CreateFileWriter(ctx); err != nil {
+			return nil, errors.Annotatef(err, "failed to create tici file writer, startKey=%s endKey=%s", hex.EncodeToString(firstKey), hex.EncodeToString(lastKey))
+		}
+		// Write headers for all tici file writers.
+		if err = ticiWriteGroup.WriteHeader(ctx, ticiFileWriter, ticiHeaderCommitTS); err != nil {
+			return nil, errors.Annotate(err, "failed to write header to tici file writer")
+		}
+	}
+	if ticiWriteGroup != nil {
+		kvBatchSize := local.KVWriteBatchSize
+		bufferPool := local.engineMgr.getBufferPool()
+		pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
+		count := 0
+		size := int64(0)
+		totalSize := int64(0)
+		totalCount := int64(0)
+		// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
+		// because the range-properties is not 100% accurate
+		regionMaxSize := j.regionSplitSize
+		if j.regionSplitSize <= int64(config.SplitRegionSize) {
+			regionMaxSize = j.regionSplitSize * 4 / 3
+		}
+
+		flushKVs := func() error {
+			if count == 0 {
+				return nil
+			}
+			if err := ticiWriteGroup.WritePairs(ctx, ticiFileWriter, pairs, count); err != nil {
+				return errors.Annotate(err, "failed to write pairs to tici file writer")
+			}
+			if local.collector != nil {
+				local.collector.Processed(size, int64(count))
+			}
+			count = 0
+			size = 0
+			return nil
+		}
+
+		iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End, bufferPool)
+		//nolint: errcheck
+		defer iter.Close()
+
+		var remainingStartKey []byte
+		for iter.First(); iter.Valid(); iter.Next() {
+			k, v := iter.Key(), iter.Value()
+			kvSize := int64(len(k) + len(v))
+			if count < len(pairs) {
+				pairs[count].Key = k
+				pairs[count].Value = v
+			} else {
+				pairs = append(pairs, &sst.Pair{Key: k, Value: v})
+			}
+			count++
+			totalCount++
+			size += kvSize
+			totalSize += kvSize
+
+			if size >= kvBatchSize {
+				if err := flushKVs(); err != nil {
+					return nil, errors.Trace(err)
+				}
+				iter.ReleaseBuf()
+			}
+			if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
+				// we will shrink the key range of this job to real written range
+				if iter.Next() {
+					remainingStartKey = slices.Clone(iter.Key())
+					tidblogutil.Logger(ctx).Info("write to tici partial finish",
+						zap.Int64("count", totalCount),
+						zap.Int64("size", totalSize),
+						logutil.Key("startKey", j.keyRange.Start),
+						logutil.Key("endKey", j.keyRange.End),
+						logutil.Key("remainStart", remainingStartKey),
+						logutil.Region(region),
+						logutil.Leader(j.region.Leader),
+						zap.Uint64("commitTS", dataCommitTS))
+				}
+				break
+			}
+		}
+
+		if iter.Error() != nil {
+			return nil, errors.Trace(iter.Error())
+		}
+
+		if err := flushKVs(); err != nil {
+			return nil, errors.Trace(err)
+		}
+		iter.ReleaseBuf()
+
+		if err := ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
+			return nil, errors.Annotate(err, "failed to close tici file writer")
+		}
+		if err := ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
+			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")
+		}
+
+		takeTime := time.Since(begin)
+		tidblogutil.Logger(ctx).Debug("write to tici", zap.Reflect("region", j.region),
+			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
+			zap.Stringer("takeTime", takeTime))
+		if m, ok := metric.FromContext(ctx); ok {
+			m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
+		}
+
+		return &tikvWriteResult{
+			skipIngest:        true,
+			count:             totalCount,
+			totalBytes:        totalSize,
+			remainingStartKey: remainingStartKey,
+		}, nil
+	}
+
+	apiVersion := local.tikvCodec.GetAPIVersion()
+	clientFactory := local.importClientFactory
+	kvBatchSize := local.KVWriteBatchSize
+	bufferPool := local.engineMgr.getBufferPool()
+	writeLimiter := local.writeLimiter
 
 	u := uuid.New()
 	meta := &sst.SSTMeta{
@@ -450,40 +607,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		allPeers = append(allPeers, peer)
 	}
 
-	var ticiFileWriter *tici.FileWriter
-	if local.ticiWriteGroup != nil {
-		// Initialize TICI file writers for each full-text index in the group.
-		if ticiFileWriter, err = local.ticiWriteGroup.CreateFileWriter(ctx); err != nil {
-			return nil, errors.Annotatef(err, "failed to create tici file writer, startKey=%s endKey=%s", hex.EncodeToString(firstKey), hex.EncodeToString(lastKey))
-		}
-	}
-
-	dataCommitTS := j.ingestData.GetTS()
-	intest.AssertFunc(func() bool {
-		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
-		now := time.Now()
-		if timeOfTS.Sub(now) > time.Hour {
-			return false
-		}
-		if now.Sub(timeOfTS) > 24*time.Hour {
-			return false
-		}
-		return true
-	}, "TS used in import should in [now-1d, now+1h], but got %d", dataCommitTS)
-	if dataCommitTS == 0 {
-		return nil, errors.New("data commitTS is 0")
-	}
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
 			CommitTs: dataCommitTS,
 		},
-	}
-
-	if local.ticiWriteGroup != nil {
-		// Write headers for all tici file writers.
-		if err = local.ticiWriteGroup.WriteHeader(ctx, ticiFileWriter, dataCommitTS); err != nil {
-			return nil, errors.Annotate(err, "failed to write header to tici file writer")
-		}
 	}
 
 	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
@@ -553,13 +680,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		}
 		if local.collector != nil {
 			local.collector.Processed(size, int64(count))
-		}
-
-		// If TiCI is enabled, write the batch to all TiCI writers.
-		if local.ticiWriteGroup != nil {
-			if err := local.ticiWriteGroup.WritePairs(ctx, ticiFileWriter, pairs, count); err != nil {
-				return errors.Annotate(err, "failed to write pairs to tici file writer")
-			}
 		}
 
 		failpoint.Inject("afterFlushKVs", func() {
@@ -643,15 +763,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		if leaderID == region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
 			tidblogutil.Logger(ctx).Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
-		}
-	}
-
-	if local.ticiWriteGroup != nil {
-		if err := local.ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
-			return nil, errors.Annotate(err, "failed to close tici file writer")
-		}
-		if err := local.ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
-			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")
 		}
 	}
 

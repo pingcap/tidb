@@ -584,6 +584,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
+	var plan *importer.Plan
+	if e.tableImporter != nil {
+		plan = e.tableImporter.Plan
+	}
+	ticiWriteEnabled := decideTiCIWriteEnabled(e.logger, e.taskID, subtask.ID, sm.KVGroup, plan)
 
 	// We specify engineID as a tag so that the callee can determine
 	// whether the call is from a data engine or an index engine.
@@ -609,6 +614,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	localBackend.SetCollector(collector)
 
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
+		TiCIWriteEnabled: ticiWriteEnabled,
 		External: &backend.ExternalEngineConfig{
 			ExtStore:      objStore,
 			DataFiles:     sm.DataFiles,
@@ -641,6 +647,51 @@ func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 func (e *writeAndIngestStepExecutor) ResetSummary() {
 	e.summary.Reset()
+}
+
+func decideTiCIWriteEnabled(logger *zap.Logger, taskID int64, subtaskID int64, kvGroup string, plan *importer.Plan) bool {
+	logFields := []zap.Field{
+		zap.Int64("task-id", taskID),
+		zap.Int64("subtask-id", subtaskID),
+		zap.String("kv-group", kvGroup),
+	}
+	if kvGroup == dataKVGroup {
+		logger.Info("TiCI write disabled for data kv group", logFields...)
+		return false
+	}
+	if plan == nil || plan.TableInfo == nil {
+		logger.Info("TiCI write disabled due to missing plan or table info", logFields...)
+		return false
+	}
+	indexID, err := strconv.ParseInt(kvGroup, 10, 64)
+	if err != nil {
+		logger.Info("TiCI write disabled due to invalid kv group index id", append(logFields, zap.Error(err))...)
+		return false
+	}
+	indexInfo := plan.TableInfo.FindIndexByID(indexID)
+	if indexInfo == nil {
+		logger.Info(
+			"TiCI write disabled because index is not found",
+			append(logFields,
+				zap.Int64("index-id", indexID),
+				zap.String("schema-name", plan.DBName),
+				zap.String("table-name", plan.TableInfo.Name.O),
+			)...,
+		)
+		return false
+	}
+	enabled := indexInfo.IsTiCIIndex()
+	logger.Info(
+		"TiCI write decision for index engine",
+		append(logFields,
+			zap.Int64("index-id", indexID),
+			zap.String("schema-name", plan.DBName),
+			zap.String("table-name", plan.TableInfo.Name.O),
+			zap.String("index-name", indexInfo.Name.O),
+			zap.Bool("tici-write-enabled", enabled),
+		)...,
+	)
+	return enabled
 }
 
 func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {

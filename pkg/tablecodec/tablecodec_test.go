@@ -24,6 +24,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -227,6 +230,98 @@ func TestDecodeColumnValue(t *testing.T) {
 	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetCollator(tp.GetCollate()))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
+}
+
+func TestHybridShardingIndexValues(t *testing.T) {
+	colAType := types.NewFieldType(mysql.TypeVarchar)
+	colAType.SetCharset(charset.CharsetUTF8MB4)
+	colAType.SetCollate(charset.CollationUTF8MB4)
+	colBType := types.NewFieldType(mysql.TypeVarchar)
+	colBType.SetCharset(charset.CharsetASCII)
+	colBType.SetCollate(charset.CollationASCII)
+	tblInfo := &model.TableInfo{
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *colAType,
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("b"),
+				Offset:    1,
+				FieldType: *colBType,
+			},
+		},
+	}
+	idxInfo := &model.IndexInfo{
+		ID:   1,
+		Name: ast.NewCIStr("idx"),
+		Columns: []*model.IndexColumn{
+			{
+				Name:   ast.NewCIStr("a"),
+				Offset: 0,
+				Length: 1,
+			},
+			{
+				Name:   ast.NewCIStr("b"),
+				Offset: 1,
+				Length: 1,
+			},
+		},
+		HybridInfo: &model.HybridIndexInfo{
+			Sharding: &model.HybridShardingSpec{
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("b"),
+						Offset: 1,
+						Length: 1,
+					},
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: 1,
+					},
+				},
+			},
+		},
+	}
+	indexedValues := []types.Datum{
+		types.NewStringDatum("你好"),
+		types.NewStringDatum("xyz"),
+	}
+	shardingValues, err := hybridShardingIndexValues(tblInfo, idxInfo, indexedValues)
+	require.NoError(t, err)
+	require.Len(t, shardingValues, 2)
+	require.Equal(t, "x", shardingValues[0].GetString())
+	require.Equal(t, "你", shardingValues[1].GetString())
+
+	missingOffsetIndex := &model.IndexInfo{
+		ID:   2,
+		Name: ast.NewCIStr("missing_offset"),
+		Columns: []*model.IndexColumn{
+			{
+				Name:   ast.NewCIStr("a"),
+				Offset: 0,
+				Length: 1,
+			},
+		},
+		HybridInfo: &model.HybridIndexInfo{
+			Sharding: &model.HybridShardingSpec{
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("b"),
+						Offset: 1,
+						Length: 1,
+					},
+				},
+			},
+		},
+	}
+	_, err = hybridShardingIndexValues(tblInfo, missingOffsetIndex, indexedValues)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "hybrid index sharding column offset 1")
 }
 
 func TestUnflattenDatums(t *testing.T) {
@@ -504,6 +599,72 @@ func TestDecodeIndexKey(t *testing.T) {
 	require.Equal(t, tableID, decodeTableID)
 	require.Equal(t, indexID, decodeIndexID)
 	require.Equal(t, valueStrs, decodeValues)
+}
+
+func TestHybridShardingIndexEncoding(t *testing.T) {
+	colA := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	colB := &model.ColumnInfo{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+	colC := &model.ColumnInfo{ID: 3, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	tblInfo := &model.TableInfo{
+		ID:      10,
+		Columns: []*model.ColumnInfo{colA, colB, colC},
+	}
+	idxCols := []*model.IndexColumn{
+		{Offset: 0, Length: types.UnspecifiedLength},
+		{Offset: 1, Length: types.UnspecifiedLength},
+		{Offset: 2, Length: types.UnspecifiedLength},
+	}
+	shardingCols := []*model.IndexColumn{
+		{Offset: 0, Length: types.UnspecifiedLength},
+		{Offset: 2, Length: types.UnspecifiedLength},
+	}
+	idxInfo := &model.IndexInfo{
+		ID:      5,
+		Columns: idxCols,
+		HybridInfo: &model.HybridIndexInfo{
+			Sharding: &model.HybridShardingSpec{Columns: shardingCols},
+		},
+	}
+
+	indexedValues := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewStringDatum("bee"),
+		types.NewIntDatum(3),
+	}
+	handle := kv.IntHandle(9)
+	key, distinct, err := GenIndexKey(time.UTC, tblInfo, idxInfo, tblInfo.ID, indexedValues, handle, nil)
+	require.NoError(t, err)
+	require.False(t, distinct)
+
+	valuesBytes, handleBytes, err := CutIndexKeyNew(key, len(shardingCols))
+	require.NoError(t, err)
+	var decodedA, decodedC types.Datum
+	_, decodedA, err = codec.DecodeOne(valuesBytes[0])
+	require.NoError(t, err)
+	_, decodedC, err = codec.DecodeOne(valuesBytes[1])
+	require.NoError(t, err)
+	require.Equal(t, indexedValues[0], decodedA)
+	require.Equal(t, indexedValues[2], decodedC)
+	_, decodedHandle, err := codec.DecodeOne(handleBytes)
+	require.NoError(t, err)
+	require.Equal(t, types.NewIntDatum(handle.IntValue()), decodedHandle)
+
+	value, err := GenIndexValuePortal(time.UTC, tblInfo, idxInfo, false, distinct, false, indexedValues, handle, tblInfo.ID, nil, nil)
+	require.NoError(t, err)
+	segs := SplitIndexValue(value)
+	require.NotNil(t, segs.RestoredValues)
+	colInfos := []rowcodec.ColInfo{
+		{ID: colA.ID, Ft: &colA.FieldType},
+		{ID: colB.ID, Ft: &colB.FieldType},
+		{ID: colC.ID, Ft: &colC.FieldType},
+	}
+	decoder := rowcodec.NewDatumMapDecoder(colInfos, time.UTC)
+	decodedMap, err := decoder.DecodeToDatumMap(segs.RestoredValues, nil)
+	require.NoError(t, err)
+	require.Len(t, decodedMap, 3)
+	require.Equal(t, indexedValues[0], decodedMap[colA.ID])
+	require.Equal(t, indexedValues[1], decodedMap[colB.ID])
+	require.Equal(t, indexedValues[2], decodedMap[colC.ID])
 }
 
 func TestCutPrefix(t *testing.T) {

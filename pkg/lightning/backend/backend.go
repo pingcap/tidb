@@ -93,6 +93,11 @@ type LocalWriterConfig struct {
 type EngineConfig struct {
 	// TableInfo is the corresponding tidb table info
 	TableInfo *checkpoints.TidbTableInfo
+	// TiCIWriteEnabled indicates whether this engine should write TiCI data.
+	TiCIWriteEnabled bool
+	// TiCIHeaderCommitTS overrides the commit ts used for TiCI header.
+	// When it is 0, TiCI header uses the ingest data TS.
+	TiCIHeaderCommitTS uint64
 	// local backend specified configuration
 	Local LocalEngineConfig
 	// local backend external engine specified configuration

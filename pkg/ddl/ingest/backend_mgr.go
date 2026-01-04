@@ -181,7 +181,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 		return mockBackend, nil
 	}
 
-	bCtx := newBackendContext(ctx, job.ID, bd, cfg,
+	bCtx := newBackendContext(ctx, job.ID, job.SchemaName, bd, cfg,
 		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpOp)
 
 	LitDiskRoot.Add(job.ID, bCtx)
@@ -250,6 +250,7 @@ const checkpointUpdateInterval = 10 * time.Minute
 func newBackendContext(
 	ctx context.Context,
 	jobID int64,
+	schemaName string,
 	be *local.Backend,
 	cfg *local.BackendConfig,
 	vars map[string]string,
@@ -262,6 +263,7 @@ func newBackendContext(
 		engines:        make(map[int64]*engineInfo, 10),
 		memRoot:        memRoot,
 		jobID:          jobID,
+		schemaName:     schemaName,
 		backend:        be,
 		ctx:            ctx,
 		cfg:            cfg,
