@@ -626,8 +626,15 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 			dupCheck[strings.ToLower(idxUpdate.Name)] = struct{}{}
 			if idxUpdate.Option != nil && idxUpdate.Option.Global {
 				tbInfo.Indices[idxOffset].Global = true
+				// Only use V2 for non-clustered tables with non-unique global indexes
+				if !tbInfo.Indices[idxOffset].Unique && !tbInfo.IsCommonHandle {
+					tbInfo.Indices[idxOffset].GlobalIndexVersion = model.GlobalIndexVersionCurrent
+				} else {
+					tbInfo.Indices[idxOffset].GlobalIndexVersion = 0
+				}
 			} else {
 				tbInfo.Indices[idxOffset].Global = false
+				tbInfo.Indices[idxOffset].GlobalIndexVersion = 0
 			}
 			updateIndexes = append(updateIndexes, model.UpdateIndexInfo{IndexName: idxUpdate.Name, Global: tbInfo.Indices[idxOffset].Global})
 			tbInfo.Partition.DDLUpdateIndexes = updateIndexes
@@ -3293,6 +3300,16 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			tblInfo.Partition.DDLChangedIndex[index.ID] = false
 			tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
 			newIndex.Global = newGlobal
+			if newGlobal {
+				// Only use V2 for non-clustered tables with non-unique global indexes
+				if !newIndex.Unique && !tblInfo.IsCommonHandle {
+					newIndex.GlobalIndexVersion = model.GlobalIndexVersionCurrent
+				} else {
+					newIndex.GlobalIndexVersion = 0
+				}
+			} else {
+				newIndex.GlobalIndexVersion = 0
+			}
 			tblInfo.Indices = append(tblInfo.Indices, newIndex)
 		}
 		failpoint.Inject("reorgPartCancel1", func(val failpoint.Value) {

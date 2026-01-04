@@ -320,10 +320,11 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 		// todo: open it after we support it.
 		//s.Equal("Records: 6  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 		//s.Equal(uint64(6), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
-		querySQL := "SELECT * FROM t;"
+		querySQL := "SELECT * FROM t"
 		if c.querySQL != "" {
 			querySQL = c.querySQL
 		}
+		querySQL = fmt.Sprintf("%s /* %s */", querySQL, c.createTableSQL)
 		s.tk.MustQuery(querySQL).Check(testkit.Rows(c.res...))
 	}
 }

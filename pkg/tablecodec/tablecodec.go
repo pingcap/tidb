@@ -66,7 +66,10 @@ const (
 
 	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
 	CommonHandleFlag byte = 127
-	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
+	// PartitionIDFlag is the flag used to decode the partition ID.
+	// Used in both global index values and global index keys (for V2+ non-unique indexes).
+	// In keys: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
+	// In values: PartitionIDFlag + partition_id (8 bytes)
 	PartitionIDFlag byte = 126
 	// IndexVersionFlag is the flag used to decode the index's version info.
 	IndexVersionFlag byte = 125
@@ -962,6 +965,15 @@ func decodeIndexKvOldCollation(key, value []byte, hdStatus HandleStatus, buf []b
 			return nil, errors.Trace(err)
 		}
 	}
+	// For V2+ global indexes, partition ID is in the key (decoded into PartitionHandle)
+	if ph, ok := handle.(kv.PartitionHandle); ok {
+		datum := types.NewIntDatum(ph.PartitionID)
+		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
+		if err != nil {
+			return nil, err
+		}
+		resultValues = append(resultValues, pidBytes)
+	}
 	return resultValues, nil
 }
 
@@ -1003,6 +1015,8 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 }
 
 // DecodeIndexHandle uses to decode the handle from index key/value.
+// For global indexes, returns a PartitionHandle containing both partition ID and inner handle.
+// For V2 indexes, partition ID is extracted from key; for V0 indexes, from value.
 func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	var err error
 	b := key[prefixLen+idLen:]
@@ -1017,8 +1031,14 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 		if err != nil {
 			return nil, err
 		}
-		// If len(value) >= 9, it may contains partition id.
-		// We should decode it and return a partition handle.
+
+		// Check if handle is already a PartitionHandle (V2 with partition in key)
+		if _, ok := handle.(kv.PartitionHandle); ok {
+			// V2 index: partition ID is in the key, return PartitionHandle as-is
+			return handle, nil
+		}
+
+		// V0/unique index: partition ID might be in value
 		if len(value) >= 9 {
 			seg := SplitIndexValue(value)
 			if len(seg.PartitionID) != 0 {
@@ -1026,18 +1046,51 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 				if err != nil {
 					return nil, err
 				}
-				handle = kv.NewPartitionHandle(pid, handle)
+				// Wrap in PartitionHandle for V0 global indexes
+				return kv.NewPartitionHandle(pid, handle), nil
 			}
 		}
 		return handle, nil
 	} else if len(value) >= 8 {
-		return DecodeHandleInIndexValue(value)
+		handle, err := DecodeHandleInIndexValue(value)
+		if err != nil {
+			return nil, err
+		}
+		// Also check for partition ID in value for this case
+		if len(value) >= 9 {
+			seg := SplitIndexValue(value)
+			if len(seg.PartitionID) != 0 {
+				_, pid, err := codec.DecodeInt(seg.PartitionID)
+				if err != nil {
+					return nil, err
+				}
+				// Wrap in PartitionHandle for V0 global indexes
+				return kv.NewPartitionHandle(pid, handle), nil
+			}
+		}
+		return handle, nil
 	}
 	// Should never execute to here.
 	return nil, errors.Errorf("no handle in index key: %v, value: %v", key, value)
 }
 
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
+	// Check if this is a PartitionHandle (for global non-unique indexes V2+)
+	if len(keySuffix) > 0 && keySuffix[0] == PartitionIDFlag {
+		// Format: PartitionIDFlag + partition_id (8 bytes) + inner_handle
+		keySuffix = keySuffix[1:] // Skip the flag
+		remain, partID, err := codec.DecodeInt(keySuffix)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Decode the inner handle
+		innerHandle, err := decodeHandleInIndexKey(remain)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return kv.NewPartitionHandle(partID, innerHandle), nil
+	}
+
 	remain, d, err := codec.DecodeOne(keySuffix)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1201,6 +1254,11 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 // GenIndexKey generates index key using input physical table id
 func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
+	// Check global index version compatibility.
+	if idxInfo.Global && idxInfo.GlobalIndexVersion > model.GlobalIndexVersionCurrent {
+		return nil, false, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB",
+			idxInfo.GlobalIndexVersion, model.GlobalIndexVersionCurrent)
+	}
 	if idxInfo.Unique {
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
@@ -1225,14 +1283,36 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 		return nil, false, err
 	}
 	if !distinct && h != nil {
-		if h.IsInt() {
-			// We choose the efficient path here instead of calling `codec.EncodeKey`
-			// because the int handle must be an int64, and it must be comparable.
-			// This remains correct until codec.encodeSignedInt is changed.
-			key = append(key, codec.IntHandleFlag)
-			key = codec.EncodeInt(key, h.IntValue())
+		// For PartitionHandle on global indexes V2+, we must encode BOTH partition ID and inner handle
+		// in the key to prevent collisions when different partitions have duplicate handles.
+		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
+		// Only use the new format for version >= V2. Legacy indexes (version 0) use the old format.
+		if ph, isPartitionHandle := h.(kv.PartitionHandle); isPartitionHandle && idxInfo.Global && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+			// Encode as: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
+			key = append(key, PartitionIDFlag)
+			key = codec.EncodeInt(key, ph.PartitionID)
+			if ph.Handle.IsInt() {
+				key = append(key, codec.IntHandleFlag)
+				key = codec.EncodeInt(key, ph.Handle.IntValue())
+			} else {
+				key = append(key, ph.Handle.Encoded()...)
+			}
 		} else {
-			key = append(key, h.Encoded()...)
+			// Extract inner handle for non-global indexes or non-PartitionHandle
+			innerHandle := h
+			if ph, ok := h.(kv.PartitionHandle); ok {
+				innerHandle = ph.Handle
+			}
+
+			if innerHandle.IsInt() {
+				// We choose the efficient path here instead of calling `codec.EncodeKey`
+				// because the int handle must be an int64, and it must be comparable.
+				// This remains correct until codec.encodeSignedInt is changed.
+				key = append(key, codec.IntHandleFlag)
+				key = codec.EncodeInt(key, innerHandle.IntValue())
+			} else {
+				key = append(key, innerHandle.Encoded()...)
+			}
 		}
 	}
 	return
@@ -1553,6 +1633,11 @@ func TempIndexValueIsUntouched(b []byte) bool {
 func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
+	// Check global index version compatibility.
+	if idxInfo.Global && idxInfo.GlobalIndexVersion > model.GlobalIndexVersionCurrent {
+		return nil, errors.Errorf("global index version %d is not supported by this TiDB version (max supported: %d). Please upgrade TiDB",
+			idxInfo.GlobalIndexVersion, model.GlobalIndexVersionCurrent)
+	}
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueForClusteredIndexVersion1(loc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData, buf)
 	}
@@ -1600,7 +1685,8 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 	if distinct {
 		idxVal = encodeCommonHandle(idxVal, h)
 	}
-	if idxInfo.Global {
+	// For V2 indexes, partition ID is in the key, so skip encoding it in the value
+	if idxInfo.Global && idxInfo.GlobalIndexVersion == 0 {
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
 	if idxValNeedRestoredData || len(handleRestoredData) > 0 {
@@ -1663,7 +1749,8 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 		idxVal = encodeCommonHandle(idxVal, h)
 		newEncode = true
 	}
-	if idxInfo.Global {
+	// For V2 indexes, partition ID is in the key, so skip encoding it in the value
+	if idxInfo.Global && idxInfo.GlobalIndexVersion == 0 {
 		idxVal = encodePartitionID(idxVal, partitionID)
 		newEncode = true
 	}
@@ -1881,24 +1968,39 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 	if segs.CommonHandle != nil {
 		// In unique common handle index.
 		handle, err = kv.NewCommonHandle(segs.CommonHandle)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		// In non-unique index, decode handle in keySuffix.
-		handle, err = kv.NewCommonHandle(keySuffix)
-	}
-	if err != nil {
-		return nil, err
+		// Use decodeHandleInIndexKey to properly handle PartitionHandle for V2 global indexes
+		handle, err = decodeHandleInIndexKey(keySuffix)
+		if err != nil {
+			return nil, err
+		}
 	}
 	handleBytes, err := reEncodeHandleConsiderNewCollation(handle, columns[colsLen:], segs.RestoredValues)
 	if err != nil {
 		return nil, err
 	}
 	resultValues = append(resultValues, handleBytes...)
+
+	// Handle partition ID: either from value (V0) or from key (V2+)
 	if segs.PartitionID != nil {
+		// V0 global indexes: partition ID is in the value
 		_, pid, err := codec.DecodeInt(segs.PartitionID)
 		if err != nil {
 			return nil, err
 		}
 		datum := types.NewIntDatum(pid)
+		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
+		if err != nil {
+			return nil, err
+		}
+		resultValues = append(resultValues, pidBytes)
+	} else if ph, ok := handle.(kv.PartitionHandle); ok {
+		// V2+ global indexes: partition ID is in the key (decoded into PartitionHandle)
+		datum := types.NewIntDatum(ph.PartitionID)
 		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
 		if err != nil {
 			return nil, err
@@ -1950,12 +2052,23 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		return nil, err
 	}
 	resultValues = append(resultValues, handleBytes...)
+
+	// Handle partition ID: either from value (V0) or from key (V2+)
 	if segs.PartitionID != nil {
+		// V0 global indexes: partition ID is in the value
 		_, pid, err := codec.DecodeInt(segs.PartitionID)
 		if err != nil {
 			return nil, err
 		}
 		datum := types.NewIntDatum(pid)
+		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
+		if err != nil {
+			return nil, err
+		}
+		resultValues = append(resultValues, pidBytes)
+	} else if ph, ok := handle.(kv.PartitionHandle); ok {
+		// V2+ global indexes: partition ID is in the key (decoded into PartitionHandle)
+		datum := types.NewIntDatum(ph.PartitionID)
 		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
 		if err != nil {
 			return nil, err

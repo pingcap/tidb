@@ -386,16 +386,22 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
 			})
 			if e.idxInfo.Global {
-				_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(e.handleVal).PartitionID)
+				// DecodeIndexHandle returns PartitionHandle for global indexes
+				partHandle, err := tablecodec.DecodeIndexHandle(e.idxKey, e.handleVal, len(e.idxInfo.Columns))
 				if err != nil {
 					return err
 				}
-				tblID = pid
+				var ph kv.PartitionHandle
+				var ok bool
+				if ph, ok = partHandle.(kv.PartitionHandle); !ok {
+					return errors.New("global index should return PartitionHandle")
+				}
+				tblID = ph.PartitionID
 				pi := e.tblInfo.GetPartitionInfo()
 				if !matchPartitionNames(tblID, e.partitionNames, pi) {
 					return nil
 				}
-				if slices.Contains(pi.IDsInDDLToIgnore(), pid) {
+				if slices.Contains(pi.IDsInDDLToIgnore(), tblID) {
 					return nil
 				}
 			}
