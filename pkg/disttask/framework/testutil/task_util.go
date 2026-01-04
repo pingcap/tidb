@@ -19,9 +19,11 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -96,4 +98,11 @@ func InsertSubtaskWithSummary(
 		return nil
 	}))
 	return id
+}
+
+func getTaskKS() string {
+	if kerneltype.IsNextGen() {
+		return keyspace.System
+	}
+	return ""
 }

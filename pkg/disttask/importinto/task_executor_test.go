@@ -24,12 +24,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type StoreWithoutKS struct {
+type StoreWithKS struct {
 	kv.Storage
+	ks string
 }
 
-func (*StoreWithoutKS) GetKeyspace() string {
-	return ""
+func (s *StoreWithKS) GetKeyspace() string {
+	return s.ks
 }
 
 func TestImportTaskExecutor(t *testing.T) {
@@ -39,7 +40,7 @@ func TestImportTaskExecutor(t *testing.T) {
 		&proto.Task{
 			TaskBase: proto.TaskBase{ID: 1},
 		},
-		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", &StoreWithoutKS{}),
+		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", &StoreWithKS{}),
 	).(*importExecutor)
 
 	require.NotNil(t, executor.BaseTaskExecutor.Extension)

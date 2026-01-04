@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path"
@@ -630,6 +631,13 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	if rateLimitUnit, err = flags.GetUint64(flagRateLimitUnit); err != nil {
 		return errors.Trace(err)
+	}
+	// Check for multiplication overflow when both values are non-zero
+	// This prevents silent wraparound that would cause incorrect rate limiting
+	if rateLimit > 0 && rateLimitUnit > 0 && rateLimit > math.MaxUint64/rateLimitUnit {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"rate limit calculation overflow: %d * %d exceeds uint64 max (consider max ~17PB/s)",
+			rateLimit, rateLimitUnit)
 	}
 	cfg.RateLimit = rateLimit * rateLimitUnit
 

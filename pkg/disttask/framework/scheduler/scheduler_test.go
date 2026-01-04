@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -147,7 +148,11 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 
 	// scheduler init error
-	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+	var ks string
+	if kerneltype.IsNextGen() {
+		ks = keyspace.System
+	}
+	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, ks, 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
