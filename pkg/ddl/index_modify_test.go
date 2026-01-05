@@ -2063,3 +2063,24 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 	require.Equal(t, "col1", idx.HybridInfo.Sharding.Columns[0].Name.O)
 	require.Equal(t, "col4", idx.HybridInfo.Sharding.Columns[1].Name.O)
 }
+
+func TestHybridIndexCreateTiCIOnce(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `1*return(true)->return(false)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("set @@session.tidb_enable_dist_task = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(col1 int, col2 text, col3 int, col4 int)")
+	tk.MustExec("insert into t values (1, 'a', 2, 3)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	tk.MustExec(`create hybrid index idx_ok on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
+		"sharding_key": {"columns": ["col1", "col4"]}
+	}'`)
+}

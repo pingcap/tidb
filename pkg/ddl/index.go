@@ -1810,12 +1810,15 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 			// wired into its WriteHeader (not ingestData.GetTS()),
 			// so job.SnapshotVer will be captured and propagated
 			// through dist-task metadata.
-			err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName)
-			if err != nil {
-				if !isRetryableJobError(err, job.ErrorCount) {
-					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+			if !job.ReorgMeta.TiCIIndexCreated {
+				err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName)
+				if err != nil {
+					if !isRetryableJobError(err, job.ErrorCount) {
+						return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+					}
+					return ver, errors.Trace(err)
 				}
-				return ver, errors.Trace(err)
+				job.ReorgMeta.TiCIIndexCreated = true
 			}
 
 			var done bool
