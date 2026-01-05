@@ -437,22 +437,9 @@ func (t *ManagerCtx) FinishIndexUpload(
 	ctx context.Context,
 	tidbTaskID string,
 ) error {
-	failpoint.Inject("MockFinishIndexUpload", func(val failpoint.Value) {
-		mockSuccess := false
-		if v, ok := val.(bool); ok {
-			mockSuccess = v
-		}
-		if mockSuccess {
-			logutil.BgLogger().Info("MockFinishIndexUpload failpoint triggered",
-				zap.String("tidbTaskID", tidbTaskID))
-			failpoint.Return(nil)
-		}
-		err := errors.New("mock FinishIndexUpload failed")
-		logutil.BgLogger().Warn("MockFinishIndexUpload failpoint triggered with error",
-			zap.String("tidbTaskID", tidbTaskID),
-			zap.Error(err))
-		failpoint.Return(err)
-	})
+	if handled, err := maybeMockFinishIndexUpload(tidbTaskID); handled {
+		return err
+	}
 	req := &FinishImportIndexUploadRequest{
 		TidbTaskId: tidbTaskID,
 		Status:     ErrorCode_SUCCESS,
@@ -474,6 +461,30 @@ func (t *ManagerCtx) FinishIndexUpload(
 		return fmt.Errorf("tici FinishIndexUpload error: %s", resp.ErrorMessage)
 	}
 	return nil
+}
+
+func maybeMockFinishIndexUpload(tidbTaskID string) (bool, error) {
+	var (
+		handled bool
+		err     error
+	)
+	failpoint.Inject("MockFinishIndexUpload", func(val failpoint.Value) {
+		handled = true
+		mockSuccess := false
+		if v, ok := val.(bool); ok {
+			mockSuccess = v
+		}
+		if mockSuccess {
+			logutil.BgLogger().Info("MockFinishIndexUpload failpoint triggered",
+				zap.String("tidbTaskID", tidbTaskID))
+		} else {
+			err = errors.New("mock FinishIndexUpload failed")
+			logutil.BgLogger().Warn("MockFinishIndexUpload failpoint triggered with error",
+				zap.String("tidbTaskID", tidbTaskID),
+				zap.Error(err))
+		}
+	})
+	return handled, err
 }
 
 // AbortIndexUpload notifies TiCI that the job has failed and the related TiCI job should be aborted.
@@ -678,6 +689,9 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 // FinishIndexUpload notifies TiCI that all partitions for the given job in all TiDB instances
 // have been uploaded successfully.
 func FinishIndexUpload(ctx context.Context, store kv.Storage, tidbTaskID string) error {
+	if handled, err := maybeMockFinishIndexUpload(tidbTaskID); handled {
+		return err
+	}
 	etcdClient, err := getEtcdClientFunc()
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -2025,8 +2026,10 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 
 func TestHybridIndexShardingKeyColumns(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(col1 int, col2 text, col3 int, col4 int)")
@@ -2034,6 +2037,7 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 
 	tk.MustContainErrMsg(`create hybrid index idx_bad on t(col1, col2, col4) parameter '{
 		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
 		"sharding_key": {"columns": ["col3"]}
 	}'`, "column 'col3' referenced in HYBRID index PARAMETER must appear in index definition")
 
@@ -2066,6 +2070,7 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 
 func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `1*return(true)->return(false)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
