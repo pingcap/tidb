@@ -4,6 +4,9 @@ filters:
   go\.mod$:
     approvers:
       - sig-critical-approvers-dep
+  ^OWNERS_ALIASES$:
+    approvers:
+      - sig-approvers-modules
   .*:
     approvers:
       - sig-community-approvers

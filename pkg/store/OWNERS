@@ -1,0 +1,6 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+# You can view or update the member of `sig-*` in the OWNERS_ALIASES file of the repository.
+options:
+  no_parent_owners: true
+approvers:
+  - sig-approvers-store
