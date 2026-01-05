@@ -15,6 +15,7 @@ go_library(
         "txn.go",
         "txnmanager.go",
         "upgrade.go",
+        "upgrade_def.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/session",
     visibility = ["//visibility:public"],

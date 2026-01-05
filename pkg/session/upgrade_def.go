@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -689,12 +690,12 @@ func upgradeToVer3(s sessionapi.Session, _ int64) {
 
 // upgradeToVer4 updates to version 4.
 func upgradeToVer4(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateStatsMetaTable)
+	mustExecute(s, metadef.CreateStatsMetaTable)
 }
 
 func upgradeToVer5(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateStatsHistogramsTable)
-	mustExecute(s, CreateStatsBucketsTable)
+	mustExecute(s, metadef.CreateStatsHistogramsTable)
+	mustExecute(s, metadef.CreateStatsBucketsTable)
 }
 
 func upgradeToVer6(s sessionapi.Session, _ int64) {
@@ -829,7 +830,7 @@ func upgradeToVer14(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer15(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateGCDeleteRangeTable)
+	doReentrantDDL(s, metadef.CreateGCDeleteRangeTable)
 }
 
 func upgradeToVer16(s sessionapi.Session, _ int64) {
@@ -852,11 +853,11 @@ func upgradeToVer19(s sessionapi.Session, _ int64) {
 
 func upgradeToVer20(s sessionapi.Session, _ int64) {
 	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
-	doReentrantDDL(s, CreateStatsFeedbackTable)
+	doReentrantDDL(s, metadef.CreateStatsFeedbackTable)
 }
 
 func upgradeToVer21(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateGCDeleteRangeDoneTable)
+	mustExecute(s, metadef.CreateGCDeleteRangeDoneTable)
 
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX job_id", dbterror.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD UNIQUE INDEX delete_range_index (job_id, element_id)", dbterror.ErrDupKeyName)
@@ -895,8 +896,8 @@ func upgradeToVer25(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer26(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateRoleEdgesTable)
-	mustExecute(s, CreateDefaultRolesTable)
+	mustExecute(s, metadef.CreateRoleEdgesTable)
+	mustExecute(s, metadef.CreateDefaultRolesTable)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_role_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Drop_role_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Account_locked` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
@@ -911,7 +912,7 @@ func upgradeToVer27(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer28(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateBindInfoTable)
+	doReentrantDDL(s, metadef.CreateBindInfoTable)
 }
 
 func upgradeToVer29(s sessionapi.Session, ver int64) {
@@ -925,7 +926,7 @@ func upgradeToVer29(s sessionapi.Session, ver int64) {
 }
 
 func upgradeToVer30(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateStatsTopNTable)
+	mustExecute(s, metadef.CreateStatsTopNTable)
 }
 
 func upgradeToVer31(s sessionapi.Session, _ int64) {
@@ -937,11 +938,11 @@ func upgradeToVer32(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer33(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateExprPushdownBlacklistTable)
+	doReentrantDDL(s, metadef.CreateExprPushdownBlacklistTable)
 }
 
 func upgradeToVer34(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateOptRuleBlacklistTable)
+	doReentrantDDL(s, metadef.CreateOptRuleBlacklistTable)
 }
 
 func upgradeToVer35(s sessionapi.Session, _ int64) {
@@ -965,7 +966,7 @@ func upgradeToVer37(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer38(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateGlobalPrivTable)
+	doReentrantDDL(s, metadef.CreateGlobalPrivTable)
 }
 
 func writeNewCollationParameter(s sessionapi.Session, flag bool) {
@@ -1039,7 +1040,7 @@ func upgradeToVer47(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer50(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateSchemaIndexUsageTable)
+	doReentrantDDL(s, metadef.CreateSchemaIndexUsageTable)
 }
 
 func upgradeToVer52(s sessionapi.Session, _ int64) {
@@ -1123,7 +1124,7 @@ func upgradeToVer55(s sessionapi.Session, _ int64) {
 // If we upgrade from v4.0 to a newer version, the real upgradeToVer49 will be missed.
 // So we redo upgradeToVer49 here to make sure the upgrading from v4.0 succeeds.
 func upgradeToVer56(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateStatsExtendedTable)
+	doReentrantDDL(s, metadef.CreateStatsExtendedTable)
 }
 
 func upgradeToVer57(s sessionapi.Session, _ int64) {
@@ -1151,7 +1152,7 @@ func upgradeToVer59(s sessionapi.Session, _ int64) {
 
 func upgradeToVer60(s sessionapi.Session, _ int64) {
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
-	doReentrantDDL(s, CreateStatsExtendedTable)
+	doReentrantDDL(s, metadef.CreateStatsExtendedTable)
 }
 
 type bindInfo struct {
@@ -1278,7 +1279,7 @@ func upgradeToVer64(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer65(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateStatsFMSketchTable)
+	doReentrantDDL(s, metadef.CreateStatsFMSketchTable)
 }
 
 func upgradeToVer66(s sessionapi.Session, _ int64) {
@@ -1290,7 +1291,7 @@ func upgradeToVer68(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer69(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateGlobalGrantsTable)
+	doReentrantDDL(s, metadef.CreateGlobalGrantsTable)
 }
 
 func upgradeToVer70(s sessionapi.Session, _ int64) {
@@ -1307,7 +1308,7 @@ func upgradeToVer72(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer73(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateCapturePlanBaselinesBlacklistTable)
+	doReentrantDDL(s, metadef.CreateCapturePlanBaselinesBlacklistTable)
 }
 
 func upgradeToVer74(s sessionapi.Session, _ int64) {
@@ -1328,7 +1329,7 @@ func upgradeToVer76(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer77(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateColumnStatsUsageTable)
+	doReentrantDDL(s, metadef.CreateColumnStatsUsageTable)
 }
 
 func upgradeToVer78(s sessionapi.Session, _ int64) {
@@ -1338,7 +1339,7 @@ func upgradeToVer78(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer79(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateTableCacheMetaTable)
+	doReentrantDDL(s, metadef.CreateTableCacheMetaTable)
 }
 
 func upgradeToVer80(s sessionapi.Session, _ int64) {
@@ -1356,15 +1357,15 @@ func upgradeToVer81(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer82(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateAnalyzeOptionsTable)
+	doReentrantDDL(s, metadef.CreateAnalyzeOptionsTable)
 }
 
 func upgradeToVer83(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateStatsHistoryTable)
+	doReentrantDDL(s, metadef.CreateStatsHistoryTable)
 }
 
 func upgradeToVer84(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateStatsMetaHistoryTable)
+	doReentrantDDL(s, metadef.CreateStatsMetaHistoryTable)
 }
 
 func upgradeToVer85(s sessionapi.Session, _ int64) {
@@ -1376,7 +1377,7 @@ func upgradeToVer86(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer87(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateAnalyzeJobsTable)
+	doReentrantDDL(s, metadef.CreateAnalyzeJobsTable)
 }
 
 func upgradeToVer88(s sessionapi.Session, _ int64) {
@@ -1385,7 +1386,7 @@ func upgradeToVer88(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer89(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateAdvisoryLocksTable)
+	doReentrantDDL(s, metadef.CreateAdvisoryLocksTable)
 }
 
 // importConfigOption is a one-time import.
@@ -1435,7 +1436,7 @@ func upgradeToVer93(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer94(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateTiDBMDLView)
+	mustExecute(s, metadef.CreateTiDBMDLView)
 }
 
 func upgradeToVer95(s sessionapi.Session, _ int64) {
@@ -1474,15 +1475,15 @@ func upgradeToVer100(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer101(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreatePlanReplayerStatusTable)
+	doReentrantDDL(s, metadef.CreatePlanReplayerStatusTable)
 }
 
 func upgradeToVer102(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreatePlanReplayerTaskTable)
+	doReentrantDDL(s, metadef.CreatePlanReplayerTaskTable)
 }
 
 func upgradeToVer103(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateStatsTableLockedTable)
+	doReentrantDDL(s, metadef.CreateStatsTableLockedTable)
 }
 
 func upgradeToVer104(s sessionapi.Session, _ int64) {
@@ -1496,7 +1497,7 @@ func upgradeToVer105(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer106(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreatePasswordHistoryTable)
+	doReentrantDDL(s, metadef.CreatePasswordHistoryTable)
 	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_history` smallint unsigned  DEFAULT NULL AFTER `Create_Tablespace_Priv` ")
 	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_time` smallint unsigned DEFAULT NULL AFTER `Password_reuse_history`")
 }
@@ -1508,7 +1509,7 @@ func upgradeToVer107(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer108(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateTiDBTTLTableStatusTable)
+	doReentrantDDL(s, metadef.CreateTiDBTTLTableStatusTable)
 }
 
 // For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
@@ -1528,12 +1529,12 @@ func upgradeToVer130(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer131(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateTiDBTTLTaskTable)
-	doReentrantDDL(s, CreateTiDBTTLJobHistoryTable)
+	doReentrantDDL(s, metadef.CreateTiDBTTLTaskTable)
+	doReentrantDDL(s, metadef.CreateTiDBTTLJobHistoryTable)
 }
 
 func upgradeToVer132(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateTiDBMDLView)
+	doReentrantDDL(s, metadef.CreateTiDBMDLView)
 }
 
 func upgradeToVer133(s sessionapi.Session, _ int64) {
@@ -1555,7 +1556,7 @@ func upgradeToVer135(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer136(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateTiDBGlobalTaskTable)
+	mustExecute(s, metadef.CreateTiDBGlobalTaskTable)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX namespace", dbterror.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_task_key(task_key)", dbterror.ErrDupKeyName)
 }
@@ -1622,15 +1623,15 @@ func upgradeToVer167(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer168(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateTiDBImportJobsTable)
+	mustExecute(s, metadef.CreateTiDBImportJobsTable)
 }
 
 func upgradeToVer169(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateTiDBRunawayQueriesTable)
+	mustExecute(s, metadef.CreateTiDBRunawayQueriesTable)
 }
 
 func upgradeToVer170(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateTiDBTimersTable)
+	mustExecute(s, metadef.CreateTiDBTimersTable)
 }
 
 func upgradeToVer171(s sessionapi.Session, _ int64) {
@@ -1639,8 +1640,8 @@ func upgradeToVer171(s sessionapi.Session, _ int64) {
 
 func upgradeToVer172(s sessionapi.Session, _ int64) {
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
-	mustExecute(s, CreateTiDBRunawayWatchTable)
-	mustExecute(s, CreateTiDBRunawayWatchDoneTable)
+	mustExecute(s, metadef.CreateTiDBRunawayWatchTable)
+	mustExecute(s, metadef.CreateTiDBRunawayWatchDoneTable)
 }
 
 func upgradeToVer173(s sessionapi.Session, _ int64) {
@@ -1708,12 +1709,12 @@ func upgradeToVer175(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer176(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateTiDBGlobalTaskHistoryTable)
+	mustExecute(s, metadef.CreateTiDBGlobalTaskHistoryTable)
 }
 
 func upgradeToVer177(s sessionapi.Session, _ int64) {
 	// ignore error when upgrading from v7.4 to higher version.
-	doReentrantDDL(s, CreateDistFrameworkMetaTable, infoschema.ErrTableExists)
+	doReentrantDDL(s, metadef.CreateDistFrameworkMetaTable, infoschema.ErrTableExists)
 	err := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableAsyncMergeGlobalStats, vardef.Off)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer177 error", zap.Error(err))
@@ -1784,11 +1785,11 @@ func upgradeToVer191(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer192(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateRequestUnitByGroupTable)
+	doReentrantDDL(s, metadef.CreateRequestUnitByGroupTable)
 }
 
 func upgradeToVer193(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateTiDBMDLView)
+	doReentrantDDL(s, metadef.CreateTiDBMDLView)
 }
 
 func upgradeToVer194(s sessionapi.Session, _ int64) {
@@ -1796,7 +1797,7 @@ func upgradeToVer194(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer195(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, DropMySQLIndexUsageTable)
+	doReentrantDDL(s, metadef.DropMySQLIndexUsageTable)
 }
 
 func upgradeToVer196(s sessionapi.Session, _ int64) {
@@ -1805,7 +1806,7 @@ func upgradeToVer196(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer197(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateTiDBMDLView)
+	doReentrantDDL(s, metadef.CreateTiDBMDLView)
 }
 
 func upgradeToVer198(s sessionapi.Session, _ int64) {
@@ -1862,12 +1863,12 @@ func upgradeToVer212(s sessionapi.Session, ver int64) {
 }
 
 func upgradeToVer213(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateTiDBPITRIDMapTable)
+	mustExecute(s, metadef.CreateTiDBPITRIDMapTable)
 }
 
 func upgradeToVer214(s sessionapi.Session, _ int64) {
-	mustExecute(s, CreateIndexAdvisorResultsTable)
-	mustExecute(s, CreateTiDBKernelOptionsTable)
+	mustExecute(s, metadef.CreateIndexAdvisorResultsTable)
+	mustExecute(s, metadef.CreateTiDBKernelOptionsTable)
 }
 
 func upgradeToVer215(s sessionapi.Session, _ int64) {
@@ -1934,7 +1935,7 @@ func writeClusterID(s sessionapi.Session) {
 
 func upgradeToVer242(s sessionapi.Session, _ int64) {
 	writeClusterID(s)
-	mustExecute(s, CreateTiDBWorkloadValuesTable)
+	mustExecute(s, metadef.CreateTiDBWorkloadValuesTable)
 }
 
 func upgradeToVer243(s sessionapi.Session, _ int64) {
@@ -2014,7 +2015,7 @@ func upgradeToVer248(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer249(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateTiDBRestoreRegistryTable)
+	doReentrantDDL(s, metadef.CreateTiDBRestoreRegistryTable)
 }
 
 func upgradeToVer250(s sessionapi.Session, _ int64) {
