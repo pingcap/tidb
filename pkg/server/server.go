@@ -128,8 +128,7 @@ type Server struct {
 	listener          net.Listener
 	socket            net.Listener
 	concurrentLimiter *util.TokenLimiter
-	flightListener    net.Listener
-	flightSQLServer   *FlightSQLServer
+	flightSQL         any // FlightSQL state, set by build-tagged files
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
@@ -189,18 +188,12 @@ func (s *Server) StatusListenerAddr() net.Addr {
 
 // FlightSQLListenerAddr returns the server's Flight SQL listener's network address.
 func (s *Server) FlightSQLListenerAddr() net.Addr {
-	if s.flightListener == nil {
-		return nil
-	}
-	return s.flightListener.Addr()
+	return getFlightSQLListenerAddr(s)
 }
 
 // FlightSQLPort returns the server's Flight SQL port.
 func (s *Server) FlightSQLPort() uint {
-	if s.flightListener == nil {
-		return 0
-	}
-	return uint(s.flightListener.Addr().(*net.TCPAddr).Port)
+	return getFlightSQLPort(s)
 }
 
 // BitwiseXorCapability gets the capability of the server.
@@ -382,19 +375,9 @@ func (s *Server) initTiDBListener() (err error) {
 		}
 	}
 
-	if s.cfg.Host != "" && (s.cfg.FlightSQLPort != 0 || RunInGoTest) {
-		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.FlightSQLPort)))
-		tcpProto := "tcp"
-		if s.cfg.EnableTCP4Only {
-			tcpProto = "tcp4"
-		}
-		if s.flightListener, err = net.Listen(tcpProto, addr); err != nil {
-			return errors.Trace(err)
-		}
-		logutil.BgLogger().Info("server is running Arrow protocol", zap.String("addr", addr))
-		if RunInGoTest && s.cfg.FlightSQLPort == 0 {
-			s.cfg.FlightSQLPort = uint(s.flightListener.Addr().(*net.TCPAddr).Port)
-		}
+	// Initialize FlightSQL listener if enabled via build tag
+	if err = initFlightSQLListener(s); err != nil {
+		return errors.Trace(err)
 	}
 
 	if s.cfg.Socket != "" {
@@ -530,7 +513,8 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
-	go s.startFlightServer(s.flightListener, errChan)
+	// Start FlightSQL server if enabled via build tag
+	go startFlightSQLServer(s, errChan)
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
@@ -540,22 +524,6 @@ func (s *Server) Run(dom *domain.Domain) error {
 		return err
 	}
 	return <-errChan
-}
-
-func (s *Server) startFlightServer(listener net.Listener, errChan chan error) {
-	errChan <- func() error {
-		if listener == nil {
-			return nil
-		}
-		server, err := NewFlightSQLServer(s)
-		if err != nil {
-			return err
-		}
-
-		s.flightSQLServer = server
-
-		return server.Serve(listener)
-	}()
 }
 
 // isClosed is to check if the channel is closed
@@ -699,15 +667,8 @@ func (s *Server) closeListener() {
 		terror.Log(errors.Trace(err))
 		s.statusServer.Store(nil)
 	}
-	if s.flightSQLServer != nil {
-		s.flightSQLServer.Shutdown()
-		s.flightSQLServer = nil
-	}
-	if s.flightListener != nil {
-		err := s.flightListener.Close()
-		terror.Log(errors.Trace(err))
-		s.flightListener = nil
-	}
+	// Close FlightSQL server if enabled via build tag
+	closeFlightSQLServer(s)
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
