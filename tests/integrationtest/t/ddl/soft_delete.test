@@ -1,3 +1,5 @@
+set @@global.tidb_enable_global_index = 1;
+
 drop database if exists test_sd;
 create database test_sd softdelete = RETENTION 7 DAY;
 show create database test_sd;
@@ -26,6 +28,13 @@ show create table t3;
 alter database test_sd softdelete retention 7 hour;
 create table t4 (id int primary key, name varchar(50));
 show create table t4;
+
+drop table if exists t4_gi;
+create table t4_gi (id int primary key) /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ partition by hash(id) partitions 4;
+alter table t4_gi add index i1(_tidb_softdelete_time) global;
+show create table t4_gi;
+drop table if exists t4_gi;
+
 alter database test_sd softdelete = 'off';
 create table t5 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
 show create table t5;
@@ -80,3 +89,5 @@ create temporary table tmp_sd4 (id int);
 alter table tmp_sd4 softdelete retention 7 day;
 
 drop database test_sd;
+
+set @@global.tidb_enable_global_index = default;

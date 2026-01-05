@@ -106,4 +106,15 @@ func TestRestoreSpecialComment(t *testing.T) {
 		return err
 	})
 	require.Same(t, err, got)
+
+	sb.Reset()
+	ctx.WriteWithSpecialComments("fea_id", func() error {
+		ctx.WritePlain("content")
+		ctx.WriteWithSpecialComments("fea_id2", func() error {
+			ctx.WritePlain(" content2")
+			return nil
+		})
+		return nil
+	})
+	require.Equal(t, "/*T![fea_id] content content2 */", sb.String())
 }

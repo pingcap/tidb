@@ -1221,17 +1221,17 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 
 	writeIndexDef := func(rc *parserformat.RestoreCtx, idxInfo *model.IndexInfo, isLast bool) {
 		if idxInfo.Primary {
-			rc.WritePlain("  PRIMARY KEY ")
+			rc.WritePlain("PRIMARY KEY ")
 		} else if idxInfo.Unique {
-			rc.WritePlainf("  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
+			rc.WritePlainf("UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
-			rc.WritePlainf("  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+			rc.WritePlainf("VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.FullTextInfo != nil {
-			rc.WritePlainf("  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+			rc.WritePlainf("FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.InvertedInfo != nil {
-			rc.WritePlainf("  COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+			rc.WritePlainf("COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
-			rc.WritePlainf("  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
+			rc.WritePlainf("KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
@@ -1279,14 +1279,14 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 				if tableInfo.HasClusteredIndex() {
 					clusteredWord = "CLUSTERED"
 				}
-				rc.WritePlainf(" %s", clusteredWord)
+				rc.WritePlainf("%s", clusteredWord)
 				return nil
 			})
 		}
 		if idxInfo.Global {
 			rc.WritePlain(" ")
 			_ = rc.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
-				rc.WritePlain(" GLOBAL")
+				rc.WritePlain("GLOBAL")
 				return nil
 			})
 		}
@@ -1310,6 +1310,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		buf.WriteString(",\n")
 	}
 	for i, idxInfo := range publicIndices {
+		buf.WriteString("  ")
 		if wrap, featureID := indexCommentFeature(idxInfo); wrap {
 			_ = restoreCtx.WriteWithSpecialComments(featureID, func() error {
 				writeIndexDef(restoreCtx, idxInfo, i == len(publicIndices)-1)

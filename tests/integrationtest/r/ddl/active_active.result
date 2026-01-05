@@ -1,4 +1,6 @@
 drop database if exists test_aa;
+set tidb_enable_global_index = 1;
+set @@global.tidb_enable_check_constraint = 1;
 create database test_aa active_active = 'ON';
 Error 8200 (HY000): Unsupported ActiveActive enabled but SoftDelete disabled
 create database test_aa;
@@ -14,7 +16,6 @@ show create database test_aa;
 Database	Create Database
 test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 use test_aa;
-set @@global.tidb_enable_check_constraint = 1;
 create table t (id int primary key, name varchar(50));
 show create table t;
 Table	Create Table
@@ -45,6 +46,24 @@ t	CREATE TABLE `t` (
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t (
+id int primary key,
+name varchar(50)
+) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+ALTER TABLE t ADD INDEX i1(_tidb_origin_ts);
+ALTER TABLE t ADD INDEX i2(_tidb_softdelete_time);
+drop table if exists t;
+create table t (id int primary key) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ partition by hash(id) partitions 4;
+ALTER TABLE t ADD INDEX i3(_tidb_softdelete_time) GLOBAL;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  /*T![softdelete] KEY `i3` (`_tidb_softdelete_time`) GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id`) PARTITIONS 4 /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 drop table if exists t;
 create table t (
 id int primary key,

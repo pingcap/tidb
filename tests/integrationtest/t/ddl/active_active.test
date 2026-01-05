@@ -1,4 +1,7 @@
 drop database if exists test_aa;
+set tidb_enable_global_index = 1;
+set @@global.tidb_enable_check_constraint = 1;
+
 -- error 8200
 create database test_aa active_active = 'ON';
 create database test_aa;
@@ -8,8 +11,6 @@ show create database test_aa;
 alter database test_aa active_active = 'ON' softdelete = retention 7 day;
 show create database test_aa;
 use test_aa;
-
-set @@global.tidb_enable_check_constraint = 1;
 
 create table t (id int primary key, name varchar(50));
 show create table t;
@@ -25,6 +26,20 @@ create table t (id int primary key, name varchar(50)) active_active = 'OFF';
 show create table t;
 
 drop table if exists t;
+create table t (
+	id int primary key,
+	name varchar(50)
+) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+
+ALTER TABLE t ADD INDEX i1(_tidb_origin_ts);
+ALTER TABLE t ADD INDEX i2(_tidb_softdelete_time);
+
+drop table if exists t;
+create table t (id int primary key) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ partition by hash(id) partitions 4;
+ALTER TABLE t ADD INDEX i3(_tidb_softdelete_time) GLOBAL;
+show create table t;
+drop table if exists t;
+
 create table t (
 	id int primary key,
 	name varchar(50)
@@ -127,5 +142,4 @@ create global temporary table tmp_aa (id int) on commit delete rows active_activ
 create temporary table tmp_aa2 (id int) active_active = 'ON' softdelete = retention 7 day;
 
 drop database test_aa;
-
 set @@global.tidb_enable_check_constraint = default;
