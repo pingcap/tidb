@@ -274,12 +274,19 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 		}
 	}()
 
+	if e.Limit.Count == 0 {
+		close(e.resultChannel)
+		return nil
+	}
+
 	if len(e.prefixKeyFieldTypes) > 0 {
 		err := e.loadChunksUntilTotalLimitForRankTopN(ctx)
 		if err != nil {
 			close(e.resultChannel)
 			return err
 		}
+
+		// TODO(x) executeTopN
 	} else {
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
@@ -358,7 +365,8 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		}
 	}
 
-	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
+	needMoreChunks := true
+	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit && needMoreChunks {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		err := exec.Next(ctx, e.Children(0), srcChk)
 		if err != nil {
@@ -366,6 +374,16 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		}
 		if srcChk.NumRows() == 0 {
 			break
+		}
+
+		endIdx := e.findEndIdx(srcChk)
+
+		if endIdx < srcChk.NumRows() {
+			srcChk.TruncateTo(endIdx)
+
+			// Truncation means that we have found the end row
+			// and unnecessary to receive more chunks
+			needMoreChunks = false
 		}
 
 		e.chkHeap.rowChunks.Add(srcChk)
@@ -390,26 +408,35 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) int {
 	idx := 0
 	rowCnt := chk.NumRows()
 	savedRowCount := e.chkHeap.rowChunks.Len()
-	if len(e.prevPrefixKeys) == 0 {
-		e.prevPrefixKeys = e.getPrefixKeys(chk.GetRow(0))
-		idx++
-		savedRowCount++
+	totalLimit := int(e.chkHeap.totalLimit)
+
+	if savedRowCount+rowCnt <= totalLimit {
+		// TODO(x) test fast path in ut and endless
+		// Fast path
+		e.prevPrefixKeys = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
+		return rowCnt
 	}
 
-	// TODO(x) write a fast path when (savedRowCount+rowCnt <= totalLimit)
+	// Maybe savedRowCount is greater than totalLimit
+	remainingNeedRowCnt := max(0, totalLimit-savedRowCount)
 
-	totalLimit := int(e.chkHeap.totalLimit)
+	if remainingNeedRowCnt > 0 {
+		idx += remainingNeedRowCnt
+		savedRowCount += remainingNeedRowCnt
+	}
+
+	// both idx == 0 and len(e.prevPrefixKeys) == 0 is impossible
+	if idx > 0 {
+		e.prevPrefixKeys = e.getPrefixKeys(chk.GetRow(idx - 1))
+	}
+
+	// Now, len(e.prevPrefixKeys) must be greater than 0
 	for ; idx < rowCnt; idx++ {
-		if savedRowCount < totalLimit {
-			e.prevPrefixKeys = e.getPrefixKeys(chk.GetRow(idx))
-		} else {
-			currentPrefixKeys := e.getPrefixKeys(chk.GetRow(idx))
-			if !slices.Equal(currentPrefixKeys, e.prevPrefixKeys) {
-
-			}
+		currentPrefixKeys := e.getPrefixKeys(chk.GetRow(idx))
+		if !slices.Equal(currentPrefixKeys, e.prevPrefixKeys) {
+			return idx
 		}
 		idx++
-		savedRowCount++
 	}
 	return idx
 }
