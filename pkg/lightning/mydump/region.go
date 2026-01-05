@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -220,17 +221,24 @@ func MakeTableRegions(
 
 	start := time.Now()
 
+	// In some tests, cfg.Concurrency is 0
 	concurrency := max(cfg.Concurrency, 2)
 	var fileRegionsMap sync.Map
 
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	meta := cfg.TableMeta
+
+	var (
+		largeFiles             sync.Map
+		parallelSplitThreshold = cfg.MaxChunkSize * int64(concurrency)
+	)
+
 	for _, info := range meta.DataFiles {
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():
-				return nil
+				return egCtx.Err()
 			default:
 			}
 
@@ -244,13 +252,18 @@ func MakeTableRegions(
 			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 				info.FileMeta.Compression == CompressionNone &&
 				info.FileMeta.FileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
-				// If a csv file is overlarge, we need to split it into multiple regions.
-				// Note: We can only split a csv file whose format is strict.
-				// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
-				// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
-				// avoid split a lot of small chunks.
-				// If a csv file is compressed, we can't split it now because we can't get the exact size of a row.
-				regions, sizes, err = SplitLargeCSV(egCtx, cfg, info)
+				// If a csv file is overlarge, we need to split it into multiple
+				// regions. This can only be done for uncompressed files with
+				// strict format. Besides, the check threshold is increased by
+				// 1/10 of the `max-region-size` to avoid splitting small chunks,
+				// because tools like dumpling may dump files whose size is
+				// slightly exceed the `max-region-size`.
+				if info.FileMeta.FileSize > parallelSplitThreshold {
+					// For extremely large csv files, we split them later.
+					largeFiles.Store(info.FileMeta.Path, info)
+					return nil
+				}
+				regions, sizes, err = SplitLargeCSV(ctx, cfg, info, false)
 			} else {
 				regions, sizes, err = MakeSourceFileRegion(egCtx, cfg, info)
 			}
@@ -266,6 +279,25 @@ func MakeTableRegions(
 
 	if err := eg.Wait(); err != nil {
 		return nil, err
+	}
+
+	// Process large CSV files
+	var splitErr error
+	largeFiles.Range(func(_, value any) bool {
+		info, _ := value.(FileInfo)
+		regions, sizes, err := SplitLargeCSV(ctx, cfg, info, true)
+		if err != nil {
+			logutil.Logger(ctx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
+			splitErr = err
+			return false
+		}
+		result := fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}
+		fileRegionsMap.Store(info.FileMeta.Path, result)
+		return true
+	})
+
+	if splitErr != nil {
+		return nil, splitErr
 	}
 
 	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
@@ -407,6 +439,62 @@ func makeParquetFileRegion(
 	return []*TableRegion{region}, []float64{float64(dataFile.FileMeta.FileSize)}, nil
 }
 
+func openCSVParser(
+	ctx context.Context,
+	cfg *DataDivideConfig,
+	path string,
+	offset int64,
+) (*CSVParser, error) {
+	r, err := cfg.Store.Open(ctx, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+	charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+	if err != nil {
+		_ = r.Close()
+		return nil, err
+	}
+
+	parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
+	if err != nil {
+		_ = r.Close()
+		return nil, err
+	}
+
+	if err = parser.SetPos(offset, 0); err != nil {
+		_ = parser.Close()
+		return nil, err
+	}
+
+	return parser, nil
+}
+
+func getHeaderColumn(
+	ctx context.Context,
+	cfg *DataDivideConfig,
+	path string,
+) ([]string, int64, error) {
+	if !cfg.CSV.Header || !cfg.CSV.HeaderSchemaMatch {
+		return nil, 0, nil
+	}
+
+	parser, err := openCSVParser(ctx, cfg, path, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	//nolint: errcheck
+	defer parser.Close()
+
+	if err = parser.ReadColumns(); err != nil {
+		return nil, 0, err
+	}
+	startOffset, _ := parser.Pos()
+	return parser.Columns(), startOffset, nil
+}
+
 // SplitLargeCSV splits a large csv file into multiple regions, the size of
 // each regions is specified by `config.MaxRegionSize`.
 // Note: We split the file coarsely, thus the format of csv file is needed to be
@@ -418,75 +506,86 @@ func SplitLargeCSV(
 	ctx context.Context,
 	cfg *DataDivideConfig,
 	dataFile FileInfo,
+	parallel bool,
 ) (regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.MaxChunkSize
-	dataFileSizes = make([]float64, 0, dataFile.FileMeta.FileSize/maxRegionSize+1)
-	startOffset, endOffset := int64(0), maxRegionSize
-	var columns []string
-	var prevRowIdxMax int64
-	if cfg.CSV.Header {
-		r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-		if err != nil {
-			_ = r.Close()
-			return nil, nil, err
-		}
-		parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err = parser.ReadColumns(); err != nil {
-			_ = parser.Close()
-			return nil, nil, err
-		}
-		if cfg.CSV.HeaderSchemaMatch {
-			columns = parser.Columns()
-		}
-		startOffset, _ = parser.Pos()
-		endOffset = min(startOffset+maxRegionSize, dataFile.FileMeta.FileSize)
-		_ = parser.Close()
+
+	headerColumns, dataStart, err := getHeaderColumn(ctx, cfg, dataFile.FileMeta.Path)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
-	divisor := int64(cfg.ColumnCnt)
-	for {
-		curRowsCnt := (endOffset - startOffset) / divisor
-		rowIDMax := prevRowIdxMax + curRowsCnt
-		if endOffset != dataFile.FileMeta.FileSize {
-			r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
+
+	regionCnt := (dataFile.FileMeta.FileSize - dataStart + maxRegionSize - 1) / maxRegionSize
+	dataFileSizes = make([]float64, 0, regionCnt)
+
+	splitPoints := mathutil.Divide2Batches(dataFile.FileMeta.FileSize-dataStart, regionCnt)
+	splitPoints = splitPoints[:len(splitPoints)-1]
+	for i := range splitPoints {
+		if i == 0 {
+			splitPoints[i] += dataStart
+		} else {
+			splitPoints[i] += splitPoints[i-1]
+		}
+	}
+
+	concurrency := 1
+	if parallel {
+		concurrency = max(cfg.Concurrency, 1)
+	}
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(concurrency)
+	for i, splitPoint := range splitPoints {
+		eg.Go(func() error {
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			default:
+			}
+
+			parser, err := openCSVParser(egCtx, cfg, dataFile.FileMeta.Path, splitPoint)
 			if err != nil {
-				return nil, nil, err
+				return errors.Trace(err)
 			}
-			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-			charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-			if err != nil {
-				_ = r.Close()
-				return nil, nil, err
-			}
-			parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, false, charsetConvertor)
-			if err != nil {
-				return nil, nil, err
-			}
-			if err = parser.SetPos(endOffset, 0); err != nil {
-				_ = parser.Close()
-				return nil, nil, err
-			}
+			//nolint: errcheck
+			defer parser.Close()
 			_, pos, err := parser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
-					_ = parser.Close()
-					return nil, nil, err
+					return err
 				}
-				logutil.Logger(ctx).Warn("file contains no terminator at end",
+				logutil.Logger(egCtx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
 					zap.String("terminator", cfg.CSV.LinesTerminatedBy))
 				pos = dataFile.FileMeta.FileSize
 			}
-			endOffset = pos
-			_ = parser.Close()
+
+			splitPoints[i] = pos
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, nil, err
+	}
+
+	// Add the file end as the last split point
+	splitPoints = append(splitPoints, dataFile.FileMeta.FileSize)
+
+	divisor := int64(cfg.ColumnCnt)
+	prevRowIdxMax := int64(0)
+	for i := range splitPoints {
+		startOffset := dataStart
+		if i > 0 {
+			startOffset = splitPoints[i-1]
 		}
+		endOffset := splitPoints[i]
+
+		if startOffset == endOffset {
+			continue
+		}
+
+		curRowsCnt := (endOffset - startOffset) / divisor
+		rowIDMax := prevRowIdxMax + curRowsCnt
 		regions = append(regions,
 			&TableRegion{
 				DB:       cfg.TableMeta.DB,
@@ -497,18 +596,12 @@ func SplitLargeCSV(
 					EndOffset:    endOffset,
 					PrevRowIDMax: prevRowIdxMax,
 					RowIDMax:     rowIDMax,
-					Columns:      columns,
+					Columns:      headerColumns,
 				},
 			})
 		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
 		prevRowIdxMax = rowIDMax
-		if endOffset == dataFile.FileMeta.FileSize {
-			break
-		}
-		startOffset = endOffset
-		if endOffset += maxRegionSize; endOffset > dataFile.FileMeta.FileSize {
-			endOffset = dataFile.FileMeta.FileSize
-		}
 	}
+
 	return regions, dataFileSizes, nil
 }

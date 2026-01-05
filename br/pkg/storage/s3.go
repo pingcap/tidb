@@ -19,6 +19,7 @@ import (
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
 	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -96,6 +97,12 @@ type S3Storage struct {
 	svc       S3API
 	options   *backuppb.S3
 	accessRec *recording.AccessStats
+	// used to indicate that the S3 storage is not the official AWS S3, but a
+	// S3-compatible storage, such as minio/KS3/OSS.
+	// SDK v2 has some compliance issue with its doc, such as DeleteObjects, v2
+	// doesn't send the Content-MD5 header while the doc says it must be sent,
+	// and might report "Missing required header for this request: Content-Md5"
+	s3Compatible bool
 }
 
 func (*S3Storage) MarkStrongConsistency() {
@@ -569,7 +576,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	// Perform region detection and validation
 	var detectedRegion string
-	if len(qs.Provider) == 0 || qs.Provider == "aws" {
+	officialS3 := len(qs.Provider) == 0 || qs.Provider == "aws"
+	if officialS3 {
 		// For AWS provider, detect the actual bucket region
 		// In AWS SDK v2, GetBucketRegion has a simpler signature
 		detectedRegion, err = manager.GetBucketRegion(ctx, client, qs.Bucket, func(o *s3.Options) {
@@ -632,9 +640,10 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	// Create final S3Storage instance
 	s3Storage := &S3Storage{
-		svc:       client,
-		options:   &qs,
-		accessRec: opts.AccessRecording,
+		svc:          client,
+		options:      &qs,
+		accessRec:    opts.AccessRecording,
+		s3Compatible: !officialS3,
 	}
 
 	// Check object lock status if requested
@@ -885,7 +894,11 @@ func (rs *S3Storage) DeleteFiles(ctx context.Context, files []string) error {
 				Quiet:   aws.Bool(false),
 			},
 		}
-		_, err := rs.svc.DeleteObjects(ctx, input)
+		var optFns []func(*s3.Options)
+		if rs.s3Compatible {
+			optFns = []func(*s3.Options){withContentMD5}
+		}
+		_, err := rs.svc.DeleteObjects(ctx, input, optFns...)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1090,10 +1103,19 @@ func (rs *S3Storage) open(
 			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
 		}
 		objectSize := *(result.ContentLength)
-		r = RangeInfo{
-			Start: 0,
-			End:   objectSize - 1,
-			Size:  objectSize,
+		// Handle empty objects (size=0) to avoid End=-1
+		if objectSize == 0 {
+			r = RangeInfo{
+				Start: 0,
+				End:   0,
+				Size:  0,
+			}
+		} else {
+			r = RangeInfo{
+				Start: 0,
+				End:   objectSize - 1,
+				Size:  objectSize,
+			}
 		}
 	} else {
 		r, err = ParseRangeInfo(result.ContentRange)
@@ -1392,6 +1414,18 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 // Close implements ExternalStorage interface.
 func (*S3Storage) Close() {}
 
+// withContentMD5 removes all flexible checksum procecdures from an operation,
+// instead computing an MD5 checksum for the request payload.
+func withContentMD5(o *s3.Options) {
+	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+		_, _ = stack.Initialize.Remove("AWSChecksum:SetupInputContext")
+		_, _ = stack.Build.Remove("AWSChecksum:RequestMetricsTracking")
+		_, _ = stack.Finalize.Remove("AWSChecksum:ComputeInputPayloadChecksum")
+		_, _ = stack.Finalize.Remove("addInputChecksumTrailer")
+		return smithyhttp.AddContentChecksumMiddleware(stack)
+	})
+}
+
 // tidbRetryer implements aws.Retryer for TiDB-specific retry logic
 type tidbRetryer struct {
 	standardRetryer aws.Retryer
@@ -1402,6 +1436,12 @@ func newTidbRetryer() aws.Retryer {
 		standardRetryer: retry.NewStandard(func(so *retry.StandardOptions) {
 			so.MaxAttempts = maxRetries
 			so.MaxBackoff = 30 * time.Second
+			// this rate limiter is shared by all requests on the same S3 store
+			// instance, if there are network issues, we might easily exhaust the
+			// token bucket which doesn't add tokens back on error. such as for
+			// global-sort, we have many concurrent requests, a short period of
+			// network issue might exhaust the bucket.
+			so.RateLimiter = ratelimit.None
 		}),
 	}
 }

@@ -588,3 +588,24 @@ c_int
 1
 alter table t add index idx_4 (c_str);
 rollback;
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;
+CREATE TABLE ttl_src (created_at TIMESTAMP) TTL = `created_at` + INTERVAL 1 HOUR;
+CREATE TEMPORARY TABLE temp_local LIKE ttl_src;
+SHOW CREATE TABLE temp_local;
+Table	Create Table
+temp_local	CREATE TEMPORARY TABLE `temp_local` (
+  `created_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+CREATE GLOBAL TEMPORARY TABLE temp_global LIKE ttl_src ON COMMIT DELETE ROWS;
+SHOW CREATE TABLE temp_global;
+Table	Create Table
+temp_global	CREATE GLOBAL TEMPORARY TABLE `temp_global` (
+  `created_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
+CREATE TABLE normal_copy LIKE ttl_src;
+SHOW CREATE TABLE normal_copy;
+Table	Create Table
+normal_copy	CREATE TABLE `normal_copy` (
+  `created_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 1 HOUR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;

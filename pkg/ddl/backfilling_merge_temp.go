@@ -20,10 +20,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -37,6 +37,7 @@ import (
 
 type mergeTempIndexExecutor struct {
 	taskexecutor.BaseStepExecutor
+	task          *proto.TaskBase
 	job           *model.Job
 	store         kv.Storage
 	parentTable   table.PhysicalTable // The parent table for partition table.
@@ -52,9 +53,10 @@ type mergeTempIndexExecutor struct {
 	buffers   *tempIdxBuffers
 }
 
-func newMergeTempIndexExecutor(job *model.Job, store kv.Storage, tbl table.PhysicalTable) (*mergeTempIndexExecutor, error) {
+func newMergeTempIndexExecutor(task *proto.TaskBase, job *model.Job, store kv.Storage, tbl table.PhysicalTable) (*mergeTempIndexExecutor, error) {
 	batchCnt := job.ReorgMeta.GetBatchSize()
 	return &mergeTempIndexExecutor{
+		task:           task,
 		job:            job,
 		store:          store,
 		batchCnt:       batchCnt,
@@ -121,7 +123,8 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	collector := &mergeTempIndexCollector{}
 
 	srcOp := NewTempIndexScanTaskSource(wctx, e.store, e.physicalTable, meta.StartKey, meta.EndKey)
-	mergeOp := NewMergeTempIndexOperator(wctx, e.store, e.physicalTable, e.idxInfo, e.job.ID, subtask.Concurrency, e.batchCnt, e.job.ReorgMeta)
+	mergeOp := NewMergeTempIndexOperator(wctx, e.store, e.physicalTable, e.idxInfo, e.job.ID,
+		int(e.GetResource().CPU.Capacity()), e.batchCnt, e.job.ReorgMeta)
 	sinkOp := newTempIndexResultSink(wctx, e.physicalTable, collector)
 
 	operator.Compose(srcOp, mergeOp)

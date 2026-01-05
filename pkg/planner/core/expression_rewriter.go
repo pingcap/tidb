@@ -2556,8 +2556,12 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
-		er.ctxStackAppend(&expression.Column{RetType: &colInfo.FieldType, ID: colInfo.ID, UniqueID: colInfo.ID},
-			&types.FieldName{ColName: v.Name})
+		er.ctxStackAppend(&expression.Column{
+			RetType:  &colInfo.FieldType,
+			ID:       colInfo.ID,
+			UniqueID: colInfo.ID,
+			OrigName: fmt.Sprintf("%s.%s", er.sourceTable.Name.L, colInfo.Name.L),
+		}, &types.FieldName{ColName: v.Name})
 		return
 	}
 

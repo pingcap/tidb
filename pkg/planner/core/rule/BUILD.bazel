@@ -10,6 +10,7 @@ go_library(
         "rule_column_pruning.go",
         "rule_constant_propagation.go",
         "rule_init.go",
+        "rule_max_min_eliminate.go",
         "rule_partition_processor.go",
         "rule_predicate_simplification.go",
         "rule_prune_indexes.go",
@@ -19,6 +20,7 @@ go_library(
     deps = [
         "//pkg/domain",
         "//pkg/expression",
+        "//pkg/expression/aggregation",
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
