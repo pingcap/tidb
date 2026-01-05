@@ -1219,7 +1219,12 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 	}
 
-	writeIndexDef := func(rc *parserformat.RestoreCtx, idxInfo *model.IndexInfo, isLast bool) {
+	writeIndexDef := func(rc *parserformat.RestoreCtx, idxInfo *model.IndexInfo, sp bool) {
+		if sp {
+			restoreCtx.WritePlain(", ")
+		} else {
+			restoreCtx.WriteString(",\n  ")
+		}
 		if idxInfo.Primary {
 			rc.WritePlain("PRIMARY KEY ")
 		} else if idxInfo.Unique {
@@ -1290,9 +1295,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 				return nil
 			})
 		}
-		if !isLast {
-			rc.WritePlain(",\n")
-		}
 	}
 	indexCommentFeature := func(idxInfo *model.IndexInfo) (shouldWrap bool, featureID string) {
 		for _, col := range idxInfo.Columns {
@@ -1306,19 +1308,16 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		return false, ""
 	}
 
-	if len(publicIndices) > 0 {
-		buf.WriteString(",\n")
-	}
-	for i, idxInfo := range publicIndices {
-		buf.WriteString("  ")
+	for _, idxInfo := range publicIndices {
 		if wrap, featureID := indexCommentFeature(idxInfo); wrap {
+			buf.WriteString("\n  ")
 			_ = restoreCtx.WriteWithSpecialComments(featureID, func() error {
-				writeIndexDef(restoreCtx, idxInfo, i == len(publicIndices)-1)
+				writeIndexDef(restoreCtx, idxInfo, true)
 				return nil
 			})
 			continue
 		}
-		writeIndexDef(restoreCtx, idxInfo, i == len(publicIndices)-1)
+		writeIndexDef(restoreCtx, idxInfo, false)
 	}
 
 	// Foreign Keys are supported by data dictionary even though

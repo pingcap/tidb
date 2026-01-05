@@ -3435,6 +3435,9 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		return nil
 	}
 
+	if model.IsInternalColumn(oldColName) {
+		return dbterror.ErrWrongColumnName.GenWithStackByArgs(oldColName.L)
+	}
 	if model.IsInternalColumn(newColName) {
 		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}

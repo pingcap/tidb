@@ -47,9 +47,12 @@ create table t6 (id int primary key, name varchar(50)) softdelete_job_interval =
 # Alter table
 alter table t4 softdelete retention 30 DAY;
 show create table t4;
+-- error 8200
+alter table t4 drop column _tidb_softdelete_time;
 alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
 show create table t4;
 alter table t4 softdelete = 'OFF';
+alter table t4 drop column _tidb_softdelete_time;
 show create table t4;
 
 # Invalid value

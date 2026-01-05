@@ -101,8 +101,8 @@ alter table t2 add constraint fk1 foreign key (id) references t(id);
 alter table t add constraint fk2 foreign key (id) references t2(id);
 
 # forbid renaming internal columns
-#-- error 8200
-#ALTER TABLE t RENAME COLUMN _tidb_origin_ts TO _tidb_origin_ts2;
+-- error 1166
+ALTER TABLE t RENAME COLUMN _tidb_origin_ts TO _tidb_origin_ts2;
 -- error 1166
 ALTER TABLE t RENAME COLUMN name TO _tidb_origin_ts;
 

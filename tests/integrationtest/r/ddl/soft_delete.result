@@ -62,8 +62,8 @@ show create table t4_gi;
 Table	Create Table
 t4_gi	CREATE TABLE `t4_gi` (
   `id` int NOT NULL,
-  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
-  /*T![softdelete] KEY `i1` (`_tidb_softdelete_time`) GLOBAL */
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+  /*T![softdelete] , KEY `i1` (`_tidb_softdelete_time`) GLOBAL */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`id`) PARTITIONS 4 /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 drop table if exists t4_gi;
@@ -88,6 +88,8 @@ t4	CREATE TABLE `t4` (
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 30 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+alter table t4 drop column _tidb_softdelete_time;
+Error 8200 (HY000): Unsupported can not drop internal columns
 alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
 show create table t4;
 Table	Create Table
@@ -97,6 +99,7 @@ t4	CREATE TABLE `t4` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 30 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='OFF' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='9h' */
 alter table t4 softdelete = 'OFF';
+alter table t4 drop column _tidb_softdelete_time;
 show create table t4;
 Table	Create Table
 t4	CREATE TABLE `t4` (
