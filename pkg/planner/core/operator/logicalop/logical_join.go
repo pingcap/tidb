@@ -327,6 +327,9 @@ func filterOutOtherCondition4ConvertAntiJoin(inner int, sf []expression.Expressi
 // CanConvertAntiJoin is used in outer-join-to-semi-join rule.
 func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema) (proj *LogicalProjection, selConditionColInOuter bool) {
 	if len(ret) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
+		// ret can only have one expression.
+		// The inner expression can definitely be pushed down, so ret must be the outer expression.
+		// If they are semantically similar, one should be eliminable, leaving only one.
 		return nil, false
 	}
 	if _, ok := p.Self().(*LogicalApply); ok {
@@ -374,9 +377,9 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 	for s := range iter {
 		joinOuterKeySch.Insert(int(s.UniqueID))
 	}
-	// column in IsNull expression is from the outer side columns in the eq/other condition.
 	selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
 	if selConditionColInOuter {
+		// column in IsNull expression is from the outer side columns in the eq/other condition.
 		proj = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
 	} else if outerSchSet.Has(int(isNullcol.UniqueID)) {
 		// column in IsNull expression is from the outer side columns.
@@ -407,7 +410,8 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 		}
 		p.JoinType = base.AntiSemiJoin
 	}
-
+	// proj is to generate the NULL values for the columns of the outer table, which is the
+	// expected result for this kind of anti-join query.
 	return proj, selConditionColInOuter
 }
 

@@ -37,11 +37,11 @@ import (
 // inner table that is guaranteed to be non-null if a match had occurred. This guarantee
 // comes from two main patterns identified in the `CanConvertAntiJoin` function:
 //
-// 1. The `IS NULL` check is on a column that is part of the join condition.
-//    SQL Example: `SELECT B.* FROM A RIGHT JOIN B ON A.id = B.a_id WHERE A.id IS NULL`
+//  1. The `IS NULL` check is on a column that is part of the join condition.
+//     SQL Example: `SELECT B.* FROM A RIGHT JOIN B ON A.id = B.a_id WHERE A.id IS NULL`
 //
-// 2. The `IS NULL` check is on a column that has a `NOT NULL` constraint in its table definition.
-//    SQL Example: `SELECT A.* FROM A LEFT JOIN B ON A.id = B.a_id WHERE B.non_null_col IS NULL`
+//  2. The `IS NULL` check is on a column that has a `NOT NULL` constraint in its table definition.
+//     SQL Example: `SELECT A.* FROM A LEFT JOIN B ON A.id = B.a_id WHERE B.non_null_col IS NULL`
 //
 // In both cases, the original `LogicalSelection` is eliminated, and the plan is rewritten to
 // `LogicalProjection -> LogicalJoin(AntiSemiJoin)`.
