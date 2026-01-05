@@ -516,6 +516,11 @@ func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task replayer.PlanReplayerTaskKey) (bool, error) {
 	exec := sctx.GetSQLExecutor()
 	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.SQLDigest, task.PlanDigest))
+	defer func() {
+		if rs != nil {
+			rs.Close()
+		}
+	}()
 	if err != nil {
 		return false, err
 	}
@@ -523,7 +528,6 @@ func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, ta
 		return true, nil
 	}
 	var rows []chunk.Row
-	defer terror.Call(rs.Close)
 	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
 		return false, errors.Trace(err)
 	}
@@ -538,6 +542,11 @@ func CheckPlanReplayerTaskExists(ctx context.Context, sctx sessionctx.Context, s
 	exec := sctx.GetSQLExecutor()
 	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_task where sql_digest = '%v' and plan_digest = '%v'",
 		sqlDigest, planDigest))
+	defer func() {
+		if rs != nil {
+			rs.Close()
+		}
+	}()
 	if err != nil {
 		return false, err
 	}
@@ -545,7 +554,6 @@ func CheckPlanReplayerTaskExists(ctx context.Context, sctx sessionctx.Context, s
 		return false, nil
 	}
 	var rows []chunk.Row
-	defer terror.Call(rs.Close)
 	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
 		return false, errors.Trace(err)
 	}
