@@ -32,11 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -79,10 +79,10 @@ func TestAddIndexDistBasic(t *testing.T) {
 	}
 	// mock that we only have 1 cpu, add-index task can be scheduled as usual
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", `return(true)`))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID"))
 	})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	if store.Name() != "TiKV" {
@@ -129,7 +129,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("admin check index t1 idx;")
 
 	var counter atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
 			if counter.Add(1) == 1 {
 				*errP = context.Canceled
@@ -138,7 +138,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 	)
 	tk.MustExec("alter table t1 add index idx1(a);")
 	tk.MustExec("admin check index t1 idx1;")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan", "return()"))
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
@@ -314,7 +314,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 		}
 	})
 
-	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDMLExecutionOnPausedState", func() {
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockDMLExecutionOnPausedState", func() {
 		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 		require.Equal(t, 1, len(row))
 		jobID := row[0][0].(string)
@@ -334,7 +334,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDMLExecutionOnPausedState"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockDMLExecutionOnPausedState"))
 
 	// dist task succeed, job paused and resumed.
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
@@ -474,10 +474,10 @@ func TestAddIndexScheduleAway(t *testing.T) {
 		}
 	})
 	// Do not balance subtasks automatically.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockNoEnoughSlots", "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockNoEnoughSlots", "return")
 	afterCancel := make(chan struct{})
 	// Capture the cancel operation from checkBalanceLoop.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterCancelSubtaskExec", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterCancelSubtaskExec", func() {
 		close(afterCancel)
 	})
 	var once sync.Once
@@ -496,7 +496,7 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1.MustExec(updateExecID)
 		})
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(_ taskexecutor.TaskExecutor, _ *error, ctx context.Context) {
 			require.Error(t, ctx.Err())
 			require.Equal(t, context.Canceled, context.Cause(ctx))
@@ -510,7 +510,7 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	proto.MaxConcurrentTask = 1
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`)
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/doCleanupTask", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/doCleanupTask", func() {
 		<-ch
 	})
 	store := realtikvtest.CreateMockStoreAndSetup(t)

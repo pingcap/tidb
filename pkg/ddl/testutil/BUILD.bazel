@@ -11,8 +11,8 @@ go_library(
     deps = [
         "//pkg/ddl",
         "//pkg/ddl/logutil",
-        "//pkg/disttask/operator",
         "//pkg/domain",
+        "//pkg/dxf/operator",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
