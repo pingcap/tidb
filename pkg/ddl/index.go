@@ -132,7 +132,7 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		if col.Name == model.ExtraCommitTSName {
 			return nil, false, errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
 		}
-		if isUnique && model.IsInternalColumn(col.Name) {
+		if isUnique && model.IsSoftDeleteOrActiveActiveColumn(col.Name) {
 			return nil, false, errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
 		}
 
