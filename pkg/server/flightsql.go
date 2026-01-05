@@ -45,6 +45,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// FlightSQLServer implements the Apache Arrow Flight SQL protocol for TiDB.
 type FlightSQLServer struct {
 	flightsql.BaseServer
 	server       *Server
@@ -54,6 +55,7 @@ type FlightSQLServer struct {
 	arrowAllocator memory.Allocator
 }
 
+// NewFlightSQLServer creates a new FlightSQL server instance.
 func NewFlightSQLServer(server *Server) (*FlightSQLServer, error) {
 	ret := &FlightSQLServer{
 		server:         server,
@@ -65,6 +67,7 @@ func NewFlightSQLServer(server *Server) (*FlightSQLServer, error) {
 	return ret, nil
 }
 
+// Serve starts the FlightSQL server on the given listener.
 func (s *FlightSQLServer) Serve(l net.Listener) error {
 	// Create server with auth middleware that uses our ServerAuthHandler
 	server := flight.NewServerWithMiddleware([]flight.ServerMiddleware{
@@ -78,10 +81,12 @@ func (s *FlightSQLServer) Serve(l net.Listener) error {
 	return server.Serve()
 }
 
+// Shutdown gracefully stops the FlightSQL server.
 func (s *FlightSQLServer) Shutdown() {
 	s.flightServer.Shutdown()
 }
 
+// GetFlightInfoStatement returns flight info for a SQL query statement.
 func (s *FlightSQLServer) GetFlightInfoStatement(ctx context.Context, cmd flightsql.StatementQuery, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	// Database selection is optional - clients can use fully-qualified table names
 	// Extract database from metadata if provided
@@ -102,18 +107,22 @@ func (s *FlightSQLServer) GetFlightInfoStatement(ctx context.Context, cmd flight
 	}, nil
 }
 
+// GetFlightInfoSubstraitPlan returns flight info for a Substrait plan (not supported).
 func (s *FlightSQLServer) GetFlightInfoSubstraitPlan(ctx context.Context, plan flightsql.StatementSubstraitPlan, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("substrait plans are not supported")
 }
 
+// GetSchemaStatement returns the schema for a SQL query statement.
 func (s *FlightSQLServer) GetSchemaStatement(ctx context.Context, cmd flightsql.StatementQuery, desc *flight.FlightDescriptor) (*flight.SchemaResult, error) {
 	return nil, errors.New("GetSchemaStatement not implemented")
 }
 
+// GetSchemaSubstraitPlan returns the schema for a Substrait plan (not supported).
 func (s *FlightSQLServer) GetSchemaSubstraitPlan(ctx context.Context, plan flightsql.StatementSubstraitPlan, desc *flight.FlightDescriptor) (*flight.SchemaResult, error) {
 	return nil, errors.New("substrait plans are not supported")
 }
 
+// DoGetStatement executes a SQL query and returns the result stream.
 func (s *FlightSQLServer) DoGetStatement(ctx context.Context, cmd flightsql.StatementQueryTicket) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	_, query, err := decodeTransactionQuery(cmd.GetStatementHandle())
 	if err != nil {
@@ -170,6 +179,7 @@ func (s *FlightSQLServer) DoGetStatement(ctx context.Context, cmd flightsql.Stat
 	return rdr.Schema(), ch, nil
 }
 
+// GetFlightInfoPreparedStatement returns flight info for a prepared statement.
 func (s *FlightSQLServer) GetFlightInfoPreparedStatement(ctx context.Context, cmd flightsql.PreparedStatementQuery, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	// Decode the handle to get the query
 	query, _, err := decodePreparedHandle(cmd.GetPreparedStatementHandle())
@@ -197,10 +207,12 @@ func (s *FlightSQLServer) GetFlightInfoPreparedStatement(ctx context.Context, cm
 	}, nil
 }
 
+// GetSchemaPreparedStatement returns the schema for a prepared statement.
 func (s *FlightSQLServer) GetSchemaPreparedStatement(ctx context.Context, cmd flightsql.PreparedStatementQuery, desc *flight.FlightDescriptor) (*flight.SchemaResult, error) {
 	return nil, errors.New("GetSchemaPreparedStatement not implemented")
 }
 
+// DoGetPreparedStatement executes a prepared statement and returns the result stream.
 func (s *FlightSQLServer) DoGetPreparedStatement(ctx context.Context, cmd flightsql.PreparedStatementQuery) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	// Decode the handle to get query and parameters
 	query, params, err := decodePreparedHandle(cmd.GetPreparedStatementHandle())
@@ -298,86 +310,111 @@ func (s *FlightSQLServer) DoGetPreparedStatement(ctx context.Context, cmd flight
 	return schema, ch, nil
 }
 
+// GetFlightInfoCatalogs returns flight info for listing catalogs.
 func (s *FlightSQLServer) GetFlightInfoCatalogs(ctx context.Context, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("GetFlightInfoCatalogs not implemented")
 }
 
+// DoGetCatalogs returns the list of catalogs.
 func (s *FlightSQLServer) DoGetCatalogs(ctx context.Context) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	return nil, nil, errors.New("DoGetCatalogs not implemented")
 }
 
+// GetFlightInfoXdbcTypeInfo returns flight info for XDBC type information.
 func (s *FlightSQLServer) GetFlightInfoXdbcTypeInfo(ctx context.Context, cmd flightsql.GetXdbcTypeInfo, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("GetFlightInfoXdbcTypeInfo not implemented")
 }
 
+// DoGetXdbcTypeInfo returns XDBC type information.
 func (s *FlightSQLServer) DoGetXdbcTypeInfo(ctx context.Context, cmd flightsql.GetXdbcTypeInfo) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	return nil, nil, errors.New("DoGetXdbcTypeInfo not implemented")
 }
 
-func (s *FlightSQLServer) GetFlightInfoSqlInfo(ctx context.Context, cmd flightsql.GetSqlInfo, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
+// GetFlightInfoSqlInfo returns flight info for SQL information.
+//
+//nolint:revive,all_revive
+func (s *FlightSQLServer) GetFlightInfoSqlInfo(ctx context.Context, cmd flightsql.GetSqlInfo, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) { //nolint:revive,all_revive
 	return nil, errors.New("GetFlightInfoSqlInfo not implemented")
 }
 
-func (s *FlightSQLServer) DoGetSqlInfo(ctx context.Context, cmd flightsql.GetSqlInfo) (*arrow.Schema, <-chan flight.StreamChunk, error) {
+// DoGetSqlInfo returns SQL information.
+//
+//nolint:revive,all_revive
+func (s *FlightSQLServer) DoGetSqlInfo(ctx context.Context, cmd flightsql.GetSqlInfo) (*arrow.Schema, <-chan flight.StreamChunk, error) { //nolint:revive,all_revive
 	return nil, nil, errors.New("DoGetSqlInfo not implemented")
 }
 
+// GetFlightInfoSchemas returns flight info for listing database schemas.
 func (s *FlightSQLServer) GetFlightInfoSchemas(ctx context.Context, cmd flightsql.GetDBSchemas, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("GetFlightInfoSchemas not implemented")
 }
 
+// DoGetDBSchemas returns the list of database schemas.
 func (s *FlightSQLServer) DoGetDBSchemas(ctx context.Context, cmd flightsql.GetDBSchemas) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	return nil, nil, errors.New("DoGetDBSchemas not implemented")
 }
 
+// GetFlightInfoTables returns flight info for listing tables.
 func (s *FlightSQLServer) GetFlightInfoTables(ctx context.Context, cmd flightsql.GetTables, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("GetFlightInfoTables not implemented")
 }
 
+// DoGetTables returns the list of tables.
 func (s *FlightSQLServer) DoGetTables(ctx context.Context, cmd flightsql.GetTables) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	return nil, nil, errors.New("DoGetTables not implemented")
 }
 
+// GetFlightInfoTableTypes returns flight info for listing table types.
 func (s *FlightSQLServer) GetFlightInfoTableTypes(ctx context.Context, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("GetFlightInfoTableTypes not implemented")
 }
 
+// DoGetTableTypes returns the list of table types.
 func (s *FlightSQLServer) DoGetTableTypes(ctx context.Context) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	return nil, nil, errors.New("DoGetTableTypes not implemented")
 }
 
+// GetFlightInfoPrimaryKeys returns flight info for listing primary keys.
 func (s *FlightSQLServer) GetFlightInfoPrimaryKeys(ctx context.Context, ref flightsql.TableRef, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("GetFlightInfoPrimaryKeys not implemented")
 }
 
+// DoGetPrimaryKeys returns the primary keys for a table.
 func (s *FlightSQLServer) DoGetPrimaryKeys(ctx context.Context, ref flightsql.TableRef) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	return nil, nil, errors.New("DoGetPrimaryKeys not implemented")
 }
 
+// GetFlightInfoExportedKeys returns flight info for listing exported keys.
 func (s *FlightSQLServer) GetFlightInfoExportedKeys(ctx context.Context, ref flightsql.TableRef, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("GetFlightInfoExportedKeys not implemented")
 }
 
+// DoGetExportedKeys returns the exported keys for a table.
 func (s *FlightSQLServer) DoGetExportedKeys(ctx context.Context, ref flightsql.TableRef) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	return nil, nil, errors.New("DoGetExportedKeys not implemented")
 }
 
+// GetFlightInfoImportedKeys returns flight info for listing imported keys.
 func (s *FlightSQLServer) GetFlightInfoImportedKeys(ctx context.Context, ref flightsql.TableRef, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("GetFlightInfoImportedKeys not implemented")
 }
 
+// DoGetImportedKeys returns the imported keys for a table.
 func (s *FlightSQLServer) DoGetImportedKeys(ctx context.Context, ref flightsql.TableRef) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	return nil, nil, errors.New("DoGetImportedKeys not implemented")
 }
 
+// GetFlightInfoCrossReference returns flight info for cross-reference keys.
 func (s *FlightSQLServer) GetFlightInfoCrossReference(ctx context.Context, ref flightsql.CrossTableRef, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) {
 	return nil, errors.New("GetFlightInfoCrossReference not implemented")
 }
 
+// DoGetCrossReference returns cross-reference keys between tables.
 func (s *FlightSQLServer) DoGetCrossReference(ctx context.Context, ref flightsql.CrossTableRef) (*arrow.Schema, <-chan flight.StreamChunk, error) {
 	return nil, nil, errors.New("DoGetCrossReference not implemented")
 }
 
+// DoPutCommandStatementUpdate executes an update statement and returns affected rows.
 func (s *FlightSQLServer) DoPutCommandStatementUpdate(ctx context.Context, cmd flightsql.StatementUpdate) (int64, error) {
 	query := cmd.GetQuery()
 	logutil.BgLogger().Info("DoPutCommandStatementUpdate", zap.String("query", query))
@@ -432,10 +469,12 @@ func (s *FlightSQLServer) DoPutCommandStatementUpdate(ctx context.Context, cmd f
 	return affectedRows, nil
 }
 
+// DoPutCommandSubstraitPlan executes a Substrait plan (not supported).
 func (s *FlightSQLServer) DoPutCommandSubstraitPlan(ctx context.Context, plan flightsql.StatementSubstraitPlan) (int64, error) {
 	return 0, errors.New("substrait plans are not supported")
 }
 
+// CreatePreparedStatement creates a new prepared statement.
 func (s *FlightSQLServer) CreatePreparedStatement(ctx context.Context, cmd flightsql.ActionCreatePreparedStatementRequest) (flightsql.ActionCreatePreparedStatementResult, error) {
 	query := cmd.GetQuery()
 	logutil.BgLogger().Info("CreatePreparedStatement", zap.String("query", query))
@@ -457,15 +496,18 @@ func (s *FlightSQLServer) CreatePreparedStatement(ctx context.Context, cmd fligh
 	}, nil
 }
 
+// CreatePreparedSubstraitPlan creates a prepared Substrait plan (not supported).
 func (s *FlightSQLServer) CreatePreparedSubstraitPlan(ctx context.Context, cmd flightsql.ActionCreatePreparedSubstraitPlanRequest) (flightsql.ActionCreatePreparedStatementResult, error) {
 	return flightsql.ActionCreatePreparedStatementResult{}, errors.New("substrait plans are not supported")
 }
 
+// ClosePreparedStatement closes a prepared statement.
 func (s *FlightSQLServer) ClosePreparedStatement(ctx context.Context, cmd flightsql.ActionClosePreparedStatementRequest) error {
 	// NOP - prepared statements are stateless, so nothing to clean up
 	return nil
 }
 
+// DoPutPreparedStatementQuery binds parameters to a prepared statement query.
 func (s *FlightSQLServer) DoPutPreparedStatementQuery(ctx context.Context, cmd flightsql.PreparedStatementQuery, r flight.MessageReader, w flight.MetadataWriter) ([]byte, error) {
 	// Decode the current handle
 	query, _, err := decodePreparedHandle(cmd.GetPreparedStatementHandle())
@@ -553,6 +595,7 @@ func (s *FlightSQLServer) DoPutPreparedStatementQuery(ctx context.Context, cmd f
 	return newHandle, nil
 }
 
+// DoPutPreparedStatementUpdate executes a prepared update statement.
 func (s *FlightSQLServer) DoPutPreparedStatementUpdate(ctx context.Context, cmd flightsql.PreparedStatementUpdate, r flight.MessageReader) (int64, error) {
 	// Decode the handle to get query and parameters
 	query, params, err := decodePreparedHandle(cmd.GetPreparedStatementHandle())
@@ -660,26 +703,32 @@ func (s *FlightSQLServer) DoPutPreparedStatementUpdate(ctx context.Context, cmd 
 	return affectedRows, nil
 }
 
+// BeginTransaction begins a new transaction.
 func (s *FlightSQLServer) BeginTransaction(ctx context.Context, cmd flightsql.ActionBeginTransactionRequest) (id []byte, err error) {
 	return nil, errors.New("BeginTransaction not implemented")
 }
 
+// BeginSavepoint creates a savepoint within a transaction.
 func (s *FlightSQLServer) BeginSavepoint(ctx context.Context, cmd flightsql.ActionBeginSavepointRequest) (id []byte, err error) {
 	return nil, errors.New("BeginSavepoint not implemented")
 }
 
+// EndSavepoint releases or rolls back to a savepoint.
 func (s *FlightSQLServer) EndSavepoint(ctx context.Context, cmd flightsql.ActionEndSavepointRequest) error {
 	return errors.New("EndSavepoint not implemented")
 }
 
+// EndTransaction commits or rolls back a transaction.
 func (s *FlightSQLServer) EndTransaction(ctx context.Context, cmd flightsql.ActionEndTransactionRequest) error {
 	return errors.New("EndTransaction not implemented")
 }
 
+// CancelFlightInfo cancels a running query.
 func (s *FlightSQLServer) CancelFlightInfo(ctx context.Context, cmd *flight.CancelFlightInfoRequest) (flight.CancelFlightInfoResult, error) {
 	return flight.CancelFlightInfoResult{Status: flight.CancelStatusUnspecified}, errors.New("CancelFlightInfo not implemented")
 }
 
+// RenewFlightEndpoint renews an expiring flight endpoint.
 func (s *FlightSQLServer) RenewFlightEndpoint(ctx context.Context, cmd *flight.RenewFlightEndpointRequest) (*flight.FlightEndpoint, error) {
 	return nil, errors.New("RenewFlightEndpoint not implemented")
 }
