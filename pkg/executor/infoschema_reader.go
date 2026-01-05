@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -243,6 +244,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPlanCache(ctx, sctx, true)
 		case infoschema.TableKeyspaceMeta:
 			err = e.setDataForKeyspaceMeta(sctx)
+		case infoschema.TableSoftDeleteTableStats:
+			err = e.setDataFromSoftDeleteTableStats(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -4195,4 +4198,190 @@ func tableOrPartitionNotExist(ctx context.Context, dbName string, tableName stri
 		}
 	}
 	return false
+}
+
+func (e *memtableRetriever) setDataFromSoftDeleteTableStats(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+
+	ex, ok := e.extractor.(*plannercore.InfoSchemaSoftDeleteTableStatsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaSoftDeleteTableStatsExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
+		return nil
+	}
+
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Get stats handle from domain
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
+
+	var rows [][]types.Datum
+	for i, table := range tables {
+		schema := schemas[i]
+		// Privilege check
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
+			continue
+		}
+
+		// Only include tables with softdelete enabled
+		if table.SoftdeleteInfo == nil {
+			continue
+		}
+
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
+
+		// Find the softdelete column ID
+		var softDeleteColID int64
+		for _, col := range table.Columns {
+			if col.Name.L == model.ExtraSoftDeleteTimeName.L {
+				softDeleteColID = col.ID
+			}
+		}
+		intest.Assert(softDeleteColID != 0, "softdelete column ID should be found")
+
+		if table.GetPartitionInfo() == nil {
+			// Non-partitioned table: emit one row with table info
+			totalRowCount, softDeletedRowCount := getSoftDeleteTableRowCounts(ctx, sctx, statsHandle, table.ID, softDeleteColID)
+			record := types.MakeDatums(
+				schema.O,            // DB_NAME
+				table.Name.O,        // TABLE_NAME
+				nil,                 // PARTITION_NAME
+				totalRowCount,       // ESTIMATED_TOTAL_ROW_COUNT
+				softDeletedRowCount, // ESTIMATED_SOFTDELETED_ROW_COUNT
+			)
+			rows = append(rows, record)
+			e.recordMemoryConsume(record)
+		} else {
+			// Partitioned table: emit one row per partition
+			for _, pi := range table.GetPartitionInfo().Definitions {
+				if !ex.HasPartition(pi.Name.L) {
+					continue
+				}
+				totalRowCount, softDeletedRowCount := getSoftDeleteTableRowCounts(ctx, sctx, statsHandle, pi.ID, softDeleteColID)
+				record := types.MakeDatums(
+					schema.O,            // DB_NAME
+					table.Name.O,        // TABLE_NAME
+					pi.Name.O,           // PARTITION_NAME
+					totalRowCount,       // ESTIMATED_TOTAL_ROW_COUNT
+					softDeletedRowCount, // ESTIMATED_SOFTDELETED_ROW_COUNT
+				)
+				rows = append(rows, record)
+				e.recordMemoryConsume(record)
+			}
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+// getSoftDeleteTableRowCounts retrieves the estimated total row count and softdeleted row count
+// for a physical table (table or partition) based on the _tidb_softdelete_time column statistics.
+//
+// The function tries to get stats from cache first. If the stats are evicted, it fallbacks to
+// querying the system tables directly. If the column has not been analyzed, both return values
+// will be nil (NULL).
+//
+// Returns:
+//   - totalRowCount: The total number of rows in the table (NULL + non-NULL in softdelete column)
+//   - softDeletedRowCount: The number of soft-deleted rows (non-NULL in softdelete column, meaning
+//     the row has a deletion timestamp)
+func getSoftDeleteTableRowCounts(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	statsHandle *statshandle.Handle,
+	physicalTableID int64,
+	softDeleteColID int64,
+) (totalRowCount any, softDeletedRowCount any) {
+	// If column ID not found, return NULL
+	if softDeleteColID == 0 {
+		return nil, nil
+	}
+	// Try to get stats from cache
+	if statsHandle == nil {
+		return nil, nil
+	}
+	tblStats, found := statsHandle.GetNonPseudoPhysicalTableStats(physicalTableID)
+	if !found || tblStats == nil || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(softDeleteColID, false) {
+		return nil, nil
+	}
+	colStats := tblStats.GetCol(softDeleteColID)
+	if colStats != nil && !colStats.IsAllEvicted() {
+		// Stats are fully loaded in cache, calculate row counts
+		return uint64(colStats.TotalRowCount()), uint64(colStats.NotNullCount())
+	}
+	// Stats are evicted, fall back to query from storage
+	return getSoftDeleteRowCountsFromStorage(ctx, sctx, physicalTableID, softDeleteColID)
+}
+
+func getSoftDeleteRowCountsFromStorage(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalTableID int64,
+	colID int64,
+) (totalRowCount any, softDeletedRowCount any) {
+	exec := sctx.GetRestrictedSQLExecutor()
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+
+	// Query stats_histograms for null_count and stats_ver
+	histRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil,
+		"SELECT null_count, stats_ver FROM mysql.stats_histograms WHERE table_id = %? AND hist_id = %? AND is_index = 0",
+		physicalTableID, colID)
+	if err != nil || len(histRows) == 0 {
+		return nil, nil
+	}
+
+	nullCount := histRows[0].GetInt64(0)
+	statsVer := histRows[0].GetInt64(1)
+
+	// If stats_ver is 0, the column is not analyzed
+	if statsVer == 0 {
+		intest.Assert(false,
+			"it should not happen since we already checked analyze status in getSoftDeleteTableRowCounts")
+		return nil, nil
+	}
+
+	// Query stats_buckets to get the total count from histogram
+	var histogramCount int64
+	bucketRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil,
+		"SELECT SUM(count) FROM mysql.stats_buckets WHERE table_id = %? AND hist_id = %? AND is_index = 0",
+		physicalTableID, colID)
+	if err != nil {
+		return nil, nil
+	}
+	if len(bucketRows) > 0 && !bucketRows[0].IsNull(0) {
+		histogramCountDecimal := bucketRows[0].GetMyDecimal(0)
+		histogramCount, err = histogramCountDecimal.ToInt()
+		if err != nil {
+			return nil, nil
+		}
+	}
+
+	// Query stats_top_n to get the top-n total count (for stats_ver >= 2)
+	var topNCount int64
+	if statsVer >= statistics.Version2 {
+		topNRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil,
+			"SELECT SUM(count) FROM mysql.stats_top_n WHERE table_id = %? AND hist_id = %? AND is_index = 0",
+			physicalTableID, colID)
+		if err != nil {
+			return nil, nil
+		}
+		if len(topNRows) > 0 && !topNRows[0].IsNull(0) {
+			topNCountDecimal := topNRows[0].GetMyDecimal(0)
+			topNCount, err = topNCountDecimal.ToInt()
+			if err != nil {
+				return nil, nil
+			}
+		}
+	}
+
+	softDeleted := histogramCount + topNCount
+	total := softDeleted + nullCount
+
+	return uint64(total), uint64(softDeleted)
 }

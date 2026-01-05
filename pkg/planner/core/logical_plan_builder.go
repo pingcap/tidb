@@ -4900,6 +4900,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 			p.Extractor = NewInfoSchemaTableConstraintsExtractor()
 		case infoschema.TableTiKVRegionStatus:
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
+		case infoschema.TableSoftDeleteTableStats:
+			p.Extractor = NewInfoSchemaSoftDeleteTableStatsExtractor()
 		}
 	}
 	return p, nil
