@@ -544,7 +544,7 @@
         "End": "very_long_common_prefix_that_will_cause_predWidth_zero_9000",
         "Count": 13,
         "MinEst": 9,
-        "MaxEst": 13
+        "MaxEst": 1508
       },
       {
         "Start": "very_long_common_prefix_that_will_cause_predWidth_zero_",

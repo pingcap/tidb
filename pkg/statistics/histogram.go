@@ -1113,6 +1113,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
 	realtimeRowCount, histNDV int64,
+	topNCount uint64,
 ) (result RowEstimate) {
 	if hg.Len() == 0 {
 		return DefaultRowEst(0)
@@ -1124,14 +1125,11 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
-	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, 0)
-	// If addedRows == zero, it may be caused by a delay in updates to modifyCount.
+	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, topNCount)
+	// If addedRows is too small, it may be caused by a delay in updates to modifyCount.
 	// Assume a minimum worst case of 1% of the total row count.
-	maxAddedRows := addedRows
 	onePercentChange := float64(realtimeRowCount) / outOfRangeBetweenRate
-	if addedRows == 0 {
-		maxAddedRows = max(maxAddedRows, onePercentChange)
-	}
+	maxAddedRows := max(addedRows, onePercentChange)
 	// If the realtime row count has decreased, it means there have been
 	// more deletes than inserts. We need to adjust the added rows downward.
 	if isNegative {
@@ -1196,7 +1194,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// minimum of oneValue, and return the max as worst case.
 		histInvalid = true
 	}
-
 	// Step 6: Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
@@ -1205,6 +1202,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// the impact of modifications to the table
 	if histWidth <= 0 || math.IsInf(histWidth, 1) {
 		histInvalid = true
+	} else if math.IsInf(predWidth, 1) || predWidth > histWidth {
+		predWidth = histWidth
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
@@ -1272,7 +1271,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if entirelyOutOfRange {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// For max estimate, use the sum (not average) to account for worst case
-		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 1.0)
+		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 0.5)
 	}
 
 	if maxTotalPercent > 0 {
