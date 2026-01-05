@@ -308,7 +308,7 @@ func buildColumnAndConstraint(
 	tblCharset string,
 	tblCollate string,
 ) (*table.Column, []*ast.Constraint, error) {
-	if colName := colDef.Name.Name; model.IsSoftDeleteColumn(colName) || model.IsActiveActiveColumn(colName) {
+	if colName := colDef.Name.Name; model.IsInternalColumn(colName) {
 		return nil, nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(colName.L)
 	}
 
