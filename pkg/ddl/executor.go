@@ -2804,6 +2804,10 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		SessionVars:    make(map[string]string),
 	}
 	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	// Initialize ReorgMeta for distributed global index cleanup.
+	if err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx); err != nil {
+		return err
+	}
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
@@ -2908,6 +2912,10 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	// Initialize ReorgMeta for distributed global index cleanup.
+	if err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx); err != nil {
+		return err
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,

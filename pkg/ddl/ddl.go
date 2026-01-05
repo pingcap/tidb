@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/globalindexcleanup"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -816,6 +817,18 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 			return newLitBackfillScheduler(ctx, d, task, param)
 		})
 	scheduler.RegisterSchedulerCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
+
+	// Register GlobalIndexCleanup task type for DROP/TRUNCATE PARTITION.
+	taskexecutor.RegisterTaskType(proto.GlobalIndexCleanup,
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return globalindexcleanup.NewExecutor(ctx, d.store, task, param)
+		},
+	)
+	scheduler.RegisterSchedulerFactory(proto.GlobalIndexCleanup,
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			return globalindexcleanup.NewScheduler(ctx, d.store, task, param)
+		})
+
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL

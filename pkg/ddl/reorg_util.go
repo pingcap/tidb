@@ -60,6 +60,10 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		setReorgParam = true
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		// Global index cleanup can use distributed task framework.
+		setReorgParam = true
+		setDistTaskParam = true
 	case model.ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			switch sub.Type {

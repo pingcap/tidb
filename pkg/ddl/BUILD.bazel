@@ -82,6 +82,7 @@ go_library(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
+        "//pkg/ddl/globalindexcleanup",
         "//pkg/ddl/ingest",
         "//pkg/ddl/label",
         "//pkg/ddl/logutil",
