@@ -1291,7 +1291,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			})
 		}
 		if !isLast {
-			rc.WriteString(",\n")
+			rc.WritePlain(",\n")
 		}
 	}
 	indexCommentFeature := func(idxInfo *model.IndexInfo) (shouldWrap bool, featureID string) {
