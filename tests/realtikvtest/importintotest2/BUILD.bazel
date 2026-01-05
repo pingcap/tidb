@@ -12,8 +12,8 @@ go_test(
     race = "on",
     deps = [
         "//pkg/config/kerneltype",
-        "//pkg/disttask/framework/testutil",
         "//pkg/domain",
+        "//pkg/dxf/framework/testutil",
         "//pkg/executor/importer",
         "//pkg/infoschema",
         "//pkg/kv",
