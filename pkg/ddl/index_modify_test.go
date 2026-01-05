@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -1160,10 +1159,6 @@ func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess"))
-	}()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

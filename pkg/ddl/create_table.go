@@ -226,9 +226,11 @@ func createTiCIIndexes(jobCtx *jobContext, schemaName string, tblInfo *model.Tab
 	return nil
 }
 
-func dropTiCIIndexes(jobCtx *jobContext, tblInfo *model.TableInfo) error {
+// dropTiCIIndexes drops TiCI indexes in a best-effort manner.
+// It never blocks TiDB DDL progress: failures are logged as warnings.
+func dropTiCIIndexes(jobCtx *jobContext, tblInfo *model.TableInfo) {
 	if tblInfo == nil {
-		return nil
+		return
 	}
 
 	ctx := jobCtx.stepCtx
@@ -241,12 +243,16 @@ func dropTiCIIndexes(jobCtx *jobContext, tblInfo *model.TableInfo) error {
 			continue
 		}
 		if err := tici.DropFullTextIndex(ctx, jobCtx.store, tblInfo.ID, index.ID); err != nil {
-			logutil.DDLLogger().Warn("drop TiCI index failed when dropping table", zap.Error(err),
-				zap.String("table", tblInfo.Name.L), zap.String("index", index.Name.L))
+			logutil.DDLLogger().Warn(
+				"drop TiCI index failed when dropping table",
+				zap.Error(err),
+				zap.Int64("table_id", tblInfo.ID),
+				zap.String("table", tblInfo.Name.L),
+				zap.Int64("index_id", index.ID),
+				zap.String("index", index.Name.L),
+			)
 		}
 	}
-
-	return nil
 }
 
 func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {

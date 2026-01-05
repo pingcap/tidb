@@ -96,9 +96,7 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		oldIDs := getPartitionIDs(tblInfo)
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 
-		if err := dropTiCIIndexes(jobCtx, tblInfo); err != nil {
-			return ver, errors.Trace(err)
-		}
+		dropTiCIIndexes(jobCtx, tblInfo)
 
 		args.OldPartitionIDs = oldIDs
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
