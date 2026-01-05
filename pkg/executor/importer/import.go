@@ -1007,9 +1007,13 @@ func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []st
 		fieldMapping := &FieldMapping{
 			Column: v,
 		}
-		if model.IsInternalColumn(v.ColumnInfo.Name) {
+
+		col := v.ColumnInfo
+		if (e.TableInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+			(e.TableInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L) {
 			continue
 		}
+
 		mappings = append(mappings, fieldMapping)
 		names = append(names, v.Name.O)
 	}
