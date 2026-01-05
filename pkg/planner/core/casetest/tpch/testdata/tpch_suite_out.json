@@ -351,18 +351,32 @@
           "    └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TopN 100.00 mpp[tiflash]  test.orders.o_totalprice:desc, test.orders.o_orderdate, offset:0, count:100",
           "        └─Projection 8000.00 mpp[tiflash]  Column#52, test.customer.c_custkey, test.customer.c_name, test.orders.o_orderkey, test.orders.o_totalprice, test.orders.o_orderdate",
+<<<<<<< HEAD
           "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.customer.c_custkey, test.customer.c_name, test.orders.o_orderdate, test.orders.o_orderkey, test.orders.o_totalprice, funcs:sum(Column#87)->Column#52, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey, funcs:firstrow(test.customer.c_name)->test.customer.c_name, funcs:firstrow(test.orders.o_orderkey)->test.orders.o_orderkey, funcs:firstrow(test.orders.o_totalprice)->test.orders.o_totalprice, funcs:firstrow(test.orders.o_orderdate)->test.orders.o_orderdate",
           "            └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
           "              └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.customer.c_name, collate: utf8mb4_bin], [name: test.customer.c_custkey, collate: binary], [name: test.orders.o_orderkey, collate: binary], [name: test.orders.o_orderdate, collate: binary], [name: test.orders.o_totalprice, collate: binary]",
           "                └─HashAgg 8000.00 mpp[tiflash]  group by:test.customer.c_custkey, test.customer.c_name, test.orders.o_orderdate, test.orders.o_orderkey, test.orders.o_totalprice, funcs:sum(test.lineitem.l_quantity)->Column#87",
+=======
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.customer.c_custkey, test.customer.c_name, test.orders.o_orderdate, test.orders.o_orderkey, test.orders.o_totalprice, funcs:sum(Column#91)->Column#52, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey, funcs:firstrow(test.customer.c_name)->test.customer.c_name, funcs:firstrow(test.orders.o_orderkey)->test.orders.o_orderkey, funcs:firstrow(test.orders.o_totalprice)->test.orders.o_totalprice, funcs:firstrow(test.orders.o_orderdate)->test.orders.o_orderdate",
+          "            └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.customer.c_name, collate: utf8mb4_bin], [name: test.customer.c_custkey, collate: binary], [name: test.orders.o_orderkey, collate: binary], [name: test.orders.o_orderdate, collate: binary], [name: test.orders.o_totalprice, collate: binary]",
+          "                └─HashAgg 8000.00 mpp[tiflash]  group by:test.customer.c_custkey, test.customer.c_name, test.orders.o_orderdate, test.orders.o_orderkey, test.orders.o_totalprice, funcs:sum(test.lineitem.l_quantity)->Column#91",
+>>>>>>> 0f1f7aa89b2 (planner: outer join cannot be eliminated due to the impact of the expression index (#65187))
           "                  └─Projection 12500.00 mpp[tiflash]  test.customer.c_custkey, test.customer.c_name, test.orders.o_orderkey, test.orders.o_totalprice, test.orders.o_orderdate, test.lineitem.l_quantity",
           "                    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.orders.o_orderkey, test.lineitem.l_orderkey)]",
           "                      ├─Selection(Build) 6400.00 mpp[tiflash]  gt(Column#50, 314)",
           "                      │ └─Projection 8000.00 mpp[tiflash]  Column#50, test.lineitem.l_orderkey",
+<<<<<<< HEAD
           "                      │   └─HashAgg 8000.00 mpp[tiflash]  group by:test.lineitem.l_orderkey, funcs:sum(Column#57)->Column#50, funcs:firstrow(test.lineitem.l_orderkey)->test.lineitem.l_orderkey",
           "                      │     └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
           "                      │       └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary]",
           "                      │         └─HashAgg 8000.00 mpp[tiflash]  group by:test.lineitem.l_orderkey, funcs:sum(test.lineitem.l_quantity)->Column#57",
+=======
+          "                      │   └─HashAgg 8000.00 mpp[tiflash]  group by:test.lineitem.l_orderkey, funcs:sum(Column#53)->Column#50, funcs:firstrow(test.lineitem.l_orderkey)->test.lineitem.l_orderkey",
+          "                      │     └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                      │       └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary]",
+          "                      │         └─HashAgg 8000.00 mpp[tiflash]  group by:test.lineitem.l_orderkey, funcs:sum(test.lineitem.l_quantity)->Column#53",
+>>>>>>> 0f1f7aa89b2 (planner: outer join cannot be eliminated due to the impact of the expression index (#65187))
           "                      │           └─TableFullScan 10000.00 mpp[tiflash] table:lineitem keep order:false, stats:pseudo",
           "                      └─Projection(Probe) 15625.00 mpp[tiflash]  test.customer.c_custkey, test.customer.c_name, test.orders.o_orderkey, test.orders.o_totalprice, test.orders.o_orderdate, test.lineitem.l_quantity",
           "                        └─HashJoin 15625.00 mpp[tiflash]  inner join, equal:[eq(test.orders.o_orderkey, test.lineitem.l_orderkey)]",

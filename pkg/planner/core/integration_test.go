@@ -918,6 +918,26 @@ func TestHypoIndexHint(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 invalid HYPO_INDEX hint: table 'test1.t1' doesn't exist"))
 }
 
+func TestIssue65166(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`CREATE TABLE t_outer (
+			id bigint(20) NOT NULL,
+			scode varchar(64) NOT NULL,
+			username varchar(60) NOT NULL,
+			real_name varchar(100) NOT NULL DEFAULT '',
+			KEY idx1 ((lower(real_name))),
+			UNIQUE KEY idx2 (username,scode))`)
+		tk.MustExec(`CREATE TABLE t (
+			id int(11) unsigned NOT NULL,
+			scode varchar(64) NOT NULL DEFAULT '',
+			plat_id varchar(64) NOT NULL)`)
+		tk.MustQuery(`EXPLAIN FORMAT='plan_tree' SELECT a.id FROM
+			t AS a LEFT JOIN t_outer b ON b.username = a.plat_id
+			AND b.scode = a.scode ORDER BY a.id`).CheckNotContain("Join")
+	})
+}
+
 func TestIssue29503(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

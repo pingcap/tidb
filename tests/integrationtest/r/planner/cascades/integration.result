@@ -300,6 +300,7 @@ c	sum(a)
 24	2
 36	3
 48	4
+<<<<<<< HEAD
 explain select max(a.a) from t a left join t b on a.a = b.a;
 id	estRows	task	access object	operator info
 HashAgg_36	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#5
@@ -307,6 +308,15 @@ HashAgg_36	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#5
   └─TableReader_43	1.00	root		data:Limit_44
     └─Limit_44	1.00	cop[tikv]		offset:0, count:1
       └─TableFullScan_42	1.00	cop[tikv]	table:a	keep order:true, desc, stats:pseudo
+=======
+explain format="plan_tree" select max(a.a) from t a left join t b on a.a = b.a;
+id	task	access object	operator info
+StreamAgg	root		funcs:max(planner__cascades__integration.t.a)->Column#5
+└─Limit	root		offset:0, count:1
+  └─TableReader	root		data:Limit
+    └─Limit	cop[tikv]		offset:0, count:1
+      └─TableFullScan	cop[tikv]	table:a	keep order:true, desc, stats:pseudo
+>>>>>>> 0f1f7aa89b2 (planner: outer join cannot be eliminated due to the impact of the expression index (#65187))
 select max(a.a) from t a left join t b on a.a = b.a;
 max(a.a)
 4
