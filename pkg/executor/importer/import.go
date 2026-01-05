@@ -1008,6 +1008,9 @@ func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []st
 			Column: v,
 		}
 
+		// When we're using soft delete or active-active table, there are some extra hidden columns
+		// like _tidb_origin_ts, _tidb_soft_delete_time, if user is not explicitly specifying them,
+		// load data should ignore them.
 		col := v.ColumnInfo
 		if (e.TableInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
 			(e.TableInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L) {
