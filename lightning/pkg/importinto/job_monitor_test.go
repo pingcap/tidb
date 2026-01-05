@@ -34,28 +34,35 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 	tests := []struct {
 		name    string
 		jobs    []*importinto.ImportJob
-		setup   func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager)
+		setup   func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater)
 		wantErr bool
 	}{
 		{
-			name:  "no jobs",
-			jobs:  []*importinto.ImportJob{},
-			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager) {},
+			name: "no jobs",
+			jobs: []*importinto.ImportJob{},
+			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
+			},
 		},
 		{
 			name: "one job success",
 			jobs: []*importinto.ImportJob{
 				{JobID: 1, GroupKey: "g1", TableMeta: &importsdk.TableMeta{Database: "db", Table: "t1"}},
 			},
-			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager) {
+			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
 				// First poll: running
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
-					{JobID: 1, Status: "running"},
+					{JobID: 1, Status: "running", TotalSize: "100MB", ProcessedSize: "50MB"},
 				}, nil)
+				mockPU.EXPECT().UpdateTotalSize(int64(100 * 1000 * 1000)).Times(1)
+				mockPU.EXPECT().UpdateFinishedSize(int64(50 * 1000 * 1000)).Times(1)
+
 				// Second poll: finished
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
-					{JobID: 1, Status: "finished", ImportedRows: 100},
+					{JobID: 1, Status: "finished", ImportedRows: 100, TotalSize: "100MB", ProcessedSize: "100MB"},
 				}, nil)
+				mockPU.EXPECT().UpdateTotalSize(int64(100 * 1000 * 1000)).Times(1)
+				mockPU.EXPECT().UpdateFinishedSize(int64(100 * 1000 * 1000)).Times(1)
+
 				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
 					require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
 					require.Equal(t, importinto.CheckpointStatusFinished, cp.Status)
@@ -68,10 +75,13 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 			jobs: []*importinto.ImportJob{
 				{JobID: 1, GroupKey: "g1", TableMeta: &importsdk.TableMeta{Database: "db", Table: "t1"}},
 			},
-			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager) {
+			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
 					{JobID: 1, Status: "failed", ResultMessage: "some error"},
 				}, nil)
+				mockPU.EXPECT().UpdateTotalSize(int64(0)).Times(1)
+				mockPU.EXPECT().UpdateFinishedSize(int64(0)).Times(1)
+
 				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
 					require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
 					require.Equal(t, importinto.CheckpointStatusFailed, cp.Status)
@@ -86,12 +96,14 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 				{JobID: 1, GroupKey: "g1", TableMeta: &importsdk.TableMeta{Database: "db", Table: "t1"}},
 				{JobID: 2, GroupKey: "g1", TableMeta: &importsdk.TableMeta{Database: "db", Table: "t2"}},
 			},
-			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager) {
+			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
 				// Job 1 fails, Job 2 is running
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
 					{JobID: 1, Status: "failed", ResultMessage: "fail"},
 					{JobID: 2, Status: "running"},
 				}, nil)
+				mockPU.EXPECT().UpdateTotalSize(int64(0)).Times(1)
+				mockPU.EXPECT().UpdateFinishedSize(int64(0)).Times(1)
 
 				// Should record failure for job 1
 				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
@@ -112,18 +124,22 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 			jobs: []*importinto.ImportJob{
 				{JobID: 2, GroupKey: "g1", TableMeta: &importsdk.TableMeta{Database: "db", Table: "t2"}},
 			},
-			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager) {
+			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
 				// Job 1 is old failed job, Job 2 is current running job
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
 					{JobID: 1, Status: "failed"},
 					{JobID: 2, Status: "running"},
 				}, nil)
+				mockPU.EXPECT().UpdateTotalSize(int64(0)).Times(1)
+				mockPU.EXPECT().UpdateFinishedSize(int64(0)).Times(1)
 
 				// Next poll: Job 2 finished
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
 					{JobID: 1, Status: "failed"},
 					{JobID: 2, Status: "finished"},
 				}, nil)
+				mockPU.EXPECT().UpdateTotalSize(int64(0)).Times(1)
+				mockPU.EXPECT().UpdateFinishedSize(int64(0)).Times(1)
 
 				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
 					require.Equal(t, common.UniqueTable("db", "t2"), cp.TableName)
@@ -137,13 +153,16 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 			jobs: []*importinto.ImportJob{
 				{JobID: 1, GroupKey: "g1", TableMeta: &importsdk.TableMeta{Database: "db", Table: "t1"}},
 			},
-			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager) {
+			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
 				// First poll error
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return(nil, errors.New("network error"))
 				// Second poll success
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
 					{JobID: 1, Status: "finished"},
 				}, nil)
+				mockPU.EXPECT().UpdateTotalSize(int64(0)).Times(1)
+				mockPU.EXPECT().UpdateFinishedSize(int64(0)).Times(1)
+
 				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
 					require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
 					require.Equal(t, importinto.CheckpointStatusFinished, cp.Status)
@@ -159,9 +178,10 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 			defer ctrl.Finish()
 			mockSDK := sdkmock.NewMockSDK(ctrl)
 			mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
-			monitor := importinto.NewJobMonitor(mockSDK, mockCpMgr, time.Millisecond, time.Hour, log.L())
+			mockPU := mockimport.NewMockProgressUpdater(ctrl)
+			monitor := importinto.NewJobMonitor(mockSDK, mockCpMgr, time.Millisecond, time.Hour, log.L(), mockPU)
 
-			tt.setup(mockSDK, mockCpMgr)
+			tt.setup(mockSDK, mockCpMgr, mockPU)
 			err := monitor.WaitForJobs(context.Background(), tt.jobs)
 			if tt.wantErr {
 				require.Error(t, err)

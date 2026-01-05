@@ -33,8 +33,21 @@ const (
 	cancelTimeout = time.Minute
 )
 
+// ProgressUpdater is an interface for updating the progress of the import process.
+type ProgressUpdater interface {
+	UpdateTotalSize(size int64)
+	UpdateFinishedSize(size int64)
+}
+
 // ImporterOption is a function that configures the Importer.
 type ImporterOption func(*Importer)
+
+// WithProgressUpdater sets the ProgressUpdater for the Importer.
+func WithProgressUpdater(pu ProgressUpdater) ImporterOption {
+	return func(i *Importer) {
+		i.progressUpdater = pu
+	}
+}
 
 // WithCheckpointManager sets the CheckpointManager for the Importer.
 func WithCheckpointManager(cpMgr CheckpointManager) ImporterOption {
@@ -59,13 +72,14 @@ func WithOrchestrator(orchestrator JobOrchestrator) ImporterOption {
 
 // Importer is the implementation of LightningImporter for the 'import into' backend.
 type Importer struct {
-	cfg          *config.Config
-	db           *sql.DB
-	sdk          importsdk.SDK
-	logger       log.Logger
-	cpMgr        CheckpointManager
-	orchestrator JobOrchestrator
-	groupKey     string
+	cfg             *config.Config
+	db              *sql.DB
+	sdk             importsdk.SDK
+	logger          log.Logger
+	cpMgr           CheckpointManager
+	orchestrator    JobOrchestrator
+	groupKey        string
+	progressUpdater ProgressUpdater
 }
 
 // NewImporter creates a new Importer.
@@ -138,6 +152,7 @@ func (i *Importer) buildOrchestrator() JobOrchestrator {
 		PollInterval:      DefaultPollInterval,
 		LogInterval:       i.cfg.Cron.LogProgress.Duration,
 		Logger:            i.logger.With(zap.String("component", "orchestrator")),
+		ProgressUpdater:   i.progressUpdater,
 	})
 }
 

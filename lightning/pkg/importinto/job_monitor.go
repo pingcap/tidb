@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/importsdk"
@@ -33,11 +34,12 @@ type JobMonitor interface {
 
 // DefaultJobMonitor is the default implementation of JobMonitor.
 type DefaultJobMonitor struct {
-	sdk          importsdk.SDK
-	cpMgr        CheckpointManager
-	pollInterval time.Duration
-	logInterval  time.Duration
-	logger       log.Logger
+	sdk             importsdk.SDK
+	cpMgr           CheckpointManager
+	pollInterval    time.Duration
+	logInterval     time.Duration
+	logger          log.Logger
+	progressUpdater ProgressUpdater
 }
 
 type groupStats struct {
@@ -56,13 +58,15 @@ func NewJobMonitor(
 	pollInterval time.Duration,
 	logInterval time.Duration,
 	logger log.Logger,
+	progressUpdater ProgressUpdater,
 ) JobMonitor {
 	return &DefaultJobMonitor{
-		sdk:          sdk,
-		cpMgr:        cpMgr,
-		pollInterval: pollInterval,
-		logInterval:  logInterval,
-		logger:       logger,
+		sdk:             sdk,
+		cpMgr:           cpMgr,
+		pollInterval:    pollInterval,
+		logInterval:     logInterval,
+		logger:          logger,
+		progressUpdater: progressUpdater,
 	}
 }
 
@@ -153,10 +157,28 @@ func (m *DefaultJobMonitor) processJobStatuses(
 	firstError *error,
 ) *groupStats {
 	stats := &groupStats{}
+	var (
+		totalSize    int64
+		finishedSize int64
+	)
+
 	for _, status := range statuses {
 		job, ok := jobMap[status.JobID]
 		if !ok {
 			continue
+		}
+
+		// Calculate progress
+		if total, err := units.FromHumanSize(status.TotalSize); err == nil {
+			totalSize += total
+		} else if status.TotalSize != "" {
+			m.logger.Warn("failed to parse total size", zap.String("size", status.TotalSize), zap.Int64("jobID", status.JobID), zap.Error(err))
+		}
+
+		if processed, err := units.FromHumanSize(status.ProcessedSize); err == nil {
+			finishedSize += processed
+		} else if status.ProcessedSize != "" {
+			m.logger.Warn("failed to parse processed size", zap.String("size", status.ProcessedSize), zap.Int64("jobID", status.JobID), zap.Error(err))
 		}
 
 		stats.totalImportedRows += status.ImportedRows
@@ -194,6 +216,12 @@ func (m *DefaultJobMonitor) processJobStatuses(
 			m.logJobCompletion(job, status, firstError)
 		}
 	}
+
+	if m.progressUpdater != nil {
+		m.progressUpdater.UpdateTotalSize(totalSize)
+		m.progressUpdater.UpdateFinishedSize(finishedSize)
+	}
+
 	return stats
 }
 

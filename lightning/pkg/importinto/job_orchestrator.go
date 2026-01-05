@@ -66,6 +66,7 @@ type OrchestratorConfig struct {
 	PollInterval      time.Duration
 	LogInterval       time.Duration
 	Logger            log.Logger
+	ProgressUpdater   ProgressUpdater
 }
 
 // NewJobOrchestrator creates a new job orchestrator.
@@ -85,7 +86,7 @@ func NewJobOrchestrator(cfg OrchestratorConfig) JobOrchestrator {
 
 	monitor := cfg.Monitor
 	if monitor == nil {
-		monitor = NewJobMonitor(cfg.SDK, cfg.CheckpointMgr, pollInterval, logInterval, cfg.Logger)
+		monitor = NewJobMonitor(cfg.SDK, cfg.CheckpointMgr, pollInterval, logInterval, cfg.Logger, cfg.ProgressUpdater)
 	}
 
 	return &DefaultJobOrchestrator{
