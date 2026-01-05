@@ -831,3 +831,37 @@ func TestDumpStatsDeltaInBatch(t *testing.T) {
 		"The version of two tables should be the same because they are dumped in the same transaction.",
 	)
 }
+
+func TestInitStatsForTableWithTopNButNoBuckets(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t2 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t2", "c")
+	// Handle DDL event to init the stats meta and histogram meta.
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec("analyze table t2")
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
+	require.True(t, tableStats2.IsAnalyzed())
+	// Check index stats
+	require.Equal(t, 1, tableStats2.IdxNum())
+	idx2 := tableStats2.GetIdx(tbl2.Meta().Indices[0].ID)
+	require.NotNil(t, idx2)
+	require.True(t, tableStats2.ColAndIdxExistenceMap.Has(idx2.ID, true))
+	require.True(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(idx2.ID, true))
+	require.True(t, idx2.IsStatsInitialized())
+	require.True(t, idx2.IsAllEvicted())
+	require.False(t, idx2.IsFullLoad())
+	require.Equal(t, uint64(6), idx2.TopN.TotalCount())
+	require.Equal(t, float64(6), idx2.TotalRowCount())
+	require.Equal(t, 0, idx2.Len())
+}
