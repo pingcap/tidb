@@ -50,6 +50,7 @@ type ResultSetRecordReader struct {
 	err            error
 }
 
+// NewResultSetRecordReader creates a new reader that converts TiDB result sets to Arrow records.
 func NewResultSetRecordReader(set sqlexec.RecordSet, tidbAllocator chunk.Allocator, arrowAllocator memory.Allocator) (*ResultSetRecordReader, error) {
 	schema, err := adaptSchema(set.Fields())
 	if err != nil {
@@ -71,10 +72,12 @@ func NewResultSetRecordReader(set sqlexec.RecordSet, tidbAllocator chunk.Allocat
 	}, nil
 }
 
+// Retain is a no-op to satisfy the RecordReader interface.
 func (r *ResultSetRecordReader) Retain() {
 	// NOP
 }
 
+// Release releases all resources held by the reader.
 func (r *ResultSetRecordReader) Release() {
 	if r.cur != nil {
 		r.cur.Reset()
@@ -87,10 +90,12 @@ func (r *ResultSetRecordReader) Release() {
 	r.err = r.set.Close()
 }
 
+// Schema returns the Arrow schema for the result set.
 func (r *ResultSetRecordReader) Schema() *arrow.Schema {
 	return r.schema
 }
 
+// Next advances to the next chunk and returns true if data is available.
 func (r *ResultSetRecordReader) Next() bool {
 	if r.cur == nil {
 		r.cur = r.set.NewChunk(r.tidbAllocator)
@@ -104,6 +109,7 @@ func (r *ResultSetRecordReader) Next() bool {
 	return r.cur.NumRows() > 0
 }
 
+// Record returns the current chunk as an Arrow record.
 func (r *ResultSetRecordReader) Record() arrow.Record {
 	// TODO: Optimize memory allocation
 	// Current approach copies data from TiDB chunk to Arrow builders.
@@ -124,6 +130,7 @@ func (r *ResultSetRecordReader) Record() arrow.Record {
 	return r.builder.NewRecord()
 }
 
+// Err returns any error encountered during reading.
 func (r *ResultSetRecordReader) Err() error {
 	return r.err
 }
