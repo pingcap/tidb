@@ -1968,7 +1968,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal)
+		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal.Value)
 		if err2 != nil {
 			return nil, err2
 		}

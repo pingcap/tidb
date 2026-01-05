@@ -3875,7 +3875,7 @@ func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorg
 			for i := range w.rowRecords {
 				newKeys = append(newKeys, w.rowRecords[i].key)
 			}
-			found, err = txn.BatchGet(ctx, newKeys)
+			found, err = kv.BatchGetValue(ctx, txn, newKeys)
 			if err != nil {
 				return errors.Trace(err)
 			}
