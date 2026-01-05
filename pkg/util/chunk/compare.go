@@ -26,6 +26,13 @@ import (
 // CompareFunc is a function to compare the two values in Row, the two columns must have the same type.
 type CompareFunc = func(l Row, lCol int, r Row, rCol int) int
 
+// ComparePrefixKeyFunc is function compare two prefixs in row
+// prefixCharLen means the length of character.
+// For example, "啊啊啊" occupies 9 bytes but it has 3 characters, 
+type ComparePrefixKeyFunc = func(l Row, lCol int, r Row, rCol int, prefixCharLen int) int
+
+// GetComparePrefixKeyFunc gets a compare function for the field type
+
 // GetCompareFunc gets a compare function for the field type.
 func GetCompareFunc(tp *types.FieldType) CompareFunc {
 	switch tp.GetType() {

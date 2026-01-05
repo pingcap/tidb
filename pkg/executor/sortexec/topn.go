@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
@@ -68,6 +69,12 @@ type TopNExec struct {
 
 	// ColumnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	ColumnIdxsUsedByChild []int
+
+	remainingRows       int // TODO(x) initialize it with e.Limit.Offset+e.Limit.Count
+	prefixKeyFieldTypes []expression.Expression
+	prefixKeyColIdxs    []int
+	prefixKeyLens       []int
+	// TODO(x) define a field to contain prefix index keys for comparison
 }
 
 // Open implements the Executor Open interface.
@@ -262,16 +269,21 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 		}
 	}()
 
-	err := e.loadChunksUntilTotalLimit(ctx)
-	if err != nil {
-		close(e.resultChannel)
-		return err
+	if len(e.prefixKeyFieldTypes) > 0 {
+
+	} else {
+		err := e.loadChunksUntilTotalLimit(ctx)
+		if err != nil {
+			close(e.resultChannel)
+			return err
+		}
+		go e.executeTopN(ctx)
 	}
-	go e.executeTopN(ctx)
+
 	return nil
 }
 
-func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
+func (e *TopNExec) initBeforeLoadingChunks() error {
 	err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
 	if err != nil {
 		return err
@@ -283,6 +295,12 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	}
 
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
+	return nil
+}
+
+func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
+	e.initBeforeLoadingChunks()
+
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		// TopN requires its child to return all data, so don't need to set RequiredRows here according to the limit.
@@ -302,6 +320,31 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		}
 
 		injectTopNRandomFail(1)
+	}
+
+	e.chkHeap.initPtrs()
+	return nil
+}
+
+func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) error {
+	e.initBeforeLoadingChunks()
+	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
+		srcChk := exec.TryNewCacheChunk(e.Children(0))
+		err := exec.Next(ctx, e.Children(0), srcChk)
+		if err != nil {
+			return err
+		}
+		if srcChk.NumRows() == 0 {
+			break
+		}
+
+		e.chkHeap.rowChunks.Add(srcChk)
+		if e.spillHelper.isSpillNeeded() {
+			e.isSpillTriggeredInStage1ForTest = true
+			break
+		}
+
+		// TODO(x) add random failpoint?
 	}
 
 	e.chkHeap.initPtrs()
