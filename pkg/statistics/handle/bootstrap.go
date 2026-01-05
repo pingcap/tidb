@@ -580,7 +580,7 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 
 // getTablesWithBucketsInRange checks which tables in the given range have buckets.
 // Returns a map where keys are table IDs that have bucket entries.
-func (h *Handle) getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
+func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
 	// Query to find table_ids that have buckets in the given range
 	sql := "select distinct table_id from mysql.stats_buckets" +
 		" where is_index = 1" +
@@ -627,7 +627,7 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 // This method preserves git blame history by keeping the original logic intact.
 func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	// First, get the tables with buckets in this range
-	tablesWithBuckets, err := h.getTablesWithBucketsInRange(sctx, [2]int64{task.StartTid, task.EndTid})
+	tablesWithBuckets, err := getTablesWithBucketsInRange(sctx, [2]int64{task.StartTid, task.EndTid})
 	if err != nil {
 		return errors.Trace(err)
 	}
