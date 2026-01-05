@@ -70,6 +70,12 @@ type Collator interface {
 	Pattern() WildcardPattern
 	// Clone returns a copy of the collator.
 	Clone() Collator
+	// ImmutablePrefixKey is the same as `ImmutableKey`, however, only prefix characters will be converted
+	// For example:
+	//   input string: 12345
+	//   prefixCharCount: 3
+	//   only "123" will be converted and returned
+	ImmutablePrefixKey(str string, prefixCharCount int) []byte
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.

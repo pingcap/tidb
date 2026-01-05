@@ -22,15 +22,19 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -70,11 +74,12 @@ type TopNExec struct {
 	// ColumnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	ColumnIdxsUsedByChild []int
 
-	remainingRows       int // TODO(x) initialize it with e.Limit.Offset+e.Limit.Count
-	prefixKeyFieldTypes []expression.Expression
-	prefixKeyColIdxs    []int
-	prefixKeyLens       []int
-	// TODO(x) define a field to contain prefix index keys for comparison
+	prefixKeyFieldTypes     []expression.Expression
+	prefixKeyFieldCollators []collate.Collator
+	prefixKeyColIdxs        []int
+	prefixKeyCharCounts     []int
+	prevPrefixKeys          []string
+	prefixKeyCount          int
 }
 
 // Open implements the Executor Open interface.
@@ -270,7 +275,11 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 	}()
 
 	if len(e.prefixKeyFieldTypes) > 0 {
-
+		err := e.loadChunksUntilTotalLimitForRankTopN(ctx)
+		if err != nil {
+			close(e.resultChannel)
+			return err
+		}
 	} else {
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
@@ -293,6 +302,14 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 	if err != nil {
 		return err
 	}
+
+	e.prefixKeyFieldCollators = make([]collate.Collator, 0, len(e.prefixKeyFieldTypes))
+	for i := range e.prefixKeyFieldTypes {
+		collateName := e.prefixKeyFieldTypes[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetCollate()
+		e.prefixKeyFieldCollators = append(e.prefixKeyFieldCollators, collate.GetCollator(collateName))
+	}
+
+	e.prefixKeyCount = len(e.prefixKeyFieldTypes)
 
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
 	return nil
@@ -328,6 +345,19 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) error {
 	e.initBeforeLoadingChunks()
+
+	// Check types, we need string types as prefix index only supports string types.
+	for i := range e.prefixKeyFieldTypes {
+		prefixKeyType := e.prefixKeyFieldTypes[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetType()
+		switch prefixKeyType {
+		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			break
+		default:
+			return errors.NewNoStackErrorf("Get unexpected type %d", prefixKeyType)
+		}
+	}
+
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		err := exec.Next(ctx, e.Children(0), srcChk)
@@ -339,16 +369,49 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		}
 
 		e.chkHeap.rowChunks.Add(srcChk)
-		if e.spillHelper.isSpillNeeded() {
-			e.isSpillTriggeredInStage1ForTest = true
-			break
-		}
 
 		// TODO(x) add random failpoint?
 	}
 
 	e.chkHeap.initPtrs()
 	return nil
+}
+
+func (e *TopNExec) getPrefixKeys(row chunk.Row) []string {
+	prefixKeys := make([]string, 0, e.prefixKeyCount)
+	for i := range e.prefixKeyFieldCollators {
+		key := row.GetString(e.prefixKeyColIdxs[i])
+		prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutablePrefixKey(key, e.prefixKeyCharCounts[i]))))
+	}
+	return prefixKeys
+}
+
+func (e *TopNExec) findEndIdx(chk *chunk.Chunk) int {
+	idx := 0
+	rowCnt := chk.NumRows()
+	savedRowCount := e.chkHeap.rowChunks.Len()
+	if len(e.prevPrefixKeys) == 0 {
+		e.prevPrefixKeys = e.getPrefixKeys(chk.GetRow(0))
+		idx++
+		savedRowCount++
+	}
+
+	// TODO(x) write a fast path when (savedRowCount+rowCnt <= totalLimit)
+
+	totalLimit := int(e.chkHeap.totalLimit)
+	for ; idx < rowCnt; idx++ {
+		if savedRowCount < totalLimit {
+			e.prevPrefixKeys = e.getPrefixKeys(chk.GetRow(idx))
+		} else {
+			currentPrefixKeys := e.getPrefixKeys(chk.GetRow(idx))
+			if !slices.Equal(currentPrefixKeys, e.prevPrefixKeys) {
+
+			}
+		}
+		idx++
+		savedRowCount++
+	}
+	return idx
 }
 
 const topNCompactionFactor = 4
