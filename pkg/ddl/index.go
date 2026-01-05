@@ -2554,7 +2554,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 		return nil
 	}
 
-	batchVals, err := txn.BatchGet(context.Background(), uniqueBatchKeys)
+	batchVals, err := kv.BatchGetValue(context.Background(), txn, uniqueBatchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3651,7 +3651,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		}
 
 		var found map[string][]byte
-		found, err = txn.BatchGet(ctx, globalIndexKeys)
+		found, err = kv.BatchGetValue(ctx, txn, globalIndexKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}

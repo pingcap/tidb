@@ -61,11 +61,53 @@ var (
 	TxnTotalSizeLimit = atomic.NewUint64(config.DefTxnTotalSizeLimit)
 )
 
+// ValueEntry represents the value entry stored in kv store.
+type ValueEntry = tikvstore.ValueEntry
+
+// NewValueEntry creates a ValueEntry.
+func NewValueEntry(value []byte, commitTS uint64) ValueEntry {
+	return tikvstore.NewValueEntry(value, commitTS)
+}
+
+// GetOption is the option for kv Get operation.
+type GetOption = tikvstore.GetOption
+
+// BatchGetOption is the option for kv BatchGet operation.
+type BatchGetOption = tikvstore.BatchGetOption
+
+// GetOptions is the options for kv Get operation.
+type GetOptions = tikvstore.GetOptions
+
+// BatchGetOptions is the options for kv BatchGet operation.
+type BatchGetOptions = tikvstore.BatchGetOptions
+
+// BatchGetToGetOptions converts []BatchGetOption to []GetOption.
+func BatchGetToGetOptions(options []BatchGetOption) []GetOption {
+	if len(options) == 0 {
+		return nil
+	}
+	return tikvstore.BatchGetToGetOptions(options)
+}
+
+// WithReturnCommitTS is used to indicate that the returned value should contain commit ts.
+func WithReturnCommitTS() tikvstore.GetOrBatchGetOption {
+	return tikvstore.WithReturnCommitTS()
+}
+
 // Getter is the interface for the Get method.
 type Getter interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
-	Get(ctx context.Context, k Key) ([]byte, error)
+	// The returned ValueEntry contains both value and some extra meta such as `CommitTS`.
+	// The `CommitTS` is 0 by default, indicating that the commit timestamp is unknown,
+	// if you need it, please set the option `WithReturnCommitTS`.
+	Get(ctx context.Context, k Key, options ...GetOption) (ValueEntry, error)
+}
+
+// GetValue gets the value for key k from kv store.
+func GetValue(ctx context.Context, getter Getter, k Key) (value []byte, _ error) {
+	entry, err := getter.Get(ctx, k)
+	return entry.Value, err
 }
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -106,8 +148,8 @@ func (*EmptyIterator) Close() {}
 type EmptyRetriever struct{}
 
 // Get gets the value for key k from kv store. Always return nil for this retriever
-func (*EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
-	return nil, ErrNotExist
+func (*EmptyRetriever) Get(_ context.Context, _ Key, _ ...GetOption) (ValueEntry, error) {
+	return ValueEntry{}, ErrNotExist
 }
 
 // Iter creates an Iterator. Always return EmptyIterator for this retriever
@@ -196,7 +238,8 @@ type MemBuffer interface {
 	GetLocal(context.Context, []byte) ([]byte, error)
 
 	// BatchGet gets values from the memory buffer.
-	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+	// The returned `ValueEntry.CommitTS` is always 0 because it is not committed yet.
+	BatchGet(ctx context.Context, keys [][]byte, options ...BatchGetOption) (map[string]ValueEntry, error)
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.
@@ -267,7 +310,10 @@ type Transaction interface {
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	// Do not use len(value) == 0 or value == nil to represent non-exist.
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
-	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
+	// The returned ValueEntry contains both value and some extra meta such as `CommitTS`.
+	// The `CommitTS` is 0 by default, indicating that the commit timestamp is unknown,
+	// if you need it, please set the option `WithReturnCommitTS`.
+	BatchGet(ctx context.Context, keys []Key, options ...BatchGetOption) (map[string]ValueEntry, error)
 	IsPessimistic() bool
 	// CacheTableInfo caches the index name.
 	// PresumeKeyNotExists will use this to help decode error message.
@@ -657,7 +703,7 @@ type Response interface {
 type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
-	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []Key, options ...BatchGetOption) (map[string]ValueEntry, error)
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
 	SetOption(opt int, val any)
@@ -666,9 +712,9 @@ type Snapshot interface {
 // SnapshotInterceptor is used to intercept snapshot's read operation
 type SnapshotInterceptor interface {
 	// OnGet intercepts Get operation for Snapshot
-	OnGet(ctx context.Context, snap Snapshot, k Key) ([]byte, error)
+	OnGet(ctx context.Context, snap Snapshot, k Key, options ...GetOption) (ValueEntry, error)
 	// OnBatchGet intercepts BatchGet operation for Snapshot
-	OnBatchGet(ctx context.Context, snap Snapshot, keys []Key) (map[string][]byte, error)
+	OnBatchGet(ctx context.Context, snap Snapshot, keys []Key, options ...BatchGetOption) (map[string]ValueEntry, error)
 	// OnIter intercepts Iter operation for Snapshot
 	OnIter(snap Snapshot, k Key, upperBound Key) (Iterator, error)
 	// OnIterReverse intercepts IterReverse operation for Snapshot
@@ -678,7 +724,23 @@ type SnapshotInterceptor interface {
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.
-	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
+	// The returned ValueEntry contains both value and some extra meta such as `CommitTS`.
+	// The `CommitTS` is 0 by default, indicating that the commit timestamp is unknown,
+	// if you need it, please set the option `WithReturnCommitTS`.
+	BatchGet(ctx context.Context, keys []Key, options ...BatchGetOption) (map[string]ValueEntry, error)
+}
+
+// BatchGetValue gets a batch of values from BatchGetter.
+func BatchGetValue(ctx context.Context, getter BatchGetter, keys []Key) (map[string][]byte, error) {
+	entries, err := getter.BatchGet(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string][]byte, len(entries))
+	for k, entry := range entries {
+		values[k] = entry.Value
+	}
+	return values, nil
 }
 
 // Driver is the interface that must be implemented by a KV storage.
