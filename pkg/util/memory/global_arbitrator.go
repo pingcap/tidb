@@ -108,8 +108,9 @@ func reportGlobalMemArbitratorMetrics() {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorQuota, label, value)
 		}
 		setQuota("allocated", m.allocated())
-		setQuota("out-of-control", m.avoidance.size.Load())
+		setQuota("out-of-control", m.OutOfControl())
 		setQuota("buffer", m.reservedBuffer())
+		setQuota("available", m.available())
 		setQuota("tracked-heap", m.avoidance.heapTracked.Load())
 		setQuota("awaitfree-pool-cap", m.awaitFreePoolCap())
 		setQuota("awaitfree-pool-used", m.approxAwaitFreePoolUsed().quota)
@@ -139,14 +140,14 @@ func reportGlobalMemArbitratorMetrics() {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorRootPool, label, value)
 		}
 		setRootPool("root-pool", m.RootPoolNum())
-		setRootPool("internal-session", globalArbitrator.metrics.pools.internalSession.Load())
+		setRootPool("session-internal", globalArbitrator.metrics.pools.internalSession.Load())
 		setRootPool("under-kill", m.underKill.approxSize())
 		setRootPool("under-cancel", m.underCancel.approxSize())
 		setRootPool("digest-cache", m.digestProfileCache.num.Load())
-		setRootPool("big-sql", globalArbitrator.metrics.pools.big.Load())
-		setRootPool("small-sql", globalArbitrator.metrics.pools.small.Load())
-		setRootPool("internal-sql", globalArbitrator.metrics.pools.internal.Load())
-		setRootPool("small-into-big", globalArbitrator.metrics.pools.intoBig.Load())
+		setRootPool("sql-big", globalArbitrator.metrics.pools.big.Load())
+		setRootPool("sql-small", globalArbitrator.metrics.pools.small.Load())
+		setRootPool("sql-internal", globalArbitrator.metrics.pools.internal.Load())
+		setRootPool("sql-into-big", globalArbitrator.metrics.pools.intoBig.Load())
 	}
 	{ // counter
 		newExecMetrics := m.ExecMetrics()
