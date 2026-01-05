@@ -8,6 +8,8 @@ go_library(
         "dbtestkit.go",
         "mocksessionmanager.go",
         "mockstore.go",
+        "mockstore_unix.go",
+        "mockstore_windows.go",
         "result.go",
         "stepped.go",
         "testkit.go",
@@ -66,7 +68,12 @@ go_library(
         "@io_opencensus_go//stats/view",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
+    ] + select({
+        "@io_bazel_rules_go//go/platform:windows": [
+            "@org_golang_x_sys//windows",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 go_test(
