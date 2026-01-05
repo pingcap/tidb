@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,9 +66,6 @@ type Importer struct {
 	cpMgr        CheckpointManager
 	orchestrator JobOrchestrator
 	groupKey     string
-
-	isPaused atomic.Bool
-	resumeCh chan struct{}
 }
 
 // NewImporter creates a new Importer.
@@ -80,9 +76,8 @@ func NewImporter(
 	opts ...ImporterOption,
 ) (*Importer, error) {
 	imp := &Importer{
-		cfg:      cfg,
-		db:       db,
-		resumeCh: make(chan struct{}),
+		cfg: cfg,
+		db:  db,
 	}
 
 	for _, opt := range opts {
@@ -148,7 +143,7 @@ func (i *Importer) buildOrchestrator() JobOrchestrator {
 
 // Run starts the import process.
 func (i *Importer) Run(ctx context.Context) error {
-	err := i.runWithPauser(ctx, i.runOnce)
+	err := i.runOnce(ctx)
 	if common.IsContextCanceledError(err) {
 		i.logger.Info("context canceled, cancelling import jobs...")
 		cancelCtx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
@@ -161,40 +156,6 @@ func (i *Importer) Run(ctx context.Context) error {
 		}
 	}
 	return err
-}
-
-// runWithPauser executes the given function, and retries it after resume if paused.
-func (i *Importer) runWithPauser(ctx context.Context, fn func(context.Context) error) error {
-	for {
-		err := fn(ctx)
-		if err == nil {
-			return nil
-		}
-
-		// If not paused, return the error directly
-		if !i.isPaused.Load() {
-			return err
-		}
-
-		// Wait for resume
-		if !i.waitForResume(ctx) {
-			return ctx.Err()
-		}
-	}
-}
-
-// waitForResume waits for the resume signal or context cancellation.
-// Returns true if resumed, false if context is done.
-func (i *Importer) waitForResume(ctx context.Context) bool {
-	i.logger.Info("import paused, waiting for resume")
-	select {
-	case <-i.resumeCh:
-		i.logger.Info("resuming import...")
-		i.isPaused.Store(false)
-		return true
-	case <-ctx.Done():
-		return false
-	}
 }
 
 func (i *Importer) runOnce(ctx context.Context) error {
@@ -234,24 +195,15 @@ func (i *Importer) runOnce(ctx context.Context) error {
 // Pause cancels the current import process.
 // Since TiDB does not support PAUSE IMPORT JOB, we implement Pause by cancelling the jobs.
 // The Resume operation will restart the jobs from checkpoints.
-func (i *Importer) Pause(ctx context.Context) error {
-	i.logger.Info("pausing import by cancelling jobs")
-	i.isPaused.Store(true)
-	return i.orchestrator.Cancel(ctx)
+func (i *Importer) Pause(_ context.Context) error {
+	i.logger.Info("pause is not supported for 'import into' backend")
+	return nil
 }
 
 // Resume resumes the import process.
 // It calls Run internally to restart the process from checkpoints.
-func (i *Importer) Resume(ctx context.Context) error {
-	if !i.isPaused.Load() {
-		return nil
-	}
-	i.logger.Info("resuming import")
-	select {
-	case i.resumeCh <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+func (i *Importer) Resume(_ context.Context) error {
+	i.logger.Info("resume is not supported for 'import into' backend")
 	return nil
 }
 

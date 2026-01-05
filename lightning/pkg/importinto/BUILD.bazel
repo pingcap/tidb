@@ -42,7 +42,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 14,
     deps = [
         "//lightning/pkg/importinto/mock",
         "//lightning/pkg/precheck",

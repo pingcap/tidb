@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
@@ -281,65 +280,4 @@ func TestImporterClose(t *testing.T) {
 			importer.Close()
 		})
 	}
-}
-
-func TestImporterPauseResume(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockSDK := mock.NewMockSDK(ctrl)
-	mockCPMgr := mockimport.NewMockCheckpointManager(ctrl)
-	mockOrchestrator := mockimport.NewMockJobOrchestrator(ctrl)
-
-	cfg := config.NewConfig()
-	cfg.App.CheckRequirements = true
-	cfg.Checkpoint.Enable = true
-	cfg.Checkpoint.KeepAfterSuccess = config.CheckpointRemove
-
-	tables := []*importsdk.TableMeta{
-		{Database: "db", Table: "t1"},
-	}
-
-	t.Run("pause resume loop", func(t *testing.T) {
-		mockCPMgr.EXPECT().Initialize(gomock.Any()).Return(nil)
-		mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
-
-		importer, err := importinto.NewImporter(context.Background(), cfg, nil,
-			importinto.WithBackendSDK(mockSDK),
-			importinto.WithCheckpointManager(mockCPMgr),
-			importinto.WithOrchestrator(mockOrchestrator),
-		)
-		require.NoError(t, err)
-
-		// First run: Pause
-		mockSDK.EXPECT().CreateSchemasAndTables(gomock.Any()).Return(nil)
-		mockSDK.EXPECT().GetTableMetas(gomock.Any()).Return(tables, nil)
-		mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
-		mockOrchestrator.EXPECT().SubmitAndWait(gomock.Any(), tables).DoAndReturn(func(ctx context.Context, _ any) error {
-			mockOrchestrator.EXPECT().Cancel(gomock.Any()).Return(nil)
-			importer.Pause(ctx)
-			return context.Canceled
-		})
-
-		// Second run: Success
-		mockSDK.EXPECT().CreateSchemasAndTables(gomock.Any()).Return(nil)
-		mockSDK.EXPECT().GetTableMetas(gomock.Any()).Return(tables, nil)
-		mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
-		mockOrchestrator.EXPECT().SubmitAndWait(gomock.Any(), tables).Return(nil)
-		mockCPMgr.EXPECT().Remove(gomock.Any(), "all").Return(nil)
-
-		errCh := make(chan error)
-		go func() {
-			errCh <- importer.Run(context.Background())
-		}()
-
-		// Wait for pause
-		time.Sleep(100 * time.Millisecond)
-
-		// Resume
-		importer.Resume(context.Background())
-
-		err = <-errCh
-		require.NoError(t, err)
-	})
 }
