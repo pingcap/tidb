@@ -21,28 +21,30 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
-// OuterJoinToSemiJoin is a logical optimization rule that converts a `LogicalJoin` operator
-// (LEFT or RIGHT outer join) into a more efficient `LogicalSemiJoin` operator. While users
-// cannot write `SEMI JOIN` directly in SQL, the optimizer can apply this transformation
-// internally when a `WHERE` clause makes an outer join behave like a semi join. This avoids
-// building the full join result and significantly improves performance.
+// OuterJoinToSemiJoin is a logical optimization rule that rewrites a `LogicalJoin` (Outer Join)
+// into an `AntiSemiJoin`. The transformation is triggered by a subsequent `LogicalSelection`
+// that effectively filters for non-matched rows from the outer join.
 //
-// This rule identifies two main patterns that can be transformed into a `LogicalSemiJoin` operator:
+// The core idea is to identify queries whose semantics are to find rows from one table that
+// have NO match in another. This rule recognizes such patterns and changes the `LogicalJoin`'s
+// `JoinType` to `AntiSemiJoin`.
 //
-//  1. With a standard `SemiJoin` mode:
-//     When a `WHERE` clause contains a "null-rejecting" predicate on the inner table of a
-//     `LEFT JOIN`, it filters out all non-matching rows. If the query only needs to check for
-//     the existence of matching rows, the `LogicalJoin` can be converted to a `LogicalSemiJoin`.
-//     SQL Example: `SELECT a.* FROM a LEFT JOIN b ON a.id=b.id WHERE b.val > 0`
-//     This is transformed internally into a plan with a `LogicalSemiJoin` operator.
+// A key part of this transformation is the creation of a `LogicalProjection` on top of the
+// new `AntiSemiJoin`. This projection is responsible for generating the `NULL` values for the
+// columns of the outer table, which is the expected result for this type of query.
 //
-//  2. With an `Anti` mode (`AntiSemiJoin`):
-//     When a `WHERE` clause checks for `IS NULL` on a `NOT NULL` column of the inner table,
-//     it's a clear indication that the query seeks rows from the outer table that have NO match.
-//     This pattern is transformed internally into a `LogicalSemiJoin` operator with its `JoinType`
-//     set to `AntiSemiJoin`.
-//     SQL Example: `SELECT a.* FROM a LEFT JOIN b ON a.id=b.id WHERE b.id IS NULL`
-//     This is transformed internally into a plan with an `AntiSemiJoin` operator.
+// The rule is triggered if the `WHERE` clause checks for `IS NULL` on a column from the
+// inner table that is guaranteed to be non-null if a match had occurred. This guarantee
+// comes from two main patterns identified in the `CanConvertAntiJoin` function:
+//
+// 1. The `IS NULL` check is on a column that is part of the join condition.
+//    SQL Example: `SELECT B.* FROM A RIGHT JOIN B ON A.id = B.a_id WHERE A.id IS NULL`
+//
+// 2. The `IS NULL` check is on a column that has a `NOT NULL` constraint in its table definition.
+//    SQL Example: `SELECT A.* FROM A LEFT JOIN B ON A.id = B.a_id WHERE B.non_null_col IS NULL`
+//
+// In both cases, the original `LogicalSelection` is eliminated, and the plan is rewritten to
+// `LogicalProjection -> LogicalJoin(AntiSemiJoin)`.
 type OuterJoinToSemiJoin struct{}
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
