@@ -531,8 +531,8 @@ func TestIngestUseGivenTS(t *testing.T) {
 	var tblInfo *model.TableInfo
 	var idxInfo *model.IndexInfo
 	var isNextgen bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/expectedIngestWorkerCnt", func(isNG bool) {
-		isNextgen = isNG
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/expectedIngestWorkerCnt", func(isNG *bool) {
+		isNextgen = *isNG
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if idxInfo == nil {

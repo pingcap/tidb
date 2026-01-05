@@ -15,8 +15,10 @@
 package ddl
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,8 +48,13 @@ func TestExpectedIngestWorkerCnt(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		reader, writer := expectedIngestWorkerCnt(tt.concurrency, tt.avgRowSize, tt.isNextgen)
-		require.Equal(t, tt.expReader, reader, "concurrency: %d, avgRowSize: %d, isNextgen: %v", tt.concurrency, tt.avgRowSize, tt.isNextgen)
-		require.Equal(t, tt.expWriter, writer, "concurrency: %d, avgRowSize: %d, isNextgen: %v", tt.concurrency, tt.avgRowSize, tt.isNextgen)
+		t.Run(fmt.Sprintf("concurrency%d_avgRowSize%d_isNextgen%v", tt.concurrency, tt.avgRowSize, tt.isNextgen), func(t *testing.T) {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/expectedIngestWorkerCnt", func(isNextgen *bool) {
+				*isNextgen = tt.isNextgen
+			})
+			reader, writer := expectedIngestWorkerCnt(tt.concurrency, tt.avgRowSize)
+			require.Equal(t, tt.expReader, reader, "concurrency: %d, avgRowSize: %d, isNextgen: %v", tt.concurrency, tt.avgRowSize, tt.isNextgen)
+			require.Equal(t, tt.expWriter, writer, "concurrency: %d, avgRowSize: %d, isNextgen: %v", tt.concurrency, tt.avgRowSize, tt.isNextgen)
+		})
 	}
 }

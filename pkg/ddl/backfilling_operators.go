@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/session"
@@ -123,7 +122,7 @@ func NewAddIndexIngestPipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, kerneltype.IsNextGen())
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	failpoint.InjectCall("beforeAddIndexScan")
 
@@ -181,7 +180,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, kerneltype.IsNextGen())
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))

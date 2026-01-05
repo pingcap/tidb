@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -340,8 +341,9 @@ func (b *txnBackfillExecutor) close(force bool) {
 	close(b.resultCh)
 }
 
-func expectedIngestWorkerCnt(concurrency, avgRowSize int, isNextgen bool) (readerCnt, writerCnt int) {
-	failpoint.InjectCall("expectedIngestWorkerCnt", isNextgen)
+func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt int) {
+	isNextgen := kerneltype.IsNextGen()
+	failpoint.InjectCall("expectedIngestWorkerCnt", &isNextgen)
 	workerCnt := concurrency
 	// Testing showed that in a nextgen cluster,
 	// reader ratio does not significantly impact the performance of add indexes.
