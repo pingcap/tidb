@@ -1273,16 +1273,18 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			rc.WritePlain(` /* HYPO INDEX */`)
 		}
 		if idxInfo.Primary {
-			clusteredWord := "NONCLUSTERED"
-			if tableInfo.HasClusteredIndex() {
-				clusteredWord = "CLUSTERED"
-			}
+			rc.WritePlain(" ")
 			_ = rc.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
+				clusteredWord := "NONCLUSTERED"
+				if tableInfo.HasClusteredIndex() {
+					clusteredWord = "CLUSTERED"
+				}
 				rc.WritePlainf(" %s", clusteredWord)
 				return nil
 			})
 		}
 		if idxInfo.Global {
+			rc.WritePlain(" ")
 			_ = rc.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
 				rc.WritePlain(" GLOBAL")
 				return nil
