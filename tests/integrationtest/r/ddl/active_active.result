@@ -14,10 +14,11 @@ show create database test_aa;
 Database	Create Database
 test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 use test_aa;
-create table t1 (id int primary key, name varchar(50));
-show create table t1;
+set @@global.tidb_enable_check_constraint = 1;
+create table t (id int primary key, name varchar(50));
+show create table t;
 Table	Create Table
-t1	CREATE TABLE `t1` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
@@ -26,58 +27,94 @@ alter database test_aa active_active = 'OFF' softdelete = 'OFF';
 show create database test_aa;
 Database	Create Database
 test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */
-create table t2 (id int primary key, name varchar(50)) active_active = 'ON' softdelete = retention 7 day;
-show create table t2;
+drop table if exists t;
+create table t (id int primary key, name varchar(50)) active_active = 'ON' softdelete = retention 7 day;
+show create table t;
 Table	Create Table
-t2	CREATE TABLE `t2` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
-create table t3 (id int primary key, name varchar(50)) active_active = 'OFF';
-show create table t3;
+drop table if exists t;
+create table t (id int primary key, name varchar(50)) active_active = 'OFF';
+show create table t;
 Table	Create Table
-t3	CREATE TABLE `t3` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-create table t4 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
-ALTER TABLE t4 ADD INDEX i1(_tidb_origin_ts);
-ALTER TABLE t4 ADD INDEX i2(_tidb_softdelete_time);
-ALTER TABLE t4 ADD UNIQUE INDEX i3(_tidb_softdelete_time);
+drop table if exists t;
+create table t (
+id int primary key,
+name varchar(50)
+) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+ALTER TABLE t ADD INDEX i1(_tidb_origin_ts);
+ALTER TABLE t ADD INDEX i2(_tidb_softdelete_time);
+ALTER TABLE t ADD UNIQUE INDEX i3(_tidb_softdelete_time);
 Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
-ALTER TABLE t4 ADD UNIQUE INDEX i3(_tidb_origin_ts);
+ALTER TABLE t ADD UNIQUE INDEX i3(_tidb_origin_ts);
 Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
-ALTER TABLE t4 ADD UNIQUE INDEX i3(_tidb_commit_ts);
+ALTER TABLE t ADD UNIQUE INDEX i3(_tidb_commit_ts);
 Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
-ALTER TABLE t4 ADD UNIQUE INDEX i3(name);
+ALTER TABLE t ADD UNIQUE INDEX i3(name);
 Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
-ALTER TABLE t4 ADD INDEX i3(_tidb_commit_ts);
+ALTER TABLE t ADD INDEX i3(_tidb_commit_ts);
 Error 1072 (42000): column does not exist: _tidb_commit_ts
-ALTER TABLE t4 ADD CONSTRAINT UNIQUE(_tidb_commit_ts);
+ALTER TABLE t ADD CONSTRAINT UNIQUE(_tidb_commit_ts);
 Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
-show create table t4;
+ALTER TABLE t ADD CONSTRAINT CHECK(id > 0);
+CREATE INDEX i4 ON t ((lower(name)));
+CREATE UNIQUE INDEX i5 ON t ((lower(name)));
+Error 1846 (0A000): UNIQUE is not supported. Reason: Cannot add unique index on ACTIVE_ACTIVE or softdelete table. Try removing UNIQUE.
+create table t5 (id int primary key, name varchar(50), g1 bigint AS (_tidb_softdelete_time) virtual) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+Error 1054 (42S22): Unknown column '_tidb_softdelete_time' in 'generated column function'
+ALTER TABLE t ADD CONSTRAINT c2 CHECK(_tidb_origin_ts > 0);
+Error 8200 (HY000): Unsupported invalid check constraint on internal columnss
+ALTER TABLE t DROP COLUMN _tidb_origin_ts;
+Error 8200 (HY000): Unsupported can not drop internal columns
+ALTER TABLE t DROP COLUMN _tidb_softdelete_time;
+Error 8200 (HY000): Unsupported can not drop internal columns
+ALTER TABLE t ADD COLUMN _tidb_origin_ts bigint;
+Error 1060 (42S21): Duplicate column name '_tidb_origin_ts'
+ALTER TABLE t ADD COLUMN _tidb_softdelete_time timestamp(6);
+Error 1060 (42S21): Duplicate column name '_tidb_softdelete_time'
+ALTER TABLE t MODIFY COLUMN _tidb_origin_ts bigint;
+Error 1166 (42000): Incorrect column name '_tidb_origin_ts'
+ALTER TABLE t CHANGE COLUMN _tidb_softdelete_time _tidb_softdelete_time datetime;
+Error 1166 (42000): Incorrect column name '_tidb_softdelete_time'
+create table t2 (id int primary key, name varchar(50));
+alter table t2 add constraint fk1 foreign key (id) references t(id);
+Error 1215 (HY000): Cannot add foreign key constraint
+alter table t add constraint fk2 foreign key (id) references t2(id);
+Error 1215 (HY000): Cannot add foreign key constraint
+ALTER TABLE t RENAME COLUMN name TO _tidb_origin_ts;
+Error 1166 (42000): Incorrect column name '_tidb_origin_ts'
+DROP INDEX i1 ON t;
+DROP INDEX i2 ON t;
+DROP INDEX i4 ON t;
+show create table t;
 Table	Create Table
-t4	CREATE TABLE `t4` (
+t	CREATE TABLE `t` (
   `id` int NOT NULL,
   `name` varchar(50) DEFAULT NULL,
-  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  CONSTRAINT `t_chk_1` CHECK ((`id` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 create table t5 (id int primary key, name varchar(50)) active_active = 'ON';
 Error 8200 (HY000): Unsupported ActiveActive enabled but SoftDelete disabled
 create table t5 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
 Error 8200 (HY000): Unsupported ACTIVE_ACTIVE = 'ON' but SOFTDELETE = 'OFF'
-alter table t3 active_active = 'ON';
-Error 8200 (HY000): This type of ALTER TABLE is currently unsupported
-create table t5 (id int primary key, name varchar(50)) active_active = 'ON';
-Error 8200 (HY000): Unsupported ActiveActive enabled but SoftDelete disabled
-create table t5 (id int primary key, name varchar(50)) active_active = 'ON' SOFTDELETE = 'OFF';
-Error 8200 (HY000): Unsupported ACTIVE_ACTIVE = 'ON' but SOFTDELETE = 'OFF'
-alter table t3 active_active = 'ON';
+alter table t active_active = 'ON';
 Error 8200 (HY000): This type of ALTER TABLE is currently unsupported
 alter database test_aa active_active = 'INVALID';
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 48 near ""The ACTIVE_ACTIVE option must be 'ON' or 'OFF' 
-create table t4 (id int) active_active = 'YES';
+create table t5 (id int) active_active = 'YES';
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 46 near ""The ACTIVE_ACTIVE option must be 'ON' or 'OFF' 
+create global temporary table tmp_aa (id int) on commit delete rows active_active = 'ON' softdelete = retention 7 day;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 81 near "active_active = 'ON' softdelete = retention 7 day" 
+create temporary table tmp_aa2 (id int) active_active = 'ON' softdelete = retention 7 day;
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
 drop database test_aa;
+set @@global.tidb_enable_check_constraint = default;

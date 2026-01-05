@@ -3434,7 +3434,8 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 	if oldColName.L == newColName.L {
 		return nil
 	}
-	if model.IsSoftDeleteOrActiveActiveColumn(newColName) {
+
+	if model.IsInternalColumn(newColName) {
 		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 
@@ -4708,7 +4709,7 @@ func checkCreateGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexNa
 
 func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
-	isUnique := true
+	const isUnique = true
 
 	if indexOption != nil && indexOption.PrimaryKeyTp == ast.PrimaryKeyTypeClustered {
 		return dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
@@ -4875,7 +4876,7 @@ func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 
 func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
-	isUnique := false
+	const isUnique = false
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)

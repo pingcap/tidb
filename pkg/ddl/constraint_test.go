@@ -63,6 +63,18 @@ func TestAlterConstraintAddDrop(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 }
 
+func TestCheckConstraintOnInternalColumnsForbidden(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+	tk.MustExec("drop table if exists t")
+	// Creating a CHECK constraint should forbid any _tidb_xxx internal columns,
+	// even if they are not a real column in the table schema.
+	tk.MustExec("create table t (a int)")
+	tk.MustGetErrCode("alter table t add constraint c1 check(_tidb_rowid > 0)", 1846)
+}
+
 func TestAlterAddConstraintStateChange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

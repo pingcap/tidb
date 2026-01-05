@@ -43,7 +43,7 @@ show create table t4;
 alter table t4 softdelete = 'OFF';
 show create table t4;
 
-# Invalid value 
+# Invalid value
 -- error 1064
 alter database test_sd softdelete = 'INVALID';
 
@@ -55,5 +55,11 @@ alter table t1 softdelete_job_enable = 'MAYBE';
 
 -- error 1064
 create table t6 (id int) softdelete = retention 'invalid_duration' DAY;
+
+# softdelete should not be supported for temporary tables
+-- error 1064
+create global temporary table tmp_aa (id int) on commit delete rows active_active = 'ON' softdelete = retention 7 day;
+-- error 8200
+create temporary table tmp_sd2 (id int) softdelete = retention 7 day;
 
 drop database test_sd;

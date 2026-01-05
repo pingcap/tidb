@@ -278,6 +278,11 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName ast.CIStr) error {
 		return dbterror.ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
 			colName, tblInfo.Name)
 	}
+
+	if model.IsInternalColumn(colName) {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("can not drop internal columns")
+	}
+
 	// We only support dropping column with single-value none Primary Key index covered now.
 	err := isColumnCanDropWithIndex(colName.L, tblInfo.Indices)
 	if err != nil {

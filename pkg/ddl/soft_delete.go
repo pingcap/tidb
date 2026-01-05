@@ -198,6 +198,10 @@ func getSoftDeleteAndActiveActive(oldInfo *model.SoftdeleteInfo, newInfo *model.
 
 // checkSoftDeleteAndActiveActive validates soft delete configuration
 func checkSoftDeleteAndActiveActive(tblInfo *model.TableInfo) error {
+	if tblInfo.TempTableType != model.TempTableNone && (tblInfo.IsActiveActive || tblInfo.SoftdeleteInfo != nil) {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table")
+	}
+
 	if info := tblInfo.SoftdeleteInfo; info != nil {
 		// Validate retention duration
 		if _, err := tblInfo.SoftdeleteInfo.GetRetention(); err != nil {

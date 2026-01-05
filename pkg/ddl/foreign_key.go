@@ -261,6 +261,9 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	if referTblInfo.TempTableType != model.TempTableNone || tblInfo.TempTableType != model.TempTableNone {
 		return infoschema.ErrCannotAddForeign
 	}
+	if referTblInfo.IsActiveActive || referTblInfo.SoftdeleteInfo != nil || tblInfo.IsActiveActive || tblInfo.SoftdeleteInfo != nil {
+		return infoschema.ErrCannotAddForeign
+	}
 	if referTblInfo.TTLInfo != nil {
 		return dbterror.ErrUnsupportedTTLReferencedByFK
 	}

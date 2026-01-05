@@ -1536,7 +1536,7 @@ func GetModifiableColumnJob(
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
 	newColName := specNewColumn.Name.Name
-	if model.IsSoftDeleteOrActiveActiveColumn(newColName) {
+	if model.IsInternalColumn(newColName) {
 		return nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 	errG := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)

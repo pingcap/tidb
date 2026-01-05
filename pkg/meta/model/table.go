@@ -102,6 +102,11 @@ var ExtraOriginTSName = ast.NewCIStr("_tidb_origin_ts")
 // ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
 var ExtraSoftDeleteTimeName = ast.NewCIStr("_tidb_softdelete_time")
 
+// IsInternalColumn will check if a column name is reserved.
+func IsInternalColumn(x ast.CIStr) bool {
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x) || x.L == ExtraHandleName.L
+}
+
 // IsSoftDeleteOrActiveActiveColumn will check if a column name is reserved.
 func IsSoftDeleteOrActiveActiveColumn(x ast.CIStr) bool {
 	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x)
@@ -110,7 +115,7 @@ func IsSoftDeleteOrActiveActiveColumn(x ast.CIStr) bool {
 // IsActiveActiveColumn will check if a column name is reserved.
 func IsActiveActiveColumn(x ast.CIStr) bool {
 	switch x.L {
-	case ExtraOriginTSName.L, ExtraHandleName.L:
+	case ExtraOriginTSName.L:
 		return true
 	}
 	return false
