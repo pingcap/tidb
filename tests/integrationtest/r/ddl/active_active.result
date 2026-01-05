@@ -140,8 +140,10 @@ alter database test_aa active_active = 'INVALID';
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 48 near ""The ACTIVE_ACTIVE option must be 'ON' or 'OFF' 
 create table t5 (id int) active_active = 'YES';
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 46 near ""The ACTIVE_ACTIVE option must be 'ON' or 'OFF' 
-create global temporary table tmp_aa (id int) on commit delete rows active_active = 'ON' softdelete = retention 7 day;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 81 near "active_active = 'ON' softdelete = retention 7 day" 
+create global temporary table tmp_aa (id int) active_active = 'ON' softdelete = retention 7 day on commit delete rows;
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
+create global temporary table tmp_aa like t on commit delete rows;
+Error 1347 (HY000): 'test_aa.t' is not supported, it is ACTIVE_ACTIVE TABLE
 create temporary table tmp_aa2 (id int) active_active = 'ON' softdelete = retention 7 day;
 Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
 drop database test_aa;

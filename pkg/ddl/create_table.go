@@ -1271,6 +1271,12 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
 	}
+	if referTblInfo.IsActiveActive {
+		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "supported, it is ACTIVE_ACTIVE TABLE")
+	}
+	if referTblInfo.SoftdeleteInfo != nil {
+		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "supported, it is SOFTDELETE TABLE")
+	}
 	tblInfo := *referTblInfo
 	if err := setTemporaryType(&tblInfo, s); err != nil {
 		return nil, errors.Trace(err)

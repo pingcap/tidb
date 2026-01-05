@@ -136,8 +136,10 @@ alter database test_aa active_active = 'INVALID';
 create table t5 (id int) active_active = 'YES';
 
 # active-active / softdelete should not be supported for temporary tables
--- error 1064
-create global temporary table tmp_aa (id int) on commit delete rows active_active = 'ON' softdelete = retention 7 day;
+-- error 8200
+create global temporary table tmp_aa (id int) active_active = 'ON' softdelete = retention 7 day on commit delete rows;
+-- error 1347
+create global temporary table tmp_aa like t on commit delete rows;
 -- error 8200
 create temporary table tmp_aa2 (id int) active_active = 'ON' softdelete = retention 7 day;
 

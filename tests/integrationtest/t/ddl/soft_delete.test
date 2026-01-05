@@ -69,8 +69,10 @@ alter table t1 softdelete_job_enable = 'MAYBE';
 create table t6 (id int) softdelete = retention 'invalid_duration' DAY;
 
 # softdelete should not be supported for temporary tables
--- error 1064
-create global temporary table tmp_aa (id int) on commit delete rows active_active = 'ON' softdelete = retention 7 day;
+-- error 8200
+create global temporary table tmp_aa (id int) softdelete = retention 7 day on commit delete rows;
+-- error 1347
+create global temporary table tmp_aa like t3 on commit delete rows;
 -- error 8200
 create temporary table tmp_sd2 (id int) softdelete = retention 7 day;
 
