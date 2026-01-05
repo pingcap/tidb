@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
@@ -797,6 +798,121 @@ func TestRiskRangeSkewRatio(t *testing.T) {
 }
 
 // TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
+// TestOutOfRangeEstimationWithTopN demonstrates that TopN reduces addedRows in OutOfRangeRowCount.
+// When TopN values are present, the histRowCount includes TopNCount, resulting in lower addedRows
+// and thus lower out-of-range estimates compared to when TopN is not present.
+func TestOutOfRangeEstimationWithTopN(t *testing.T) {
+	// Create mock table info
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: -1,
+					},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Generate mock histogram data for column 'a' with values [300, 900)
+	// Each value appears 5 times (3000/600 = 5)
+	colValues, err := generateIntDatum(1, 600) // 600 values from 0 to 599
+	require.NoError(t, err)
+
+	// Adjust the values to be in range [300, 900)
+	for i := range colValues {
+		colValues[i].SetInt64(int64(i) + 300)
+	}
+
+	// Create column statistics WITHOUT TopN
+	colWithoutTopN := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+		TopN:              nil, // No TopN
+	}
+
+	// Create column statistics WITH TopN
+	// Add 10 frequent values to TopN, each appearing 50 times = 500 rows in TopN
+	colWithTopN := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+		TopN:              statistics.NewTopN(10),
+	}
+
+	sctx := mock.NewContext()
+	sc := sctx.GetSessionVars().StmtCtx
+
+	// Add 10 frequent values to TopN (values 300-309, each 50 times)
+	for i := 0; i < 10; i++ {
+		val := types.NewIntDatum(int64(i + 300))
+		encoded, err := tablecodec.EncodeValue(sc.TimeZone(), nil, val)
+		require.NoError(t, err)
+		colWithTopN.TopN.AppendTopN(encoded, 50)
+	}
+	colWithTopN.TopN.Sort()
+
+	// Set up test parameters:
+	// - Initial histogram: 3000 rows
+	// - RealtimeRowCount: 4500 rows (1500 rows added since ANALYZE)
+	// - For colWithoutTopN: histRowCount = 3000, addedRows = |4500 - 3000| = 1500
+	// - For colWithTopN: histRowCount = 3000 + 500 (TopN) = 3500, addedRows = |4500 - 3500| = 1000
+	realtimeRowCount := int64(4500)
+	modifyCount := int64(1500)
+
+	// Test out-of-range query: [900, 1000] - entirely out of range
+	testRange := getRange(900, 1000)
+
+	// Get estimates for both columns
+	countEstWithoutTopN, err := getColumnRowCount(sctx, colWithoutTopN, testRange, realtimeRowCount, modifyCount, false)
+	require.NoError(t, err)
+
+	countEstWithTopN, err := getColumnRowCount(sctx, colWithTopN, testRange, realtimeRowCount, modifyCount, false)
+	require.NoError(t, err)
+
+	// The estimate with TopN should be lower because addedRows is lower (1000 vs 1500)
+	// This demonstrates that TopN is properly excluded from addedRows calculation
+	require.Truef(t, countEstWithTopN.Est < countEstWithoutTopN.Est,
+		"Estimate with TopN (%v) should be lower than without TopN (%v) because addedRows is lower",
+		countEstWithTopN.Est, countEstWithoutTopN.Est)
+
+	// Verify that TopN count is correct
+	require.Equal(t, uint64(500), colWithTopN.TopN.TotalCount(), "TopN should contain 500 rows (10 values * 50 each)")
+
+	// Verify the histRowCount difference
+	histRowCountWithoutTopN := colWithoutTopN.Histogram.NotNullCount() + float64(colWithoutTopN.Histogram.NullCount) + float64(0)
+	histRowCountWithTopN := colWithTopN.Histogram.NotNullCount() + float64(colWithTopN.Histogram.NullCount) + float64(colWithTopN.TopN.TotalCount())
+	require.Equal(t, float64(3000), histRowCountWithoutTopN, "histRowCount without TopN should be 3000")
+	require.Equal(t, float64(3500), histRowCountWithTopN, "histRowCount with TopN should be 3500 (3000 + 500)")
+
+	t.Logf("Without TopN: Est=%v, histRowCount=%v, addedRows=%v",
+		countEstWithoutTopN.Est, histRowCountWithoutTopN, math.Abs(float64(realtimeRowCount)-histRowCountWithoutTopN))
+	t.Logf("With TopN: Est=%v, histRowCount=%v, addedRows=%v",
+		countEstWithTopN.Est, histRowCountWithTopN, math.Abs(float64(realtimeRowCount)-histRowCountWithTopN))
+}
+
 // The test result doesn't perfectly reflect the actual data distribution, but this is the expected behavior for now.
 func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)

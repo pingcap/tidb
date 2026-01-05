@@ -1067,11 +1067,7 @@ func calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth float64) f
 	adjRight := histR + predWidth
 	adjRight = math.Min(adjRight, boundR)
 	histWidthSq := math.Pow(histWidth, 2)
-	numerator := (math.Pow(boundR-histR, 2) - math.Pow(boundR-adjRight, 2))
-	if numerator < 0 {
-		return 0
-	}
-	return numerator / histWidthSq
+	return (math.Pow(boundR-histR, 2) - math.Pow(boundR-adjRight, 2)) / histWidthSq
 }
 
 // calculateTimeAdjustmentLeft calculates the time decay adjustment percentage
@@ -1080,11 +1076,7 @@ func calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth float64) fl
 	adjLeft := histL - predWidth
 	adjLeft = math.Max(adjLeft, boundL)
 	histWidthSq := math.Pow(histWidth, 2)
-	numerator := (math.Pow(histL-boundL, 2) - math.Pow(adjLeft-boundL, 2))
-	if numerator < 0 {
-		return 0
-	}
-	return numerator / histWidthSq
+	return (math.Pow(histL-boundL, 2) - math.Pow(adjLeft-boundL, 2)) / histWidthSq
 }
 
 // OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
@@ -1208,10 +1200,28 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
+	// For datetime columns, cap the right side to now() to ensure reasonable estimates
+	// for future-dated ranges (e.g., '2023-01-01' to '9999-12-31')
+	if lDatum.Kind() == types.KindMysqlTime {
+		nowTime, err := sctx.GetExprCtx().GetEvalCtx().CurrentTime()
+		if err == nil {
+			// Convert now() to scalar value using the same conversion as the predicate
+			nowDatum := types.NewTimeDatum(types.NewTime(types.FromGoTime(nowTime), mysql.TypeDatetime, types.DefaultFsp))
+			nowScalar := convertDatumToScalar(&nowDatum, commonPrefix)
+			// Cap r to now() to prevent unreasonably high estimates for future dates
+			if l < nowScalar {
+				r = math.Min(r, nowScalar)
+				predWidth = r - l
+			}
+		}
+	}
+
 	var leftPercent, rightPercent, timeAdjLeft, timeAdjRight, estRows float64
 
 	// Step 7: Calculate the percentage on the left/right that we are searching.
 	// Only attempt to calculate the ranges if the histogram is valid
+	// TODO: If isNegative is true and this is types.KindMysqlTime, we should consider
+	// that the deleted rows are likely to be on the left side of the histogram.
 	if !histInvalid {
 		// Calculate left overlap percentage if the range overlaps with (boundL, histL)
 		leftPercent = calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
@@ -1271,7 +1281,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if entirelyOutOfRange {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// For max estimate, use the sum (not average) to account for worst case
-		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 0.5)
+		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 1.0)
 	}
 
 	if maxTotalPercent > 0 {
@@ -1283,9 +1293,11 @@ func (hg *Histogram) OutOfRangeRowCount(
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 	// If the skew ratio > 0, we want to allow the ratio to scale from min to max.
+	// The min estimate should respect totalPercent (via estRows), not just be 1.
 	// If the skew ratio is 0, we want to use the oneValue as the estimate.
 	if skewRatio > 0 {
-		result = CalculateSkewRatioCounts(1, maxAddedRows, skewRatio)
+		minEst := min(estRows, oneValue)
+		result = CalculateSkewRatioCounts(minEst, maxAddedRows, skewRatio)
 	} else {
 		result.Est = max(estRows, oneValue)
 		result.MinEst = 1
