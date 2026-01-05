@@ -2413,6 +2413,7 @@ func TestExternalEngine(t *testing.T) {
 			WorkerConcurrency: 2,
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
+		logger: log.L(),
 		splitCli: initTestSplitClient([][]byte{
 			keys[0], keys[50], endKey,
 		}, hook),
