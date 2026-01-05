@@ -518,7 +518,7 @@ func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, ta
 	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.SQLDigest, task.PlanDigest))
 	defer func() {
 		if rs != nil {
-			rs.Close()
+			_ = rs.Close()
 		}
 	}()
 	if err != nil {
@@ -544,7 +544,7 @@ func CheckPlanReplayerTaskExists(ctx context.Context, sctx sessionctx.Context, s
 		sqlDigest, planDigest))
 	defer func() {
 		if rs != nil {
-			rs.Close()
+			_ = rs.Close()
 		}
 	}()
 	if err != nil {
