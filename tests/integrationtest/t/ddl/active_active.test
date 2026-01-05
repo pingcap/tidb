@@ -105,6 +105,15 @@ create table t5 (id int primary key, name varchar(50)) active_active = 'ON' SOFT
 -- error 8200
 alter table t active_active = 'ON';
 
+# should not enable softdelete/active-active on a table with foreign key
+create table parent_fk2 (id int primary key);
+create table child_fk2 (id int primary key, pid int);
+alter table child_fk2 add constraint fk_child2 foreign key(pid) references parent_fk2(id);
+-- error 8200
+alter table parent_fk2 active_active = 'ON' softdelete = retention 7 day;
+-- error 8200
+alter table child_fk2 active_active = 'ON' softdelete = retention 7 day;
+
 # Invalid value
 -- error 1064
 alter database test_aa active_active = 'INVALID';

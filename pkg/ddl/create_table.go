@@ -1010,7 +1010,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkSoftDeleteAndActiveActive(tbInfo); err != nil {
+	if err := checkSoftDeleteAndActiveActive(tbInfo, nil, ast.CIStr{}); err != nil {
 		return errors.Trace(err)
 	}
 

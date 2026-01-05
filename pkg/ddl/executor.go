@@ -3895,7 +3895,7 @@ func (e *executor) AlterTableSoftDeleteInfo(
 		return err
 	}
 	// Validate the soft delete configuration
-	err = checkSoftDeleteAndActiveActive(tblInfo)
+	err = checkSoftDeleteAndActiveActive(tblInfo, is, schema.Name)
 	if err != nil {
 		return err
 	}

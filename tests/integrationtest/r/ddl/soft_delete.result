@@ -103,4 +103,17 @@ create global temporary table tmp_aa (id int) on commit delete rows active_activ
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 81 near "active_active = 'ON' softdelete = retention 7 day" 
 create temporary table tmp_sd2 (id int) softdelete = retention 7 day;
 Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
+create table parent_fk (id int primary key);
+create table child_fk (id int primary key, pid int);
+alter table child_fk add constraint fk_child foreign key(pid) references parent_fk(id);
+alter table parent_fk softdelete retention 7 day;
+Error 8200 (HY000): Unsupported SOFTDELETE is unspported on referenced foreign key table
+alter table child_fk softdelete retention 7 day;
+Error 8200 (HY000): Unsupported SOFTDELETE is unspported on table with foreign key
+create global temporary table tmp_sd3 (id int) on commit delete rows;
+alter table tmp_sd3 softdelete retention 7 day;
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
+create temporary table tmp_sd4 (id int);
+alter table tmp_sd4 softdelete retention 7 day;
+Error 8200 (HY000): TiDB doesn't support ALTER TABLE for local temporary table
 drop database test_sd;

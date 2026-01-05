@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -197,12 +198,20 @@ func getSoftDeleteAndActiveActive(oldInfo *model.SoftdeleteInfo, newInfo *model.
 }
 
 // checkSoftDeleteAndActiveActive validates soft delete configuration
-func checkSoftDeleteAndActiveActive(tblInfo *model.TableInfo) error {
+func checkSoftDeleteAndActiveActive(tblInfo *model.TableInfo, is infoschema.InfoSchema, dbName ast.CIStr) error {
 	if tblInfo.TempTableType != model.TempTableNone && (tblInfo.IsActiveActive || tblInfo.SoftdeleteInfo != nil) {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table")
 	}
 
 	if info := tblInfo.SoftdeleteInfo; info != nil {
+		if len(tblInfo.ForeignKeys) > 0 {
+			return errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("SOFTDELETE is unspported on table with foreign key"))
+		}
+
+		if is != nil && len(is.GetTableReferredForeignKeys(dbName.L, tblInfo.Name.L)) > 0 {
+			return errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("SOFTDELETE is unspported on referenced foreign key table"))
+		}
+
 		// Validate retention duration
 		if _, err := tblInfo.SoftdeleteInfo.GetRetention(); err != nil {
 			return errors.Trace(err)

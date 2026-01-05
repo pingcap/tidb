@@ -1304,6 +1304,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		return false, ""
 	}
 
+	if len(publicIndices) > 0 {
+		buf.WriteString(",\n")
+	}
 	for i, idxInfo := range publicIndices {
 		if wrap, featureID := indexCommentFeature(idxInfo); wrap {
 			_ = restoreCtx.WriteWithSpecialComments(featureID, func() error {
