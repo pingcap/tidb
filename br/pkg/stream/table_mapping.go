@@ -660,7 +660,8 @@ func (tm *TableMappingManager) CheckExistingDBAndTables(ctx context.Context, sch
 		for tableId, tableReplace := range dbReplace.TableMap {
 			if !tableReplace.FilteredOut && tableReplace.TableID < 0 {
 				if schema.TableExists(dbNameCtr, ast.NewCIStr(tableReplace.Name)) {
-					return errors.Errorf("found existing table(upstream id: %d, table id: %d) with the same name: %s", dbId, tableId, tableReplace.Name)
+					return errors.Errorf("found existing table(upstream id: %d, table id: %d) with the same name: %s",
+						dbId, tableId, tableReplace.Name)
 				}
 			}
 		}
