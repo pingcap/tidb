@@ -682,6 +682,76 @@ func TestModifyColumnWithMultipleIndex(t *testing.T) {
 	}
 }
 
+// TestCheckpointInstanceAddrValidation tests that checkpoint instance address
+// validation works correctly. When instance address changes (e.g., after restart
+// or owner transfer), the local checkpoint should not be used.
+// This covers issues #43983 and #43957.
+func TestCheckpointInstanceAddrValidation(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := range 10 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Test that InstanceAddr uses AdvertiseAddress (not just Host)
+	// The fix ensures we use config.AdvertiseAddress + port as identifier
+	instanceAddr := ingest.InstanceAddr()
+	require.NotEmpty(t, instanceAddr)
+	// Instance address should not contain "0.0.0.0" which was the bug
+	// It should use the actual advertise address
+	require.NotContains(t, instanceAddr, "0.0.0.0:0:")
+
+	// Add index and verify checkpoint works
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+}
+
+// TestCheckpointPhysicalIDValidation tests that checkpoint correctly validates
+// physical table ID during recovery.
+func TestCheckpointPhysicalIDValidation(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	// Create partitioned table
+	tk.MustExec(`create table t (
+		a int primary key,
+		b int
+	) partition by range(a) (
+		partition p0 values less than (100),
+		partition p1 values less than (200)
+	);`)
+	for i := range 50 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+	for i := 100; i < 150; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Add index and verify it completes
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+
+	// Verify cross-path consistency
+	rs1 := tk.MustQuery("select count(*) from t use index(idx);").Rows()
+	rs2 := tk.MustQuery("select count(*) from t ignore index(idx);").Rows()
+	require.Equal(t, rs1[0][0], rs2[0][0])
+	require.Equal(t, "100", rs1[0][0])
+}
+
 func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()

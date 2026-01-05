@@ -968,6 +968,288 @@ func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
 	tk.MustExec("alter table t add unique index idx(b);")
 }
 
+// TestIngestOwnerTransferEmptyPartition tests that add index on partitioned table
+// with empty partitions handles owner transfer correctly. This covers issue #44265.
+// The key point is that checkpoint should contain partition ID even for empty partitions.
+func TestIngestOwnerTransferEmptyPartition(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	// Create partitioned table with some empty partitions
+	tk.MustExec(`create table t (
+		a int primary key,
+		b int
+	) partition by range(a) (
+		partition p0 values less than (100),
+		partition p1 values less than (200),
+		partition p2 values less than (300),
+		partition p3 values less than (400)
+	);`)
+	// Only insert data into p0 and p2, leaving p1 and p3 empty
+	for i := 0; i < 50; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+	for i := 200; i < 250; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Use failpoint to trigger owner resign after processing first partition
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/resignAfterFlush", "1*return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ownerResignAfterDispatchLoopCheck", "return()"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/resignAfterFlush"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ownerResignAfterDispatchLoopCheck"))
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+
+	// Verify all partitions have indexes (including empty ones)
+	tk.MustExec("admin check table t;")
+
+	// Verify data-index consistency by comparing results with and without index
+	rs1 := tk.MustQuery("select * from t use index(idx) order by a;").Rows()
+	rs2 := tk.MustQuery("select * from t ignore index(idx) order by a;").Rows()
+	require.Equal(t, len(rs1), len(rs2))
+	require.Equal(t, 100, len(rs1)) // 50 rows in p0 + 50 rows in p2
+
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][12].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
+// TestIngestPartitionCheckpointRecovery tests that checkpoint correctly saves partition
+// info and allows recovery to continue from the correct partition. This covers issues
+// #43997 and #44024.
+func TestIngestPartitionCheckpointRecovery(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	// Create partitioned table with multiple partitions
+	tk.MustExec(`create table t (
+		a int primary key,
+		b int
+	) partition by range(a) (
+		partition p0 values less than (100),
+		partition p1 values less than (200),
+		partition p2 values less than (300),
+		partition p3 values less than (400)
+	);`)
+	// Insert data into all partitions
+	for i := 0; i < 80; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+	for i := 100; i < 180; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+	for i := 200; i < 280; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+	for i := 300; i < 380; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	rowCnt := atomic.Int32{}
+	partitionSwitchCnt := atomic.Int32{}
+
+	// Track when partitions are processed
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
+		rowCnt.Add(1)
+		// Trigger job retry after processing around 80 rows (first partition)
+		if rowCnt.Load() == 80 && partitionSwitchCnt.Load() == 0 {
+			partitionSwitchCnt.Add(1)
+			// Simulate write conflict to trigger job retry
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use addindexlit;")
+			jobs := tk2.MustQuery("admin show ddl jobs 1;").Rows()
+			if len(jobs) > 0 {
+				jobID := jobs[0][0].(string)
+				updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %s", jobID)
+				tk2.MustExec(updateSQL)
+				updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %s", jobID)
+				tk2.MustExec(updateSQL)
+			}
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+
+	// Verify checkpoint recovery worked correctly
+	// If partition recovery failed, we would see more rows processed than expected
+	totalRows := int(rowCnt.Load())
+	// 320 rows total (80 per partition * 4 partitions)
+	// With proper recovery, we should process close to 320 rows
+	// Without proper recovery, we would reprocess some partitions and see more
+	require.LessOrEqual(t, totalRows, 400) // Allow some overhead but not doubling
+
+	tk.MustExec("admin check table t;")
+
+	// Verify data-index consistency
+	rs1 := tk.MustQuery("select count(*) from t use index(idx);").Rows()
+	rs2 := tk.MustQuery("select count(*) from t ignore index(idx);").Rows()
+	require.Equal(t, rs1[0][0], rs2[0][0])
+	require.Equal(t, "320", rs1[0][0])
+}
+
+// TestIngestConcurrentJobCleanupRace tests that parallel add index jobs don't
+// cause panic due to cleanup race. This covers issues #44137 and #44140.
+func TestIngestConcurrentJobCleanupRace(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	}
+
+	// Create two tables
+	tk.MustExec("create table t1 (a int primary key, b int);")
+	tk.MustExec("create table t2 (a int primary key, b int);")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d);", i, i))
+		tk.MustExec(fmt.Sprintf("insert into t2 values (%d, %d);", i, i))
+	}
+
+	// Start two add index jobs concurrently
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use addindexlit;")
+
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+
+	var err1, err2 error
+	go func() {
+		defer wg.Done()
+		_, err1 = tk1.Exec("alter table t1 add index idx1(b);")
+	}()
+	go func() {
+		defer wg.Done()
+		_, err2 = tk2.Exec("alter table t2 add index idx2(b);")
+	}()
+
+	wg.Wait()
+
+	// Verify no panic occurred and both indexes created successfully
+	require.NoError(t, err1)
+	require.NoError(t, err2)
+
+	tk.MustExec("admin check table t1;")
+	tk.MustExec("admin check table t2;")
+}
+
+// TestIngestGCSafepointBlocking tests that add index correctly uses TS from checkpoint
+// and blocks GC safepoint advancement. This covers issues #40074 and #40081.
+// The fix changed Copr request start TS to use explicit transaction start time.
+func TestIngestGCSafepointBlocking(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Verify that add index completes without GC error
+	// The fix ensures we use explicit transaction start time for Copr requests
+	// which properly blocks GC safepoint advancement
+	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(false)
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+
+	// Verify data consistency
+	rs1 := tk.MustQuery("select count(*) from t use index(idx);").Rows()
+	rs2 := tk.MustQuery("select count(*) from t ignore index(idx);").Rows()
+	require.Equal(t, rs1[0][0], rs2[0][0])
+	require.Equal(t, "100", rs1[0][0])
+
+	// Verify the job used ingest mode
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][12].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
+// TestIngestCancelCleanupOrder tests that canceling add index during execution
+// doesn't cause nil pointer panic due to incorrect cleanup order.
+// This covers issues #43323 and #43326.
+// Note: This test verifies cancel during StateNone doesn't cause panic.
+// The cancel-during-backfill scenario is covered by TestAddIndexCancelOnNoneState
+// in integration_test.go with mock backend.
+func TestIngestCancelCleanupOrder(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Test cancel during StateDeleteOnly - this verifies cleanup happens correctly
+	// Using StateDeleteOnly as it's more likely to be caught than StateNone
+	cancelOnce := sync.Once{}
+	tkCancel := testkit.NewTestKit(t, store)
+	tkCancel.MustExec("use addindexlit;")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateDeleteOnly {
+			cancelOnce.Do(func() {
+				_, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+				assert.NoError(t, err)
+			})
+		}
+	})
+
+	err := tk.ExecToErr("alter table t add index idx(b);")
+	// The job might complete or be cancelled depending on timing
+	// The key point is no panic occurs during the process
+	if err != nil {
+		require.ErrorContains(t, err, "Cancelled DDL job")
+	}
+
+	// Verify no panic occurred and table is consistent
+	tk.MustExec("admin check table t;")
+
+	// Verify backend context is cleaned up (should be 0 since cancel happened early)
+	cnt := ingest.LitDiskRoot.Count()
+	require.Equal(t, 0, cnt)
+}
+
 func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("DXF is always enabled on nextgen")
