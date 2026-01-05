@@ -20,21 +20,21 @@ import "net"
 
 // No-op implementations when FlightSQL is not enabled
 
-func initFlightSQLListener(s *Server) error {
+func initFlightSQLListener(_ *Server) error {
 	return nil
 }
 
-func startFlightSQLServer(s *Server, errChan chan error) {
+func startFlightSQLServer(_ *Server, errChan chan error) {
 	errChan <- nil
 }
 
-func closeFlightSQLServer(s *Server) {
+func closeFlightSQLServer(_ *Server) {
 }
 
-func getFlightSQLListenerAddr(s *Server) net.Addr {
+func getFlightSQLListenerAddr(_ *Server) net.Addr {
 	return nil
 }
 
-func getFlightSQLPort(s *Server) uint {
+func getFlightSQLPort(_ *Server) uint {
 	return 0
 }

@@ -93,7 +93,11 @@ func closeFlightSQLServer(s *Server) {
 	if state.listener != nil {
 		err := state.listener.Close()
 		if err != nil {
-			logutil.BgLogger().Error("close FlightSQL listener error", zap.Error(err))
+			if errors.ErrorEqual(err, net.ErrClosed) {
+				logutil.BgLogger().Info("close FlightSQL listener", zap.Error(err))
+			} else {
+				logutil.BgLogger().Warn("close FlightSQL listener error", zap.Error(err))
+			}
 		}
 		state.listener = nil
 	}
