@@ -25,8 +25,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
-        "//pkg/disttask/framework/taskexecutor/execute",
-        "//pkg/disttask/operator",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/dxf/operator",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend/encode",
@@ -87,7 +87,7 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
-        "//pkg/disttask/framework/taskexecutor/execute",
+        "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend/kv",
