@@ -472,6 +472,11 @@ const (
 	// version253
 	// Add last_used_date to mysql.bind_info
 	version253 = 253
+
+	// version254
+	// Add the default value management for `tidb_analyze_distsql_scan_concurrency`
+	// If the cluster is upgraded from a version that has no such variable, we set it to the global.tidb_distsql_scan_concurrency value.
+	version254 = 254
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -485,7 +490,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version253
+var currentBootstrapVersion int64 = version254
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -663,6 +668,7 @@ var (
 		{version: version251, fn: upgradeToVer251},
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
+		{version: version254, fn: upgradeToVer254},
 	}
 )
 
@@ -2036,4 +2042,14 @@ func upgradeToVer252(s sessionapi.Session, _ int64) {
 
 func upgradeToVer253(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN last_used_date DATE DEFAULT NULL AFTER `plan_digest`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer254(s sessionapi.Session, _ int64) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBDistSQLScanConcurrency)
+	terror.MustNil(err)
+	if len(rows) == 0 || rows[0].GetString(0) == "" {
+		return
+	}
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
 }
