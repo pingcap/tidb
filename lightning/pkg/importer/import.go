@@ -279,6 +279,8 @@ type ControllerParam struct {
 	CheckpointName string
 	// DupIndicator can expose the duplicate detection result to the caller
 	DupIndicator *atomic.Bool
+	// KeepJobsOnContextCancel indicates whether to keep jobs running on context cancel.
+	KeepJobsOnContextCancel *atomic.Bool
 	// Keyspace name
 	KeyspaceName string
 	// ResourceGroup name for current TiDB user

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -70,16 +71,24 @@ func WithOrchestrator(orchestrator JobOrchestrator) ImporterOption {
 	}
 }
 
+// WithKeepJobsOnContextCancel sets a *bool to indicate whether to keep jobs running on context cancel.
+func WithKeepJobsOnContextCancel(b *atomic.Bool) ImporterOption {
+	return func(i *Importer) {
+		i.keepJobsOnContextCancel = b
+	}
+}
+
 // Importer is the implementation of LightningImporter for the 'import into' backend.
 type Importer struct {
-	cfg             *config.Config
-	db              *sql.DB
-	sdk             importsdk.SDK
-	logger          log.Logger
-	cpMgr           CheckpointManager
-	orchestrator    JobOrchestrator
-	groupKey        string
-	progressUpdater ProgressUpdater
+	cfg                     *config.Config
+	db                      *sql.DB
+	sdk                     importsdk.SDK
+	logger                  log.Logger
+	cpMgr                   CheckpointManager
+	orchestrator            JobOrchestrator
+	groupKey                string
+	progressUpdater         ProgressUpdater
+	keepJobsOnContextCancel *atomic.Bool
 }
 
 // NewImporter creates a new Importer.
@@ -160,6 +169,11 @@ func (i *Importer) buildOrchestrator() JobOrchestrator {
 func (i *Importer) Run(ctx context.Context) error {
 	err := i.runOnce(ctx)
 	if common.IsContextCanceledError(err) {
+		if i.keepJobsOnContextCancel != nil && i.keepJobsOnContextCancel.Load() {
+			i.logger.Info("context canceled, skipping job cancellation")
+			return err
+		}
+
 		i.logger.Info("context canceled, cancelling import jobs...")
 		cancelCtx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
 		defer cancel()

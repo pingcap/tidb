@@ -528,15 +528,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}
 
 	param := &importer.ControllerParam{
-		DBMetas:           dbMetas,
-		Status:            &l.status,
-		DumpFileStorage:   s,
-		OwnExtStorage:     o.dumpFileStorage == nil,
-		DB:                db,
-		CheckpointStorage: o.checkpointStorage,
-		CheckpointName:    o.checkpointName,
-		DupIndicator:      o.dupIndicator,
-		KeyspaceName:      keyspaceName,
+		DBMetas:                 dbMetas,
+		Status:                  &l.status,
+		DumpFileStorage:         s,
+		OwnExtStorage:           o.dumpFileStorage == nil,
+		DB:                      db,
+		CheckpointStorage:       o.checkpointStorage,
+		CheckpointName:          o.checkpointName,
+		DupIndicator:            o.dupIndicator,
+		KeepJobsOnContextCancel: o.keepJobsOnContextCancel,
+		KeyspaceName:            keyspaceName,
 	}
 
 	var procedure LightningImporter
@@ -1213,7 +1214,10 @@ func (a *importIntoProgressAdapter) UpdateFinishedSize(size int64) {
 func newImporter(ctx context.Context, cfg *config.Config, param *importer.ControllerParam) (LightningImporter, error) {
 	switch cfg.TikvImporter.Backend {
 	case config.BackendImportInto:
-		return importinto.NewImporter(ctx, cfg, param.DB, importinto.WithProgressUpdater(&importIntoProgressAdapter{s: param.Status}))
+		return importinto.NewImporter(ctx, cfg, param.DB,
+			importinto.WithProgressUpdater(&importIntoProgressAdapter{s: param.Status}),
+			importinto.WithKeepJobsOnContextCancel(param.KeepJobsOnContextCancel),
+		)
 	default:
 		return importer.NewImportController(ctx, cfg, param)
 	}
