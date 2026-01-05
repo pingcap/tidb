@@ -686,6 +686,9 @@ func TestModifyColumnWithMultipleIndex(t *testing.T) {
 // validation works correctly. When instance address changes (e.g., after restart
 // or owner transfer), the local checkpoint should not be used.
 // This covers issues #43983 and #43957.
+// The bug was: using host:port as instance identifier caused issues when
+// the same host:port was reused after restart but local data was stale.
+// The fix uses AdvertiseAddress + TempDir as a more unique identifier.
 func TestCheckpointInstanceAddrValidation(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
@@ -701,21 +704,36 @@ func TestCheckpointInstanceAddrValidation(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
 	}
 
-	// Test that InstanceAddr uses AdvertiseAddress (not just Host)
-	// The fix ensures we use config.AdvertiseAddress + port as identifier
+	// Test that InstanceAddr uses AdvertiseAddress + TempDir (not just Host:Port)
+	// The fix ensures we use config.AdvertiseAddress + port + tempDir as identifier
 	instanceAddr := ingest.InstanceAddr()
 	require.NotEmpty(t, instanceAddr)
-	// Instance address should not contain "0.0.0.0" which was the bug
-	// It should use the actual advertise address
-	require.NotContains(t, instanceAddr, "0.0.0.0:0:")
+
+	// Instance address should contain the temp dir path (this is the key fix)
+	// Format should be "host:port:tempDir"
+	parts := strings.Split(instanceAddr, ":")
+	require.GreaterOrEqual(t, len(parts), 3, "instance addr should contain host:port:tempDir, got: %s", instanceAddr)
+
+	// Instance address should not be just "0.0.0.0:0" which was the old bug
+	require.NotEqual(t, "0.0.0.0:0", parts[0]+":"+parts[1], "instance addr should not be 0.0.0.0:0")
+
+	// Track that checkpoint mechanism is exercised
+	checkpointExercised := atomic.Bool{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow", func() {
+		checkpointExercised.Store(true)
+	})
 
 	// Add index and verify checkpoint works
 	tk.MustExec("alter table t add index idx(b);")
+
+	// Key assertion: checkpoint mechanism should have been exercised
+	require.True(t, checkpointExercised.Load(), "checkpoint mechanism should have been exercised during add index")
+
 	tk.MustExec("admin check table t;")
 }
 
-// TestCheckpointPhysicalIDValidation tests that checkpoint correctly validates
-// physical table ID during recovery.
+// TestCheckpointPhysicalIDValidation tests that checkpoint saves physical_id
+// that matches actual partition IDs from information_schema.
 func TestCheckpointPhysicalIDValidation(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
@@ -730,26 +748,140 @@ func TestCheckpointPhysicalIDValidation(t *testing.T) {
 	tk.MustExec(`create table t (
 		a int primary key,
 		b int
-	) partition by range(a) (
-		partition p0 values less than (100),
-		partition p1 values less than (200)
-	);`)
-	for i := range 50 {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
-	}
-	for i := 100; i < 150; i++ {
+	) partition by hash(a) partitions 4;`)
+	for i := range 20 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
 	}
 
-	// Add index and verify it completes
+	// Get valid partition IDs from information_schema
+	partitionRows := tk.MustQuery("select TIDB_PARTITION_ID from information_schema.partitions where table_schema='test' and table_name='t';").Rows()
+	require.Len(t, partitionRows, 4)
+	validPartIDs := make(map[string]bool)
+	for _, row := range partitionRows {
+		pid, ok := row[0].(string)
+		require.True(t, ok)
+		validPartIDs[pid] = true
+	}
+
+	// Track physical_id from checkpoint during add index
+	var observedPhysicalID string
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
+		if observedPhysicalID != "" {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		rows := tk2.MustQuery("select reorg_meta from mysql.tidb_ddl_reorg where ele_type = '_idx_' limit 1;").Rows()
+		if len(rows) > 0 && rows[0][0] != nil {
+			reorgMetaStr, ok := rows[0][0].(string)
+			if !ok {
+				return
+			}
+			// Parse physical_id from JSON
+			idx := strings.Index(reorgMetaStr, `"physical_id":`)
+			if idx >= 0 {
+				start := idx + len(`"physical_id":`)
+				end := start
+				for end < len(reorgMetaStr) && reorgMetaStr[end] >= '0' && reorgMetaStr[end] <= '9' {
+					end++
+				}
+				if end > start {
+					observedPhysicalID = reorgMetaStr[start:end]
+				}
+			}
+		}
+	})
+
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
 
-	// Verify cross-path consistency
+	// Key assertion: observed physical_id must be a valid partition ID
+	require.NotEmpty(t, observedPhysicalID, "should have observed physical_id in checkpoint")
+	require.True(t, validPartIDs[observedPhysicalID], "physical_id %s should be a valid partition ID", observedPhysicalID)
+}
+
+// TestAddIndexWithEmptyPartitions tests that add index correctly iterates through
+// all partitions including empty ones, and checkpoint physical_id is always valid.
+// This covers #44265 where empty partitions could cause checkpoint issues.
+func TestAddIndexWithEmptyPartitions(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	// Create partitioned table with empty partitions (p1, p3 are empty)
+	tk.MustExec(`create table t (
+		a int primary key,
+		b int
+	) partition by range(a) (
+		partition p0 values less than (100),
+		partition p1 values less than (200),
+		partition p2 values less than (300),
+		partition p3 values less than (400)
+	);`)
+	// Only insert into p0 and p2, leaving p1 and p3 empty
+	for i := range 10 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+	for i := 200; i < 210; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Get all partition IDs including empty ones
+	partitionRows := tk.MustQuery("select PARTITION_NAME, TIDB_PARTITION_ID from information_schema.partitions where table_schema='test' and table_name='t' order by PARTITION_NAME;").Rows()
+	require.Len(t, partitionRows, 4)
+	allPartIDs := make(map[string]string) // partition_id -> partition_name
+	for _, row := range partitionRows {
+		partID, ok := row[1].(string)
+		require.True(t, ok)
+		partName, ok := row[0].(string)
+		require.True(t, ok)
+		allPartIDs[partID] = partName
+	}
+
+	// Track physical_id from tidb_ddl_reorg.physical_id column after each partition completes
+	var observedIDs []string
+	var mu sync.Mutex
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdatePartitionReorgInfo", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		// Query physical_id column directly from tidb_ddl_reorg - this is the NEXT partition to process
+		rows := tk2.MustQuery("select physical_id from mysql.tidb_ddl_reorg where job_id = ? limit 1;", job.ID).Rows()
+		if len(rows) > 0 && rows[0][0] != nil {
+			pid := fmt.Sprintf("%v", rows[0][0])
+			if pid != "0" && pid != "" {
+				mu.Lock()
+				observedIDs = append(observedIDs, pid)
+				mu.Unlock()
+			}
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+
+	// Verify data-index consistency
 	rs1 := tk.MustQuery("select count(*) from t use index(idx);").Rows()
 	rs2 := tk.MustQuery("select count(*) from t ignore index(idx);").Rows()
 	require.Equal(t, rs1[0][0], rs2[0][0])
-	require.Equal(t, "100", rs1[0][0])
+	require.Equal(t, "20", rs1[0][0])
+
+	// Key assertion: should observe partition switches for all 4 partitions
+	// afterUpdatePartitionReorgInfo triggers after each partition completes, recording the NEXT partition ID
+	mu.Lock()
+	defer mu.Unlock()
+	// Should observe at least 3 partition switches (p0->p1, p1->p2, p2->p3)
+	require.GreaterOrEqual(t, len(observedIDs), 3, "should observe at least 3 partition switches for 4 partitions")
+	// All observed IDs must be valid partition IDs (including empty partitions p1, p3)
+	for _, pid := range observedIDs {
+		_, exists := allPartIDs[pid]
+		require.True(t, exists, "physical_id %s should be a valid partition ID", pid)
+	}
 }
 
 func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
