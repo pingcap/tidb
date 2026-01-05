@@ -8,11 +8,12 @@ go_test(
         "serial_test.go",
     ],
     flaky = True,
-    shard_count = 19,
+    shard_count = 20,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+        "//pkg/ddl/testutil",
         "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/domain/infosync",
