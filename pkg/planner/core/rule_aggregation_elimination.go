@@ -142,7 +142,7 @@ func CheckCanConvertAggToProj(agg *logicalop.LogicalAggregation) bool {
 			mayNullCols := expression.ExtractColumnsFromExpressions(fun.Args, func(column *expression.Column) bool {
 				// collect may-null cols.
 				return mayNullSchema.Contains(column)
-			})
+			}, false)
 			if len(mayNullCols) != 0 {
 				return false
 			}

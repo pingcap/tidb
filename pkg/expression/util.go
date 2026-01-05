@@ -127,7 +127,7 @@ func extractDependentColumns(result []*Column, expr Expression) []*Column {
 func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 	tmp := make(map[int64]*Column, 8)
-	extractColumns(tmp, expr, nil)
+	extractColumns(tmp, expr, nil, false)
 	result := slices.Collect(maps.Values(tmp))
 	// The keys in a map are unordered, so to ensure stability, we need to sort them here.
 	slices.SortFunc(result, func(a, b *Column) int {
@@ -161,13 +161,19 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 //
 // Provide an additional filter argument, this can be done in one step.
 // To avoid allocation for cols that not need.
-func ExtractColumnsFromExpressions(exprs []Expression, filter func(*Column) bool) []*Column {
+//
+// Fulltext search functions are special ones. They can not be executed outside from index lib.
+// So sometimes we need to ignore the columns inside fulltext search functions.
+// e.g. We don't need to read the columns inside fulltext search functions. The functions will be handled
+// by index lib directly.
+// So we provide ignoreFTSFunc to support this.
+func ExtractColumnsFromExpressions(exprs []Expression, filter func(*Column) bool, ignoreFTSFunc bool) []*Column {
 	if len(exprs) == 0 {
 		return nil
 	}
 	m := make(map[int64]*Column, len(exprs))
 	for _, expr := range exprs {
-		extractColumns(m, expr, filter)
+		extractColumns(m, expr, filter, ignoreFTSFunc)
 	}
 	result := slices.Collect(maps.Values(m))
 	// The keys in a map are unordered, so to ensure stability, we need to sort them here.
@@ -184,7 +190,7 @@ func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expres
 	}
 	m := make(map[int64]*Column, len(exprs))
 	for _, expr := range exprs {
-		extractColumns(m, expr, filter)
+		extractColumns(m, expr, filter, false)
 	}
 	return m
 }
@@ -215,7 +221,7 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 		m = make(map[int64]*Column, len(exprs))
 	}
 	for _, expr := range exprs {
-		extractColumns(m, expr, filter)
+		extractColumns(m, expr, filter, false)
 	}
 }
 
@@ -260,15 +266,20 @@ func ExtractColumnsSetFromExpressions(m *intset.FastIntSet, filter func(*Column)
 	}
 }
 
-func extractColumns(result map[int64]*Column, expr Expression, filter func(*Column) bool) {
+func extractColumns(result map[int64]*Column, expr Expression, filter func(*Column) bool, ignoreFTSFunc bool) {
 	switch v := expr.(type) {
 	case *Column:
 		if filter == nil || filter(v) {
 			result[v.UniqueID] = v
 		}
 	case *ScalarFunction:
+		if ignoreFTSFunc {
+			if _, ok := FTSFuncMap[v.FuncName.L]; ok {
+				return
+			}
+		}
 		for _, arg := range v.GetArgs() {
-			extractColumns(result, arg, filter)
+			extractColumns(result, arg, filter, ignoreFTSFunc)
 		}
 	}
 }

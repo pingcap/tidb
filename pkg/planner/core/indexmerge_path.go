@@ -246,7 +246,7 @@ func accessPathsForConds(
 		if !isInIndexMergeHints(ds, newPath.Index.Name.L) {
 			return nil
 		}
-		err := fillIndexPath(ds, newPath, conditions)
+		err := fillIndexPath(ds, newPath, conditions, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 			return nil
@@ -960,7 +960,7 @@ func buildPartialPath4MVIndex(
 		partialPath.FullIdxCols = append(partialPath.FullIdxCols, idxCols[i])
 		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, length)
 	}
-	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl); err != nil {
+	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl, false); err != nil {
 		return nil, false, err
 	}
 	if len(partialPath.AccessConds) != len(accessFilters) || len(partialPath.TableFilters) > 0 {

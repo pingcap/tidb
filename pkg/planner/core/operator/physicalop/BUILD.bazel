@@ -109,6 +109,7 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/hint",
         "//pkg/util/intest",
+        "//pkg/util/intset",
         "//pkg/util/logutil",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
