@@ -247,6 +247,11 @@ SERVER_BUILD_CMD := \
 server: ## Build TiDB server binary
 	$(SERVER_BUILD_CMD)
 
+.PHONY: server-flightsql
+server-flightsql: ## Build TiDB server binary with Apache Arrow Flight SQL support
+	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags=$(BUILD_TAGS),flightsql $(RACE_FLAG) $(COVER_FLAG) \
+		-ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
+
 .PHONY: server_debug
 server_debug: ## Build TiDB server binary with debug symbols
 ifeq ($(TARGET), "")
