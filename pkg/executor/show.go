@@ -1223,7 +1223,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		if sp {
 			restoreCtx.WritePlain(", ")
 		} else {
-			restoreCtx.WriteString(",\n  ")
+			restoreCtx.WritePlain(",\n  ")
 		}
 		if idxInfo.Primary {
 			rc.WritePlain("PRIMARY KEY ")
