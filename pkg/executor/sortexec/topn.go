@@ -286,7 +286,7 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 			return err
 		}
 
-		// TODO(x) executeTopN
+		go e.executeRankTopN()
 	} else {
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
@@ -386,7 +386,9 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 			needMoreChunks = false
 		}
 
-		e.chkHeap.rowChunks.Add(srcChk)
+		if srcChk.NumRows() > 0 {
+			e.chkHeap.rowChunks.Add(srcChk)
+		}
 
 		// TODO(x) add random failpoint?
 	}
@@ -614,6 +616,30 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 	}
 
 	e.generateTopNResults()
+}
+
+func (e *TopNExec) executeRankTopN() {
+	defer func() {
+		if r := recover(); r != nil {
+			processPanicAndLog(e.resultChannel, r)
+		}
+
+		close(e.resultChannel)
+	}()
+
+	// As the input rows are prefix-ordered, it's
+	// unnecessary to receive more chunks and we
+	// have received all chunks now.
+	slices.SortFunc(e.chkHeap.rowPtrs, e.chkHeap.keyColumnsCompare)
+
+	if len(e.chkHeap.rowPtrs) < int(e.chkHeap.totalLimit) {
+		e.resultChannel <- rowWithError{err: errors.NewNoStackErrorf("Invalid rowPtrs count. len(e.chkHeap.rowPtrs): %d, e.chkHeap.totalLimit: %d", len(e.chkHeap.rowPtrs), e.chkHeap.totalLimit)}
+		return
+	}
+
+	for ; e.chkHeap.idx < int(e.chkHeap.totalLimit); e.chkHeap.idx++ {
+		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
+	}
 }
 
 // Return true when spill is triggered
