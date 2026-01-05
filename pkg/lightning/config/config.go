@@ -698,6 +698,8 @@ func (dra DuplicateResolutionAlgorithm) String() string {
 		return "ignore"
 	case ErrorOnDup:
 		return "error"
+	case CustomizeOnDup:
+		return "customize"
 	default:
 		panic(fmt.Sprintf("invalid conflict.strategy type '%d'", dra))
 	}
