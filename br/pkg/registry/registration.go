@@ -655,7 +655,11 @@ func (r *Registry) StopHeartbeatManager() {
 
 // resolveRestoreTS determines which restoredTS to use, handling conflicts with existing tasks
 // when restoredTS is not user-specified. Returns: (resolvedRestoreTS, error)
-func (r *Registry) resolveRestoreTS(ctx context.Context, info RegistrationInfo, isRestoredTSUserSpecified bool) (uint64, error) {
+func (r *Registry) resolveRestoreTS(
+	ctx context.Context,
+	info RegistrationInfo,
+	isRestoredTSUserSpecified bool,
+) (uint64, error) {
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
 
 	// look for tasks with same filter, startTS, cluster, sysTable, cmd
