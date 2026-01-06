@@ -191,8 +191,6 @@ go_test(
         "//pkg/store/mockstore/teststore",
         "//pkg/table/tblsession",
         "//pkg/telemetry",
-        "//pkg/testkit/testenv",
-        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/types",
