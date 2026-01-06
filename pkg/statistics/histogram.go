@@ -634,6 +634,8 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 			}
 			if skewRatio > 0 {
 				// Dilute the skewRatio to avoid overestimation.
+				// TODO: Evaluate usage feedback to determine if this needs to be adjusted,
+				// or if this variable needs to be detached from it's use in out-of-range estimation.
 				skewRatio = max(skewRatio*0.1, 0.05)
 			}
 			return CalculateSkewRatioCounts(rangeEst, float64(skewEstimate), skewRatio)
@@ -643,11 +645,11 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 }
 
 // CalculateSkewRatioCounts calculates the default, min, and max skew estimates given a skew ratio.
-func CalculateSkewRatioCounts(minEstimate, maxEstimate, skewRatio float64) RowEstimate {
-	skewDiff := maxEstimate - minEstimate
+func CalculateSkewRatioCounts(estimate, maxEstimate, skewRatio float64) RowEstimate {
+	skewDiff := maxEstimate - estimate
 	// Add a "ratio" of the skewEstimate to adjust the default row estimate.
 	skewAmt := skewDiff * skewRatio
-	return RowEstimate{minEstimate + skewAmt, minEstimate, maxEstimate}
+	return RowEstimate{estimate + skewAmt, estimate, maxEstimate}
 }
 
 // RowEstimate stores the min, default, and max row count estimates.
@@ -1117,6 +1119,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
+	// TODO: The calculation of "how many added rows are truly out of range" is a
+	// very difficult problem. Rows added to TopN, nullCount or within the histogram range
+	// can all reduce the addedRows estimate. This code does not consider these factors.
 	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, topNCount)
 	// If addedRows is too small, it may be caused by a delay in updates to modifyCount.
 	// Assume a minimum worst case of 1% of the total row count.
@@ -1135,7 +1140,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histNDV = max(histNDV, int64(outOfRangeBetweenRate))
 	oneValue := max(1.0, hg.NotNullCount()/float64(histNDV))
 
-	// Step 3: Exit if usage of modifications (and thus changes to realtimeRowCount) is disabled.
+	// Step 3: Exit if usage of modifications (changes to realtimeRowCount) is disabled.
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate

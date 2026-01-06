@@ -217,15 +217,15 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		// handling the out-of-range part
 		// Unless the row count already covers the realtime row count
 		if cnt.Est < float64(realtimeRowCount)*0.99 && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
-			histNDV := c.NDV
-			// Exclude the TopN
-			if c.StatsVer == statistics.Version2 {
-				histNDV -= int64(c.TopN.Num())
-			}
 			var count statistics.RowEstimate
+			histNDV := c.NDV
 			topNCount := uint64(0)
 			if c.TopN != nil {
 				topNCount = c.TopN.TotalCount()
+				if c.StatsVer == statistics.Version2 {
+					// Exclude the TopN
+					histNDV -= int64(c.TopN.Num())
+				}
 			}
 			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, histNDV, topNCount))
 			cnt.Add(count)
