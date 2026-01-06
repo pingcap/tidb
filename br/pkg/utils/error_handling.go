@@ -46,10 +46,10 @@ var retryableErrorMsg = []string{
 // non-retryable error messages
 // UNSAFE! TODO: remove and map them to error types
 const (
-	ioMsg                      = "io"
-	notFoundMsg                = "notfound"
-	permissionDeniedMsg        = "permissiondenied"
-	credentialNotFoundMsg      = "credential info not found" // Azure Blob
+	ioMsg                 = "io"
+	notFoundMsg           = "notfound"
+	permissionDeniedMsg   = "permissiondenied"
+	credentialNotFoundMsg = "credential info not found" // Azure Blob
 )
 
 // error messages
