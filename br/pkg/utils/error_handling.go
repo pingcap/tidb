@@ -46,10 +46,10 @@ var retryableErrorMsg = []string{
 // non-retryable error messages
 // UNSAFE! TODO: remove and map them to error types
 const (
-	ioMsg                 = "io"
-	notFoundMsg           = "notfound"
-	permissionDeniedMsg   = "permissiondenied"
-	credentialNotFoundMsg = "credential info not found"
+	ioMsg                      = "io"
+	notFoundMsg                = "notfound"
+	permissionDeniedMsg        = "permissiondenied"
+	credentialNotFoundMsg      = "credential info not found" // Azure Blob
 )
 
 // error messages
@@ -198,7 +198,8 @@ func messageIsPermissionDeniedStorageError(msg string) bool {
 	return strings.Contains(msgLower, permissionDeniedMsg)
 }
 
-// messageIsCredentialNotFoundError checks whether the message returning from TiKV is "credential info not found" error
+// messageIsCredentialNotFoundError checks whether the message returning from TiKV is credential not found error
+// Currently only supports Azure Blob Storage. AWS S3 credential errors are handled differently by TiKV's internal retry.
 func messageIsCredentialNotFoundError(msg string) bool {
 	msgLower := strings.ToLower(msg)
 	return strings.Contains(msgLower, credentialNotFoundMsg)
