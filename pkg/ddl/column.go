@@ -280,7 +280,7 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName ast.CIStr) error {
 	}
 
 	if (model.IsSoftDeleteColumn(colName) && tblInfo.SoftdeleteInfo != nil) ||
-		model.IsActiveActiveColumn(colName) ||
+		(model.IsActiveActiveColumn(colName) && tblInfo.IsActiveActive) ||
 		colName == model.ExtraHandleName {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("can not drop internal columns")
 	}
