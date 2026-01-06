@@ -137,6 +137,7 @@ type S3Uploader struct {
 	svc           S3API
 	createOutput  *s3.CreateMultipartUploadOutput
 	completeParts []types.CompletedPart
+	s3Compatible  bool
 }
 
 // UploadPart update partial data to s3, we should call CreateMultipartUpload to start it,
@@ -151,7 +152,11 @@ func (u *S3Uploader) Write(ctx context.Context, data []byte) (int, error) {
 		ContentLength: aws.Int64(int64(len(data))),
 	}
 
-	uploadResult, err := u.svc.UploadPart(ctx, partInput)
+	var optFns []func(*s3.Options)
+	if u.s3Compatible {
+		optFns = []func(*s3.Options){withContentMD5}
+	}
+	uploadResult, err := u.svc.UploadPart(ctx, partInput, optFns...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1328,6 +1333,7 @@ func (rs *S3Storage) createUploader(ctx context.Context, name string) (ExternalF
 		svc:           rs.svc,
 		createOutput:  resp,
 		completeParts: make([]types.CompletedPart, 0, 128),
+		s3Compatible:  rs.s3Compatible,
 	}, nil
 }
 
