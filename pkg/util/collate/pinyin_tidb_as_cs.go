@@ -38,13 +38,8 @@ func (*zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(_ string) []byte {
 	panic("implement me")
 }
 
-// MaxBytesOneCharacter implements Collator interface.
-func (*zhPinyinTiDBASCSCollator) MaxBytesOneCharacter() int {
-	panic("implement me")
-}
-
-// GetCharacterNum returns number of character for string type
-func (*zhPinyinTiDBASCSCollator) GetCharacterNum(string) int {
+// MaxKeyLen implements Collator interface.
+func (*zhPinyinTiDBASCSCollator) MaxKeyLen(s string) int {
 	panic("implement me")
 }
 

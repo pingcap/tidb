@@ -70,10 +70,8 @@ type Collator interface {
 	Pattern() WildcardPattern
 	// Clone returns a copy of the collator.
 	Clone() Collator
-	// MaxBytesOneCharacter returns the max byte number of a character will need
-	MaxBytesOneCharacter() int
-	// GetCharacterNum returns number of character for string type
-	GetCharacterNum(string) int
+	// MaxKeyLen returns the max length of the collate key for str
+	MaxKeyLen(string) int
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.

@@ -148,12 +148,7 @@ func (uc *unicode0900AICICollator) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
 }
 
-// MaxBytesOneCharacter implements Collator interface.
-func (uc *unicode0900AICICollator) MaxBytesOneCharacter() int {
-	return 16
-}
-
-// GetCharacterNum returns number of character for string type
-func (uc *unicode0900AICICollator) GetCharacterNum(s string) int {
-	return utf8.RuneCountInString(s)
+// MaxKeyLen implements Collator interface.
+func (uc *unicode0900AICICollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 16
 }

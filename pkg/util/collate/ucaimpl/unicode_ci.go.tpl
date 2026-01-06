@@ -148,12 +148,7 @@ func (uc *{{.Name}}) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
 }
 
-// MaxBytesOneCharacter implements Collator interface.
-func (uc *{{.Name}}) MaxBytesOneCharacter() int {
-	return 16
-}
-
-// GetCharacterNum returns number of character for string type
-func (uc *{{.Name}}) GetCharacterNum(s string) int {
-	return utf8.RuneCountInString(s)
+// MaxKeyLen implements Collator interface.
+func (uc *{{.Name}}) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 16
 }

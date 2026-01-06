@@ -19,6 +19,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/collate",
         "//pkg/util/hack",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/size",
         "@com_github_pingcap_errors//:errors",

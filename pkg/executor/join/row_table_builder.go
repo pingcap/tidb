@@ -16,7 +16,6 @@ package join
 
 import (
 	"errors"
-	"fmt"
 	"hash"
 	"hash/fnv"
 	"math"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
@@ -162,33 +160,21 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 
-	b.serializedKeyLens, b.serializedKeysBuffer, err = codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer, b.serializedKeyLens, b.serializedKeysBuffer)
+	// 1. split partition
+	b.serializedKeyLens, b.serializedKeysBuffer, err = codec.SerializeKeys(
+		typeCtx,
+		chk,
+		b.buildKeyTypes,
+		b.buildKeyIndex,
+		b.usedRows,
+		b.filterVector,
+		b.nullKeyVector,
+		hashJoinCtx.hashTableMeta.serializeModes,
+		b.serializedKeyVectorBuffer,
+		b.serializedKeyLens,
+		b.serializedKeysBuffer)
 	if err != nil {
 		return err
-	}
-
-	serializedKeyVectorBufferCapsForTest := make([]int, 0)
-	if intest.InTest {
-		serializedKeyVectorBufferCapsForTest = make([]int, len(b.serializedKeyVectorBuffer))
-		for i := range b.serializedKeyVectorBuffer {
-			serializedKeyVectorBufferCapsForTest[i] = cap(b.serializedKeyVectorBuffer[i])
-		}
-	}
-
-	// 1. split partition
-	for index, colIdx := range b.buildKeyIndex {
-		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
-		if err != nil {
-			return err
-		}
-	}
-
-	if intest.InTest {
-		for i := range b.serializedKeyVectorBuffer {
-			if serializedKeyVectorBufferCapsForTest[i] < cap(b.serializedKeyVectorBuffer[i]) {
-				panic(fmt.Sprintf("Before: %d, After: %d", serializedKeyVectorBufferCapsForTest[i], cap(b.serializedKeyVectorBuffer[i])))
-			}
-		}
 	}
 
 	for _, key := range b.serializedKeyVectorBuffer {

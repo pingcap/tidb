@@ -84,14 +84,9 @@ func (*gb18030ChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return buf
 }
 
-// MaxBytesOneCharacter implements Collator interface.
-func (*gb18030ChineseCICollator) MaxBytesOneCharacter() int {
-	return 4
-}
-
-// GetCharacterNum returns number of character for string type
-func (*gb18030ChineseCICollator) GetCharacterNum(s string) int {
-	return utf8.RuneCountInString(s)
+// MaxKeyLen implements Collator interface.
+func (*gb18030ChineseCICollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 4
 }
 
 // Pattern implements Collator interface.

@@ -107,14 +107,9 @@ func (g *gb18030BinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return buf
 }
 
-// MaxBytesOneCharacter implements Collator interface.
-func (*gb18030BinCollator) MaxBytesOneCharacter() int {
-	return 4
-}
-
-// GetCharacterNum returns number of character for string type
-func (*gb18030BinCollator) GetCharacterNum(s string) int {
-	return len(s)
+// MaxKeyLen implements Collator interface.
+func (*gb18030BinCollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 4
 }
 
 // Pattern implements Collator interface.

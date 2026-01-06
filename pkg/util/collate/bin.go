@@ -45,13 +45,8 @@ func (*binCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
 }
 
-// MaxBytesOneCharacter implements Collator interface.
-func (*binCollator) MaxBytesOneCharacter() int {
-	return 1
-}
-
-// GetCharacterNum returns number of character for string type
-func (*binCollator) GetCharacterNum(s string) int {
+// MaxKeyLen implements Collator interface.
+func (*binCollator) MaxKeyLen(s string) int {
 	return len(s)
 }
 
@@ -95,13 +90,8 @@ func (*binPaddingCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
 }
 
-// MaxBytesOneCharacter implements Collator interface.
-func (*binPaddingCollator) MaxBytesOneCharacter() int {
-	return 4
-}
-
-// GetCharacterNum returns number of character for string type
-func (*binPaddingCollator) GetCharacterNum(s string) int {
+// MaxKeyLen implements Collator interface.
+func (*binPaddingCollator) MaxKeyLen(s string) int {
 	return len(s)
 }
 

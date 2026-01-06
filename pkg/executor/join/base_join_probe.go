@@ -251,17 +251,21 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 
-	j.serializedKeysLens, j.serializedKeysBuffer, err = codec.PreAllocForSerializedKeyBuffer(j.keyIndex, chk, j.keyTypes, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes, j.serializedKeys, j.serializedKeysLens, j.serializedKeysBuffer)
+	// generate serialized key
+	j.serializedKeysLens, j.serializedKeysBuffer, err = codec.SerializeKeys(
+		j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(),
+		j.currentChunk,
+		j.keyTypes,
+		j.keyIndex,
+		j.usedRows,
+		j.filterVector,
+		j.nullKeyVector,
+		j.ctx.hashTableMeta.serializeModes,
+		j.serializedKeys,
+		j.serializedKeysLens,
+		j.serializedKeysBuffer)
 	if err != nil {
 		return err
-	}
-
-	// generate serialized key
-	for i, index := range j.keyIndex {
-		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.keyTypes[i], index, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[i], j.serializedKeys)
-		if err != nil {
-			return err
-		}
 	}
 
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
