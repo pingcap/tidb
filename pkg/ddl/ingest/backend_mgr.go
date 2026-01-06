@@ -124,6 +124,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	intest.Assert(
 		job.Type == model.ActionAddPrimaryKey ||
 			job.Type == model.ActionAddIndex ||
+			job.Type == model.ActionAddHybridIndex ||
 			job.Type == model.ActionModifyColumn,
 	)
 	intest.Assert(job.ReorgMeta != nil)
@@ -206,6 +207,7 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 	}
 	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
 		job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionAddHybridIndex ||
 		job.Type == model.ActionModifyColumn)
 	intest.Assert(job.ReorgMeta != nil)
 

@@ -2073,10 +2073,10 @@ func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
-	tk.MustExec("set @@session.tidb_enable_dist_task = 1")
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t(col1 int, col2 text, col3 int, col4 int)")
