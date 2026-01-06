@@ -3553,17 +3553,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ctx, ses[0])
 
-<<<<<<< HEAD
-	// We should make the load bind-info loop before other loops which has internal SQL.
-	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
-	// LoadBindInfoLoop inits global bind-info handler.
-	err = dom.LoadBindInfoLoop(ses[1], ses[2])
-	if err != nil {
-		return nil, err
-	}
-
-=======
->>>>>>> 60bf54f3113 (planner: fix the issue that the optimizer can't use the latest system value to initialize binding cache (#65392))
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
@@ -3580,7 +3569,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Binding Handle must be initialized after LoadSysVarCacheLoop since
 	// it'll use `tidb_mem_quota_binding_cache` to set the cache size.
-	err = dom.InitBindingHandle()
+	err = dom.LoadBindInfoLoop(ses[1], ses[2])
 	if err != nil {
 		return nil, err
 	}
