@@ -6522,6 +6522,14 @@ func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err e
 		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache")
 	}
 
+	// Cached table uses transaction Scan API to get data, which does not support returnning _tidb_commit_ts.
+	// So if we allow query _tidb_commit_ts on cached table, it would always return NULL. That would look like a buggy
+	// behavior, so just disallow this combination to avoid it from happenning.
+	// Anyway, both feature's scenario are corner case and their combination are even rare.
+	if t.Meta().IsActiveActive {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Cached table can not work with active-active feature")
+	}
+
 	if t.Meta().Partition != nil {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("partition mode")
 	}
