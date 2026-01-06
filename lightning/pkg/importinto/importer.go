@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -184,7 +184,7 @@ func (i *Importer) runOnce(ctx context.Context) error {
 
 	if i.cfg.Checkpoint.Enable && i.cfg.Checkpoint.KeepAfterSuccess == config.CheckpointRemove {
 		i.logger.Info("removing all checkpoints")
-		if err := i.cpMgr.Remove(ctx, "all"); err != nil {
+		if err := i.cpMgr.Remove(ctx, common.AllTables); err != nil {
 			i.logger.Warn("failed to remove checkpoints", zap.Error(err))
 		}
 	}
@@ -248,24 +248,19 @@ func (i *Importer) initGroupKey(ctx context.Context) error {
 
 // Close closes the importer and releases resources.
 func (i *Importer) Close() {
-	logger := i.logger
-	if logger.Logger == nil {
-		logger = log.L()
-	}
-
 	if i.cpMgr != nil {
 		if err := i.cpMgr.Close(); err != nil {
-			logger.Warn("failed to close checkpoint manager", zap.Error(err))
+			i.logger.Warn("failed to close checkpoint manager", zap.Error(err))
 		}
 	}
 	if i.sdk != nil {
 		if err := i.sdk.Close(); err != nil {
-			logger.Warn("failed to close sdk", zap.Error(err))
+			i.logger.Warn("failed to close sdk", zap.Error(err))
 		}
 	}
 	if i.db != nil {
 		if err := i.db.Close(); err != nil {
-			logger.Warn("failed to close database connection", zap.Error(err))
+			i.logger.Warn("failed to close database connection", zap.Error(err))
 		}
 	}
 }

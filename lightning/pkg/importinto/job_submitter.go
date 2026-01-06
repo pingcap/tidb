@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -108,7 +108,7 @@ func (s *DefaultJobSubmitter) buildImportOptions(tableMeta *importsdk.TableMeta)
 		}
 	}
 
-	if cfg.TikvImporter.DiskQuota > 0 && cfg.TikvImporter.DiskQuota != config.ByteSize(1<<63-1) {
+	if cfg.TikvImporter.DiskQuota > 0 && cfg.TikvImporter.DiskQuota != config.UnlimitedQuota {
 		opts.DiskQuota = units.BytesSize(float64(cfg.TikvImporter.DiskQuota))
 	}
 

@@ -95,7 +95,7 @@ test_cancel() {
     LPID=$!
     
     sleep 2
-    pkill -INT -f tidb-lightning.test || kill -INT $LPID
+    pkill -INT -f tidb-lightning.test || kill -INT "$LPID"
     wait $LPID || true
     
     run_sql "SHOW IMPORT JOBS"

@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -176,6 +176,8 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 	eg, egCtx := errgroup.WithContext(ctx)
 	sem := make(chan struct{}, o.submitConcurrency)
 
+	// Note: In Go 1.22+, the loop variable 'table' is scoped to each iteration,
+	// so it is safe to capture directly in the goroutine below.
 	for _, table := range tables {
 		if len(table.DataFiles) == 0 || table.TotalSize == 0 {
 			o.logger.Info("skipping table with no data", zap.String("database", table.Database), zap.String("table", table.Table))

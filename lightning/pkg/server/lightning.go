@@ -1185,7 +1185,15 @@ func parsePrivateKey(keyPath string) (*ecdsa.PrivateKey, error) {
 	return x509.ParseECPrivateKey(keyDERBlock.Bytes)
 }
 
-// LightningImporter is the interface for different import backends.
+// LightningImporter is an interface that abstracts the execution lifecycle of different import backends.
+// It allows TiDB Lightning to support multiple import engines (such as the standard Local/Importer
+// backend and the specialized IMPORT INTO procedure) through a unified API.
+//
+// This interface should be implemented when adding a new import strategy or engine that requires
+// integration with the Lightning task server. Unlike the legacy Controller pattern, which is often
+// specifically tied to mydump-based data sourcing and global resource management, LightningImporter
+// provides a polymorphic abstraction focused on the execution phase (Run, Pause, Resume, Close),
+// enabling the higher-level server to manage various import procedures consistently.
 type LightningImporter interface {
 	// Run starts the import process.
 	Run(ctx context.Context) error
@@ -1202,7 +1210,9 @@ func newImporter(ctx context.Context, cfg *config.Config, param *importer.Contro
 	switch cfg.TikvImporter.Backend {
 	case config.BackendImportInto:
 		return importinto.NewImporter(ctx, cfg, param.DB)
-	default:
+	case config.BackendLocal, config.BackendTiDB:
 		return importer.NewImportController(ctx, cfg, param)
+	default:
+		return nil, errors.Errorf("unknown backend %s", cfg.TikvImporter.Backend)
 	}
 }
