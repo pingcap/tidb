@@ -39,7 +39,7 @@ func TestTiCISearchExplain(t *testing.T) {
 	}()
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
-
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 
 	tiflash := infosync.NewMockTiFlash()
