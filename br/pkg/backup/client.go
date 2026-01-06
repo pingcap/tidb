@@ -52,6 +52,9 @@ const (
 	IncompleteRangesUpdateInterval = time.Second * 15
 
 	RangesSentThreshold = 30000000
+
+	// RoundSleepInterval is the sleep time between backup rounds to prevent excessive retries.
+	RoundSleepInterval = 200 * time.Millisecond
 )
 
 // ClientMgr manages connections needed by backup.
@@ -104,26 +107,36 @@ func (s *MainBackupSender) SendAsync(
 	cli backuppb.BackupClient,
 	respCh chan *ResponseAndStore,
 	StateNotifier chan BackupRetryPolicy,
+	onComplete func(storeID uint64),
 ) {
 	go func() {
+		startTime := time.Now()
 		defer func() {
-			logutil.CL(ctx).Info("store backup goroutine exits", zap.Uint64("store", storeID))
+			endTime := time.Now()
+			logutil.CL(ctx).Info("Store backup completed",
+				zap.Uint64("storeID", storeID),
+				zap.Uint64("round", round),
+				zap.Duration("backup-duration", endTime.Sub(startTime)))
+			if onComplete != nil {
+				onComplete(storeID)
+			}
 			close(respCh)
 		}()
 		err := startBackup(ctx, storeID, limiter, request, cli, concurrency, respCh)
 		if err != nil {
-			// only 2 kinds of errors will occur here.
-			// 1. grpc connection error(already retry inside)
-			// 2. context cancelled outside.
+			// Two types of errors possible:
+			// 1. gRPC connection errors (already retried internally by startBackup)
+			// 2. Context cancellation from outside
 			if errors.Cause(err) == context.Canceled {
-				logutil.CL(ctx).Info("store backup cancelled",
-					zap.Uint64("round", round),
-					zap.Uint64("storeID", storeID))
+				logutil.CL(ctx).Info("Store backup cancelled by context",
+					zap.Uint64("storeID", storeID),
+					zap.Uint64("round", round))
 			} else {
-				// otherwise retry backup this store
-				logutil.CL(ctx).Error("store backup failed",
+				// gRPC connection error or other failure - trigger retry
+				logutil.CL(ctx).Error("Store backup failed - will retry",
+					zap.Uint64("storeID", storeID),
 					zap.Uint64("round", round),
-					zap.Uint64("storeID", storeID), zap.Error(err))
+					zap.Error(err))
 				select {
 				case <-ctx.Done():
 				case StateNotifier <- BackupRetryPolicy{One: storeID}:
@@ -170,11 +183,115 @@ func (l *MainBackupLoop) CollectStoreBackupsAsync(
 	}()
 }
 
+
+
+// cleanupRound handles the common cleanup logic when restarting a backup round
+func (bc *Client) cleanupRound(handleCancel, mainCancel context.CancelFunc, resetConnections *bool) {
+	handleCancel()
+	mainCancel()
+	*resetConnections = true
+}
+
+// updateIncompleteRanges updates the incomplete ranges and adjusts ticker interval
+func (bc *Client) updateIncompleteRanges(loop *MainBackupLoop, ticker *time.Ticker) error {
+	startUpdate := time.Now()
+	subRanges, err := loop.GlobalProgressTree.GetIncompleteRanges()
+	if err != nil {
+		return err
+	}
+	loop.BackupReq.SubRanges = subRanges
+	elapsed := time.Since(startUpdate)
+	log.Info("Updated incomplete ranges from progress tree",
+		zap.Duration("update-duration", elapsed),
+		zap.Duration("next-check-interval", max(5*elapsed, IncompleteRangesUpdateInterval)))
+	ticker.Reset(max(5*elapsed, IncompleteRangesUpdateInterval))
+	return nil
+}
+
+// retryStoreBackup handles retrying backup for a single store that has changed state
+func (bc *Client) retryStoreBackup(mainCtx context.Context, round uint64, storeID uint64, loop *MainBackupLoop,
+	handleCancel context.CancelFunc, storeBackupResultChMap map[uint64]chan *ResponseAndStore,
+	globalBackupResultCh chan *ResponseAndStore, onComplete func(storeID uint64)) (context.Context, context.CancelFunc, error) {
+
+	store, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
+	if err != nil {
+		// store may have been scaled in/out, try next round
+		logutil.CL(mainCtx).Info("Store no longer available from PD - may have been scaled down",
+			zap.Uint64("round", round),
+			zap.Uint64("storeID", storeID),
+			zap.Error(err))
+		return nil, nil, err
+	}
+
+	if err = utils.CheckStoreLiveness(store); err != nil {
+		// store temporarily unavailable, skip for this round
+		logutil.CL(mainCtx).Warn("Store unavailable during retry - will try next round",
+			zap.Uint64("round", round),
+			zap.Uint64("storeID", store.GetId()),
+			zap.Error(err))
+		return nil, nil, err
+	}
+
+	// reset backup client. store address could change but store id remained.
+	cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, true) // resetConnections = true for retry
+	if err != nil {
+		logutil.CL(mainCtx).Error("Failed to reset backup client for store - will retry",
+			zap.Uint64("round", round),
+			zap.Uint64("storeID", storeID),
+			zap.Error(err))
+		return nil, nil, err
+	}
+
+	// cancel the former collect goroutine
+	handleCancel()
+	ch := make(chan *ResponseAndStore)
+	storeBackupResultChMap[storeID] = ch
+	storeBackupStartTimes[storeID] = time.Now()
+
+	// start backup for this store
+	loop.SendAsync(mainCtx, round, storeID, loop.Limiter, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier, onComplete)
+
+	// re-create context for new handler loop
+	handleCtx, handleCancel := context.WithCancel(mainCtx)
+
+	// handleCancel makes the former collect goroutine exits
+	// so we need to re-create a new channel and restart a new collect goroutine.
+	globalBackupResultCh = make(chan *ResponseAndStore)
+	// collect all store backup producer channel result to one channel
+	loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+
+	return handleCtx, handleCancel, nil
+}
+
+// resolveTransactionLocks resolves transaction locks before finishing the backup round
+func (bc *Client) resolveTransactionLocks(handleCtx context.Context, round uint64, allTxnLocks []*txnlock.Lock, loop *MainBackupLoop) {
+	if len(allTxnLocks) == 0 {
+		return
+	}
+
+	bo := utils.AdaptTiKVBackoffer(handleCtx, MaxResolveLocksbackupOffSleepMs, berrors.ErrUnknown)
+	_, ignoreLocks, accessLocks, err := bc.mgr.GetLockResolver().ResolveLocksForRead(bo.Inner(), loop.BackupReq.EndVersion, allTxnLocks, true)
+	if err != nil {
+		logutil.CL(handleCtx).Warn("Failed to resolve transaction locks - will retry in next round",
+			zap.Uint64("round", round),
+			zap.Int("locks-to-resolve", len(allTxnLocks)),
+			zap.Error(err))
+	} else {
+		// context is nil when doing raw/txn backup
+		if loop.BackupReq.Context != nil {
+			// send resolved locks to next round backup request
+			// so that backup scanner can skip these ignore locks next time.
+			loop.BackupReq.Context.ResolvedLocks = append(loop.BackupReq.Context.ResolvedLocks, ignoreLocks...)
+			loop.BackupReq.Context.CommittedLocks = append(loop.BackupReq.Context.CommittedLocks, accessLocks...)
+		}
+	}
+}
+
 // infinite loop to backup ranges on all tikv stores
 // if one client grpc disconnected. resend backup request to this store.
 // if new tikv store joined. send backup request to new store.
 // if one tikv store rebooted. consider leader changes, resend backup request to all stores.
-// if one tikv store disconnected. consider leader changes, resend backup request to all stores.a
+// if one tikv store disconnected. consider leader changes, resend backup request to all stores.
 func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	// a flag to indicate the backup round
 	// one backup round try to backup all ranges on all tikv stores.
@@ -182,23 +299,34 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	// unless the cluster state changed or some kv errors occurred.
 	round := uint64(0)
 	// reset grpc connection every round except key_locked error.
-	reset := true
+	resetConnections := true
 	// update incompleteRanges to advance the progress and the request.
 	incompleteRangesUpdateTicker := time.NewTicker(IncompleteRangesUpdateInterval)
 	defer incompleteRangesUpdateTicker.Stop()
+
+	storeBackupCompletionTimes := make(map[uint64]time.Time)
+	onStoreBackupComplete := func(storeID uint6) {
+		storeBackupCompletionTimes[storeID] = time.Now()
+	}
 mainLoop:
 	for {
 		round += 1
-		// sleep 200ms. in case of tikv cluster abnormal state trigger too many backup rounds.
-		time.Sleep(200 * time.Millisecond)
-		logutil.CL(ctx).Info("This round of backup starts...", zap.Uint64("round", round))
-		// initialize the error context every round
+		// sleep to prevent triggering too many backup rounds during TiKV cluster abnormal states.
+		time.Sleep(RoundSleepInterval)
+		logutil.CL(ctx).Info("Starting backup round",
+			zap.Uint64("round", round),
+			zap.Bool("reset-connections", resetConnections))
+
+		// initialize round-specific variables
+		// create error context to track and limit errors during this backup round
 		errContext := utils.NewErrorContext("MainBackupLoop", 10)
 
 		// a channel to collect all store backup results
 		globalBackupResultCh := make(chan *ResponseAndStore)
 		// channel slices to receive backup region result from different tikv stores
 		storeBackupResultChMap := make(map[uint64]chan *ResponseAndStore)
+		// track when each store backup started for timeout detection
+		storeBackupCompletionTimes = make(map[uint64]time.Time)
 
 		// mainCtx used to control mainLoop
 		// every round need a new context to control the main backup process
@@ -207,166 +335,145 @@ mainLoop:
 		// handleCtx used to control handleLoop
 		// every round has another infinite loop to handle all tikv backup responses
 		// until backup finished, store state changed or error occurred.
-		handleCtx, handleCancel := context.WithCancel(ctx)
+		handleCtx, handleCancel := context.WithCancel(mainCtx)
 
-		// Compute the left ranges that not backuped yet
+		// Compute the left ranges that are not backed up yet
 		start := time.Now()
 
+		// collect transaction locks encountered during this round for resolution
 		var allTxnLocks []*txnlock.Lock
 		select {
 		case <-ctx.Done():
-			// ctx cancal outside
-			handleCancel()
+			// ctx cancel outside
 			mainCancel()
 			return ctx.Err()
 		default:
 			var getIncompleteErr error
 			loop.BackupReq.SubRanges, getIncompleteErr = loop.GlobalProgressTree.GetIncompleteRanges()
 			if getIncompleteErr != nil {
-				handleCancel()
 				mainCancel()
 				return getIncompleteErr
 			}
 			if len(loop.BackupReq.SubRanges) == 0 {
 				// all range backuped
-				logutil.CL(ctx).Info("This round finished all backup ranges", zap.Uint64("round", round))
-				handleCancel()
+				logutil.CL(ctx).Info("Backup round completed successfully - all ranges backed up",
+					zap.Uint64("round", round),
+					zap.Int("txn-locks-resolved", len(allTxnLocks)))
 				mainCancel()
 				return nil
 			}
 		}
 
-		logutil.CL(mainCtx).Info("backup ranges", zap.Uint64("round", round),
-			zap.Int("incomplete-ranges", len(loop.BackupReq.SubRanges)), zap.Duration("cost", time.Since(start)))
+		logutil.CL(mainCtx).Info("Calculated backup ranges for this round",
+			zap.Uint64("round", round),
+			zap.Int("incomplete-ranges", len(loop.BackupReq.SubRanges)),
+			zap.Duration("range-calculation-time", time.Since(start)))
 
 		allStores, err := bc.getBackupStores(mainCtx, loop.ReplicaReadLabel)
 		if err != nil {
-			// because we have connectted to pd before.
-			// so this error must be retryable, just make infinite retry here
-			logutil.CL(mainCtx).Error("failed to get backup stores", zap.Uint64("round", round), zap.Error(err))
-			mainCancel()
-			reset = true
+			// PD connection should already be established, so this error is likely temporary and retryable
+			logutil.CL(mainCtx).Error("Failed to retrieve backup stores from PD - will retry in next round",
+				zap.Uint64("round", round),
+				zap.Error(err),
+				zap.Bool("will-reset-connections", true))
+			bc.cleanupRound(handleCancel, mainCancel, &resetConnections)
 			continue mainLoop
 		}
 		for _, store := range allStores {
 			if err = utils.CheckStoreLiveness(store); err != nil {
 				// skip this store in this round.
-				logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
+				logutil.CL(mainCtx).Warn("Store temporarily unavailable - skipping for this round",
+					zap.Uint64("round", round),
+					zap.Uint64("storeID", store.GetId()),
+					zap.Error(err))
 				continue
 			}
 			storeID := store.GetId()
-			// reset backup client every round, to get a clean grpc connection.
-			cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, reset)
+			// reset backup client for clean gRPC connection unless key_locked error occurred
+			cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, resetConnections)
 			if err != nil {
-				// because the we get store info from pd.
-				// there is no customer setting here, so make infinite retry.
-				logutil.CL(ctx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
-				mainCancel()
-				reset = true
+				// store info comes from PD, no custom configuration, so retry indefinitely
+				logutil.CL(ctx).Error("Failed to reset backup client connection - will retry in next round",
+					zap.Uint64("round", round),
+					zap.Uint64("storeID", storeID),
+					zap.Error(err),
+					zap.Bool("will-reset-connections", true))
+				bc.cleanupRound(handleCancel, mainCancel, &resetConnections)
 				continue mainLoop
 			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
-			loop.SendAsync(mainCtx, round, storeID, loop.Limiter, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
+			loop.SendAsync(mainCtx, round, storeID, loop.Limiter, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier, onStoreBackupComplete)
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+		// reset ticker for periodic incomplete ranges update
 		incompleteRangesUpdateTicker.Reset(IncompleteRangesUpdateInterval)
+		// ticker to check for store backup timeouts (every 30 seconds)
+		storeTimeoutCheckTicker := time.NewTicker(30 * time.Second)
+		defer storeTimeoutCheckTicker.Stop()
 	handleLoop:
 		for {
 			select {
 			case <-ctx.Done():
-				handleCancel()
 				mainCancel()
 				return ctx.Err()
 			case <-incompleteRangesUpdateTicker.C:
-				startUpdate := time.Now()
-				loop.BackupReq.SubRanges, err = loop.GlobalProgressTree.GetIncompleteRanges()
-				if err != nil {
-					handleCancel()
+				if err := bc.updateIncompleteRanges(loop, incompleteRangesUpdateTicker); err != nil {
 					mainCancel()
 					return err
 				}
-				elapsed := time.Since(startUpdate)
-				log.Info("update the incomplete ranges", zap.Duration("take", elapsed))
-				incompleteRangesUpdateTicker.Reset(max(5*elapsed, IncompleteRangesUpdateInterval))
+			case <-storeTimeoutCheckTicker.C:
+				// check for stores that have been idle for more than 1 minute
+				now := time.Now()
+				for storeID, endTime := range storeBackupCompletionTimes {
+					if now.Sub(endTime) > time.Minute {
+						logutil.CL(mainCtx).Warn("Store backup timeout detected - restarting backup for store",
+							zap.Uint64("storeID", storeID),
+							zap.Uint64("round", round),
+							zap.Duration("idle-time", now.Sub(endTime)))  
+
+						newHandleCtx, newHandleCancel, err := bc.retryStoreBackup(mainCtx, round, storeID, loop, handleCancel, storeBackupResultChMap, globalBackupResultCh, onStoreBackupComplete)
+						if err != nil {
+							logutil.CL(mainCtx).Warn("Failed to restart timed-out store backup",
+								zap.Uint64("storeID", storeID),
+								zap.Uint64("round", round),
+								zap.Error(err))
+							continue
+						}
+
+						handleCtx = newHandleCtx
+						handleCancel = newHandleCancel
+					}
+				}
 			case storeBackupInfo := <-loop.StateNotifier:
 				if storeBackupInfo.All {
-					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
-					// stop current connections
-					handleCancel()
-					mainCancel()
-					// start next round backups
-					reset = true
+					logutil.CL(mainCtx).Info("Cluster topology changed - restarting backup round to adapt to new store configuration",
+						zap.Uint64("round", round))
+					bc.cleanupRound(handleCancel, mainCancel, &resetConnections)
 					continue mainLoop
 				}
 				if storeBackupInfo.One != 0 {
 					storeID := storeBackupInfo.One
-					logutil.CL(mainCtx).Info("receive notifaction and retry backup on this store",
-						zap.Uint64("storeID", storeID), zap.Uint64("round", round))
-					store, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
+					logutil.CL(mainCtx).Info("Received store state change notification - retrying backup for store",
+						zap.Uint64("storeID", storeID),
+						zap.Uint64("round", round))
+
+					newHandleCtx, newHandleCancel, err := bc.retryStoreBackup(mainCtx, round, storeID, loop, handleCancel, storeBackupResultChMap, globalBackupResultCh, onStoreBackupComplete)
 					if err != nil {
-						// cannot get store, maybe store has scaled-in.
-						logutil.CL(mainCtx).Info("cannot get store from pd", zap.Uint64("round", round), zap.Error(err))
-						// try next round
-						handleCancel()
-						mainCancel()
-						reset = true
-						continue mainLoop
-					}
-					if err = utils.CheckStoreLiveness(store); err != nil {
-						// skip this store in this round.
-						logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
-						reset = true
-						continue mainLoop
-					}
-					// reset backup client. store address could change but store id remained.
-					cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, reset)
-					if err != nil {
-						logutil.CL(mainCtx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
-						handleCancel()
-						mainCancel()
-						// receive new store info but failed to get backup client.
-						// start next round backups to get all tikv stores and reset all client connections.
-						reset = true
+						// retry failed, try next round
+						bc.cleanupRound(handleCancel, mainCancel, &resetConnections)
 						continue mainLoop
 					}
 
-					// cancel the former collect goroutine
-					handleCancel()
-					ch := make(chan *ResponseAndStore)
-
-					storeBackupResultChMap[storeID] = ch
-					// start backup for this store
-					loop.SendAsync(mainCtx, round, storeID, loop.Limiter, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
-					// re-create context for new handler loop
-					handleCtx, handleCancel = context.WithCancel(mainCtx)
-					// handleCancel makes the former collect goroutine exits
-					// so we need to re-create a new channel and restart a new collect goroutine.
-					globalBackupResultCh = make(chan *ResponseAndStore)
-					// collect all store backup producer channel result to one channel
-					loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+					handleCtx = newHandleCtx
+					handleCancel = newHandleCancel
 				}
 			case respAndStore, ok := <-globalBackupResultCh:
 				if !ok {
-					// resolve all txn lock before next round starts
-					if len(allTxnLocks) > 0 {
-						bo := utils.AdaptTiKVBackoffer(handleCtx, MaxResolveLocksbackupOffSleepMs, berrors.ErrUnknown)
-						_, ignoreLocks, accessLocks, err := bc.mgr.GetLockResolver().ResolveLocksForRead(bo.Inner(), loop.BackupReq.EndVersion, allTxnLocks, true)
-						if err != nil {
-							logutil.CL(handleCtx).Warn("failed to resolve locks, ignore and wait for next round to resolve",
-								zap.Uint64("round", round), zap.Error(err))
-						} else {
-							// context is nil when doing raw/txn backup
-							if loop.BackupReq.Context != nil {
-								// send resolved locks to next round backup request
-								// so that backup scanner can skip these ignore locks next time.
-								loop.BackupReq.Context.ResolvedLocks = append(loop.BackupReq.Context.ResolvedLocks, ignoreLocks...)
-								loop.BackupReq.Context.CommittedLocks = append(loop.BackupReq.Context.CommittedLocks, accessLocks...)
-							}
-						}
-						reset = false
-					}
+					// resolve all txn locks before next round starts
+					bc.resolveTransactionLocks(handleCtx, round, allTxnLocks, loop)
+					resetConnections = false
 					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
 				}
@@ -377,7 +484,6 @@ mainLoop:
 					// 1. permission denied on tikv store.
 					// 2. parse backup response error.(shouldn't happen in any case)
 					// 3. checkpoint update failed. TODO: should we retry here?
-					handleCancel()
 					mainCancel()
 					return err
 				}
