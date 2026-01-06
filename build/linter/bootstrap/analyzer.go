@@ -34,7 +34,7 @@ var Analyzer = &analysis.Analyzer{
 
 const (
 	bootstrapCodeFile = "/bootstrap.go"
-	upgradeCodeFile   = "/upgrade.go"
+	upgradeCodeFile   = "/upgrade_def.go"
 )
 
 func run(pass *analysis.Pass) (any, error) {
@@ -79,7 +79,11 @@ func checkBootstrapDotGo(pass *analysis.Pass, file *ast.File) {
 							pass.Reportf(elt.Pos(), "the name of the table in tablesInSystemDatabase must be a string literal, but got %q", quotedName)
 							continue
 						}
-						sqlIdentName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.Ident).Name
+						sqlPkgName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).X.(*ast.Ident).Name
+						if sqlPkgName != "metadef" {
+							pass.Reportf(elt.Pos(), "Create table SQL must be defined in metadef pkg, but got %q", sqlPkgName)
+						}
+						sqlIdentName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).Sel.Name
 						if !strings.HasSuffix(idIdentName, "TableID") {
 							pass.Reportf(elt.Pos(), "the name of the constant of table ID in tablesInSystemDatabase must end with TableID, but got %q", idIdentName)
 						}
