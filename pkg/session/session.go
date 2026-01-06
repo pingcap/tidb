@@ -2620,7 +2620,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		digestKey := normalizedSQL
 		// digestKey := sessVars.StmtCtx.OriginalSQL
 
-		sessVars.StmtCtx.MemTracker.InitMemArbitrator(
+		tracker := sessVars.StmtCtx.MemTracker
+		if !tracker.InitMemArbitrator(
 			globalMemArbitrator,
 			sessVars.MemQuotaQuery,
 			sessVars.MemTracker.Killer,
@@ -2628,7 +2629,17 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			memPriority,
 			enableWaitAverse,
 			reserveSize,
-		)
+			s.isInternal(),
+		) {
+			return nil, errors.New("failed to init mem-arbitrator")
+		}
+
+		defer func() { // detach mem-arbitrator and rethrow panic if any
+			if r := recover(); r != nil {
+				tracker.DetachMemArbitrator()
+				panic(r)
+			}
+		}()
 	}
 
 	var recordSet sqlexec.RecordSet
