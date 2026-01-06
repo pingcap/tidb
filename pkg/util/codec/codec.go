@@ -426,189 +426,10 @@ const (
 	KeepVarColumnLength
 )
 
-// PreAllocForSerializedKeyBuffer estimates key length
-func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte, serializedKeyLens []int, serializedKeysBuffer []byte) ([]int, []byte, error) {
-	rowNum := len(usedRows)
-	if cap(serializedKeyLens) < rowNum {
-		serializedKeyLens = make([]int, rowNum)
-	} else {
-		clear(serializedKeyLens)
-		serializedKeyLens = serializedKeyLens[:rowNum]
-	}
-
-	for i, idx := range buildKeyIndex {
-		column := chk.Column(idx)
-		canSkip := func(index int) bool {
-			if column.IsNull(index) {
-				nullVector[index] = true
-			}
-			return (filterVector != nil && !filterVector[index]) || (nullVector != nil && nullVector[index])
-		}
-
-		switch tps[i].GetType() {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			flagByteNum := int(0)
-			if serializeModes[i] == NeedSignFlag {
-				flagByteNum = int(size.SizeOfByte)
-			}
-
-			for j := range serializedKeyLens {
-				serializedKeyLens[j] += flagByteNum + 8
-			}
-		case mysql.TypeFloat, mysql.TypeDouble:
-			for j := range serializedKeyLens {
-				serializedKeyLens[j] += int(sizeFloat64)
-			}
-		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			collator := collate.GetCollator(tps[i].GetCollate())
-
-			sizeByteNum := int(0)
-			if serializeModes[i] == KeepVarColumnLength {
-				sizeByteNum = int(sizeUint32)
-			}
-
-			for j, physicalRowIndex := range usedRows {
-				if canSkip(physicalRowIndex) {
-					continue
-				}
-				strLen := collator.MaxKeyLen(string(hack.String(column.GetBytes(physicalRowIndex))))
-				serializedKeyLens[j] += sizeByteNum + strLen
-			}
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			for j := range serializedKeyLens {
-				serializedKeyLens[j] += int(sizeUint64)
-			}
-		case mysql.TypeDuration:
-			for j := range serializedKeyLens {
-				serializedKeyLens[j] += 8
-			}
-		case mysql.TypeNewDecimal:
-			sizeByteNum := int(0)
-			if serializeModes[i] == KeepVarColumnLength {
-				sizeByteNum = int(sizeUint32)
-			}
-
-			ds := column.Decimals()
-			for j, physicalRowindex := range usedRows {
-				if canSkip(physicalRowindex) {
-					continue
-				}
-
-				size, err := ds[physicalRowindex].HashKeySize()
-				if err != nil {
-					return serializedKeyLens, serializedKeysBuffer, err
-				}
-
-				serializedKeyLens[j] += size + sizeByteNum
-			}
-		case mysql.TypeEnum:
-			if mysql.HasEnumSetAsIntFlag(tps[i].GetFlag()) {
-				elemLen := 0
-				if serializeModes[i] == NeedSignFlag {
-					elemLen += int(size.SizeOfByte)
-				}
-				elemLen += int(sizeUint64)
-
-				for j := range serializedKeyLens {
-					serializedKeyLens[j] += elemLen
-				}
-			} else {
-				sizeByteNum := int64(0)
-				if serializeModes[i] == KeepVarColumnLength {
-					sizeByteNum = int64(sizeUint32)
-				}
-
-				collator := collate.GetCollator(tps[i].GetCollate())
-				for j, physicalRowindex := range usedRows {
-					if canSkip(physicalRowindex) {
-						continue
-					}
-
-					v := column.GetEnum(physicalRowindex).Value
-					str := ""
-					if enum, err := types.ParseEnumValue(tps[i].GetElems(), v); err == nil {
-						str = enum.Name
-					}
-
-					serializedKeyLens[j] += int(sizeByteNum) + collator.MaxKeyLen(str)
-				}
-			}
-		case mysql.TypeSet:
-			sizeByteNum := int64(0)
-			if serializeModes[i] == KeepVarColumnLength {
-				sizeByteNum = int64(sizeUint32)
-			}
-
-			collator := collate.GetCollator(tps[i].GetCollate())
-			for j, physicalRowindex := range usedRows {
-				if canSkip(physicalRowindex) {
-					continue
-				}
-
-				s, err := types.ParseSetValue(tps[i].GetElems(), column.GetSet(physicalRowindex).Value)
-				if err != nil {
-					return serializedKeyLens, serializedKeysBuffer, err
-				}
-
-				serializedKeyLens[j] += int(sizeByteNum) + collator.MaxKeyLen(s.Name)
-			}
-		case mysql.TypeBit:
-			signFlagLen := 0
-			if serializeModes[i] == NeedSignFlag {
-				signFlagLen = int(size.SizeOfByte)
-			}
-			for j, physicalRowindex := range usedRows {
-				if canSkip(physicalRowindex) {
-					continue
-				}
-
-				serializedKeyLens[j] += signFlagLen + int(sizeUint64)
-			}
-		case mysql.TypeJSON:
-			sizeByteNum := 0
-			if serializeModes[i] == KeepVarColumnLength {
-				sizeByteNum = int(sizeUint32)
-			}
-
-			for j, physicalRowindex := range usedRows {
-				if canSkip(physicalRowindex) {
-					continue
-				}
-
-				serializedKeyLens[j] += sizeByteNum + int(column.GetJSON(physicalRowindex).CalculateHashValueSize())
-			}
-		case mysql.TypeNull:
-		default:
-			return serializedKeyLens, serializedKeysBuffer, errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
-		}
-	}
-
-	totalMemUsage := 0
-	for _, usage := range serializedKeyLens {
-		totalMemUsage += usage
-	}
-
-	if cap(serializedKeysBuffer) < totalMemUsage {
-		serializedKeysBuffer = make([]byte, totalMemUsage)
-	} else {
-		serializedKeysBuffer = serializedKeysBuffer[:totalMemUsage]
-	}
-
-	start := 0
-	for i := range serializedKeysVectorBuffer {
-		rowLen := serializedKeyLens[i]
-		serializedKeysVectorBuffer[i] = serializedKeysBuffer[start : start : start+rowLen]
-		start += rowLen
-	}
-	return serializedKeyLens, serializedKeysBuffer, nil
-}
-
-// SerializeKeys is used in join
-func SerializeKeys(
-	typeCtx types.Context,
+func preAllocForSerializedKeyBuffer(
+	buildKeyIndexs []int,
 	chk *chunk.Chunk,
 	tps []*types.FieldType,
-	buildKeyIndexs []int,
 	usedRows []int,
 	filterVector []bool,
 	nullVector []bool,
@@ -616,7 +437,6 @@ func SerializeKeys(
 	serializedKeys [][]byte,
 	serializedKeyLens []int,
 	serializedKeysBuffer []byte) ([]byte, error) {
-	// Prealloc memory
 	for i, idx := range buildKeyIndexs {
 		column := chk.Column(idx)
 		canSkip := func(index int) bool {
@@ -796,16 +616,19 @@ func SerializeKeys(
 		serializedKeys[i] = serializedKeysBuffer[start : start : start+rowLen]
 		start += rowLen
 	}
+	return serializedKeysBuffer, nil
+}
 
-	var serializedKeyVectorBufferCapsForTest []int
-	if intest.InTest {
-		serializedKeyVectorBufferCapsForTest = make([]int, len(serializedKeys))
-		for i := range serializedKeys {
-			serializedKeyVectorBufferCapsForTest[i] = cap(serializedKeys[i])
-		}
-	}
-
-	// Start to serialize keys
+func serializeKeysImpl(
+	typeCtx types.Context,
+	chk *chunk.Chunk,
+	tps []*types.FieldType,
+	buildKeyIndexs []int,
+	usedRows []int,
+	filterVector []bool,
+	nullVector []bool,
+	serializeModes []SerializeMode,
+	serializedKeys [][]byte) error {
 	canSkip := func(index int) bool {
 		return (filterVector != nil && !filterVector[index]) || (nullVector != nil && nullVector[index])
 	}
@@ -879,7 +702,7 @@ func SerializeKeys(
 				}
 				v, err := ts[physicalRowIndex].ToPackedUint()
 				if err != nil {
-					return serializedKeysBuffer, err
+					return err
 				}
 				// don't need to check serializeMode since date/datetime/timestamp must be compared with date/datetime/timestamp, so the serializeMode must be normal
 				serializedKeys[logicalRowIndex] = append(serializedKeys[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
@@ -900,7 +723,7 @@ func SerializeKeys(
 				}
 				b, err := ds[physicalRowindex].ToHashKey()
 				if err != nil {
-					return serializedKeysBuffer, err
+					return err
 				}
 				if serializeMode == KeepVarColumnLength {
 					// for decimal, the size must be less than uint8.MAX, so use uint8 here
@@ -950,7 +773,7 @@ func SerializeKeys(
 				}
 				s, err := types.ParseSetValue(tp.GetElems(), column.GetSet(physicalRowindex).Value)
 				if err != nil {
-					return serializedKeysBuffer, err
+					return err
 				}
 				b := collator.ImmutableKey(s.Name)
 				if serializeMode == KeepVarColumnLength {
@@ -989,8 +812,60 @@ func SerializeKeys(
 			}
 		case mysql.TypeNull:
 		default:
-			return serializedKeysBuffer, errors.Errorf("unsupport column type for encode %d", tp.GetType())
+			return errors.Errorf("unsupport column type for encode %d", tp.GetType())
 		}
+	}
+	return nil
+}
+
+// SerializeKeys is used in join
+func SerializeKeys(
+	typeCtx types.Context,
+	chk *chunk.Chunk,
+	tps []*types.FieldType,
+	buildKeyIndexs []int,
+	usedRows []int,
+	filterVector []bool,
+	nullVector []bool,
+	serializeModes []SerializeMode,
+	serializedKeys [][]byte,
+	serializedKeyLens []int,
+	serializedKeysBuffer []byte) ([]byte, error) {
+	serializedKeysBuffer, err := preAllocForSerializedKeyBuffer(
+		buildKeyIndexs,
+		chk,
+		tps,
+		usedRows,
+		filterVector,
+		nullVector,
+		serializeModes,
+		serializedKeys,
+		serializedKeyLens,
+		serializedKeysBuffer)
+	if err != nil {
+		return serializedKeysBuffer, err
+	}
+
+	var serializedKeyVectorBufferCapsForTest []int
+	if intest.InTest {
+		serializedKeyVectorBufferCapsForTest = make([]int, len(serializedKeys))
+		for i := range serializedKeys {
+			serializedKeyVectorBufferCapsForTest[i] = cap(serializedKeys[i])
+		}
+	}
+
+	err = serializeKeysImpl(
+		typeCtx,
+		chk,
+		tps,
+		buildKeyIndexs,
+		usedRows,
+		filterVector,
+		nullVector,
+		serializeModes,
+		serializedKeys)
+	if err != nil {
+		return serializedKeysBuffer, err
 	}
 
 	if intest.InTest {
