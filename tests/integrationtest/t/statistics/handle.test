@@ -13,7 +13,7 @@ set @@tidb_partition_prune_mode=default;
 # TestIssues24401
 set @@tidb_partition_prune_mode='static';
 drop table if exists t;
-truncate table mysql.stats_fm_sketch;
+delete from mysql.stats_fm_sketch;
 create table t(a int, index(a));
 insert into t values (1), (2), (3);
 analyze table t;
