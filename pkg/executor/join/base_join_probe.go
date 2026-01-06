@@ -243,22 +243,18 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		j.serializedKeys = make([][]byte, logicalRows)
 	}
 
-	for i := range logicalRows {
-		j.serializedKeys[i] = j.serializedKeys[i][:0]
+	if cap(j.serializedKeysLens) < logicalRows {
+		j.serializedKeysLens = make([]int, logicalRows)
+	} else {
+		clear(j.serializedKeysLens)
+		j.serializedKeysLens = j.serializedKeysLens[:logicalRows]
 	}
+
 	if j.ctx.ProbeFilter != nil {
 		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.ProbeFilter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
 		if err != nil {
 			return err
 		}
-	}
-
-	rowNum := len(j.usedRows)
-	if cap(j.serializedKeysLens) < rowNum {
-		j.serializedKeysLens = make([]int, rowNum)
-	} else {
-		clear(j.serializedKeysLens)
-		j.serializedKeysLens = j.serializedKeysLens[:rowNum]
 	}
 
 	// generate serialized key
