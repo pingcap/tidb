@@ -20,7 +20,6 @@ const (
 	// Adding columns that are nullable or have default values is permitted.
 	// But operations like dropping or renaming columns may break the compatibility with BR.
 	// REFERENCE ISSUE: https://github.com/pingcap/tidb/issues/38785
-	//
 	CreateUserTable = `CREATE TABLE IF NOT EXISTS mysql.user (
 		Host					CHAR(255),
 		User					CHAR(32),
