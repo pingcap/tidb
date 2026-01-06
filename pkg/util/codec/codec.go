@@ -805,7 +805,7 @@ func SerializeKeys(
 		start += rowLen
 	}
 
-	serializedKeyVectorBufferCapsForTest := make([]int, 0)
+	var serializedKeyVectorBufferCapsForTest []int
 	if intest.InTest {
 		serializedKeyVectorBufferCapsForTest = make([]int, len(serializedKeys))
 		for i := range serializedKeys {
