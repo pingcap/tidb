@@ -173,7 +173,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 			}
 		}
 		// We may merge buckets, so we should check it again.
-		if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
+		if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket || b.numBuckets == 1 {
 			b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1, b.needBucketNDV)
 		} else {
 			b.lastNumber = b.hist.Buckets[b.bucketIdx].Count
