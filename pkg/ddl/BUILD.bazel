@@ -26,7 +26,6 @@ go_library(
         "bdr.go",
         "cluster.go",
         "column.go",
-        "constant.go",
         "constraint.go",
         "create_table.go",
         "ddl.go",
