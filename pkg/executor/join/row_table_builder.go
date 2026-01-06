@@ -160,14 +160,6 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 
-	rowNum := len(b.usedRows)
-	if cap(b.serializedKeyLens) < rowNum {
-		b.serializedKeyLens = make([]int, rowNum)
-	} else {
-		clear(b.serializedKeyLens)
-		b.serializedKeyLens = b.serializedKeyLens[:rowNum]
-	}
-
 	// 1. split partition
 	b.serializedKeysBuffer, err = codec.SerializeKeys(
 		typeCtx,
@@ -239,12 +231,16 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 		}
 	}
 	if cap(b.serializedKeyVectorBuffer) >= logicalRows {
+		clear(b.serializedKeyVectorBuffer[:])
 		b.serializedKeyVectorBuffer = b.serializedKeyVectorBuffer[:logicalRows]
-		for i := range logicalRows {
-			b.serializedKeyVectorBuffer[i] = b.serializedKeyVectorBuffer[i][:0]
-		}
 	} else {
 		b.serializedKeyVectorBuffer = make([][]byte, logicalRows)
+	}
+	if cap(b.serializedKeyLens) < logicalRows {
+		b.serializedKeyLens = make([]int, logicalRows)
+	} else {
+		clear(b.serializedKeyLens)
+		b.serializedKeyLens = b.serializedKeyLens[:logicalRows]
 	}
 }
 
