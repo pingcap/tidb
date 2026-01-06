@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1251,6 +1252,18 @@ func doDDLWorks(s sessionapi.Session) {
 	mustExecute(s, CreateSchemaUnusedIndexesView)
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
+}
+
+func checkSystemTableConstraint(tblInfo *model.TableInfo) error {
+	if tblInfo.Partition != nil {
+		return errors.New("system table should not be partitioned table")
+	}
+	if tblInfo.SepAutoInc() {
+		// AUTO_ID_CACHE=1 is implemented through GRPC service and requires owner
+		// election, system tables should not depend on that.
+		return errors.New("system table should not use AUTO_ID_CACHE=1")
+	}
+	return nil
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

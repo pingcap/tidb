@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
@@ -47,6 +49,8 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/telemetry"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
@@ -2921,4 +2925,79 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 		"versionedBootstrapSchemas should have the same number of tables as tablesInSystemDatabase")
 	slices.Sort(allIDs)
 	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
+}
+
+func TestBootstrapInNextGenInvalidSystemTable(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("this is only checked in next-gen kernel")
+	}
+	testenv.SetGOMAXPROCSForTest()
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/mockCreateSystemTableSQL", func(tbl *TableBasicInfo) {
+		tbl.SQL = "create table t(id int primary key) partition by hash(id) partitions 4"
+	})
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	_, err = BootstrapSession(store)
+	require.ErrorContains(t, err, "system table should not be partitioned table")
+}
+
+func TestCheckSystemTableConstraint(t *testing.T) {
+	tests := []struct {
+		name      string
+		setupFunc func(*model.TableInfo)
+		errMsg    string
+	}{
+		{
+			name: "valid system table",
+			setupFunc: func(tblInfo *model.TableInfo) {
+				// No partition, no SepAutoInc
+				tblInfo.Partition = nil
+				tblInfo.Version = model.CurrLatestTableInfoVersion
+				tblInfo.AutoIDCache = 0
+			},
+		},
+		{
+			name: "table with partition should fail",
+			setupFunc: func(tblInfo *model.TableInfo) {
+				tblInfo.Partition = &model.PartitionInfo{
+					Type:        ast.PartitionTypeRange,
+					Enable:      true,
+					Definitions: []model.PartitionDefinition{},
+				}
+				tblInfo.Version = model.CurrLatestTableInfoVersion
+				tblInfo.AutoIDCache = 0
+			},
+			errMsg: "system table should not be partitioned table",
+		},
+		{
+			name: "table with SepAutoInc should fail - version 5 and AutoIDCache 1",
+			setupFunc: func(tblInfo *model.TableInfo) {
+				tblInfo.Partition = nil
+				tblInfo.Version = model.CurrLatestTableInfoVersion
+				tblInfo.AutoIDCache = 1
+			},
+			errMsg: "system table should not use AUTO_ID_CACHE=1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tblInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("test_table")}
+			tt.setupFunc(tblInfo)
+
+			err := checkSystemTableConstraint(tblInfo)
+			if len(tt.errMsg) > 0 {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }

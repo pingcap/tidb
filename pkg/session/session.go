@@ -3943,13 +3943,15 @@ func InitDDLTables(store kv.Storage) error {
 }
 
 func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []TableBasicInfo) error {
-	tableIDs := make([]int64, 0, len(tables))
-	for _, tbl := range tables {
-		tableIDs = append(tableIDs, tbl.ID)
-	}
-	splitAndScatterTable(store, tableIDs)
+	var (
+		tableIDs = make([]int64, 0, len(tables))
+		tblInfos = make([]*model.TableInfo, 0, len(tables))
+	)
 	p := parser.New()
 	for _, tbl := range tables {
+		failpoint.InjectCall("mockCreateSystemTableSQL", &tbl)
+		tableIDs = append(tableIDs, tbl.ID)
+
 		stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 		if err != nil {
 			return errors.Trace(err)
@@ -3966,7 +3968,16 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = tbl.ID
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, tblInfo)
+		if err = checkSystemTableConstraint(tblInfo); err != nil {
+			return errors.Trace(err)
+		}
+
+		tblInfos = append(tblInfos, tblInfo)
+	}
+
+	splitAndScatterTable(store, tableIDs)
+	for _, tblInfo := range tblInfos {
+		err := t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
