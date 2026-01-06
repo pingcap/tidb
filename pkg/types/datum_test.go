@@ -808,3 +808,20 @@ func TestIsPrintable(t *testing.T) {
 			tc.input, tc.input, tc.valid, r)
 	}
 }
+
+func BenchmarkIsPrintable(b *testing.B) {
+	inputs := []string{
+		"abc",
+		"abcé",
+		string([]byte{0x61, 0x0, 0x62, 0x63}), // broken: contains NUL
+		string([]byte{0x61, 0x62, 0x63, 0xc3, 0xa9}), // broken: contains half char
+		strings.Repeat("abc", 1000),                  // longer string
+	}
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		for _, input := range inputs {
+			isPrintable(input)
+		}
+	}
+}

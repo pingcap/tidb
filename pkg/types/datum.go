@@ -2440,6 +2440,15 @@ func isPrintable(s string) bool {
 
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
+	return datumsToString(datums, handleSpecialValue, false)
+}
+
+// DatumsToStringSmart is like DatumsToString, but with smart detection of non-printable data
+func DatumsToStringSmart(datums []Datum, handleSpecialValue bool) (string, error) {
+	return datumsToString(datums, handleSpecialValue, true)
+}
+
+func datumsToString(datums []Datum, handleSpecialValue bool, binaryAsHex bool) (string, error) {
 	n := len(datums)
 	builder := &strings.Builder{}
 	builder.Grow(8 * n)
@@ -2474,7 +2483,7 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 			str = str[:logDatumLen]
 		}
 		if datum.Kind() == KindString {
-			if isPrintable(str) {
+			if !binaryAsHex || isPrintable(str) {
 				builder.WriteString(`"`)
 				builder.WriteString(str)
 				builder.WriteString(`"`)
@@ -2501,6 +2510,15 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 // If an error occurs, it will print a log instead of returning an error.
 func DatumsToStrNoErr(datums []Datum) string {
 	str, err := DatumsToString(datums, true)
+	terror.Log(errors.Trace(err))
+	return str
+}
+
+// DatumsToStrNoErrSmart converts some datums to a formatted string.
+// If an error occurs, it will print a log instead of returning an error.
+// It also enables detection of non-pritable arguments
+func DatumsToStrNoErrSmart(datums []Datum) string {
+	str, err := DatumsToStringSmart(datums, true)
 	terror.Log(errors.Trace(err))
 	return str
 }
