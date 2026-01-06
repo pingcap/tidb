@@ -54,6 +54,7 @@ func TestGetSchemaVersionFromStatsMeta(t *testing.T) {
 	ctx := context.Background()
 	g := gluetidb.New()
 	se, err := g.CreateSession(cluster.Storage)
+	require.NoError(t, err)
 	err = se.ExecuteInternal(ctx, "create database test_ver2")
 	require.NoError(t, err)
 	err = se.ExecuteInternal(ctx, "create database test_ver1")
