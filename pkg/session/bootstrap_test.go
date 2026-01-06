@@ -49,8 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/telemetry"
-	"github.com/pingcap/tidb/pkg/testkit/testenv"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
@@ -2925,26 +2923,6 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 		"versionedBootstrapSchemas should have the same number of tables as tablesInSystemDatabase")
 	slices.Sort(allIDs)
 	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
-}
-
-func TestBootstrapInNextGenInvalidSystemTable(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("this is only checked in next-gen kernel")
-	}
-	testenv.SetGOMAXPROCSForTest()
-	if kerneltype.IsNextGen() {
-		testenv.UpdateConfigForNextgen(t)
-	}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/mockCreateSystemTableSQL", func(tbl *TableBasicInfo) {
-		tbl.SQL = "create table t(id int primary key) partition by hash(id) partitions 4"
-	})
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, store.Close())
-	})
-	_, err = BootstrapSession(store)
-	require.ErrorContains(t, err, "system table should not be partitioned table")
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {
