@@ -267,19 +267,19 @@ func (c *Column) Reserve(moreBytesNumNullBitmapNeed int64, moreBytesNumDataNeed 
 	currentNullBitmapLen := int64(len(c.nullBitmap))
 	nullBitmapExpectedCap := currentNullBitmapLen + moreBytesNumNullBitmapNeed
 	if int64(cap(c.nullBitmap)) < nullBitmapExpectedCap {
-		c.nullBitmap = slices.Grow(c.nullBitmap, int(nullBitmapExpectedCap))
+		c.nullBitmap = slices.Grow(c.nullBitmap, int(moreBytesNumNullBitmapNeed))
 	}
 
 	currentDataLen := int64(len(c.data))
 	dataExpectedCap := currentDataLen + moreBytesNumDataNeed
 	if int64(cap(c.data)) < dataExpectedCap {
-		c.data = slices.Grow(c.data, int(dataExpectedCap))
+		c.data = slices.Grow(c.data, int(moreBytesNumDataNeed))
 	}
 
 	currentOffsetLen := int64(len(c.offsets))
 	offsetExpectedCap := currentOffsetLen + moreBytesNumOffsetNeed
 	if int64(cap(c.offsets)) < offsetExpectedCap {
-		c.offsets = slices.Grow(c.offsets, int(offsetExpectedCap))
+		c.offsets = slices.Grow(c.offsets, int(moreBytesNumOffsetNeed))
 	}
 }
 
