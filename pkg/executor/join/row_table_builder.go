@@ -160,8 +160,16 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 
+	rowNum := len(b.usedRows)
+	if cap(b.serializedKeyLens) < rowNum {
+		b.serializedKeyLens = make([]int, rowNum)
+	} else {
+		clear(b.serializedKeyLens)
+		b.serializedKeyLens = b.serializedKeyLens[:rowNum]
+	}
+
 	// 1. split partition
-	b.serializedKeyLens, b.serializedKeysBuffer, err = codec.SerializeKeys(
+	b.serializedKeysBuffer, err = codec.SerializeKeys(
 		typeCtx,
 		chk,
 		b.buildKeyTypes,

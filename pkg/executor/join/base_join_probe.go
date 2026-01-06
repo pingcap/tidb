@@ -237,10 +237,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 	if cap(j.serializedKeys) >= logicalRows {
+		clear(j.serializedKeys[:])
 		j.serializedKeys = j.serializedKeys[:logicalRows]
 	} else {
 		j.serializedKeys = make([][]byte, logicalRows)
 	}
+
 	for i := range logicalRows {
 		j.serializedKeys[i] = j.serializedKeys[i][:0]
 	}
@@ -251,8 +253,16 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 
+	rowNum := len(j.usedRows)
+	if cap(j.serializedKeysLens) < rowNum {
+		j.serializedKeysLens = make([]int, rowNum)
+	} else {
+		clear(j.serializedKeysLens)
+		j.serializedKeysLens = j.serializedKeysLens[:rowNum]
+	}
+
 	// generate serialized key
-	j.serializedKeysLens, j.serializedKeysBuffer, err = codec.SerializeKeys(
+	j.serializedKeysBuffer, err = codec.SerializeKeys(
 		j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(),
 		j.currentChunk,
 		j.keyTypes,

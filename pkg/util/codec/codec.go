@@ -615,16 +615,8 @@ func SerializeKeys(
 	serializeModes []SerializeMode,
 	serializedKeys [][]byte,
 	serializedKeyLens []int,
-	serializedKeysBuffer []byte) ([]int, []byte, error) {
+	serializedKeysBuffer []byte) ([]byte, error) {
 	// Prealloc memory
-	rowNum := len(usedRows)
-	if cap(serializedKeyLens) < rowNum {
-		serializedKeyLens = make([]int, rowNum)
-	} else {
-		clear(serializedKeyLens)
-		serializedKeyLens = serializedKeyLens[:rowNum]
-	}
-
 	for i, idx := range buildKeyIndexs {
 		column := chk.Column(idx)
 		canSkip := func(index int) bool {
@@ -697,7 +689,7 @@ func SerializeKeys(
 
 				size, err := ds[physicalRowindex].HashKeySize()
 				if err != nil {
-					return serializedKeyLens, serializedKeysBuffer, err
+					return serializedKeysBuffer, err
 				}
 
 				serializedKeyLens[j] += size + sizeByteNum
@@ -751,7 +743,7 @@ func SerializeKeys(
 
 				s, err := types.ParseSetValue(tps[i].GetElems(), column.GetSet(physicalRowindex).Value)
 				if err != nil {
-					return serializedKeyLens, serializedKeysBuffer, err
+					return serializedKeysBuffer, err
 				}
 
 				serializedKeyLens[j] += int(sizeByteNum) + collator.MaxKeyLen(s.Name)
@@ -783,7 +775,7 @@ func SerializeKeys(
 			}
 		case mysql.TypeNull:
 		default:
-			return serializedKeyLens, serializedKeysBuffer, errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
+			return serializedKeysBuffer, errors.Errorf("unsupport column type for pre-alloc %d", tps[i].GetType())
 		}
 	}
 
@@ -887,7 +879,7 @@ func SerializeKeys(
 				}
 				v, err := ts[physicalRowIndex].ToPackedUint()
 				if err != nil {
-					return serializedKeyLens, serializedKeysBuffer, err
+					return serializedKeysBuffer, err
 				}
 				// don't need to check serializeMode since date/datetime/timestamp must be compared with date/datetime/timestamp, so the serializeMode must be normal
 				serializedKeys[logicalRowIndex] = append(serializedKeys[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
@@ -908,7 +900,7 @@ func SerializeKeys(
 				}
 				b, err := ds[physicalRowindex].ToHashKey()
 				if err != nil {
-					return serializedKeyLens, serializedKeysBuffer, err
+					return serializedKeysBuffer, err
 				}
 				if serializeMode == KeepVarColumnLength {
 					// for decimal, the size must be less than uint8.MAX, so use uint8 here
@@ -958,7 +950,7 @@ func SerializeKeys(
 				}
 				s, err := types.ParseSetValue(tp.GetElems(), column.GetSet(physicalRowindex).Value)
 				if err != nil {
-					return serializedKeyLens, serializedKeysBuffer, err
+					return serializedKeysBuffer, err
 				}
 				b := collator.ImmutableKey(s.Name)
 				if serializeMode == KeepVarColumnLength {
@@ -997,7 +989,7 @@ func SerializeKeys(
 			}
 		case mysql.TypeNull:
 		default:
-			return serializedKeyLens, serializedKeysBuffer, errors.Errorf("unsupport column type for encode %d", tp.GetType())
+			return serializedKeysBuffer, errors.Errorf("unsupport column type for encode %d", tp.GetType())
 		}
 	}
 
@@ -1009,7 +1001,7 @@ func SerializeKeys(
 		}
 	}
 
-	return serializedKeyLens, serializedKeysBuffer, nil
+	return serializedKeysBuffer, nil
 }
 
 // HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to h.
