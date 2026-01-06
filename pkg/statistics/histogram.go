@@ -1135,7 +1135,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histNDV = max(histNDV, int64(outOfRangeBetweenRate))
 	oneValue := max(1.0, hg.NotNullCount()/float64(histNDV))
 
-	// Step 3: Exit if usage of modifyCount is disabled.
+	// Step 3: Exit if usage of modifications (and thus changes to realtimeRowCount) is disabled.
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
@@ -1272,6 +1272,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// Calculate estRows using totalPercent (average)
 	if totalPercent > 0 {
+		// Multiplying addedRows by 0.5 provides the assumption that 50% "addedRows" are inside
+		// the histogram range, and 50% (0.5) are out-of-range. Users can adjust this
+		// assumption by setting the session variable `tidb_opt_risk_range_skew_ratio`.
 		estRows = (addedRows * 0.5) * totalPercent
 	} else {
 		estRows = oneValue

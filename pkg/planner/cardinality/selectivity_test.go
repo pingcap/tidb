@@ -797,7 +797,6 @@ func TestRiskRangeSkewRatio(t *testing.T) {
 	require.Truef(t, countEst2.MaxEst >= countEst1.MaxEst, "MaxEst should be >= when ratio is increased (out-of-range), MaxEst1: %v, MaxEst2: %v", countEst1.MaxEst, countEst2.MaxEst)
 }
 
-// TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
 // TestOutOfRangeEstimationWithTopN demonstrates that TopN reduces addedRows in OutOfRangeRowCount.
 // When TopN values are present, the histRowCount includes TopNCount, resulting in lower addedRows
 // and thus lower out-of-range estimates compared to when TopN is not present.
@@ -913,7 +912,7 @@ func TestOutOfRangeEstimationWithTopN(t *testing.T) {
 		countEstWithTopN.Est, histRowCountWithTopN, math.Abs(float64(realtimeRowCount)-histRowCountWithTopN))
 }
 
-// The test result doesn't perfectly reflect the actual data distribution, but this is the expected behavior for now.
+// TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
 func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
