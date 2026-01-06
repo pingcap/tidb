@@ -595,6 +595,7 @@ func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
 	tablesWithBuckets := make(map[int64]struct{})
 
 	for {
@@ -605,7 +606,6 @@ func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (
 		if req.NumRows() == 0 {
 			break
 		}
-		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			tableID := row.GetInt64(0)
 			tablesWithBuckets[tableID] = struct{}{}
