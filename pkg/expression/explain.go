@@ -191,17 +191,17 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 	removeColNums := shouldRemoveColumnNumbers(ctx)
 	for i, expr := range exprs {
 		switch expr := expr.(type) {
-		case *Column:
-			exprStr := expr.StringWithCtxForExplain(ctx, redactMode, removeColNums)
-			schemaColStr := schema.Columns[i].StringWithCtxForExplain(ctx, redactMode, removeColNums)
-			builder.WriteString(exprStr)
-			if exprStr != schemaColStr {
-				// simple col projected again with another uniqueID without origin name.
-				builder.WriteString("->")
-				builder.WriteString(schemaColStr)
+		case *Column, *CorrelatedColumn:
+			// Both Column and CorrelatedColumn use the same StringWithCtxForExplain method
+			// (CorrelatedColumn embeds Column), so they can share the same logic
+			var col *Column
+			switch c := expr.(type) {
+			case *Column:
+				col = c
+			case *CorrelatedColumn:
+				col = &c.Column
 			}
-		case *CorrelatedColumn:
-			exprStr := expr.StringWithCtxForExplain(ctx, redactMode, removeColNums)
+			exprStr := col.StringWithCtxForExplain(ctx, redactMode, removeColNums)
 			schemaColStr := schema.Columns[i].StringWithCtxForExplain(ctx, redactMode, removeColNums)
 			builder.WriteString(exprStr)
 			if exprStr != schemaColStr {

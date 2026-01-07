@@ -850,8 +850,10 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	// Ensure StmtCtx.ExplainFormat is set to match e.Format so shouldRemoveColumnNumbers can access it
+	// e.Format is already normalized to lowercase in planbuilder.go
 	if e.SCtx() != nil {
-		e.SCtx().GetSessionVars().StmtCtx.ExplainFormat = strings.ToLower(e.Format)
+		e.SCtx().GetSessionVars().StmtCtx.ExplainFormat = e.Format
+		e.SCtx().GetSessionVars().StmtCtx.InExplainStmt = true
 	}
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache, types.ExplainFormatPlanTree:
@@ -1098,10 +1100,11 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 	costFormula = "N/A"
 	sctx := p.SCtx()
 	// Ensure StmtCtx.ExplainFormat is set before calling ExplainInfo() so shouldRemoveColumnNumbers can access it
+	// format is already normalized to lowercase when passed from ExplainFlatPlanInRowFormat (which uses e.Format)
 	if sctx != nil {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		stmtCtx.InExplainStmt = true
-		stmtCtx.ExplainFormat = strings.ToLower(format)
+		stmtCtx.ExplainFormat = format
 	}
 	if isPhysicalPlan {
 		if format != types.ExplainFormatPlanTree {
