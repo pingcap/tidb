@@ -1643,6 +1643,10 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 	if idxInfo.Global {
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
+	// If an index is a hybrid index (detected by the presence of sharding columns),
+	// we must encode restored data for *all index columns* into the index value.
+	// The sharding columns are only used to identify the hybrid-index case and to build the key;
+	// the value side intentionally carries all index columns to satisfy TiCi’s data ingest.
 	forceAllColumns := len(hybridShardingIndexColumns(idxInfo)) > 0
 	if idxValNeedRestoredData || len(handleRestoredData) > 0 || forceAllColumns {
 		colIds := make([]int64, 0, len(idxInfo.Columns))

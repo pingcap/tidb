@@ -1157,16 +1157,17 @@ LOOP:
 
 func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
-
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("create table th(a int, v varchar(20))")
 
-	param := `'{"inverted":[{"columns":["a"]}]}'`
+	param := `'{"inverted":{"columns":["a"]}, "sharding_key":{"columns":["a"]}}'`
 	tk.MustExec("create hybrid index h_idx on th(a) parameter " + param)
 	tk.MustExec("drop index h_idx on th")
 
@@ -1524,11 +1525,13 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 
 func TestHybridIndexOnPartitionedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 
 	tk.MustExec("drop table if exists pt_create, pt_alter;")
 	tk.MustExec(`create table pt_create(a int, b text, v vector(3))
@@ -1536,7 +1539,7 @@ partition by range (a) (
         partition p0 values less than (10),
         partition p1 values less than (20)
 );`)
-	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}]}'`)
+	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}], "sharding_key":{"columns":["b"]}}'`)
 	tbl := external.GetTableByName(t, tk, "test", "pt_create")
 	idx := tbl.Meta().FindIndexByName("idx_hybrid")
 	require.NotNil(t, idx)
