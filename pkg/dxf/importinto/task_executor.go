@@ -193,8 +193,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	task := log.BeginTask(logger, "run subtask")
 	var (
 		dataKVFiles, indexKVFiles atomic.Int64
-		accessRec = &recording.AccessStats{}
-		objStore  objstore.ExternalStorage
+		accessRec                 = &recording.AccessStats{}
+		objStore                  objstore.ExternalStorage
 	)
 	defer func() {
 		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),

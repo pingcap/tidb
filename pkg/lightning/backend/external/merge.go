@@ -145,8 +145,8 @@ func (*MergeOperator) String() string {
 type mergeWorker struct {
 	ctx context.Context
 
-	store    objstore.ExternalStorage
-	partSize int64
+	store         objstore.ExternalStorage
+	partSize      int64
 	newFilePrefix string
 	blockSize     int
 	onWriterClose OnWriterCloseFunc

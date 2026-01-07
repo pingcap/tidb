@@ -278,8 +278,8 @@ func (manager *TableMetaManager[K, SV, LV, M]) TryGetStorage() objstore.External
 }
 
 type StorageMetaManager[K KeyType, SV, LV ValueType, M any] struct {
-	storage objstore.ExternalStorage
-	cipher  *backuppb.CipherInfo
+	storage   objstore.ExternalStorage
+	cipher    *backuppb.CipherInfo
 	clusterID string
 	taskName  string
 }

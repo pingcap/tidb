@@ -424,8 +424,8 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 
 // Writer is used to write data into external storage.
 type Writer struct {
-	store    objstore.ExternalStorage
-	writerID string
+	store          objstore.ExternalStorage
+	writerID       string
 	groupOffset    int
 	currentSeq     int
 	filenamePrefix string

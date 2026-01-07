@@ -208,9 +208,9 @@ type SharedVars struct {
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
 	SortedIndexMetas        map[int64]*external.SortedKVMeta
 	RecordedConflictKVCount uint64
-	ShareMu         sync.Mutex
-	globalSortStore objstore.ExternalStorage
-	dataKVFileCount *atomic.Int64
+	ShareMu                 sync.Mutex
+	globalSortStore         objstore.ExternalStorage
+	dataKVFileCount         *atomic.Int64
 	indexKVFileCount        *atomic.Int64
 }
 

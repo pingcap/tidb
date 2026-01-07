@@ -130,8 +130,8 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
-	storage   objstore.ExternalStorage
-	dataFiles []string
+	storage           objstore.ExternalStorage
+	dataFiles         []string
 	statsFiles        []string
 	startKey          []byte
 	endKey            []byte
@@ -176,9 +176,9 @@ type Engine struct {
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
 	recordedDupCnt  int
 	recordedDupSize int64
-	dupFile    string
-	dupWriter  objstore.ExternalFileWriter
-	dupKVStore *KeyValueStore
+	dupFile         string
+	dupWriter       objstore.ExternalFileWriter
+	dupKVStore      *KeyValueStore
 }
 
 var _ engineapi.Engine = (*Engine)(nil)

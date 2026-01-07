@@ -42,8 +42,8 @@ import (
 var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
 
 type writeTestSuite struct {
-	store  objstore.ExternalStorage
-	source kvSource
+	store              objstore.ExternalStorage
+	source             kvSource
 	memoryLimit        int
 	beforeCreateWriter func()
 	afterWriterClose   func()
@@ -238,8 +238,8 @@ func TestCompareWriter(t *testing.T) {
 }
 
 type readTestSuite struct {
-	store  objstore.ExternalStorage
-	subDir string
+	store              objstore.ExternalStorage
+	subDir             string
 	totalKVCnt         int
 	concurrency        int
 	memoryLimit        int
@@ -494,8 +494,8 @@ func testCompareReaderWithContent(
 }
 
 type mergeTestSuite struct {
-	store  objstore.ExternalStorage
-	subDir string
+	store            objstore.ExternalStorage
+	subDir           string
 	totalKVCnt       int
 	concurrency      int
 	memoryLimit      int
