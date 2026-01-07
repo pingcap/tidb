@@ -32,14 +32,14 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -163,10 +163,10 @@ func TestGlobalSortBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/doCleanupTask", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/doCleanupTask", func() {
 		ch <- struct{}{}
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", func() {
 		ch <- struct{}{}
 	})
 	tk.MustExec("drop database if exists addindexlit;")
@@ -376,7 +376,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	})
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
 	testErrStep := proto.StepInit
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
 			if errP != nil {
 				testErrStep = e.GetTaskBase().Step
@@ -530,6 +530,10 @@ func TestIngestUseGivenTS(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	var tblInfo *model.TableInfo
 	var idxInfo *model.IndexInfo
+	var useCloudStorage bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterLoadCloudStorageURI", func(job *model.Job) {
+		useCloudStorage = job.ReorgMeta.UseCloudStorage
+	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if idxInfo == nil {
 			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
@@ -578,9 +582,13 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
+	require.True(t, useCloudStorage)
 }
 
 func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("resource params are calculated automatically on nextgen for add-index, we don't support alter them")
+	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 
@@ -621,7 +629,7 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 		modifiedMerge     atomic.Bool
 	)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return(true)")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func(step proto.Step) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterDetectAndHandleParamModify", func(step proto.Step) {
 		switch step {
 		case proto.BackfillStepReadIndex:
 			modifiedReadIndex.Store(true)
@@ -634,8 +642,9 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
 		reader, writer := pipe.GetReaderAndWriter()
-		require.EqualValues(t, 4, reader.GetWorkerPoolSize())
-		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
+		// Global sort uses equal reader and writer count.
+		require.EqualValues(t, 8, reader.GetWorkerPoolSize())
+		require.EqualValues(t, 8, writer.GetWorkerPoolSize())
 	})
 
 	// Change the batch size and concurrency during table scanning and check the modified parameters.
@@ -774,7 +783,7 @@ func TestSplitRangeForTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
+	_, err = dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
 	require.NoError(t, err)
 
 	tk.MustExec("drop database if exists addindexlit;")
@@ -795,28 +804,50 @@ func TestSplitRangeForTable(t *testing.T) {
 		{"dxf ingest", "on", ""},
 		{"dxf global-sort", "on", cloudStorageURI},
 	}
-	var addCnt, removeCnt int
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
-		addCnt += 1
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
-		removeCnt += 1
-	})
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
 		tk.MustExec("set global tidb_cloud_storage_uri = '';")
 	})
-	for _, tc := range testcases {
+
+	var addCnt, removeCnt atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		addCnt.Add(1)
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+		removeCnt.Add(1)
+	})
+
+	for i, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
 			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
 
-			addCnt = 0
-			removeCnt = 0
-			tk.MustExec("alter table t add index i(c)")
-			require.Equal(t, addCnt, len(stores))
-			require.Equal(t, removeCnt, addCnt)
-			tk.MustExec("alter table t drop index i")
+			idxNameSmall := fmt.Sprintf("i_small_%d", i)
+			idxNameLarge := fmt.Sprintf("i_large_%d", i)
+
+			// 1. Verify small table case (default behavior)
+			addCnt.Store(0)
+			removeCnt.Store(0)
+			tk.MustExec("alter table t add index " + idxNameSmall + "(c)")
+			// 1024 rows is a small table, which has only 1 region (< 100), so it should skip force split.
+			require.Equal(t, int32(0), addCnt.Load(), "Small table should skip force split in "+tc.caseName)
+			require.Equal(t, int32(0), removeCnt.Load())
+			tk.MustExec("alter table t drop index " + idxNameSmall)
+
+			// 2. Verify large table case (mocked by lowering threshold)
+			// We only need to verify the logic once for the local backend logic.
+			if tc.caseName == "local ingest" {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+					*threshold = 0
+				})
+				addCnt.Store(0)
+				removeCnt.Store(0)
+				tk.MustExec("alter table t add index " + idxNameLarge + "(c)")
+				// If failpoints are working or threshold variable is used, addCnt should be > 0.
+				require.Greater(t, addCnt.Load(), int32(0), "Large table should trigger force split in "+tc.caseName)
+				require.Equal(t, addCnt.Load(), removeCnt.Load())
+				tk.MustExec("alter table t drop index " + idxNameLarge)
+			}
 		})
 	}
 }
@@ -848,35 +879,56 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 		{"dxf ingest", "on", ""},
 		{"dxf global-sort", "on", cloudStorageURI},
 	}
-	var addCnt, removeCnt int
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
-		addCnt += 1
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
-		removeCnt += 1
-	})
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
 		tk.MustExec("set global tidb_cloud_storage_uri = '';")
 	})
-	for _, tc := range testcases {
+	for i, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {
+			var addCnt, removeCnt atomic.Int32
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+				addCnt.Add(1)
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+				removeCnt.Add(1)
+			})
+
 			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
 			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
 
-			addCnt = 0
-			removeCnt = 0
-			tk.MustExec("alter table tp add index i(c)")
-			require.Greater(t, addCnt, 0)
-			require.Equal(t, removeCnt, addCnt)
-			tk.MustExec("alter table tp drop index i")
+			idxNameSmall := fmt.Sprintf("i_small_%d", i)
+			idxNameLarge := fmt.Sprintf("i_large_%d", i)
 
-			addCnt = 0
-			removeCnt = 0
-			tk.MustExec("alter table tp add index gi(c) global")
-			require.Greater(t, addCnt, 0)
-			require.Equal(t, removeCnt, addCnt)
-			tk.MustExec("alter table tp drop index gi")
+			// 1. Verify small table case (default behavior)
+			addCnt.Store(0)
+			removeCnt.Store(0)
+			tk.MustExec("alter table tp add index " + idxNameSmall + "(c)")
+			// 1024 rows in 2 partitions is a small table, so it should skip force split.
+			require.Equal(t, int32(0), addCnt.Load(), "Small table should skip force split in "+tc.caseName)
+			require.Equal(t, int32(0), removeCnt.Load())
+			tk.MustExec("alter table tp drop index " + idxNameSmall)
+
+			// 2. Verify large table case (mocked by lowering threshold)
+			if tc.caseName == "local ingest" {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+					*threshold = 0
+				})
+				addCnt.Store(0)
+				removeCnt.Store(0)
+				tk.MustExec("alter table tp add index " + idxNameLarge + "(c)")
+				// If failpoints are working or threshold variable is used, addCnt should be > 0.
+				require.Greater(t, addCnt.Load(), int32(0), "Large table should trigger force split in "+tc.caseName)
+				require.Equal(t, addCnt.Load(), removeCnt.Load())
+				tk.MustExec("alter table tp drop index " + idxNameLarge)
+
+				// 3. Verify global index
+				addCnt.Store(0)
+				removeCnt.Store(0)
+				tk.MustExec("alter table tp add index gi(c) global")
+				require.Greater(t, addCnt.Load(), int32(0))
+				require.Equal(t, addCnt.Load(), removeCnt.Load())
+				tk.MustExec("alter table tp drop index gi")
+			}
 		})
 	}
 }
@@ -909,14 +961,14 @@ func TestNextGenMetering(t *testing.T) {
 	tk.MustExec("insert into t values ('a',1,1),('b',2,2),('c',3,3);")
 
 	baseTime := time.Now().Truncate(time.Minute).Unix()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
 		// the metering library requires the timestamp to be at minute boundary, but
 		// during test, we want to reduce the flush interval.
 		*ts = baseTime
 		baseTime += 60
 	})
 	var gotMeterData uberatomic.String
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
 		gotMeterData.Store(s.String())
 	})
 	var jobID int64
@@ -927,7 +979,7 @@ func TestNextGenMetering(t *testing.T) {
 	})
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
 	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
 		rowAndSizeMeterItems.Store(&items)
 	})
 	tk.MustExec("alter table t add index idx(c);")
@@ -972,7 +1024,7 @@ func TestNextGenMetering(t *testing.T) {
 		items := *rowAndSizeMeterItems.Load()
 		return items != nil && items["row_count"].(int64) == 3 &&
 			items["index_kv_bytes"].(int64) == 153 &&
-			items[metering.ConcurrencyField].(int) == task.Concurrency &&
+			items[metering.RequiredSlotsField].(int) == task.RequiredSlots &&
 			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
 			items[metering.DurationSecondsField].(int64) > 0
 	}, 30*time.Second, 100*time.Millisecond)
@@ -995,4 +1047,44 @@ func getStepSummary(t *testing.T, taskMgr *diststorage.TaskManager, taskID int64
 		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
 	}
 	return &accumSummary
+}
+
+func TestGlobalSortExtraParams(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
+		func(requiredSlots *int, params *proto.ExtraParams) {
+			*requiredSlots = 16
+			params.MaxRuntimeSlots = 12
+		},
+	)
+	var callCnt int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool/NewWorkerPool", func(numWorkers int) {
+		// readerCnt or writerCnt is calculated, about half of the runtime slots
+		// merge-sort/ingest is 12
+		if numWorkers != 6 && numWorkers != 8 && numWorkers != 12 {
+			t.Fatalf("unexpected numWorkers: %d", numWorkers)
+		}
+		callCnt++
+	})
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists extra_params;")
+	tk.MustExec("create database extra_params;")
+	tk.MustExec("use extra_params;")
+	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
+	defer func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	}()
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (2), (3);")
+	tk.MustExec("alter table t add unique index idx(a);")
+	// read-index/merge-sort/ingest all create worker pool once
+	require.Equal(t, 4, callCnt)
 }

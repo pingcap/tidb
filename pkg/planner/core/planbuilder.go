@@ -3950,8 +3950,8 @@ func collectVisitInfoFromRevokeStmt(ctx context.Context, sctx base.PlanContext, 
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
 		if semv2.IsEnabled() {
-			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(item.Name)) ||
-				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(item.Priv.String())) {
+			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(strings.ToUpper(item.Name))) ||
+				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(strings.ToUpper(item.Priv.String()))) {
 				// In `semv2`, we'll support to limit non-dynamic privileges unless the user has the `RESTRICTED_PRIV_ADMIN` privilege.
 				// For example, `File` privilege might be restricted.
 				// It's also controlled by the `GRANT OPTION`, so the user will also need the `GRANT OPTION` for this privilege.
@@ -4025,8 +4025,8 @@ func collectVisitInfoFromGrantStmt(sctx base.PlanContext, vi []visitInfo, stmt *
 	authErr := genAuthErrForGrantStmt(sctx, dbName)
 	for _, item := range stmt.Privs {
 		if semv2.IsEnabled() {
-			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(item.Name)) ||
-				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(item.Priv.String())) {
+			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(strings.ToUpper(item.Name))) ||
+				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(strings.ToUpper(item.Priv.String()))) {
 				// In `semv2`, we'll support to limit non-dynamic privileges unless the user has the `RESTRICTED_PRIV_ADMIN` privilege.
 				// For example, `File` privilege might be restricted.
 				// It's also controlled by the `GRANT OPTION`, so the user will also need the `GRANT OPTION` for this privilege.
@@ -5388,7 +5388,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
 					spec.NewTable.Name.L, "", authErr)
-			} else if spec.Tp == ast.AlterTableDropPartition {
+			} else if spec.Tp == ast.AlterTableDropPartition || spec.Tp == ast.AlterTableTruncatePartition {
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
@@ -5821,7 +5821,7 @@ func getHintedStmtThroughPlanDigest(ctx base.PlanContext, planDigest string) (st
 				return err
 			}
 			if query == "" {
-				return errors.NewNoStackErrorf("can't find any plans for '" + planDigest + "'")
+				return errors.NewNoStackErrorf("can't find any plans for '%s'", planDigest)
 			}
 
 			p := parser.New()

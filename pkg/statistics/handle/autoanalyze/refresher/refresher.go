@@ -92,14 +92,6 @@ func (r *Refresher) UpdateConcurrency() {
 // Usually, this is done by the caller through `util.CallWithSCtx`.
 func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	err := r.setAutoAnalysisTimeWindow(parameters)
-	if err != nil {
-		statslogutil.StatsErrVerboseSampleLogger().Error("Set auto analyze time window failed", zap.Error(err))
-		return false
-	}
-	if !r.isWithinTimeWindow() {
-		return false
-	}
 	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
@@ -120,6 +112,20 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 				return false
 			}
 		}
+	}
+
+	// NOTE: This check must be done after initializing/rebuilding the queue.
+	// For example, if TiDB instances restart outside the time window, the queue will not be initialized.
+	// This means the DDL events are not being processed. This would prevent the DDL notifier from moving forward.
+	// Although this won't cause a correctness issue and it does not affect other handlers, it is still better to avoid this situation.
+	// We should make sure the queue is always initialized when the current instance is the owner.
+	err := r.setAutoAnalysisTimeWindow(parameters)
+	if err != nil {
+		statslogutil.StatsErrVerboseSampleLogger().Error("Set auto analyze time window failed", zap.Error(err))
+		return false
+	}
+	if !r.isWithinTimeWindow() {
+		return false
 	}
 
 	// Update the concurrency to the latest value.
@@ -265,15 +271,8 @@ func (r *Refresher) Close() {
 	}
 }
 
-// OnBecomeOwner is used to handle the event when the current TiDB instance becomes the stats owner.
-func (*Refresher) OnBecomeOwner() {
-	// No action is taken when becoming the stats owner.
-	// Initialization of the Refresher can fail, so operations are deferred until the first auto-analyze check.
-}
-
-// OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
-func (r *Refresher) OnRetireOwner() {
-	// Theoretically we should stop the worker here, but stopping analysis jobs can be time-consuming.
-	// To avoid blocking etcd leader re-election, we only close the priority queue.
+// ClosePriorityQueue closes the stats priority queue if initialized.
+// NOTE: This does NOT stop the analyze worker. Only the priority queue is closed.
+func (r *Refresher) ClosePriorityQueue() {
 	r.jobs.Close()
 }

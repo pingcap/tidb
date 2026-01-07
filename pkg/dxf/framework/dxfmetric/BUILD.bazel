@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "dxfmetric",
+    srcs = [
+        "collector.go",
+        "metric.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/metrics/common",
+        "//pkg/util/intest",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_prometheus_client_golang//prometheus",
+    ],
+)

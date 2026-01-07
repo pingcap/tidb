@@ -47,10 +47,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1368,7 +1368,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		s := utiltest.CreateRestoreSchemaSuite(t)
 		tk := testkit.NewTestKit(t, s.Mock.Storage)
-		tk.Exec(session.CreateTiDBPITRIDMapTable)
+		tk.Exec(metadef.CreateTiDBPITRIDMapTable)
 		g := gluetidb.New()
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
@@ -1438,7 +1438,7 @@ func TestPITRIDMap(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.MustExec(session.CreateTiDBPITRIDMapTable)
+	tk.MustExec(metadef.CreateTiDBPITRIDMapTable)
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
@@ -1538,7 +1538,7 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.MustExec(session.CreateTiDBPITRIDMapTable)
+	tk.MustExec(metadef.CreateTiDBPITRIDMapTable)
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)

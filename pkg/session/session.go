@@ -48,13 +48,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
@@ -2620,7 +2620,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		digestKey := normalizedSQL
 		// digestKey := sessVars.StmtCtx.OriginalSQL
 
-		sessVars.StmtCtx.MemTracker.InitMemArbitrator(
+		tracker := sessVars.StmtCtx.MemTracker
+		if !tracker.InitMemArbitrator(
 			globalMemArbitrator,
 			sessVars.MemQuotaQuery,
 			sessVars.MemTracker.Killer,
@@ -2628,7 +2629,17 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			memPriority,
 			enableWaitAverse,
 			reserveSize,
-		)
+			s.isInternal(),
+		) {
+			return nil, errors.New("failed to init mem-arbitrator")
+		}
+
+		defer func() { // detach mem-arbitrator and rethrow panic if any
+			if r := recover(); r != nil {
+				tracker.DetachMemArbitrator()
+				panic(r)
+			}
+		}()
 	}
 
 	var recordSet sqlexec.RecordSet
@@ -3850,24 +3861,24 @@ var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
 	DDLJobTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLJobTableID, Name: "tidb_ddl_job", SQL: ddl.JobTableSQL},
-		{ID: metadef.TiDBDDLReorgTableID, Name: "tidb_ddl_reorg", SQL: ddl.ReorgTableSQL},
-		{ID: metadef.TiDBDDLHistoryTableID, Name: "tidb_ddl_history", SQL: ddl.HistoryTableSQL},
+		{ID: metadef.TiDBDDLJobTableID, Name: "tidb_ddl_job", SQL: metadef.CreateTiDBDDLJobTable},
+		{ID: metadef.TiDBDDLReorgTableID, Name: "tidb_ddl_reorg", SQL: metadef.CreateTiDBReorgTable},
+		{ID: metadef.TiDBDDLHistoryTableID, Name: "tidb_ddl_history", SQL: metadef.CreateTiDBDDLHistoryTable},
 	}
 	// MDLTables is a list of tables definitions used for metadata lock.
 	MDLTables = []TableBasicInfo{
-		{ID: metadef.TiDBMDLInfoTableID, Name: "tidb_mdl_info", SQL: ddl.MDLTableSQL},
+		{ID: metadef.TiDBMDLInfoTableID, Name: "tidb_mdl_info", SQL: metadef.CreateTiDBMDLTable},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
 	BackfillTables = []TableBasicInfo{
-		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: "tidb_background_subtask", SQL: ddl.BackgroundSubtaskTableSQL},
-		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: "tidb_background_subtask_history", SQL: ddl.BackgroundSubtaskHistoryTableSQL},
+		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: "tidb_background_subtask", SQL: metadef.CreateTiDBBackgroundSubtaskTable},
+		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: "tidb_background_subtask_history", SQL: metadef.CreateTiDBBackgroundSubtaskHistoryTable},
 	}
 	// DDLNotifierTables contains the table definitions used in DDL notifier.
 	// It only contains the notifier table.
 	// Put it here to reuse a unified initialization function and make it easier to find.
 	DDLNotifierTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: ddl.NotifierTableSQL},
+		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: metadef.CreateTiDBDDLNotifierTable},
 	}
 
 	ddlTableVersionTables = []versionedDDLTables{
@@ -4002,27 +4013,6 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	return nil
 }
 
-// InitMDLVariableForUpgrade initializes the metadata lock variable.
-func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
-	isNull := false
-	enable := false
-	var err error
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		enable, isNull, err = t.GetMetadataLock()
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	if isNull || !enable {
-		vardef.SetEnableMDL(false)
-	} else {
-		vardef.SetEnableMDL(true)
-	}
-	return isNull, err
-}
-
 // InitMDLVariable initializes the metadata lock variable.
 func InitMDLVariable(store kv.Storage) error {
 	isNull := false
@@ -4144,7 +4134,19 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	ses[0].GetSessionVars().InRestrictedSQL = true
+	// Mark all bootstrap sessions as restricted since they are used for internal operations
+	// ses[0]: main bootstrap session
+	// ses[1-2]: reserved
+	// ses[3]: privilege loading
+	// ses[4]: sysvar cache
+	// ses[5]: telemetry, expression pushdown
+	// ses[6]: plan replayer collector
+	// ses[7]: dump file GC
+	// ses[8]: historical stats
+	// ses[9]: bootstrap SQL file
+	for i := range ses {
+		ses[i].GetSessionVars().InRestrictedSQL = true
+	}
 
 	// get system tz from mysql.tidb
 	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
@@ -4170,14 +4172,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ctx, ses[0])
 
-	// We should make the load bind-info loop before other loops which has internal SQL.
-	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
-	// LoadBindInfoLoop inits global bind-info handler.
-	err = dom.InitBindingHandle()
-	if err != nil {
-		return nil, err
-	}
-
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
@@ -4187,6 +4181,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
+	if err != nil {
+		return nil, err
+	}
+
+	// We should make the load bind-info loop before other loops which has internal SQL.
+	// Binding Handle must be initialized after LoadSysVarCacheLoop since
+	// it'll use `tidb_mem_quota_binding_cache` to set the cache size.
+	err = dom.InitBindingHandle()
 	if err != nil {
 		return nil, err
 	}

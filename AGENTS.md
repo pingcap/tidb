@@ -93,7 +93,7 @@ The test set is located at `/tests/integrationtest/t`, and the result set is in 
 ```bash
 # in the root directory of the repository
 pushd tests/integrationtest
-./run-tests.sh -run <TestName>
+./run-tests.sh -r <TestName>
 popd
 ```
 

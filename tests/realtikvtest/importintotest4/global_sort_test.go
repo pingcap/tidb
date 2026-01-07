@@ -27,12 +27,13 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -158,12 +159,12 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		key(a), key(c,d), key(d));`)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
 	ch := make(chan struct{}, 1)
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", func() {
 		ch <- struct{}{}
 	})
 	var counter atomic.Int32
 	tk2 := testkit.NewTestKit(s.T(), s.store)
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish",
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/syncAfterSubtaskFinish",
 		func() {
 			newVal := counter.Add(1)
 			if newVal == 1 {
@@ -236,7 +237,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	<-ch
 
 	// failed task, should clean up all sorted data too.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
 	s.tk.MustExec("truncate table t")
 	result = s.tk.MustQuery(importSQL + ", detached").Rows()
 	s.Len(result, 1)
@@ -450,12 +451,15 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 
-	var addCnt, removeCnt int
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+		*threshold = 0
+	})
+	var addCnt, removeCnt atomic.Int32
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
-		addCnt += 1
+		addCnt.Add(1)
 	})
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
-		removeCnt += 1
+		removeCnt.Add(1)
 	})
 	dom, err := session.GetDomain(s.store)
 	require.NoError(s.T(), err)
@@ -466,24 +470,24 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s' with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	require.Greater(s.T(), addCnt, 0)
-	require.Equal(s.T(), removeCnt, addCnt)
+	require.Greater(s.T(), addCnt.Load(), int32(0))
+	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 
-	addCnt = 0
-	removeCnt = 0
+	addCnt.Store(0)
+	removeCnt.Store(0)
 	s.tk.MustExec("truncate t")
 	importSQL = fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'`, gcsEndpoint)
 	result = s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	require.Equal(s.T(), addCnt, 2*len(stores))
-	require.Equal(s.T(), removeCnt, addCnt)
+	require.Equal(s.T(), addCnt.Load(), int32(2*len(stores)))
+	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 
-	addCnt = 0
-	removeCnt = 0
+	addCnt.Store(0)
+	removeCnt.Store(0)
 	s.tk.MustExec("create table dst like t")
 	s.tk.MustExec(`import into dst FROM select * from t`)
-	require.Equal(s.T(), addCnt, 2*len(stores))
-	require.Equal(s.T(), removeCnt, addCnt)
+	require.Equal(s.T(), addCnt.Load(), int32(2*len(stores)))
+	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 }
 
 func TestNextGenMetering(t *testing.T) {
@@ -512,18 +516,18 @@ func TestNextGenMetering(t *testing.T) {
 	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), index(b));")
 
 	baseTime := time.Now().Truncate(time.Minute).Unix()
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
 		// the metering library requires the timestamp to be at minute boundary, but
 		// during test, we want to reduce the flush interval.
 		*ts = baseTime
 		baseTime += 60
 	})
 	var gotMeterData atomic.String
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
 		gotMeterData.Store(s.String())
 	})
 	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
 		rowAndSizeMeterItems.Store(&items)
 	})
 
@@ -574,8 +578,68 @@ func TestNextGenMetering(t *testing.T) {
 		items := *rowAndSizeMeterItems.Load()
 		return items != nil && items[metering.RowCountField].(int64) == 3 &&
 			items[metering.DataKVBytesField].(int64) == 114 && items[metering.IndexKVBytesField].(int64) == 174 &&
-			items[metering.ConcurrencyField].(int) == task.Concurrency &&
+			items[metering.RequiredSlotsField].(int) == task.RequiredSlots &&
 			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
 			items[metering.DurationSecondsField].(int64) > 0
 	}, 30*time.Second, 100*time.Millisecond)
+}
+
+func TestDropTableBeforeCleanup(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("switching table mode is not supported in nextgen")
+	}
+
+	bak := scheduler.DefaultCleanUpInterval
+	scheduler.DefaultCleanUpInterval = time.Second
+	t.Cleanup(func() {
+		scheduler.DefaultCleanUpInterval = bak
+	})
+
+	s := &mockGCSSuite{}
+	s.SetT(t)
+	s.SetupSuite()
+	t.Cleanup(func() {
+		s.TearDownSuite()
+	})
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "drop-test", Name: "data.csv"},
+		Content:     []byte("1,1\n2,2\n"),
+	})
+	s.prepareAndUseDB("drop_test")
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "drop-sort"})
+	sortStorageURI := fmt.Sprintf("gs://drop-sort?endpoint=%s", gcsEndpoint)
+
+	dropCh := make(chan struct{})
+	waitDropCh := make(chan struct{})
+	var mockError atomic.Bool
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/mockCleanupError", func(err *error) {
+		if mockError.CompareAndSwap(false, true) {
+			// Start drop table and wait finished
+			close(waitDropCh)
+			<-dropCh
+			*err = fmt.Errorf("mock clean up global sort dir error")
+			return
+		}
+	})
+
+	s.tk.MustExec("create table table_mode (id int primary key, fk int)")
+	importSQL := fmt.Sprintf(`import into table_mode FROM 'gs://drop-test/data.csv?endpoint=%s'
+		with cloud_storage_uri='%s', thread=8`, gcsEndpoint, sortStorageURI)
+	query := "SELECT * FROM table_mode"
+
+	// Wait import finish without altering table mode back, then drop table
+	s.tk.MustQuery(importSQL)
+	s.checkMode(s.tk, query, "table_mode", true)
+	s.tk.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
+
+	<-waitDropCh
+	s.tk.MustExec("drop table table_mode")
+	close(dropCh)
+
+	// Make sure all tasks can be cleaned up successfully.
+	require.Eventually(t, func() bool {
+		rs := s.tk.MustQuery("select count(*) from mysql.tidb_global_task").Rows()
+		return rs[0][0].(string) == "0"
+	}, 30*time.Second, time.Second)
 }

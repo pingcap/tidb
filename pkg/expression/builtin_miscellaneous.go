@@ -39,66 +39,78 @@ import (
 )
 
 var (
-	_ functionClass = &sleepFunctionClass{}
-	_ functionClass = &lockFunctionClass{}
-	_ functionClass = &releaseLockFunctionClass{}
 	_ functionClass = &anyValueFunctionClass{}
+	_ functionClass = &binToUUIDFunctionClass{}
 	_ functionClass = &defaultFunctionClass{}
-	_ functionClass = &inetAtonFunctionClass{}
-	_ functionClass = &inetNtoaFunctionClass{}
 	_ functionClass = &inet6AtonFunctionClass{}
 	_ functionClass = &inet6NtoaFunctionClass{}
+	_ functionClass = &inetAtonFunctionClass{}
+	_ functionClass = &inetNtoaFunctionClass{}
 	_ functionClass = &isFreeLockFunctionClass{}
-	_ functionClass = &isIPv4FunctionClass{}
 	_ functionClass = &isIPv4CompatFunctionClass{}
+	_ functionClass = &isIPv4FunctionClass{}
 	_ functionClass = &isIPv4MappedFunctionClass{}
 	_ functionClass = &isIPv6FunctionClass{}
 	_ functionClass = &isUsedLockFunctionClass{}
+	_ functionClass = &isUUIDFunctionClass{}
+	_ functionClass = &lockFunctionClass{}
 	_ functionClass = &nameConstFunctionClass{}
 	_ functionClass = &releaseAllLocksFunctionClass{}
+	_ functionClass = &releaseLockFunctionClass{}
+	_ functionClass = &sleepFunctionClass{}
+	_ functionClass = &tidbRowChecksumFunctionClass{}
+	_ functionClass = &tidbShardFunctionClass{}
 	_ functionClass = &uuidFunctionClass{}
 	_ functionClass = &uuidShortFunctionClass{}
-	_ functionClass = &vitessHashFunctionClass{}
+	_ functionClass = &uuidTimestampFunctionClass{}
 	_ functionClass = &uuidToBinFunctionClass{}
-	_ functionClass = &binToUUIDFunctionClass{}
-	_ functionClass = &isUUIDFunctionClass{}
-	_ functionClass = &tidbShardFunctionClass{}
+	_ functionClass = &uuidv4FunctionClass{}
+	_ functionClass = &uuidv7FunctionClass{}
+	_ functionClass = &uuidVersionFunctionClass{}
+	_ functionClass = &vitessHashFunctionClass{}
 )
 
 var (
-	_ builtinFunc = &builtinSleepSig{}
-	_ builtinFunc = &builtinLockSig{}
-	_ builtinFunc = &builtinReleaseLockSig{}
-	_ builtinFunc = &builtinReleaseAllLocksSig{}
+	_ builtinFunc = &builtinBinToUUIDSig{}
 	_ builtinFunc = &builtinDecimalAnyValueSig{}
 	_ builtinFunc = &builtinDurationAnyValueSig{}
-	_ builtinFunc = &builtinIntAnyValueSig{}
-	_ builtinFunc = &builtinJSONAnyValueSig{}
-	_ builtinFunc = &builtinRealAnyValueSig{}
-	_ builtinFunc = &builtinStringAnyValueSig{}
-	_ builtinFunc = &builtinTimeAnyValueSig{}
-	_ builtinFunc = &builtinInetAtonSig{}
-	_ builtinFunc = &builtinInetNtoaSig{}
+	_ builtinFunc = &builtinFreeLockSig{}
 	_ builtinFunc = &builtinInet6AtonSig{}
 	_ builtinFunc = &builtinInet6NtoaSig{}
-	_ builtinFunc = &builtinIsIPv4Sig{}
+	_ builtinFunc = &builtinInetAtonSig{}
+	_ builtinFunc = &builtinInetNtoaSig{}
+	_ builtinFunc = &builtinIntAnyValueSig{}
 	_ builtinFunc = &builtinIsIPv4CompatSig{}
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
+	_ builtinFunc = &builtinIsIPv4Sig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinIsUUIDSig{}
-	_ builtinFunc = &builtinUUIDSig{}
-	_ builtinFunc = &builtinVitessHashSig{}
-	_ builtinFunc = &builtinUUIDToBinSig{}
-	_ builtinFunc = &builtinBinToUUIDSig{}
-
-	_ builtinFunc = &builtinNameConstIntSig{}
-	_ builtinFunc = &builtinNameConstRealSig{}
+	_ builtinFunc = &builtinJSONAnyValueSig{}
+	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinNameConstDecimalSig{}
-	_ builtinFunc = &builtinNameConstTimeSig{}
 	_ builtinFunc = &builtinNameConstDurationSig{}
-	_ builtinFunc = &builtinNameConstStringSig{}
+	_ builtinFunc = &builtinNameConstIntSig{}
 	_ builtinFunc = &builtinNameConstJSONSig{}
+	_ builtinFunc = &builtinNameConstRealSig{}
+	_ builtinFunc = &builtinNameConstStringSig{}
+	_ builtinFunc = &builtinNameConstTimeSig{}
+	_ builtinFunc = &builtinNameConstVectorFloat32Sig{}
+	_ builtinFunc = &builtinRealAnyValueSig{}
+	_ builtinFunc = &builtinReleaseAllLocksSig{}
+	_ builtinFunc = &builtinReleaseLockSig{}
+	_ builtinFunc = &builtinSleepSig{}
+	_ builtinFunc = &builtinStringAnyValueSig{}
 	_ builtinFunc = &builtinTidbShardSig{}
+	_ builtinFunc = &builtinTimeAnyValueSig{}
+	_ builtinFunc = &builtinUsedLockSig{}
+	_ builtinFunc = &builtinUUIDSig{}
+	_ builtinFunc = &builtinUUIDTimestampSig{}
+	_ builtinFunc = &builtinUUIDToBinSig{}
+	_ builtinFunc = &builtinUUIDv4Sig{}
+	_ builtinFunc = &builtinUUIDv7Sig{}
+	_ builtinFunc = &builtinUUIDVersionSig{}
+	_ builtinFunc = &builtinVectorFloat32AnyValueSig{}
+	_ builtinFunc = &builtinVitessHashSig{}
 )
 
 const (
@@ -1497,7 +1509,9 @@ func (b *builtinUUIDSig) Clone() builtinFunc {
 }
 
 // evalString evals a builtinUUIDSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
+// See:
+// - https://dev.mysql.com/doc/refman/8.4/en/miscellaneous-functions.html#function_uuid
+// - https://datatracker.ietf.org/doc/html/rfc9562
 func (b *builtinUUIDSig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
 	var id uuid.UUID
 	id, err = uuid.NewUUID()
@@ -1508,11 +1522,223 @@ func (b *builtinUUIDSig) evalString(ctx EvalContext, row chunk.Row) (d string, i
 	return
 }
 
+// Function: UUID_V4()
+type uuidv4FunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *uuidv4FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	charset, collate := ctx.GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(36)
+	sig := &builtinUUIDv4Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUID)
+	return sig, nil
+}
+
+type builtinUUIDv4Sig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinUUIDv4Sig) Clone() builtinFunc {
+	newSig := &builtinUUIDv4Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinUUIDv4Sig.
+func (b *builtinUUIDv4Sig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
+	var id uuid.UUID
+	id, err = uuid.NewRandom()
+	if err != nil {
+		return
+	}
+	d = id.String()
+	return
+}
+
+// Function: UUID_V7()
+type uuidv7FunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *uuidv7FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	charset, collate := ctx.GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(36)
+	sig := &builtinUUIDv7Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUID)
+	return sig, nil
+}
+
+type builtinUUIDv7Sig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinUUIDv7Sig) Clone() builtinFunc {
+	newSig := &builtinUUIDv7Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinUUIDv7Sig.
+func (b *builtinUUIDv7Sig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
+	var id uuid.UUID
+	id, err = uuid.NewV7()
+	if err != nil {
+		return
+	}
+	d = id.String()
+	return
+}
+
+// Function: UUID_VERSION()
+type uuidVersionFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *uuidVersionFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(10)
+	sig := &builtinUUIDVersionSig{bf}
+	return sig, nil
+}
+
+type builtinUUIDVersionSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinUUIDVersionSig) Clone() builtinFunc {
+	newSig := &builtinUUIDVersionSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evaluates a builtinUUIDVersionSig.
+func (b *builtinUUIDVersionSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	u, err := uuid.Parse(val)
+	if err != nil {
+		return 0, isNull, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_version")
+	}
+	return int64(u.Version()), false, nil
+}
+
+// Function: UUID_TIMESTAMP()
+type uuidTimestampFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *uuidTimestampFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(18)
+	bf.tp.SetDecimalUnderLimit(6)
+	sig := &builtinUUIDTimestampSig{bf}
+	return sig, nil
+}
+
+type builtinUUIDTimestampSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinUUIDTimestampSig) Clone() builtinFunc {
+	newSig := &builtinUUIDTimestampSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evaluates a builtinUUIDTimestampSig.
+func (b *builtinUUIDTimestampSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
+	val, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return new(types.MyDecimal), isNull, err
+	}
+	u, err := uuid.Parse(val)
+	if err != nil {
+		return new(types.MyDecimal), isNull, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_timestamp")
+	}
+
+	switch u.Version() {
+	case 1, 6, 7:
+	default:
+		// No timestamp, return NULL
+		return new(types.MyDecimal), true, nil
+	}
+
+	s, ns := u.Time().UnixTime()
+	r := new(types.MyDecimal)
+	r.FromInt((s * 1000000) + (ns / 1000))
+	err = r.Shift(-6)
+	if err != nil {
+		return new(types.MyDecimal), isNull, err
+	}
+	err = r.Round(r, 6, types.ModeHalfUp)
+	if err != nil {
+		return new(types.MyDecimal), isNull, err
+	}
+
+	return r, false, nil
+}
+
 type uuidShortFunctionClass struct {
 	baseFunctionClass
 }
 
 func (c *uuidShortFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	// This should be:
+	//
+	// (server_id & 255) << 56
+	// + (server_startup_time_in_seconds << 24)
+	// + incremented_variable++;
+	//
+	// But we have a noop server_id
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
 }
 
