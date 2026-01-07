@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -101,9 +101,7 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 		case <-logTicker.C:
 			m.logProgress(len(jobs), stats)
 		case <-ticker.C:
-			failpoint.Inject("SlowDownPolling", func() {
-				time.Sleep(time.Second)
-			})
+			failpoint.Inject("SlowDownPolling", nil)
 			// Get detailed status for each job
 			statuses, err := m.sdk.GetJobsByGroup(ctx, groupKey)
 			if err != nil {
@@ -204,6 +202,15 @@ func (m *DefaultJobMonitor) processJobStatuses(
 		if status.IsCompleted() {
 			finishedJobs[status.JobID] = struct{}{}
 
+			// Set error if not success
+			if !status.IsFinished() && *firstError == nil {
+				if status.IsFailed() {
+					*firstError = errors.Errorf("job %d failed: %s", status.JobID, status.ResultMessage)
+				} else if status.IsCancelled() {
+					*firstError = errors.Errorf("job %d was cancelled", status.JobID)
+				}
+			}
+
 			// Record completion in checkpoint
 			if err := m.recordCompletion(ctx, job, status); err != nil {
 				m.logger.Error("failed to record job completion", zap.Int64("jobID", job.JobID), zap.Error(err))
@@ -213,7 +220,7 @@ func (m *DefaultJobMonitor) processJobStatuses(
 				continue
 			}
 
-			m.logJobCompletion(job, status, firstError)
+			m.logJobCompletion(job, status)
 		}
 	}
 
@@ -242,9 +249,10 @@ func (m *DefaultJobMonitor) handleFailures(
 		for _, status := range statuses {
 			// Only cancel jobs that are not completed (finished, failed, or cancelled)
 			if !status.IsCompleted() {
-				m.logger.Info("cancelling job", zap.Int64("jobID", status.JobID))
+				logger := m.logger.With(zap.Int64("jobID", status.JobID))
+				logger.Info("cancelling job")
 				if err := m.sdk.CancelJob(ctx, status.JobID); err != nil {
-					m.logger.Warn("failed to cancel job", zap.Int64("jobID", status.JobID), zap.Error(err))
+					logger.Warn("failed to cancel job", zap.Error(err))
 				}
 			}
 		}
@@ -253,19 +261,18 @@ func (m *DefaultJobMonitor) handleFailures(
 	return nil
 }
 
-func (m *DefaultJobMonitor) logJobCompletion(job *ImportJob, status *importsdk.JobStatus, firstError *error) {
+func (m *DefaultJobMonitor) logJobCompletion(job *ImportJob, status *importsdk.JobStatus) {
+	logger := m.logger.With(
+		zap.Int64("jobID", job.JobID),
+		zap.String("database", job.TableMeta.Database),
+		zap.String("table", job.TableMeta.Table),
+	)
 	if status.IsFinished() {
-		m.logger.Info("job completed successfully", zap.Int64("jobID", job.JobID), zap.String("database", job.TableMeta.Database), zap.String("table", job.TableMeta.Table), zap.Int64("importedRows", status.ImportedRows))
+		logger.Info("job completed successfully", zap.Int64("importedRows", status.ImportedRows))
 	} else if status.IsFailed() {
-		m.logger.Error("job failed", zap.Int64("jobID", job.JobID), zap.String("database", job.TableMeta.Database), zap.String("table", job.TableMeta.Table), zap.String("error", status.ResultMessage))
-		if *firstError == nil {
-			*firstError = errors.Errorf("job %d failed: %s", job.JobID, status.ResultMessage)
-		}
+		logger.Error("job failed", zap.String("error", status.ResultMessage))
 	} else if status.IsCancelled() {
-		m.logger.Warn("job was cancelled", zap.Int64("jobID", job.JobID), zap.String("database", job.TableMeta.Database), zap.String("table", job.TableMeta.Table))
-		if *firstError == nil {
-			*firstError = errors.Errorf("job %d was cancelled", job.JobID)
-		}
+		logger.Warn("job was cancelled")
 	}
 }
 

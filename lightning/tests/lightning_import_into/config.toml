@@ -11,7 +11,7 @@ disk-quota = "10GB"
 store-write-bwlimit = "100MB"
 
 [mydumper]
-data-source-dir = "/workspaces/tidb/lightning/tests/lightning_import_into/data"
+data-source-dir = "$CUR/data"
 strict-format = true
 character-set = "utf8mb4"
 data-character-set = "utf8mb4"
