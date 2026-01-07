@@ -829,6 +829,25 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
 	}
+
+	// If one path has significantly fewer seeks than the other, don't let
+	// other heuristics (access columns, covering) dominate - let the cost model decide.
+	// See #63487 for why this is necessary.
+	if fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, false) {
+		lhsRanges := float64(len(lhs.path.Ranges))
+		rhsRanges := float64(len(rhs.path.Ranges))
+		if lhsRanges > 0 && rhsRanges > 0 {
+			ratio := lhsRanges / rhsRanges
+			if ratio < 1 {
+				ratio = 1 / ratio
+			}
+			if ratio > cost.SkylinePruningSeekRatioThreshold {
+				// Seek cost difference is too large for skyline pruning heuristics to be reliable
+				return 0, false
+			}
+		}
+	}
+
 	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
 	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
 	//

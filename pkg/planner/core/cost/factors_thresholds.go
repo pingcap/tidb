@@ -55,4 +55,10 @@ const (
 	// than the limit count, the unordered scan may cost much more than keep order.
 	// So when a limit exists, we don't apply the DescScanFactor.
 	SmallScanThreshold = 10000
+
+	// SkylinePruningSeekRatioThreshold is the threshold for bypassing skyline pruning heuristics
+	// when the seek ratio between two candidate paths differs significantly.
+	// When one path has 10x more seeks than another, let the cost model decide instead of
+	// relying on heuristics like covering index or access columns. See issue #63487.
+	SkylinePruningSeekRatioThreshold = 10.0
 )
