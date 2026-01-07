@@ -1,0 +1,50 @@
+create table t (id int primary key, v int) active_active='on' softdelete retention 7 day;
+insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6);
+batch on t.id limit 2 delete from t where v < 6;
+number of jobs	job status
+3	all succeeded
+select * from t;
+id	v
+6	6
+set @@tidb_translate_softdelete_sql = true;
+select id, v, _tidb_softdelete_time from t;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+set @@tidb_translate_softdelete_sql = false;
+select id, v, _tidb_softdelete_time from t;
+id	v	_tidb_softdelete_time
+1	1	TIME
+2	2	TIME
+3	3	TIME
+4	4	TIME
+5	5	TIME
+6	6	NULL
+create table t1 (id int primary key, v int);
+insert into t1 values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7);
+set @@tidb_translate_softdelete_sql = true;
+batch on t1.id limit 2 insert ignore into t select * from t1;
+number of jobs	job status
+4	all succeeded
+set @@tidb_translate_softdelete_sql = false;
+select id, v, _tidb_softdelete_time from t;
+id	v	_tidb_softdelete_time
+1	1	NULL
+2	2	NULL
+3	3	NULL
+4	4	NULL
+5	5	NULL
+6	6	NULL
+7	7	NULL
+set @@tidb_translate_softdelete_sql = true;
+batch on t.id limit 3 update t set v =  v + 1;
+number of jobs	job status
+3	all succeeded
+set @@tidb_translate_softdelete_sql = false;
+select id, v, _tidb_softdelete_time from t;
+id	v	_tidb_softdelete_time
+1	2	NULL
+2	3	NULL
+3	4	NULL
+4	5	NULL
+5	6	NULL
+6	7	NULL
+7	8	NULL
