@@ -355,7 +355,7 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 	}
 
 	if cap(j.serializedKeys) >= logicalRowCount {
-		clear(j.serializedKeys[:])
+		clear(j.serializedKeys)
 		j.serializedKeys = j.serializedKeys[:logicalRowCount]
 	} else {
 		j.serializedKeys = make([][]byte, logicalRowCount)
