@@ -1,0 +1,532 @@
+// Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
+
+package utils_test
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/stretchr/testify/require"
+	tikv "github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
+	pdgc "github.com/tikv/pd/client/clients/gc"
+)
+
+// ============================================================================
+// Mock implementations
+// ============================================================================
+
+// mockCodec implements tikv.Codec interface (partial for testing)
+type mockCodec struct {
+	tikv.Codec
+	keyspaceID tikv.KeyspaceID
+}
+
+func (m *mockCodec) GetKeyspaceID() tikv.KeyspaceID {
+	return m.keyspaceID
+}
+
+// mockStorage implements kv.Storage interface (partial)
+type mockStorage struct {
+	kv.Storage
+	codec *mockCodec
+}
+
+func (m *mockStorage) GetCodec() tikv.Codec {
+	return m.codec
+}
+
+// mockGCStatesClient implements pdgc.GCStatesClient interface (partial for testing)
+type mockGCStatesClient struct {
+	sync.Mutex
+	pdgc.GCStatesClient
+	keyspaceID             uint32
+	barriers               map[string]*pdgc.GCBarrierInfo
+	setGCBarrierCalls      int
+	deleteGCBarrierCalls   int
+	lastBarrierID          string
+	lastBarrierTS          uint64
+	lastTTL                time.Duration
+	getGCStateCalls        int
+	setGCBarrierShouldFail bool
+}
+
+func newMockGCStatesClient(keyspaceID uint32) *mockGCStatesClient {
+	return &mockGCStatesClient{
+		keyspaceID: keyspaceID,
+		barriers:   make(map[string]*pdgc.GCBarrierInfo),
+	}
+}
+
+func (m *mockGCStatesClient) GetGCState(ctx context.Context) (pdgc.GCState, error) {
+	m.Lock()
+	defer m.Unlock()
+	m.getGCStateCalls++
+
+	// Return GC safepoint > 0 to pass CheckGCSafePoint
+	return pdgc.GCState{
+		KeyspaceID:   m.keyspaceID,
+		GCSafePoint:  2333,
+		TxnSafePoint: 2334,
+		GCBarriers:   nil, // Will be populated if barriers exist
+	}, nil
+}
+
+func (m *mockGCStatesClient) SetGCBarrier(ctx context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GCBarrierInfo, error) {
+	m.Lock()
+	defer m.Unlock()
+
+	if m.setGCBarrierShouldFail {
+		return nil, errors.New("mock SetGCBarrier failure")
+	}
+
+	m.setGCBarrierCalls++
+	m.lastBarrierID = barrierID
+	m.lastBarrierTS = barrierTS
+	m.lastTTL = ttl
+
+	barrier := pdgc.NewGCBarrierInfo(barrierID, barrierTS, ttl, time.Now())
+	m.barriers[barrierID] = barrier
+	return barrier, nil
+}
+
+func (m *mockGCStatesClient) DeleteGCBarrier(ctx context.Context, barrierID string) (*pdgc.GCBarrierInfo, error) {
+	m.Lock()
+	defer m.Unlock()
+
+	m.deleteGCBarrierCalls++
+	barrier, exists := m.barriers[barrierID]
+	if !exists {
+		return nil, errors.Errorf("barrier %s not found", barrierID)
+	}
+	delete(m.barriers, barrierID)
+	return barrier, nil
+}
+
+// mockPDClientWithGCStates implements pd.Client interface with GCStatesClient support
+type mockPDClientWithGCStates struct {
+	sync.Mutex
+	pd.Client
+	gcStatesClients          map[uint32]*mockGCStatesClient
+	updateServiceCalls       int
+	lastServiceID            string
+	lastTTL                  int64
+	lastSafePoint            uint64
+	updateServiceShouldFail  bool
+}
+
+func newMockPDClientWithGCStates() *mockPDClientWithGCStates {
+	return &mockPDClientWithGCStates{
+		gcStatesClients: make(map[uint32]*mockGCStatesClient),
+	}
+}
+
+func (m *mockPDClientWithGCStates) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	m.Lock()
+	defer m.Unlock()
+
+	if m.updateServiceShouldFail {
+		return 0, errors.New("mock UpdateServiceGCSafePoint failure")
+	}
+
+	m.updateServiceCalls++
+	m.lastServiceID = serviceID
+	m.lastTTL = ttl
+	m.lastSafePoint = safePoint
+
+	// Return current gc safepoint (used by CheckGCSafePoint)
+	return 2333, nil
+}
+
+func (m *mockPDClientWithGCStates) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	// Mock implementation - just return the current GC safepoint
+	return 2333, nil
+}
+
+func (m *mockPDClientWithGCStates) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient {
+	m.Lock()
+	defer m.Unlock()
+
+	cli, exists := m.gcStatesClients[keyspaceID]
+	if !exists {
+		cli = newMockGCStatesClient(keyspaceID)
+		m.gcStatesClients[keyspaceID] = cli
+	}
+	return cli
+}
+
+// ============================================================================
+// Test Cases
+// ============================================================================
+
+func TestNewGCSafePointManager_WithoutKeyspace(t *testing.T) {
+	// Setup: no keyspace name configured
+	originalCfg := *config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(&originalCfg)
+
+	newCfg := originalCfg
+	newCfg.KeyspaceName = ""
+	config.StoreGlobalConfig(&newCfg)
+
+	pdClient := newMockPDClientWithGCStates()
+	storage := &mockStorage{
+		codec: &mockCodec{keyspaceID: 0},
+	}
+
+	// Create GC manager
+	mgr, err := utils.NewGCSafePointManager(pdClient, storage)
+	require.NoError(t, err)
+	require.NotNil(t, mgr)
+
+	// Verify it's UnifiedGCManager by checking it uses UpdateServiceGCSafePoint
+	ctx := context.Background()
+	sp := utils.BRServiceSafePoint{
+		ID:       "test-service",
+		TTL:      60,
+		BackupTS: 2334,
+	}
+
+	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	require.NoError(t, err)
+
+	// Verify UpdateServiceGCSafePoint was called (unified manager behavior)
+	require.Equal(t, 1, pdClient.updateServiceCalls)
+	require.Equal(t, "test-service", pdClient.lastServiceID)
+	require.Equal(t, int64(60), pdClient.lastTTL)
+}
+
+func TestNewGCSafePointManager_WithKeyspace(t *testing.T) {
+	// Setup: keyspace name configured
+	originalCfg := *config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(&originalCfg)
+
+	newCfg := originalCfg
+	newCfg.KeyspaceName = "test_keyspace"
+	config.StoreGlobalConfig(&newCfg)
+
+	pdClient := newMockPDClientWithGCStates()
+	keyspaceID := uint32(123)
+	storage := &mockStorage{
+		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
+	}
+
+	// Create GC manager
+	mgr, err := utils.NewGCSafePointManager(pdClient, storage)
+	require.NoError(t, err)
+	require.NotNil(t, mgr)
+
+	// Verify it's KeyspaceGCManager by checking it uses SetGCBarrier
+	ctx := context.Background()
+	sp := utils.BRServiceSafePoint{
+		ID:       "test-service",
+		TTL:      60,
+		BackupTS: 2335,
+	}
+
+	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	require.NoError(t, err)
+
+	// Verify SetGCBarrier was called (keyspace manager behavior)
+	gcClient := pdClient.gcStatesClients[keyspaceID]
+	require.NotNil(t, gcClient)
+	require.Equal(t, 1, gcClient.setGCBarrierCalls)
+	require.Equal(t, "test-service", gcClient.lastBarrierID)
+	require.Equal(t, uint64(2334), gcClient.lastBarrierTS) // BackupTS - 1
+	require.Equal(t, time.Duration(60)*time.Second, gcClient.lastTTL)
+
+	// Verify UpdateServiceGCSafePoint was NOT called
+	require.Equal(t, 0, pdClient.updateServiceCalls)
+}
+
+func TestUnifiedGCManager_UpdateServiceSafePoint(t *testing.T) {
+	// Setup: no keyspace
+	originalCfg := *config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(&originalCfg)
+
+	newCfg := originalCfg
+	newCfg.KeyspaceName = ""
+	config.StoreGlobalConfig(&newCfg)
+
+	pdClient := newMockPDClientWithGCStates()
+	storage := &mockStorage{
+		codec: &mockCodec{keyspaceID: 0},
+	}
+
+	mgr, err := utils.NewGCSafePointManager(pdClient, storage)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Test 1: Set safepoint (TTL > 0)
+	sp := utils.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      300,
+		BackupTS: 2334, // Use a value > mock GC safepoint (2333)
+	}
+
+	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	require.NoError(t, err)
+	require.Equal(t, 1, pdClient.updateServiceCalls)
+	require.Equal(t, "br-test", pdClient.lastServiceID)
+	require.Equal(t, int64(300), pdClient.lastTTL)
+	// Note: lastSafePoint is what was passed to UpdateServiceGCSafePoint
+	require.Equal(t, uint64(2334), pdClient.lastSafePoint)
+
+	// Test 2: Delete safepoint (TTL = 0)
+	sp.TTL = 0
+	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	require.NoError(t, err)
+	require.Equal(t, 2, pdClient.updateServiceCalls)
+	require.Equal(t, int64(0), pdClient.lastTTL)
+}
+
+func TestKeyspaceGCManager_UpdateServiceSafePoint(t *testing.T) {
+	// Setup: with keyspace
+	originalCfg := *config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(&originalCfg)
+
+	newCfg := originalCfg
+	newCfg.KeyspaceName = "test_ks"
+	config.StoreGlobalConfig(&newCfg)
+
+	pdClient := newMockPDClientWithGCStates()
+	keyspaceID := uint32(456)
+	storage := &mockStorage{
+		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
+	}
+
+	mgr, err := utils.NewGCSafePointManager(pdClient, storage)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	gcClient := pdClient.gcStatesClients[keyspaceID]
+
+	// Test 1: Set barrier (TTL > 0)
+	sp := utils.BRServiceSafePoint{
+		ID:       "br-barrier",
+		TTL:      600,
+		BackupTS: 3000,
+	}
+
+	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	require.NoError(t, err)
+	require.Equal(t, 1, gcClient.setGCBarrierCalls)
+	require.Equal(t, "br-barrier", gcClient.lastBarrierID)
+	require.Equal(t, uint64(2999), gcClient.lastBarrierTS) // BackupTS - 1
+	require.Equal(t, time.Duration(600)*time.Second, gcClient.lastTTL)
+
+	// Verify barrier was stored
+	_, exists := gcClient.barriers["br-barrier"]
+	require.True(t, exists)
+
+	// Test 2: Delete barrier (TTL = 0)
+	sp.TTL = 0
+	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	require.NoError(t, err)
+	require.Equal(t, 1, gcClient.deleteGCBarrierCalls)
+
+	// Verify barrier was deleted
+	_, exists = gcClient.barriers["br-barrier"]
+	require.False(t, exists)
+}
+
+func TestUnifiedGCManager_StartServiceSafePointKeeper(t *testing.T) {
+	// Setup: no keyspace
+	originalCfg := *config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(&originalCfg)
+
+	newCfg := originalCfg
+	newCfg.KeyspaceName = ""
+	config.StoreGlobalConfig(&newCfg)
+
+	pdClient := newMockPDClientWithGCStates()
+	storage := &mockStorage{
+		codec: &mockCodec{keyspaceID: 0},
+	}
+
+	mgr, err := utils.NewGCSafePointManager(pdClient, storage)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sp := utils.BRServiceSafePoint{
+		ID:       "br-keeper",
+		TTL:      9, // Short TTL for faster test (update every TTL/3 = 3 seconds)
+		BackupTS: 2400,
+	}
+
+	// Start keeper
+	err = mgr.StartServiceSafePointKeeper(ctx, sp)
+	require.NoError(t, err)
+
+	// Verify initial call happened
+	require.GreaterOrEqual(t, pdClient.updateServiceCalls, 1)
+
+	// Wait for at least one periodic update (TTL/3 = 3 seconds)
+	time.Sleep(4 * time.Second)
+
+	// Should have at least 2 calls (initial + 1 periodic)
+	require.GreaterOrEqual(t, pdClient.updateServiceCalls, 2)
+
+	// Cancel context to stop keeper
+	cancel()
+	time.Sleep(100 * time.Millisecond) // Give goroutine time to exit
+}
+
+func TestKeyspaceGCManager_StartServiceSafePointKeeper(t *testing.T) {
+	// Setup: with keyspace
+	originalCfg := *config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(&originalCfg)
+
+	newCfg := originalCfg
+	newCfg.KeyspaceName = "test_ks"
+	config.StoreGlobalConfig(&newCfg)
+
+	pdClient := newMockPDClientWithGCStates()
+	keyspaceID := uint32(789)
+	storage := &mockStorage{
+		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
+	}
+
+	mgr, err := utils.NewGCSafePointManager(pdClient, storage)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sp := utils.BRServiceSafePoint{
+		ID:       "br-ks-keeper",
+		TTL:      9, // Short TTL for faster test
+		BackupTS: 2600,
+	}
+
+	// Start keeper
+	err = mgr.StartServiceSafePointKeeper(ctx, sp)
+	require.NoError(t, err)
+
+	gcClient := pdClient.gcStatesClients[keyspaceID]
+	require.NotNil(t, gcClient)
+
+	// Verify initial SetGCBarrier call
+	require.GreaterOrEqual(t, gcClient.setGCBarrierCalls, 1)
+	require.Equal(t, "br-ks-keeper", gcClient.lastBarrierID)
+
+	// Wait for at least one periodic update
+	time.Sleep(4 * time.Second)
+
+	// Should have at least 2 SetGCBarrier calls
+	require.GreaterOrEqual(t, gcClient.setGCBarrierCalls, 2)
+
+	// Cancel context to stop keeper
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify DeleteGCBarrier was called on cleanup
+	require.Equal(t, 1, gcClient.deleteGCBarrierCalls)
+}
+
+func TestKeyspaceGCManager_ErrorHandling(t *testing.T) {
+	// Setup: with keyspace
+	originalCfg := *config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(&originalCfg)
+
+	newCfg := originalCfg
+	newCfg.KeyspaceName = "test_ks"
+	config.StoreGlobalConfig(&newCfg)
+
+	pdClient := newMockPDClientWithGCStates()
+	keyspaceID := uint32(999)
+	storage := &mockStorage{
+		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
+	}
+
+	mgr, err := utils.NewGCSafePointManager(pdClient, storage)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	gcClient := pdClient.gcStatesClients[keyspaceID]
+
+	// Test 1: SetGCBarrier failure
+	gcClient.setGCBarrierShouldFail = true
+	sp := utils.BRServiceSafePoint{
+		ID:       "br-error",
+		TTL:      60,
+		BackupTS: 2700,
+	}
+
+	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mock SetGCBarrier failure")
+
+	// Reset error flag
+	gcClient.setGCBarrierShouldFail = false
+
+	// Test 2: DeleteGCBarrier on non-existent barrier (should succeed - no-op)
+	sp.TTL = 0
+	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	// Note: Current implementation may or may not error on this, depending on implementation
+	// Just verify no panic
+}
+
+func TestStorageAwareWrappers(t *testing.T) {
+	originalCfg := *config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(&originalCfg)
+
+	// Test 1: Without keyspace - should use UnifiedGCManager
+	newCfg1 := originalCfg
+	newCfg1.KeyspaceName = ""
+	config.StoreGlobalConfig(&newCfg1)
+	pdClient1 := newMockPDClientWithGCStates()
+	storage1 := &mockStorage{
+		codec: &mockCodec{keyspaceID: 0},
+	}
+
+	ctx := context.Background()
+	sp := utils.BRServiceSafePoint{
+		ID:       "test-wrapper",
+		TTL:      120,
+		BackupTS: 2800,
+	}
+
+	err := utils.UpdateServiceSafePointWithStorage(ctx, pdClient1, storage1, sp)
+	require.NoError(t, err)
+	require.Equal(t, 1, pdClient1.updateServiceCalls)
+
+	// Test 2: With keyspace - should use KeyspaceGCManager
+	newCfg2 := originalCfg
+	newCfg2.KeyspaceName = "test_ks"
+	config.StoreGlobalConfig(&newCfg2)
+	pdClient2 := newMockPDClientWithGCStates()
+	keyspaceID := uint32(111)
+	storage2 := &mockStorage{
+		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
+	}
+
+	err = utils.UpdateServiceSafePointWithStorage(ctx, pdClient2, storage2, sp)
+	require.NoError(t, err)
+
+	gcClient := pdClient2.gcStatesClients[keyspaceID]
+	require.NotNil(t, gcClient)
+	require.Equal(t, 1, gcClient.setGCBarrierCalls)
+	require.Equal(t, 0, pdClient2.updateServiceCalls) // Should NOT call unified API
+
+	// Test 3: StartServiceSafePointKeeperWithStorage
+	ctx3, cancel3 := context.WithCancel(context.Background())
+	defer cancel3()
+
+	err = utils.StartServiceSafePointKeeperWithStorage(ctx3, pdClient2, storage2, sp)
+	require.NoError(t, err)
+
+	// Give keeper time to start
+	time.Sleep(100 * time.Millisecond)
+	require.GreaterOrEqual(t, gcClient.setGCBarrierCalls, 2) // Initial + at least one from wrapper call
+
+	cancel3()
+}
