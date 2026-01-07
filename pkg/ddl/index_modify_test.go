@@ -2041,11 +2041,6 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 		"sharding_key": {"columns": ["col3"]}
 	}'`, "column 'col3' referenced in HYBRID index PARAMETER must appear in index definition")
 
-	tk.MustContainErrMsg(`create hybrid index idx_missing_sort on t(col1, col2, col4) parameter '{
-		"inverted": {"columns": ["col2"]},
-		"sharding_key": {"columns": ["col1", "col4"]}
-	}'`, "HYBRID index PARAMETER must define sort")
-
 	tk.MustContainErrMsg(`create hybrid index idx_missing_sharding on t(col1, col2, col4) parameter '{
 		"inverted": {"columns": ["col2"]},
 		"sort": {"columns": ["col1"]}

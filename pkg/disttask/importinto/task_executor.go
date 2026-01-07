@@ -641,47 +641,41 @@ func (e *writeAndIngestStepExecutor) ResetSummary() {
 }
 
 func decideTiCIWriteEnabled(logger *zap.Logger, taskID int64, subtaskID int64, kvGroup string, plan *importer.Plan) bool {
-	logFields := []zap.Field{
+	baseLogger := logger.With(
 		zap.Int64("task-id", taskID),
 		zap.Int64("subtask-id", subtaskID),
 		zap.String("kv-group", kvGroup),
-	}
+	)
 	if kvGroup == dataKVGroup {
-		logger.Info("TiCI write disabled for data kv group", logFields...)
+		baseLogger.Info("TiCI write disabled for data kv group")
 		return false
 	}
 	if plan == nil || plan.TableInfo == nil {
-		logger.Info("TiCI write disabled due to missing plan or table info", logFields...)
+		baseLogger.Info("TiCI write disabled due to missing plan or table info")
 		return false
 	}
 	indexID, err := strconv.ParseInt(kvGroup, 10, 64)
 	if err != nil {
-		logger.Info("TiCI write disabled due to invalid kv group index id", append(logFields, zap.Error(err))...)
+		baseLogger.With(zap.Error(err)).Info("TiCI write disabled due to invalid kv group index id")
 		return false
 	}
 	indexInfo := plan.TableInfo.FindIndexByID(indexID)
 	if indexInfo == nil {
-		logger.Info(
-			"TiCI write disabled because index is not found",
-			append(logFields,
-				zap.Int64("index-id", indexID),
-				zap.String("schema-name", plan.DBName),
-				zap.String("table-name", plan.TableInfo.Name.O),
-			)...,
-		)
-		return false
-	}
-	enabled := indexInfo.IsTiCIIndex()
-	logger.Info(
-		"TiCI write decision for index engine",
-		append(logFields,
+		baseLogger.With(
 			zap.Int64("index-id", indexID),
 			zap.String("schema-name", plan.DBName),
 			zap.String("table-name", plan.TableInfo.Name.O),
-			zap.String("index-name", indexInfo.Name.O),
-			zap.Bool("tici-write-enabled", enabled),
-		)...,
-	)
+		).Info("TiCI write disabled because index is not found")
+		return false
+	}
+	enabled := indexInfo.IsTiCIIndex()
+	baseLogger.With(
+		zap.Int64("index-id", indexID),
+		zap.String("schema-name", plan.DBName),
+		zap.String("table-name", plan.TableInfo.Name.O),
+		zap.String("index-name", indexInfo.Name.O),
+		zap.Bool("tici-write-enabled", enabled),
+	).Info("TiCI write decision for index engine")
 	return enabled
 }
 

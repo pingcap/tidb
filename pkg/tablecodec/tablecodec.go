@@ -1205,8 +1205,7 @@ func hybridShardingIndexColumns(idxInfo *model.IndexInfo) []*model.IndexColumn {
 	return idxInfo.HybridInfo.Sharding.Columns
 }
 
-func hybridShardingIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) ([]types.Datum, error) {
-	shardingCols := hybridShardingIndexColumns(idxInfo)
+func hybridShardingIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, shardingCols []*model.IndexColumn, indexedValues []types.Datum) ([]types.Datum, error) {
 	if len(shardingCols) == 0 {
 		return indexedValues, nil
 	}
@@ -1247,7 +1246,7 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	TruncateIndexValues(tblInfo, idxInfo, indexedValues)
 	keyValues := indexedValues
 	if shardingCols := hybridShardingIndexColumns(idxInfo); len(shardingCols) > 0 {
-		keyValues, err = hybridShardingIndexValues(tblInfo, idxInfo, indexedValues)
+		keyValues, err = hybridShardingIndexValues(tblInfo, idxInfo, shardingCols, indexedValues)
 		if err != nil {
 			return nil, false, err
 		}

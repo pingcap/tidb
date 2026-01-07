@@ -291,7 +291,8 @@ func TestHybridShardingIndexValues(t *testing.T) {
 		types.NewStringDatum("你好"),
 		types.NewStringDatum("xyz"),
 	}
-	shardingValues, err := hybridShardingIndexValues(tblInfo, idxInfo, indexedValues)
+	shardingCols := hybridShardingIndexColumns(idxInfo)
+	shardingValues, err := hybridShardingIndexValues(tblInfo, idxInfo, shardingCols, indexedValues)
 	require.NoError(t, err)
 	require.Len(t, shardingValues, 2)
 	require.Equal(t, "x", shardingValues[0].GetString())
@@ -319,7 +320,8 @@ func TestHybridShardingIndexValues(t *testing.T) {
 			},
 		},
 	}
-	_, err = hybridShardingIndexValues(tblInfo, missingOffsetIndex, indexedValues)
+	shardingCols = hybridShardingIndexColumns(missingOffsetIndex)
+	_, err = hybridShardingIndexValues(tblInfo, missingOffsetIndex, shardingCols, indexedValues)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "hybrid index sharding column offset 1")
 }

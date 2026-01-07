@@ -951,9 +951,6 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 	if len(param.FullText) == 0 && len(param.Vector) == 0 && len(param.Inverted) == 0 {
 		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index PARAMETER must define at least one component")
 	}
-	if param.Sort == nil {
-		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index PARAMETER must define sort")
-	}
 	if param.Sharding == nil {
 		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index PARAMETER must define sharding_key")
 	}
