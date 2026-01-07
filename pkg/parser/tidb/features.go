@@ -53,6 +53,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDSoftDelete:     {},
 	FeatureIDActiveActive:   {},
 	FeatureIDGlobalIndex:    {},
+	FeatureIDResourceGroup:  {},
 	FeatureIDPresplit:       {},
 }
 

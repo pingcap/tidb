@@ -1054,6 +1054,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		return nil
 	}
 
+	restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
+	restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
+
 	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {
 		tblCharset = mysql.DefaultCharset
@@ -1215,23 +1218,25 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			publicIndices = append(publicIndices, hypoIndexList...)
 		}
 	}
-	if len(publicIndices) > 0 {
-		buf.WriteString(",\n")
-	}
 
-	for i, idxInfo := range publicIndices {
-		if idxInfo.Primary {
-			buf.WriteString("  PRIMARY KEY ")
-		} else if idxInfo.Unique {
-			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
-		} else if idxInfo.VectorInfo != nil {
-			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
-		} else if idxInfo.FullTextInfo != nil {
-			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
-		} else if idxInfo.InvertedInfo != nil {
-			fmt.Fprintf(buf, "  COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+	writeIndexDef := func(rc *parserformat.RestoreCtx, idxInfo *model.IndexInfo, sp bool) {
+		if sp {
+			restoreCtx.WritePlain(", ")
 		} else {
-			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
+			restoreCtx.WritePlain(",\n  ")
+		}
+		if idxInfo.Primary {
+			rc.WritePlain("PRIMARY KEY ")
+		} else if idxInfo.Unique {
+			rc.WritePlainf("UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.VectorInfo != nil {
+			rc.WritePlainf("VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.FullTextInfo != nil {
+			rc.WritePlainf("FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.InvertedInfo != nil {
+			rc.WritePlainf("COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else {
+			rc.WritePlainf("KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
@@ -1249,42 +1254,70 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 		if idxInfo.VectorInfo != nil {
 			funcName := model.IndexableDistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
-			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
+			rc.WritePlainf("((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
 		} else {
-			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
+			rc.WritePlainf("(%s)", strings.Join(cols, ","))
 		}
 
 		if idxInfo.InvertedInfo != nil {
-			fmt.Fprintf(buf, " USING INVERTED")
+			rc.WritePlain(" USING INVERTED")
 		}
 		if idxInfo.FullTextInfo != nil {
-			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
+			rc.WritePlainf(" WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
 		}
 		if idxInfo.ConditionExprString != "" {
-			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)
+			rc.WritePlainf(" WHERE %s", idxInfo.ConditionExprString)
 		}
 		if idxInfo.Invisible {
-			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+			rc.WritePlain(` /*!80000 INVISIBLE */`)
 		}
 		if idxInfo.Comment != "" {
-			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+			rc.WritePlainf(` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
 		if idxInfo.Tp == ast.IndexTypeHypo {
-			fmt.Fprintf(buf, ` /* HYPO INDEX */`)
+			rc.WritePlain(` /* HYPO INDEX */`)
 		}
 		if idxInfo.Primary {
-			if tableInfo.HasClusteredIndex() {
-				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
-			} else {
-				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
-			}
+			rc.WritePlain(" ")
+			_ = rc.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
+				clusteredWord := "NONCLUSTERED"
+				if tableInfo.HasClusteredIndex() {
+					clusteredWord = "CLUSTERED"
+				}
+				rc.WritePlainf("%s", clusteredWord)
+				return nil
+			})
 		}
 		if idxInfo.Global {
-			buf.WriteString(" /*T![global_index] GLOBAL */")
+			rc.WritePlain(" ")
+			_ = rc.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
+				rc.WritePlain("GLOBAL")
+				return nil
+			})
 		}
-		if i != len(publicIndices)-1 {
-			buf.WriteString(",\n")
+	}
+	indexCommentFeature := func(idxInfo *model.IndexInfo) (shouldWrap bool, featureID string) {
+		for _, col := range idxInfo.Columns {
+			if model.IsActiveActiveColumn(col.Name) {
+				return true, tidb.FeatureIDActiveActive
+			}
+			if model.IsSoftDeleteColumn(col.Name) {
+				return true, tidb.FeatureIDSoftDelete
+			}
 		}
+		return false, ""
+	}
+
+	for _, idxInfo := range publicIndices {
+		if wrap, featureID := indexCommentFeature(idxInfo); wrap {
+			buf.WriteString("\n  ")
+			_ = restoreCtx.WriteWithSpecialComments(featureID, func() error {
+				writeIndexDef(restoreCtx, idxInfo, true)
+				return nil
+			})
+			continue
+		}
+		writeIndexDef(restoreCtx, idxInfo, false)
 	}
 
 	// Foreign Keys are supported by data dictionary even though
@@ -1416,12 +1449,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 
 	// add partition info here.
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
-
-	restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
-	var restoreCtx *parserformat.RestoreCtx
-	if tableInfo.TTLInfo != nil || tableInfo.IsActiveActive || tableInfo.SoftdeleteInfo != nil {
-		restoreCtx = parserformat.NewRestoreCtx(restoreFlags, buf)
-	}
 
 	if tableInfo.TTLInfo != nil {
 		restoreCtx.WritePlain(" ")
