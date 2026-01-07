@@ -948,8 +948,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 		restoreStartTs := cfg.RestoreStartTS
 		if restoreStartTs == 0 {
-			log.Warn("restoreStartTS is not set, skip building blocklist")
-			return
+			log.Warn("restoreStartTS is not set, the blocklist will block from 0 to restoreCommitTs")
 		}
 		// Convert map to slice for function call
 		tableIdsSlice := make([]int64, 0, len(downstreamTableIds))
