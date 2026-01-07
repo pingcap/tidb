@@ -62,14 +62,13 @@ var (
 )
 
 func getSchemaVersionFromStatsMeta(tableInfo *model.TableInfo) SchemaVersionType {
-	version := Version1
 	// version 1 -> version 2: add last_stats_histograms_version column
 	for _, columnInfo := range tableInfo.Columns {
 		if columnInfo.Name.L == "last_stats_histograms_version" {
 			return Version2
 		}
 	}
-	return version
+	return Version1
 }
 
 func updateStatsMetaSchema(
