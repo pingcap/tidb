@@ -265,9 +265,9 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdhttp
 // PreImportInfoGetterImpl implements the operations to get information used in importing preparation.
 type PreImportInfoGetterImpl struct {
 	cfg              *config.Config
-	getPreInfoCfg *ropts.GetPreInfoConfig
-	srcStorage    objstore.Storage
-	ioWorkers     *worker.Pool
+	getPreInfoCfg    *ropts.GetPreInfoConfig
+	srcStorage       objstore.Storage
+	ioWorkers        *worker.Pool
 	encBuilder       encode.EncodingBuilder
 	targetInfoGetter TargetInfoGetter
 

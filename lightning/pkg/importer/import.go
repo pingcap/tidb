@@ -224,8 +224,8 @@ type Controller struct {
 	closedEngineLimit *worker.Pool
 	addIndexLimit     *worker.Pool
 
-	store    objstore.Storage
-	ownStore bool
+	store          objstore.Storage
+	ownStore       bool
 	metaMgrBuilder metaMgrBuilder
 	errorMgr       *errormanager.ErrorManager
 	taskMgr        taskMetaMgr
