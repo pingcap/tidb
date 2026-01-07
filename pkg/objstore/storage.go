@@ -121,7 +121,7 @@ type ReaderOption struct {
 // Copier copier.
 type Copier interface {
 	// CopyFrom copies a object to the current external storage by the specification.
-	CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error
+	CopyFrom(ctx context.Context, e Storage, spec CopySpec) error
 }
 
 // CopySpec copy spec.
@@ -130,8 +130,8 @@ type CopySpec struct {
 	To   string
 }
 
-// ExternalStorage represents a kind of file system storage.
-type ExternalStorage interface {
+// Storage represents a kind of file system storage.
+type Storage interface {
 	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic
 	WriteFile(ctx context.Context, name string, data []byte) error
 	// ReadFile reads a complete file from storage, similar to os.ReadFile
@@ -142,7 +142,7 @@ type ExternalStorage interface {
 	DeleteFile(ctx context.Context, name string) error
 	// Open a Reader by file path. path is relative path to storage base path.
 	// Some implementation will use the given ctx as the inner context of the reader.
-	Open(ctx context.Context, path string, option *ReaderOption) (ExternalFileReader, error)
+	Open(ctx context.Context, path string, option *ReaderOption) (FileReader, error)
 	// DeleteFiles delete the files in storage
 	DeleteFiles(ctx context.Context, names []string) error
 	// WalkDir traverse all the files in a dir.
@@ -159,30 +159,30 @@ type ExternalStorage interface {
 	// Create opens a file writer by path. path is relative path to storage base
 	// path. The old file under same path will be overwritten. Currently only s3
 	// implemented WriterOption.
-	Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error)
+	Create(ctx context.Context, path string, option *WriterOption) (FileWriter, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
 	// Close release the resources of the storage.
 	Close()
 }
 
-// ExternalFileReader represents the streaming external file reader.
-type ExternalFileReader interface {
+// FileReader represents the streaming external file reader.
+type FileReader interface {
 	io.ReadSeekCloser
 	// GetFileSize returns the file size.
 	GetFileSize() (int64, error)
 }
 
-// ExternalFileWriter represents the streaming external file writer.
-type ExternalFileWriter interface {
+// FileWriter represents the streaming external file writer.
+type FileWriter interface {
 	// Write writes to buffer and if chunk is filled will upload it
 	Write(ctx context.Context, p []byte) (int, error)
 	// Close writes final chunk and completes the upload
 	Close(ctx context.Context) error
 }
 
-// ExternalStorageOptions are backend-independent options provided to New.
-type ExternalStorageOptions struct {
+// Options are backend-independent options provided to New.
+type Options struct {
 	// SendCredentials marks whether to send credentials downstream.
 	//
 	// This field should be set to false if the credentials are provided to
@@ -216,23 +216,23 @@ type ExternalStorageOptions struct {
 	AccessRecording *recording.AccessStats
 }
 
-// Create creates ExternalStorage.
+// Create creates Storage.
 //
 // Please consider using `New` in the future.
-func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds bool) (ExternalStorage, error) {
-	return New(ctx, backend, &ExternalStorageOptions{
+func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds bool) (Storage, error) {
+	return New(ctx, backend, &Options{
 		SendCredentials: sendCreds,
 		HTTPClient:      nil,
 	})
 }
 
-// NewWithDefaultOpt creates ExternalStorage with default options.
-func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (ExternalStorage, error) {
+// NewWithDefaultOpt creates Storage with default options.
+func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (Storage, error) {
 	return New(ctx, backend, nil)
 }
 
-// NewFromURL creates an ExternalStorage from URL.
-func NewFromURL(ctx context.Context, uri string) (ExternalStorage, error) {
+// NewFromURL creates an Storage from URL.
+func NewFromURL(ctx context.Context, uri string) (Storage, error) {
 	if len(uri) == 0 {
 		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
 	}
@@ -250,10 +250,10 @@ func NewFromURL(ctx context.Context, uri string) (ExternalStorage, error) {
 	return NewWithDefaultOpt(ctx, b)
 }
 
-// New creates an ExternalStorage with options.
-func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalStorageOptions) (ExternalStorage, error) {
+// New creates an Storage with options.
+func New(ctx context.Context, backend *backuppb.StorageBackend, opts *Options) (Storage, error) {
 	if opts == nil {
-		opts = &ExternalStorageOptions{}
+		opts = &Options{}
 	}
 	switch backend := backend.Backend.(type) {
 	case *backuppb.StorageBackend_Local:
@@ -309,7 +309,7 @@ func CloneDefaultHTTPTransport() (*http.Transport, bool) {
 // ReadDataInRange reads data from storage in range [start, start+len(p)).
 func ReadDataInRange(
 	ctx context.Context,
-	storage ExternalStorage,
+	storage Storage,
 	name string,
 	start int64,
 	p []byte,

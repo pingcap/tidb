@@ -97,7 +97,7 @@ func (ms *StreamMetadataSet) TEST_GetMetadataInfos() map[string]*MetadataInfo {
 // from transaction committed before that TS.
 func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	until uint64,
 ) (uint64, error) {
 	metadataMap := struct {
@@ -164,7 +164,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 }
 
 // LoadFrom loads data from an external storage into the stream metadata set. (Now only for test)
-func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s objstore.ExternalStorage) error {
+func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s objstore.Storage) error {
 	_, err := ms.LoadUntilAndCalculateShiftTS(ctx, s, math.MaxUint64)
 	return err
 }
@@ -209,7 +209,7 @@ func (hook updateFnHook) DeletedAFileForTruncating(count int) {
 func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	ctx context.Context,
 	from uint64,
-	st objstore.ExternalStorage,
+	st objstore.Storage,
 	// num = deleted files
 	updateFn func(num int64),
 ) ([]string, error) {
@@ -219,7 +219,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	res := MigratedTo{NewBase: NewMigration()}
 	est.doTruncateLogs(ctx, ms, from, &res)
 
-	if bst, ok := hst.ExternalStorage.(*objstore.Batched); ok {
+	if bst, ok := hst.Storage.(*objstore.Batched); ok {
 		effs, err := objstore.SaveJSONEffectsToTmp(bst.ReadOnlyEffects())
 		if err != nil {
 			log.Warn("failed to save effects", logutil.ShortError(err))
@@ -242,7 +242,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	return notDeleted, nil
 }
 
-func truncateAndWrite(ctx context.Context, s objstore.ExternalStorage, path string, data []byte) error {
+func truncateAndWrite(ctx context.Context, s objstore.Storage, path string, data []byte) error {
 	// Performance hack: the `Write` implementation would truncate the file if it exists.
 	if err := s.WriteFile(ctx, path, data); err != nil {
 		return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
@@ -260,7 +260,7 @@ const (
 // which means logs before this TS would probably be deleted or incomplete.
 func GetTSFromFile(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	filename string,
 ) (uint64, error) {
 	exists, err := s.FileExists(ctx, filename)
@@ -286,7 +286,7 @@ func GetTSFromFile(
 // which means logs before this TS would probably be deleted or incomplete.
 func SetTSToFile(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	safepoint uint64,
 	filename string,
 ) error {
@@ -461,7 +461,7 @@ func (m MigrationExt) AddMigrationToTable(ctx context.Context, mig *pb.Migration
 	cx.addMigration(mig)
 }
 
-// MigrationExt is an extension to the `ExternalStorage` type.
+// MigrationExt is an extension to the `Storage` type.
 // This added some support methods for the "migration" system of log backup.
 //
 // Migrations are idempotent batch modifications (adding a compaction, delete a file, etc..) to the backup files.
@@ -484,7 +484,7 @@ layers = {
   { sn = 2, content = [ compaction, deleteFiles, ... ] },
 */
 type MigrationExt struct {
-	s      objstore.ExternalStorage
+	s      objstore.Storage
 	prefix string
 	// The hooks used for tracking the execution.
 	// See the `Hooks` type for more details.
@@ -593,8 +593,8 @@ func (NoHooks) StartHandlingMetaEdits([]*pb.MetaEdit)                           
 func (NoHooks) HandledAMetaEdit(*pb.MetaEdit)                                      {}
 func (NoHooks) HandingMetaEditDone()                                               {}
 
-// MigrationExtension installs the extension methods to an `ExternalStorage`.
-func MigrationExtension(s objstore.ExternalStorage) MigrationExt {
+// MigrationExtension installs the extension methods to an `Storage`.
+func MigrationExtension(s objstore.Storage) MigrationExt {
 	return MigrationExt{
 		s:      s,
 		prefix: migrationPrefix,
@@ -1333,7 +1333,7 @@ func (ebs IngestedSSTsGroup) GroupTS() uint64 {
 
 func LoadIngestedSSTs(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	paths []string,
 ) iter.TryNextor[IngestedSSTsGroup] {
 	fullBackupDirIter := iter.FromSlice(paths)
@@ -1394,7 +1394,7 @@ func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]
 	return res, nil
 }
 
-func readIngestedSSTs(ctx context.Context, name string, s objstore.ExternalStorage) (*pb.IngestedSSTs, error) {
+func readIngestedSSTs(ctx context.Context, name string, s objstore.Storage) (*pb.IngestedSSTs, error) {
 	reader, err := s.ReadFile(ctx, name)
 	if err != nil {
 		return nil, err
@@ -1498,7 +1498,7 @@ func (m MigrationExt) doTruncateLogs(
 // hookedStorage is a wrapper over the external storage,
 // which triggers the `BeforeDoWriteBack` hook when putting a metadata.
 type hookedStorage struct {
-	objstore.ExternalStorage
+	objstore.Storage
 	metaSet *StreamMetadataSet
 }
 
@@ -1516,23 +1516,23 @@ func (h hookedStorage) WriteFile(ctx context.Context, name string, data []byte) 
 		}
 	}
 
-	return h.ExternalStorage.WriteFile(ctx, name, data)
+	return h.Storage.WriteFile(ctx, name, data)
 }
 
 func (h hookedStorage) DeleteFile(ctx context.Context, name string) error {
 	if strings.HasSuffix(name, metaSuffix) && h.metaSet.BeforeDoWriteBack != nil {
 		h.metaSet.BeforeDoWriteBack(name, new(pb.Metadata))
 	}
-	return h.ExternalStorage.DeleteFile(ctx, name)
+	return h.Storage.DeleteFile(ctx, name)
 }
 
-func (ms *StreamMetadataSet) hook(s objstore.ExternalStorage) hookedStorage {
+func (ms *StreamMetadataSet) hook(s objstore.Storage) hookedStorage {
 	hooked := hookedStorage{
-		ExternalStorage: s,
-		metaSet:         ms,
+		Storage: s,
+		metaSet: ms,
 	}
 	if ms.DryRun {
-		hooked.ExternalStorage = objstore.Batch(hooked.ExternalStorage)
+		hooked.Storage = objstore.Batch(hooked.Storage)
 	}
 	return hooked
 }

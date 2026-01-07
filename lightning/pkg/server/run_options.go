@@ -25,8 +25,8 @@ import (
 )
 
 type options struct {
-	dumpFileStorage   objstore.ExternalStorage
-	checkpointStorage objstore.ExternalStorage
+	dumpFileStorage   objstore.Storage
+	checkpointStorage objstore.Storage
 	checkpointName    string
 	promFactory       promutil.Factory
 	promRegistry      promutil.Registry
@@ -41,7 +41,7 @@ type Option func(*options)
 
 // WithDumpFileStorage sets the external storage to a lightning task.
 // Typically, the external storage is set when lightning is integrated with dataflow engine by DM.
-func WithDumpFileStorage(s objstore.ExternalStorage) Option {
+func WithDumpFileStorage(s objstore.Storage) Option {
 	return func(o *options) {
 		o.dumpFileStorage = s
 	}
@@ -49,7 +49,7 @@ func WithDumpFileStorage(s objstore.ExternalStorage) Option {
 
 // WithCheckpointStorage sets the checkpoint name in external storage to a lightning task.
 // Typically, the checkpoint name is set when lightning is integrated with dataflow engine by DM.
-func WithCheckpointStorage(s objstore.ExternalStorage, cpName string) Option {
+func WithCheckpointStorage(s objstore.Storage, cpName string) Option {
 	return func(o *options) {
 		o.checkpointStorage = s
 		o.checkpointName = cpName

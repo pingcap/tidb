@@ -86,7 +86,7 @@ type tableRestoreSuiteBase struct {
 	tableMeta  *mydump.MDTableMeta
 	tableMeta2 *mydump.MDTableMeta
 
-	store objstore.ExternalStorage
+	store objstore.Storage
 }
 
 func mockTiflashTableInfo(t *testing.T, sql string, replica uint64) *model.TableInfo {

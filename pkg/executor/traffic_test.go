@@ -612,10 +612,10 @@ func (m *mockPrivManager) RequestDynamicVerification(activeRoles []*auth.RoleIde
 	return m.Called(activeRoles, privName, grantable).Bool(0)
 }
 
-var _ objstore.ExternalStorage = (*mockExternalStorage)(nil)
+var _ objstore.Storage = (*mockExternalStorage)(nil)
 
 type mockExternalStorage struct {
-	objstore.ExternalStorage
+	objstore.Storage
 	paths []string
 }
 

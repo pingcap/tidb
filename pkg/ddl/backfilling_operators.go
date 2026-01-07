@@ -152,7 +152,7 @@ func NewAddIndexIngestPipeline(
 func NewWriteIndexToExternalStoragePipeline(
 	ctx *workerpool.Context,
 	store kv.Storage,
-	extStore objstore.ExternalStorage,
+	extStore objstore.Storage,
 	sessPool opSessPool,
 	taskID, subtaskID int64,
 	tbl table.PhysicalTable,
@@ -626,7 +626,7 @@ func NewWriteExternalStoreOperator(
 	subtaskID int64,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	srcChunkPool *sync.Pool,
 	concurrency int,
 	onClose external.OnWriterCloseFunc,

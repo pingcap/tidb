@@ -34,7 +34,7 @@ import (
 
 func readAllData(
 	ctx context.Context,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
 	smallBlockBufPool *membuf.Pool,
@@ -128,7 +128,7 @@ func readAllData(
 
 func readOneFile(
 	ctx context.Context,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
@@ -198,7 +198,7 @@ func readOneFile(
 // ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
 // to the returned channel, the channel will be closed when finish read.
 func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
-	store objstore.ExternalStorage, files []string) chan *KVPair {
+	store objstore.Storage, files []string) chan *KVPair {
 	pairCh := make(chan *KVPair)
 	eg.Go(func() error {
 		defer close(pairCh)
@@ -212,7 +212,7 @@ func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
 	return pairCh
 }
 
-func readOneKVFile2Ch(ctx context.Context, store objstore.ExternalStorage, file string, outCh chan *KVPair) error {
+func readOneKVFile2Ch(ctx context.Context, store objstore.Storage, file string, outCh chan *KVPair) error {
 	reader, err := NewKVReader(ctx, file, store, 0, 3*DefaultReadBufferSize)
 	if err != nil {
 		return err

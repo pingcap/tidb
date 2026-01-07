@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func ReadBackupMetaData(ctx context.Context, s objstore.ExternalStorage) (uint64, int, error) {
+func ReadBackupMetaData(ctx context.Context, s objstore.Storage) (uint64, int, error) {
 	metaInfo, err := config.NewMetaFromStorage(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)

@@ -100,7 +100,7 @@ func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherI
 // Notice: the function `output` should be thread safe.
 func walkLeafMetaFile(
 	ctx context.Context,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	file *backuppb.MetaFile,
 	cipher *backuppb.CipherInfo,
 	output func(*backuppb.MetaFile)) error {
@@ -163,7 +163,7 @@ type Table struct {
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
 type MetaReader struct {
-	storage    objstore.ExternalStorage
+	storage    objstore.Storage
 	backupMeta *backuppb.BackupMeta
 	cipher     *backuppb.CipherInfo
 }
@@ -171,7 +171,7 @@ type MetaReader struct {
 // NewMetaReader creates MetaReader.
 func NewMetaReader(
 	backupMeta *backuppb.BackupMeta,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	cipher *backuppb.CipherInfo) *MetaReader {
 	return &MetaReader{
 		storage:    storage,
@@ -644,7 +644,7 @@ func (f *sizedMetaFile) append(file any, op AppendOp) bool {
 
 // MetaWriter represents wraps a writer, and the MetaWriter should be compatible with old version of backupmeta.
 type MetaWriter struct {
-	storage           objstore.ExternalStorage
+	storage           objstore.Storage
 	metafileSizeLimit int
 	// a flag to control whether we generate v1 or v2 meta.
 	useV2Meta  bool
@@ -679,7 +679,7 @@ type MetaWriter struct {
 
 // NewMetaWriter creates MetaWriter.
 func NewMetaWriter(
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	metafileSizeLimit int,
 	useV2Meta bool,
 	metaFileName string,
@@ -803,7 +803,7 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 	return nil
 }
 
-// FlushBackupMeta flush the `backupMeta` to `ExternalStorage`
+// FlushBackupMeta flush the `backupMeta` to `Storage`
 func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 	// Set schema version
 	if writer.useV2Meta {

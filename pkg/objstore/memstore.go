@@ -61,7 +61,7 @@ func (s *MemStorage) loadMap(name string) (*memFile, bool) {
 }
 
 // DeleteFile delete the file in storage
-// It implements the `ExternalStorage` interface
+// It implements the `Storage` interface
 func (s *MemStorage) DeleteFile(ctx context.Context, name string) error {
 	select {
 	case <-ctx.Done():
@@ -79,7 +79,7 @@ func (s *MemStorage) DeleteFile(ctx context.Context, name string) error {
 }
 
 // DeleteFiles delete the files in storage
-// It implements the `ExternalStorage` interface
+// It implements the `Storage` interface
 func (s *MemStorage) DeleteFiles(ctx context.Context, names []string) error {
 	for _, name := range names {
 		err := s.DeleteFile(ctx, name)
@@ -91,7 +91,7 @@ func (s *MemStorage) DeleteFiles(ctx context.Context, names []string) error {
 }
 
 // WriteFile file to storage.
-// It implements the `ExternalStorage` interface
+// It implements the `Storage` interface
 func (s *MemStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	select {
 	case <-ctx.Done():
@@ -114,7 +114,7 @@ func (s *MemStorage) WriteFile(ctx context.Context, name string, data []byte) er
 }
 
 // ReadFile reads the storage file.
-// It implements the `ExternalStorage` interface
+// It implements the `Storage` interface
 func (s *MemStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	select {
 	case <-ctx.Done():
@@ -131,7 +131,7 @@ func (s *MemStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 }
 
 // FileExists return true if file exists.
-// It implements the `ExternalStorage` interface
+// It implements the `Storage` interface
 func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	select {
 	case <-ctx.Done():
@@ -144,8 +144,8 @@ func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) 
 }
 
 // Open opens a Reader by file path.
-// It implements the `ExternalStorage` interface
-func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption) (ExternalFileReader, error) {
+// It implements the `Storage` interface
+func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption) (FileReader, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,7 +173,7 @@ func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption)
 }
 
 // WalkDir traverse all the files in a dir.
-// It implements the `ExternalStorage` interface
+// It implements the `Storage` interface
 func (s *MemStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
 	allFileNames := func() []string {
 		fileNames := []string{}
@@ -225,8 +225,8 @@ func (*MemStorage) URI() string {
 
 // Create creates a file and returning a writer to write data into.
 // When the writer is closed, the data is stored in the file.
-// It implements the `ExternalStorage` interface
-func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
+// It implements the `Storage` interface
+func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (FileWriter, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -243,7 +243,7 @@ func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (
 }
 
 // Rename renames a file name to another file name.
-// It implements the `ExternalStorage` interface
+// It implements the `Storage` interface
 func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	select {
 	case <-ctx.Done():
@@ -262,7 +262,7 @@ func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return nil
 }
 
-// Close implements ExternalStorage interface.
+// Close implements Storage interface.
 func (s *MemStorage) Close() {
 	s.dataStore = nil
 }
@@ -311,7 +311,7 @@ type memFileWriter struct {
 }
 
 // Write writes the data into the mem storage file buffer.
-// It implements the `ExternalFileWriter` interface
+// It implements the `FileWriter` interface
 func (w *memFileWriter) Write(ctx context.Context, p []byte) (int, error) {
 	select {
 	case <-ctx.Done():

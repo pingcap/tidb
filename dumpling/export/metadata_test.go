@@ -307,7 +307,7 @@ func TestNoPrivilege(t *testing.T) {
 	require.Equal(t, "", m.buffer.String())
 }
 
-func createStorage(t *testing.T) objstore.ExternalStorage {
+func createStorage(t *testing.T) objstore.Storage {
 	backend, err := objstore.ParseBackend("file:///"+os.TempDir(), nil)
 	require.NoError(t, err)
 	testLoc, _ := objstore.Create(context.Background(), backend, true)

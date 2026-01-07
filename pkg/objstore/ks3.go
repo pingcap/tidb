@@ -61,7 +61,7 @@ type KS3Storage struct {
 func NewKS3Storage(
 	ctx context.Context,
 	backend *backuppb.S3,
-	opts *ExternalStorageOptions,
+	opts *Options,
 ) (obj *KS3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.DefaultConfig
@@ -445,7 +445,7 @@ func (rs *KS3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
+func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
 	start := int64(0)
 	end := int64(0)
 	prefetchSize := 0
@@ -678,7 +678,7 @@ func (r *ks3ObjectReader) GetFileSize() (int64, error) {
 }
 
 // createUploader create multi upload request.
-func (rs *KS3Storage) createUploader(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (rs *KS3Storage) createUploader(ctx context.Context, name string) (FileWriter, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
@@ -708,8 +708,8 @@ func (rs *KS3Storage) createUploader(ctx context.Context, name string) (External
 }
 
 // Create creates multi upload request.
-func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOption) (ExternalFileWriter, error) {
-	var uploader ExternalFileWriter
+func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOption) (FileWriter, error) {
+	var uploader FileWriter
 	var err error
 	if option == nil || option.Concurrency <= 1 {
 		uploader, err = rs.createUploader(ctx, name)
@@ -751,7 +751,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	return uploaderWriter, nil
 }
 
-// Rename implements ExternalStorage interface.
+// Rename implements Storage interface.
 func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	content, err := rs.ReadFile(ctx, oldFileName)
 	if err != nil {
@@ -767,7 +767,7 @@ func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName strin
 	return nil
 }
 
-// Close implements ExternalStorage interface.
+// Close implements Storage interface.
 func (*KS3Storage) Close() {}
 
 func maybeObjectAlreadyExists(err awserr.Error) bool {
@@ -776,7 +776,7 @@ func maybeObjectAlreadyExists(err awserr.Error) bool {
 }
 
 // CopyFrom implements Copier.
-func (rs *KS3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+func (rs *KS3Storage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
 	s, ok := e.(*KS3Storage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)

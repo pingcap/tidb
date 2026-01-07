@@ -146,7 +146,7 @@ func (e *collectConflictsStepExecutor) onFinished(_ context.Context, subtask *pr
 
 func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 	ctx context.Context,
-	objStore objstore.ExternalStorage,
+	objStore objstore.Storage,
 	concurrency int,
 	kvGroup string,
 	ci *engineapi.ConflictInfo,

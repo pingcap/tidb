@@ -129,7 +129,7 @@ func (c *EBSBasedBRMeta) ConfigFromFile(path string) error {
 	return nil
 }
 
-func NewMetaFromStorage(ctx context.Context, s objstore.ExternalStorage) (*EBSBasedBRMeta, error) {
+func NewMetaFromStorage(ctx context.Context, s objstore.Storage) (*EBSBasedBRMeta, error) {
 	metaInfo := &EBSBasedBRMeta{}
 	metaBytes, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {

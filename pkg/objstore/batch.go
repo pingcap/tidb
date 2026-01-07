@@ -77,7 +77,7 @@ func SaveJSONEffectsToTmp(es []Effect) (string, error) {
 //
 // You may use `Commit()` to execute all suspended effects.
 type Batched struct {
-	ExternalStorage
+	Storage
 	effectsMu sync.Mutex
 	// It will be one of:
 	// EffPut, EffDeleteFiles, EffDeleteFile, EffRename
@@ -85,8 +85,8 @@ type Batched struct {
 }
 
 // Batch wraps an external storage instance to a batched version.
-func Batch(s ExternalStorage) *Batched {
-	return &Batched{ExternalStorage: s}
+func Batch(s Storage) *Batched {
+	return &Batched{Storage: s}
 }
 
 // ReadOnlyEffects Fetch all effects from the batched storage.
@@ -105,7 +105,7 @@ func (d *Batched) CleanEffects() {
 	d.effects = nil
 }
 
-// DeleteFiles implements the ExternalStorage interface.
+// DeleteFiles implements the Storage interface.
 func (d *Batched) DeleteFiles(ctx context.Context, names []string) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
@@ -113,7 +113,7 @@ func (d *Batched) DeleteFiles(ctx context.Context, names []string) error {
 	return nil
 }
 
-// DeleteFile implements the ExternalStorage interface.
+// DeleteFile implements the Storage interface.
 func (d *Batched) DeleteFile(ctx context.Context, name string) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
@@ -121,7 +121,7 @@ func (d *Batched) DeleteFile(ctx context.Context, name string) error {
 	return nil
 }
 
-// WriteFile implements the ExternalStorage interface.
+// WriteFile implements the Storage interface.
 func (d *Batched) WriteFile(ctx context.Context, name string, data []byte) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
@@ -129,7 +129,7 @@ func (d *Batched) WriteFile(ctx context.Context, name string, data []byte) error
 	return nil
 }
 
-// Rename implements the ExternalStorage interface.
+// Rename implements the Storage interface.
 func (d *Batched) Rename(ctx context.Context, oldName, newName string) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
@@ -137,8 +137,8 @@ func (d *Batched) Rename(ctx context.Context, oldName, newName string) error {
 	return nil
 }
 
-// Create implements the ExternalStorage interface.
-func (d *Batched) Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error) {
+// Create implements the Storage interface.
+func (d *Batched) Create(ctx context.Context, path string, option *WriterOption) (FileWriter, error) {
 	return nil, errors.Annotatef(berrors.ErrStorageUnknown, "ExternalStorage.Create isn't allowed in batch mode for now.")
 }
 
@@ -152,13 +152,13 @@ func (d *Batched) Commit(ctx context.Context) error {
 	for _, eff := range d.effects {
 		switch e := eff.(type) {
 		case EffPut:
-			err = multierr.Combine(d.ExternalStorage.WriteFile(ctx, e.File, e.Content), err)
+			err = multierr.Combine(d.Storage.WriteFile(ctx, e.File, e.Content), err)
 		case EffDeleteFiles:
-			err = multierr.Combine(d.ExternalStorage.DeleteFiles(ctx, e.Files), err)
+			err = multierr.Combine(d.Storage.DeleteFiles(ctx, e.Files), err)
 		case EffDeleteFile:
-			err = multierr.Combine(d.ExternalStorage.DeleteFile(ctx, string(e)), err)
+			err = multierr.Combine(d.Storage.DeleteFile(ctx, string(e)), err)
 		case EffRename:
-			err = multierr.Combine(d.ExternalStorage.Rename(ctx, e.From, e.To), err)
+			err = multierr.Combine(d.Storage.Rename(ctx, e.From, e.To), err)
 		default:
 			return errors.Annotatef(berrors.ErrStorageUnknown, "Unknown effect type %T", eff)
 		}

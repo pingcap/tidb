@@ -220,7 +220,7 @@ type parquetFileWrapper struct {
 	skipBuf []byte
 
 	// current file path and store, used to open file
-	store objstore.ExternalStorage
+	store objstore.Storage
 	path  string
 }
 
@@ -490,7 +490,7 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 // OpenParquetReader opens a parquet file and returns a handle that can at least read the file.
 func OpenParquetReader(
 	ctx context.Context,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	path string,
 ) (objstore.ReadSeekCloser, error) {
 	r, err := store.Open(ctx, path, nil)
@@ -511,7 +511,7 @@ func OpenParquetReader(
 // ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
 func ReadParquetFileRowCountByFile(
 	ctx context.Context,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	fileMeta SourceFileMeta,
 ) (int64, error) {
 	r, err := store.Open(ctx, fileMeta.Path, nil)
@@ -530,7 +530,7 @@ func ReadParquetFileRowCountByFile(
 // NewParquetParser generates a parquet parser.
 func NewParquetParser(
 	ctx context.Context,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	r objstore.ReadSeekCloser,
 	path string,
 	meta ParquetFileMeta,
@@ -609,7 +609,7 @@ func NewParquetParser(
 func SampleStatisticsFromParquet(
 	ctx context.Context,
 	path string,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 ) (
 	rowCount int64,
 	avgRowSize float64,

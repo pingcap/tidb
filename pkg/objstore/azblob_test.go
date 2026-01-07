@@ -452,7 +452,7 @@ func TestAzblobSeekToEndShouldNotError(t *testing.T) {
 }
 
 type wr struct {
-	w   ExternalFileWriter
+	w   FileWriter
 	ctx context.Context
 }
 

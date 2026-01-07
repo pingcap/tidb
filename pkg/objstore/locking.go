@@ -48,7 +48,7 @@ type conditionalPut struct {
 type VerifyWriteContext struct {
 	context.Context
 	Target  string
-	Storage ExternalStorage
+	Storage Storage
 	TxnID   uuid.UUID
 }
 
@@ -65,7 +65,7 @@ func (cx *VerifyWriteContext) IntentFileName() string {
 // In each phase, before writing, it will verify whether the storage is suitable for writing, that is:
 // - There shouldn't be any other intention files.
 // - Verify() returns no error. (If there is one.)
-func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
+func (w conditionalPut) CommitTo(ctx context.Context, s Storage) (uuid.UUID, error) {
 	if _, ok := s.(StrongConsistency); !ok {
 		log.Warn("The external storage implementation doesn't provide a strong consistency guarantee. "+
 			"Please avoid concurrently accessing it if possible.",
@@ -175,7 +175,7 @@ func MakeLockMeta(hint string) LockMeta {
 	return meta
 }
 
-func getLockMeta(ctx context.Context, storage ExternalStorage, path string) (LockMeta, error) {
+func getLockMeta(ctx context.Context, storage Storage, path string) (LockMeta, error) {
 	file, err := storage.ReadFile(ctx, path)
 	if err != nil {
 		return LockMeta{}, errors.Annotatef(err, "failed to read existed lock file %s", path)
@@ -192,7 +192,7 @@ func getLockMeta(ctx context.Context, storage ExternalStorage, path string) (Loc
 // RemoteLock is the remote lock.
 type RemoteLock struct {
 	txnID   uuid.UUID
-	storage ExternalStorage
+	storage Storage
 	path    string
 }
 
@@ -201,7 +201,7 @@ func (l *RemoteLock) String() string {
 	return fmt.Sprintf("{path=%s,uuid=%s,storage_uri=%s}", l.path, l.txnID, l.storage.URI())
 }
 
-func tryFetchRemoteLockInfo(ctx context.Context, storage ExternalStorage, path string) error {
+func tryFetchRemoteLockInfo(ctx context.Context, storage Storage, path string) error {
 	meta, err := getLockMeta(ctx, storage, path)
 	if err != nil {
 		return err
@@ -214,7 +214,7 @@ func tryFetchRemoteLockInfo(ctx context.Context, storage ExternalStorage, path s
 // Will return a `ErrLocked` if there is another process already creates the lock file.
 // This isn't a strict lock like flock in linux: that means, the lock might be forced removed by
 // manually deleting the "lock file" in external storage.
-func TryLockRemote(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
+func TryLockRemote(ctx context.Context, storage Storage, path, hint string) (lock RemoteLock, err error) {
 	writer := conditionalPut{
 		Target: path,
 		Content: func(txnID uuid.UUID) []byte {
@@ -250,7 +250,7 @@ func (l RemoteLock) Unlock(ctx context.Context) error {
 		return err
 	}
 	// NOTE: this is for debug usage. For now, there isn't a Compare-And-Swap
-	// operation in our ExternalStorage abstraction.
+	// operation in our Storage abstraction.
 	// So, once our lock has been overwritten, or we are overwriting other's lock,
 	// this information will be useful for troubleshooting.
 	if !bytes.Equal(l.txnID[:], meta.TxnID) {
@@ -293,7 +293,7 @@ func newReadLockName(path string) string {
 }
 
 // Locker is a locker.
-type Locker = func(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error)
+type Locker = func(ctx context.Context, storage Storage, path, hint string) (lock RemoteLock, err error)
 
 const (
 	// lockRetryTimes specifies the maximum number of times to retry acquiring a lock.
@@ -302,7 +302,7 @@ const (
 )
 
 // LockWithRetry lock with retry.
-func LockWithRetry(ctx context.Context, locker Locker, storage ExternalStorage, path, hint string) (
+func LockWithRetry(ctx context.Context, locker Locker, storage Storage, path, hint string) (
 	lock RemoteLock, err error) {
 	const JitterMs = 5000
 
@@ -337,7 +337,7 @@ func LockWithRetry(ctx context.Context, locker Locker, storage ExternalStorage, 
 }
 
 // TryLockRemoteWrite try lock.
-func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
+func TryLockRemoteWrite(ctx context.Context, storage Storage, path, hint string) (lock RemoteLock, err error) {
 	target := writeLockName(path)
 	writer := conditionalPut{
 		Target: target,
@@ -369,7 +369,7 @@ func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint
 }
 
 // TryLockRemoteRead try lock.
-func TryLockRemoteRead(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
+func TryLockRemoteRead(ctx context.Context, storage Storage, path, hint string) (lock RemoteLock, err error) {
 	target := newReadLockName(path)
 	writeLock := writeLockName(path)
 	writer := conditionalPut{

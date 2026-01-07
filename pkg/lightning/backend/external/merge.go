@@ -96,7 +96,7 @@ type MergeOperator struct {
 // NewMergeOperator creates a new MergeOperator instance.
 func NewMergeOperator(
 	ctx *workerpool.Context,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	partSize int64,
 	newFilePrefix string,
 	blockSize int,
@@ -145,7 +145,7 @@ func (*MergeOperator) String() string {
 type mergeWorker struct {
 	ctx context.Context
 
-	store         objstore.ExternalStorage
+	store         objstore.Storage
 	partSize      int64
 	newFilePrefix string
 	blockSize     int
@@ -265,7 +265,7 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 func mergeOverlappingFilesInternal(
 	ctx context.Context,
 	paths []string,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	partSize int64,
 	newFilePrefix string,
 	writerID string,

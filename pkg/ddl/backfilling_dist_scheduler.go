@@ -789,7 +789,7 @@ func getRangeSplitter(
 
 func forEachBackfillSubtaskMeta(
 	ctx context.Context,
-	extStore objstore.ExternalStorage,
+	extStore objstore.Storage,
 	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,

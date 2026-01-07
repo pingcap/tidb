@@ -841,7 +841,7 @@ func GetStorage(
 	ctx context.Context,
 	storageName string,
 	cfg *Config,
-) (*backuppb.StorageBackend, objstore.ExternalStorage, error) {
+) (*backuppb.StorageBackend, objstore.Storage, error) {
 	u, err := objstore.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -853,8 +853,8 @@ func GetStorage(
 	return u, s, nil
 }
 
-func storageOpts(cfg *Config) *objstore.ExternalStorageOptions {
-	return &objstore.ExternalStorageOptions{
+func storageOpts(cfg *Config) *objstore.Options {
+	return &objstore.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
@@ -865,7 +865,7 @@ func ReadBackupMeta(
 	ctx context.Context,
 	fileName string,
 	cfg *Config,
-) (*backuppb.StorageBackend, objstore.ExternalStorage, *backuppb.BackupMeta, error) {
+) (*backuppb.StorageBackend, objstore.Storage, *backuppb.BackupMeta, error) {
 	u, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)

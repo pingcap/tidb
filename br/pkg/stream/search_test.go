@@ -25,7 +25,7 @@ func TestStartWithComparator(t *testing.T) {
 	require.False(t, comparator.Compare([]byte("aa_key"), []byte("bb")))
 }
 
-func fakeStorage(t *testing.T) objstore.ExternalStorage {
+func fakeStorage(t *testing.T) objstore.Storage {
 	baseDir := t.TempDir()
 	s, err := objstore.NewLocalStorage(baseDir)
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func fakeCFs() (defaultCFs, writeCFs []*cf) {
 	return
 }
 
-func fakeDataFile(t *testing.T, s objstore.ExternalStorage) (defaultCFDataFile, writeCFDataFile *backuppb.DataFileInfo) {
+func fakeDataFile(t *testing.T, s objstore.Storage) (defaultCFDataFile, writeCFDataFile *backuppb.DataFileInfo) {
 	const (
 		defaultCFFile = "default_cf"
 		writeCFFile   = "write_cf"

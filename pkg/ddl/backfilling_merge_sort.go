@@ -153,7 +153,7 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore objstore.ExternalStorage) error {
+func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore objstore.Storage) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
 	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil

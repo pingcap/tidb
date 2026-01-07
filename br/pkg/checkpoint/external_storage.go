@@ -69,7 +69,7 @@ func getCheckpointIngestIndexPathByName(taskName string) string {
 
 type externalCheckpointStorage struct {
 	flushPath
-	storage objstore.ExternalStorage
+	storage objstore.Storage
 
 	lockId uint64
 	timer  GlobalTimer
@@ -77,7 +77,7 @@ type externalCheckpointStorage struct {
 
 func newExternalCheckpointStorage(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	timer GlobalTimer,
 	flushPath flushPath,
 ) (*externalCheckpointStorage, error) {

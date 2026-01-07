@@ -267,7 +267,7 @@ func getAuthorizerFromEnvironment() (clientID, tenantID, clientSecret string) {
 }
 
 // get azure service client from options and environment
-func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (ClientBuilder, error) {
+func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Options) (ClientBuilder, error) {
 	if len(options.Bucket) == 0 {
 		return nil, errors.New("bucket(container) cannot be empty to access azure blob storage")
 	}
@@ -398,7 +398,7 @@ type AzureBlobStorage struct {
 }
 
 // CopyFrom implements Copier.
-func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
 	es, ok := e.(*AzureBlobStorage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig,
@@ -471,12 +471,12 @@ func progress(s string) (finished, total int, err error) {
 	return
 }
 
-// MarkStrongConsistency implements ExternalStorage.
+// MarkStrongConsistency implements Storage.
 func (*AzureBlobStorage) MarkStrongConsistency() {
 	// See https://github.com/MicrosoftDocs/azure-docs/issues/105331#issuecomment-1450252384
 }
 
-func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (*AzureBlobStorage, error) {
+func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *Options) (*AzureBlobStorage, error) {
 	clientBuilder, err := getAzureServiceClientBuilder(options, opts)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -624,7 +624,7 @@ func (s *AzureBlobStorage) DeleteFiles(ctx context.Context, names []string) erro
 }
 
 // Open implements the StorageReader interface.
-func (s *AzureBlobStorage) Open(ctx context.Context, name string, o *ReaderOption) (ExternalFileReader, error) {
+func (s *AzureBlobStorage) Open(ctx context.Context, name string, o *ReaderOption) (FileReader, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	resp, err := client.GetProperties(ctx, nil)
 	if err != nil {
@@ -702,7 +702,7 @@ func (s *AzureBlobStorage) URI() string {
 const azblobChunkSize = 64 * 1024 * 1024
 
 // Create implements the StorageWriter interface.
-func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
+func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOption) (FileWriter, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	uploader := &azblobUploader{
 		blobClient: client,
@@ -732,7 +732,7 @@ func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName 
 	return s.DeleteFile(ctx, oldFileName)
 }
 
-// Close implements the ExternalStorage interface.
+// Close implements the Storage interface.
 func (*AzureBlobStorage) Close() {}
 
 type azblobObjectReader struct {

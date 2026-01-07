@@ -92,7 +92,7 @@ var permissionCheckFn = map[Permission]func(context.Context, S3API, *backuppb.S3
 var WriteBufferSize = 5 * 1024 * 1024
 
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
-// It implements the `ExternalStorage` interface.
+// It implements the `Storage` interface.
 type S3Storage struct {
 	svc       S3API
 	options   *backuppb.S3
@@ -105,7 +105,7 @@ type S3Storage struct {
 	s3Compatible bool
 }
 
-// MarkStrongConsistency implements the ExternalStorage interface.
+// MarkStrongConsistency implements the Storage interface.
 func (*S3Storage) MarkStrongConsistency() {
 	// See https://aws.amazon.com/cn/s3/consistency/
 }
@@ -115,8 +115,8 @@ func (rs *S3Storage) GetOptions() *backuppb.S3 {
 	return rs.options
 }
 
-// CopyFrom implements the ExternalStorage interface.
-func (rs *S3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+// CopyFrom implements the Storage interface.
+func (rs *S3Storage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
 	s, ok := e.(*S3Storage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
@@ -404,7 +404,7 @@ func (p pingcapLogger) Logf(classification logging.Classification, format string
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.
-func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
+func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *Options) (obj *S3Storage, errRet error) {
 	qs := *backend
 
 	// Start with default configuration loading
@@ -790,7 +790,7 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	return errors.Trace(err)
 }
 
-// ReadFile implements ExternalStorage.ReadFile.
+// ReadFile implements Storage.ReadFile.
 func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) {
 	backoff := 10 * time.Millisecond
 	remainRetry := 5
@@ -1012,7 +1012,7 @@ func (rs *S3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
+func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
 	start := int64(0)
 	end := int64(0)
 	prefetchSize := 0
@@ -1306,7 +1306,7 @@ func (r *s3ObjectReader) GetFileSize() (int64, error) {
 }
 
 // createUploader create multi upload request.
-func (rs *S3Storage) createUploader(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (rs *S3Storage) createUploader(ctx context.Context, name string) (FileWriter, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
@@ -1357,8 +1357,8 @@ func (s *s3ObjectWriter) Close(_ context.Context) error {
 }
 
 // Create creates multi upload request.
-func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOption) (ExternalFileWriter, error) {
-	var uploader ExternalFileWriter
+func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOption) (FileWriter, error) {
+	var uploader FileWriter
 	var err error
 	if option == nil || option.Concurrency <= 1 {
 		uploader, err = rs.createUploader(ctx, name)
@@ -1399,7 +1399,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	return uploaderWriter, nil
 }
 
-// Rename implements ExternalStorage interface.
+// Rename implements Storage interface.
 func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	content, err := rs.ReadFile(ctx, oldFileName)
 	if err != nil {
@@ -1415,7 +1415,7 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 	return nil
 }
 
-// Close implements ExternalStorage interface.
+// Close implements Storage interface.
 func (*S3Storage) Close() {}
 
 // withContentMD5 removes all flexible checksum procecdures from an operation,

@@ -115,7 +115,7 @@ func (rc *SnapClient) CreateTablesTest(
 
 func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 	builder *PipelineConcurrentBuilder,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
 ) {

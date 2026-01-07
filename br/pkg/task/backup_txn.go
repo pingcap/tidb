@@ -124,7 +124,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 	defer mgr.Close()
 
 	client := backup.NewBackupClient(ctx, mgr)
-	opts := objstore.ExternalStorageOptions{
+	opts := objstore.Options{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,

@@ -113,7 +113,7 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 
 func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	ctx context.Context,
-	objStore objstore.ExternalStorage,
+	objStore objstore.Storage,
 	concurrency int,
 	kvGroup string,
 	ci *engineapi.ConflictInfo,

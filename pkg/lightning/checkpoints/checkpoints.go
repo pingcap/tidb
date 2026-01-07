@@ -1126,14 +1126,14 @@ type FileCheckpointsDB struct {
 	checkpoints checkpointspb.CheckpointsModel
 	ctx         context.Context
 	path        string
-	fileName  string
-	exStorage objstore.ExternalStorage
+	fileName    string
+	exStorage   objstore.Storage
 }
 
 func newFileCheckpointsDB(
 	ctx context.Context,
 	path string,
-	exStorage objstore.ExternalStorage,
+	exStorage objstore.Storage,
 	fileName string,
 ) (*FileCheckpointsDB, error) {
 	cpdb := &FileCheckpointsDB{
@@ -1190,7 +1190,7 @@ func newFileCheckpointsDB(
 
 // NewFileCheckpointsDB creates a new FileCheckpointsDB
 func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB, error) {
-	// init ExternalStorage
+	// init Storage
 	s, fileName, err := createExstorageByCompletePath(ctx, path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1202,14 +1202,14 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 func NewFileCheckpointsDBWithExstorageFileName(
 	ctx context.Context,
 	path string,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	fileName string,
 ) (*FileCheckpointsDB, error) {
 	return newFileCheckpointsDB(ctx, path, s, fileName)
 }
 
-// createExstorageByCompletePath create ExternalStorage by completePath and return fileName.
-func createExstorageByCompletePath(ctx context.Context, completePath string) (objstore.ExternalStorage, string, error) {
+// createExstorageByCompletePath create Storage by completePath and return fileName.
+func createExstorageByCompletePath(ctx context.Context, completePath string) (objstore.Storage, string, error) {
 	if completePath == "" {
 		return nil, "", nil
 	}
@@ -1221,7 +1221,7 @@ func createExstorageByCompletePath(ctx context.Context, completePath string) (ob
 	if err != nil {
 		return nil, "", errors.Trace(err)
 	}
-	s, err := objstore.New(ctx, u, &objstore.ExternalStorageOptions{})
+	s, err := objstore.New(ctx, u, &objstore.Options{})
 	if err != nil {
 		return nil, "", errors.Trace(err)
 	}

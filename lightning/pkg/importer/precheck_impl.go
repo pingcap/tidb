@@ -435,7 +435,7 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
-	_, err = objstore.New(ctx, u, &objstore.ExternalStorageOptions{
+	_, err = objstore.New(ctx, u, &objstore.Options{
 		CheckPermissions: []objstore.Permission{
 			objstore.ListObjects,
 			objstore.GetObject,

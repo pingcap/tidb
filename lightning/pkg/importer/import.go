@@ -224,7 +224,7 @@ type Controller struct {
 	closedEngineLimit *worker.Pool
 	addIndexLimit     *worker.Pool
 
-	store    objstore.ExternalStorage
+	store    objstore.Storage
 	ownStore bool
 	metaMgrBuilder metaMgrBuilder
 	errorMgr       *errormanager.ErrorManager
@@ -266,7 +266,7 @@ type ControllerParam struct {
 	// a pointer to status to report it to caller
 	Status *LightningStatus
 	// storage interface to read the dump data
-	DumpFileStorage objstore.ExternalStorage
+	DumpFileStorage objstore.Storage
 	// true if DumpFileStorage is created by lightning. In some cases where lightning is a library, the framework may pass an DumpFileStorage
 	OwnExtStorage bool
 	// used by lightning server mode to pause tasks
@@ -274,7 +274,7 @@ type ControllerParam struct {
 	// DB is a connection pool to TiDB
 	DB *sql.DB
 	// storage interface to write file checkpoints
-	CheckpointStorage objstore.ExternalStorage
+	CheckpointStorage objstore.Storage
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
 	CheckpointName string
 	// DupIndicator can expose the duplicate detection result to the caller
@@ -311,7 +311,7 @@ func NewImportControllerWithPauser(
 	}
 
 	var cpdb checkpoints.DB
-	// if CheckpointStorage is set, we should use given ExternalStorage to create checkpoints.
+	// if CheckpointStorage is set, we should use given Storage to create checkpoints.
 	if p.CheckpointStorage != nil {
 		cpdb, err = checkpoints.NewFileCheckpointsDBWithExstorageFileName(ctx, p.CheckpointStorage.URI(), p.CheckpointStorage, p.CheckpointName)
 		if err != nil {

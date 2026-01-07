@@ -385,10 +385,10 @@ type LoadDataController struct {
 	InsertColumns []*table.Column
 
 	logger    *zap.Logger
-	dataStore objstore.ExternalStorage
+	dataStore objstore.Storage
 	dataFiles []*mydump.SourceFileMeta
 	// globalSortStore is used to store sorted data when using global sort.
-	globalSortStore objstore.ExternalStorage
+	globalSortStore objstore.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
 }
@@ -1188,7 +1188,7 @@ func (e *LoadDataController) Close() {
 }
 
 // GetSortStore gets the sort store.
-func GetSortStore(ctx context.Context, url string) (objstore.ExternalStorage, error) {
+func GetSortStore(ctx context.Context, url string) (objstore.Storage, error) {
 	u, err := objstore.ParseRawURL(url)
 	target := "cloud storage"
 	if err != nil {
@@ -1197,7 +1197,7 @@ func GetSortStore(ctx context.Context, url string) (objstore.ExternalStorage, er
 	return initExternalStore(ctx, u, target)
 }
 
-func initExternalStore(ctx context.Context, u *url.URL, target string) (objstore.ExternalStorage, error) {
+func initExternalStore(ctx context.Context, u *url.URL, target string) (objstore.Storage, error) {
 	b, err2 := objstore.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
@@ -1215,7 +1215,7 @@ func estimateCompressionRatio(
 	filePath string,
 	fileSize int64,
 	tp mydump.SourceType,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 ) (float64, error) {
 	if tp != mydump.SourceTypeParquet {
 		return 1.0, nil
@@ -1283,7 +1283,7 @@ func getHarmonicMean(rs []float64) float64 {
 func (r *compressionEstimator) estimate(
 	ctx context.Context,
 	fileMeta mydump.SourceFileMeta,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 ) float64 {
 	compressTp := mydump.ParseCompressionOnFileExtension(fileMeta.Path)
 	if compressTp == mydump.CompressionNone {

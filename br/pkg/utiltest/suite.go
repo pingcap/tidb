@@ -26,7 +26,7 @@ import (
 type TestRestoreSchemaSuite struct {
 	Mock     *mock.Cluster
 	MockGlue *gluemock.MockGlue
-	Storage  objstore.ExternalStorage
+	Storage  objstore.Storage
 }
 
 func CreateRestoreSchemaSuite(t *testing.T) *TestRestoreSchemaSuite {

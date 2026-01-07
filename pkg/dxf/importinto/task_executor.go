@@ -194,7 +194,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	var (
 		dataKVFiles, indexKVFiles atomic.Int64
 		accessRec                 = &recording.AccessStats{}
-		objStore                  objstore.ExternalStorage
+		objStore                  objstore.Storage
 	)
 	defer func() {
 		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
@@ -299,7 +299,7 @@ func (s *importStepExecutor) ResetSummary() {
 	s.summary.Reset()
 }
 
-func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, extStore objstore.ExternalStorage) error {
+func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, extStore objstore.Storage) error {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -487,7 +487,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	return m.onFinished(ctx, subtask, objStore)
 }
 
-func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sortStore objstore.ExternalStorage) error {
+func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sortStore objstore.Storage) error {
 	var subtaskMeta MergeSortStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -677,7 +677,7 @@ func (e *writeAndIngestStepExecutor) ResetSummary() {
 	e.summary.Reset()
 }
 
-func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, objStore objstore.ExternalStorage) error {
+func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, objStore objstore.Storage) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)

@@ -61,7 +61,7 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore objstore.ExternalStorage
+	extStore objstore.Storage
 	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
@@ -80,7 +80,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		if err != nil {
 			panic(err)
 		}
-		s, err := objstore.New(context.Background(), b, &objstore.ExternalStorageOptions{})
+		s, err := objstore.New(context.Background(), b, &objstore.Options{})
 		if err != nil {
 			panic(err)
 		}

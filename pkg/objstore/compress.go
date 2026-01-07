@@ -13,25 +13,25 @@ import (
 )
 
 type withCompression struct {
-	ExternalStorage
+	Storage
 	compressType  CompressType
 	decompressCfg DecompressConfig
 }
 
-// WithCompression returns an ExternalStorage with compress option
-func WithCompression(inner ExternalStorage, compressionType CompressType, cfg DecompressConfig) ExternalStorage {
+// WithCompression returns an Storage with compress option
+func WithCompression(inner Storage, compressionType CompressType, cfg DecompressConfig) Storage {
 	if compressionType == NoCompression {
 		return inner
 	}
 	return &withCompression{
-		ExternalStorage: inner,
-		compressType:    compressionType,
-		decompressCfg:   cfg,
+		Storage:       inner,
+		compressType:  compressionType,
+		decompressCfg: cfg,
 	}
 }
 
-func (w *withCompression) Create(ctx context.Context, name string, o *WriterOption) (ExternalFileWriter, error) {
-	writer, err := w.ExternalStorage.Create(ctx, name, o)
+func (w *withCompression) Create(ctx context.Context, name string, o *WriterOption) (FileWriter, error) {
+	writer, err := w.Storage.Create(ctx, name, o)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -44,8 +44,8 @@ func (w *withCompression) Create(ctx context.Context, name string, o *WriterOpti
 	return compressedWriter, nil
 }
 
-func (w *withCompression) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
-	fileReader, err := w.ExternalStorage.Open(ctx, path, o)
+func (w *withCompression) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
+	fileReader, err := w.Storage.Open(ctx, path, o)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -67,11 +67,11 @@ func (w *withCompression) WriteFile(ctx context.Context, name string, data []byt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return w.ExternalStorage.WriteFile(ctx, name, bf.Bytes())
+	return w.Storage.WriteFile(ctx, name, bf.Bytes())
 }
 
 func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, error) {
-	data, err := w.ExternalStorage.ReadFile(ctx, name)
+	data, err := w.Storage.ReadFile(ctx, name)
 	if err != nil {
 		return data, errors.Trace(err)
 	}
@@ -91,14 +91,14 @@ type compressReader struct {
 }
 
 // InterceptDecompressReader intercepts the reader and wraps it with a decompress
-// reader on the given ExternalFileReader. Note that the returned
-// ExternalFileReader does not have the property that Seek(0, io.SeekCurrent)
+// reader on the given FileReader. Note that the returned
+// FileReader does not have the property that Seek(0, io.SeekCurrent)
 // equals total bytes Read() if the decompress reader is used.
 func InterceptDecompressReader(
-	fileReader ExternalFileReader,
+	fileReader FileReader,
 	compressType CompressType,
 	cfg DecompressConfig,
-) (ExternalFileReader, error) {
+) (FileReader, error) {
 	if compressType == NoCompression {
 		return fileReader, nil
 	}
@@ -115,11 +115,11 @@ func InterceptDecompressReader(
 
 // NewLimitedInterceptReader creates a decompress reader with limit n.
 func NewLimitedInterceptReader(
-	fileReader ExternalFileReader,
+	fileReader FileReader,
 	compressType CompressType,
 	cfg DecompressConfig,
 	n int64,
-) (ExternalFileReader, error) {
+) (FileReader, error) {
 	newFileReader := fileReader
 	if n < 0 {
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support negative limit, n: %d", n)

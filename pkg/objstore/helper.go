@@ -32,7 +32,7 @@ func ValidateCloudStorageURI(ctx context.Context, uri string) error {
 			DisableKeepAlives: true,
 		},
 	}
-	storage, err := New(ctx, b, &ExternalStorageOptions{
+	storage, err := New(ctx, b, &Options{
 		HTTPClient: &httpCli,
 		CheckPermissions: []Permission{
 			ListObjects,
@@ -59,7 +59,7 @@ func GetActiveUploadWorkerCount() int64 {
 // UnmarshalDir iterates over a prefix, then "unmarshal" the content of each file it met with the unmarshal function.
 // Returning an iterator that yields the unmarshaled content.
 // The "unmarshal" function should put the result of unmarshalling to the `target` argument.
-func UnmarshalDir[T any](ctx context.Context, walkOpt *WalkOption, s ExternalStorage, unmarshal func(target *T, name string, content []byte) error) iter.TryNextor[*T] {
+func UnmarshalDir[T any](ctx context.Context, walkOpt *WalkOption, s Storage, unmarshal func(target *T, name string, content []byte) error) iter.TryNextor[*T] {
 	ch := make(chan *T)
 	errCh := make(chan error, 1)
 	reader := func() {

@@ -46,7 +46,7 @@ type KVReader struct {
 func NewKVReader(
 	ctx context.Context,
 	name string,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	initFileOffset uint64,
 	bufSize int,
 ) (*KVReader, error) {

@@ -33,7 +33,7 @@ type LocalStorage struct {
 	base string
 	// Whether ignoring ENOINT while deleting.
 	// Don't fail when deleting an unexist file is more like
-	// a normal ExternalStorage implementation does.
+	// a normal Storage implementation does.
 	IgnoreEnoentForDelete bool
 }
 
@@ -106,7 +106,7 @@ func (l *LocalStorage) ReadFile(_ context.Context, name string) ([]byte, error) 
 	return os.ReadFile(path)
 }
 
-// FileExists implement ExternalStorage.FileExists.
+// FileExists implement Storage.FileExists.
 func (l *LocalStorage) FileExists(_ context.Context, name string) (bool, error) {
 	path := filepath.Join(l.base, name)
 	return pathExists(path)
@@ -197,7 +197,7 @@ func (l *LocalStorage) URI() string {
 }
 
 // Open a Reader by file path, path is a relative path to base path.
-func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
+func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (FileReader, error) {
 	//nolint: gosec
 	f, err := os.Open(filepath.Join(l.base, path))
 	if err != nil {
@@ -260,8 +260,8 @@ func (f *localFile) GetFileSize() (int64, error) {
 	return stat.Size(), nil
 }
 
-// Create implements ExternalStorage interface.
-func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
+// Create implements Storage interface.
+func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (FileWriter, error) {
 	filename := filepath.Join(l.base, name)
 	dir := filepath.Dir(filename)
 	err := os.MkdirAll(dir, 0750)
@@ -276,16 +276,16 @@ func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (
 	return newFlushStorageWriter(buf, buf, file, nil), nil
 }
 
-// Rename implements ExternalStorage interface.
+// Rename implements Storage interface.
 func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string) error {
 	return errors.Trace(os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName)))
 }
 
-// Close implements ExternalStorage interface.
+// Close implements Storage interface.
 func (*LocalStorage) Close() {}
 
-// CopyFrom implements ExternalStorage interface.
-func (l *LocalStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+// CopyFrom implements Storage interface.
+func (l *LocalStorage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
 	sl, ok := e.(*LocalStorage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "expect source to be LocalStorage, got %T", e)

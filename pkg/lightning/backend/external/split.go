@@ -122,7 +122,7 @@ type RangeSplitter struct {
 func NewRangeSplitter(
 	ctx context.Context,
 	multiFileStat []MultipleFilesStat,
-	externalStorage objstore.ExternalStorage,
+	externalStorage objstore.Storage,
 	rangesGroupSize, rangesGroupKeyCnt int64,
 	rangeJobSize, rangeJobKeyCnt int64,
 	regionSplitSize, regionSplitKeyCnt int64,

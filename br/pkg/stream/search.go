@@ -55,7 +55,7 @@ type StreamKVInfo struct {
 
 // StreamBackupSearch is used for searching key from log data files
 type StreamBackupSearch struct {
-	storage    objstore.ExternalStorage
+	storage    objstore.Storage
 	comparator Comparator
 	searchKey  []byte // hex string
 	startTs    uint64
@@ -64,7 +64,7 @@ type StreamBackupSearch struct {
 
 // NewStreamBackupSearch creates an instance of StreamBackupSearch
 func NewStreamBackupSearch(
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	comparator Comparator,
 	searchKey []byte,
 ) *StreamBackupSearch {

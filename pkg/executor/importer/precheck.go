@@ -149,7 +149,7 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("unsupported cloud storage uri scheme: " + cloudStorageURL.Scheme)
 	}
 
-	opt := &objstore.ExternalStorageOptions{
+	opt := &objstore.Options{
 		CheckPermissions: []objstore.Permission{
 			objstore.GetObject,
 			objstore.ListObjects,

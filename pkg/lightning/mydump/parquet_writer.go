@@ -38,7 +38,7 @@ type ParquetColumn struct {
 }
 
 type writeWrapper struct {
-	Writer objstore.ExternalFileWriter
+	Writer objstore.FileWriter
 }
 
 func (*writeWrapper) Seek(_ int64, _ int) (int64, error) {
@@ -57,7 +57,7 @@ func (w *writeWrapper) Close() error {
 	return w.Writer.Close(context.Background())
 }
 
-func getStore(path string) (objstore.ExternalStorage, error) {
+func getStore(path string) (objstore.Storage, error) {
 	s, err := objstore.ParseBackend(path, nil)
 	if err != nil {
 		return nil, err

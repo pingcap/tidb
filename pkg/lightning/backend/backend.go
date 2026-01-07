@@ -123,7 +123,7 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	ExtStore  objstore.ExternalStorage
+	ExtStore  objstore.Storage
 	DataFiles []string
 	StatFiles []string
 	StartKey  []byte

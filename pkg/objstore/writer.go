@@ -182,7 +182,7 @@ func newSimpleCompressBuffer(chunkSize int, compressType CompressType) *simpleCo
 
 type bufferedWriter struct {
 	buf       interceptBuffer
-	writer    ExternalFileWriter
+	writer    FileWriter
 	accessRec *recording.AccessStats
 }
 
@@ -244,12 +244,12 @@ func (u *bufferedWriter) Close(ctx context.Context) error {
 }
 
 // NewUploaderWriter wraps the Writer interface over an uploader.
-func NewUploaderWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) ExternalFileWriter {
+func NewUploaderWriter(writer FileWriter, chunkSize int, compressType CompressType) FileWriter {
 	return newBufferedWriter(writer, chunkSize, compressType, nil)
 }
 
 // newBufferedWriter is used to build a buffered writer.
-func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType, accessRec *recording.AccessStats) *bufferedWriter {
+func newBufferedWriter(writer FileWriter, chunkSize int, compressType CompressType, accessRec *recording.AccessStats) *bufferedWriter {
 	return &bufferedWriter{
 		writer:    writer,
 		buf:       newInterceptBuffer(chunkSize, compressType),

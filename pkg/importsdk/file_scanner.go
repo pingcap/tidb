@@ -39,9 +39,9 @@ type FileScanner interface {
 
 type fileScanner struct {
 	sourcePath string
-	db     *sql.DB
-	store  objstore.ExternalStorage
-	loader *mydump.MDLoader
+	db         *sql.DB
+	store      objstore.Storage
+	loader     *mydump.MDLoader
 	logger     log.Logger
 	config     *SDKConfig
 }
@@ -52,7 +52,7 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	if err != nil {
 		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s, err=%v", sourcePath, err)
 	}
-	store, err := objstore.New(ctx, u, &objstore.ExternalStorageOptions{})
+	store, err := objstore.New(ctx, u, &objstore.Options{})
 	if err != nil {
 		return nil, errors.Annotatef(ErrCreateExternalStorage, "source=%s, err=%v", sourcePath, err)
 	}

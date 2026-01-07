@@ -209,7 +209,7 @@ type SharedVars struct {
 	SortedIndexMetas        map[int64]*external.SortedKVMeta
 	RecordedConflictKVCount uint64
 	ShareMu                 sync.Mutex
-	globalSortStore         objstore.ExternalStorage
+	globalSortStore         objstore.Storage
 	dataKVFileCount         *atomic.Int64
 	indexKVFileCount        *atomic.Int64
 }

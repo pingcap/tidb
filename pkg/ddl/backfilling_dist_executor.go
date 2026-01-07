@@ -90,7 +90,7 @@ func (m *BackfillSubTaskMeta) Marshal() ([]byte, error) {
 	return m.BaseExternalMeta.Marshal(m)
 }
 
-func decodeBackfillSubTaskMeta(ctx context.Context, extStore objstore.ExternalStorage, raw []byte) (*BackfillSubTaskMeta, error) {
+func decodeBackfillSubTaskMeta(ctx context.Context, extStore objstore.Storage, raw []byte) (*BackfillSubTaskMeta, error) {
 	var subtask BackfillSubTaskMeta
 	err := json.Unmarshal(raw, &subtask)
 	if err != nil {
@@ -116,7 +116,7 @@ func decodeBackfillSubTaskMeta(ctx context.Context, extStore objstore.ExternalSt
 	return &subtask, nil
 }
 
-func writeExternalBackfillSubTaskMeta(ctx context.Context, extStore objstore.ExternalStorage, subtask *BackfillSubTaskMeta, externalPath string) error {
+func writeExternalBackfillSubTaskMeta(ctx context.Context, extStore objstore.Storage, subtask *BackfillSubTaskMeta, externalPath string) error {
 	if extStore == nil {
 		return nil
 	}

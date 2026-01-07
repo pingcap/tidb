@@ -49,7 +49,7 @@ func (rc *LogClient) pitrIDMapHasRestoreIDColumn() bool {
 
 func (rc *LogClient) tryGetCheckpointStorage(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) objstore.ExternalStorage {
+) objstore.Storage {
 	if !rc.useCheckpoint {
 		return nil
 	}
@@ -92,7 +92,7 @@ func (rc *LogClient) saveIDMap(
 
 func (rc *LogClient) saveIDMap2Storage(
 	ctx context.Context,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	dbMaps []*backuppb.PitrDBMap,
 ) error {
 	clusterID := rc.GetClusterID(ctx)
@@ -174,7 +174,7 @@ func (rc *LogClient) loadSchemasMap(
 
 func (rc *LogClient) loadSchemasMapFromStorage(
 	ctx context.Context,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	restoredTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
 	clusterID := rc.GetClusterID(ctx)

@@ -132,7 +132,7 @@ func (helper *FakeStreamMetadataHelper) ReadFile(
 	offset uint64,
 	length uint64,
 	compressionType backuppb.CompressionType,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	return helper.Data[offset : offset+length], nil

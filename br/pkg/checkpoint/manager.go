@@ -78,7 +78,7 @@ type LogMetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	SaveCheckpointIngestIndexRepairSQLs(context.Context, *CheckpointIngestIndexRepairSQLs) error
 	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
 
-	TryGetStorage() objstore.ExternalStorage
+	TryGetStorage() objstore.Storage
 }
 
 type TableMetaManager[K KeyType, SV, LV ValueType, M any] struct {
@@ -273,19 +273,19 @@ func (manager *TableMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	return runner, nil
 }
 
-func (manager *TableMetaManager[K, SV, LV, M]) TryGetStorage() objstore.ExternalStorage {
+func (manager *TableMetaManager[K, SV, LV, M]) TryGetStorage() objstore.Storage {
 	return nil
 }
 
 type StorageMetaManager[K KeyType, SV, LV ValueType, M any] struct {
-	storage   objstore.ExternalStorage
+	storage   objstore.Storage
 	cipher    *backuppb.CipherInfo
 	clusterID string
 	taskName  string
 }
 
 func NewSnapshotStorageMetaManager(
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
@@ -302,7 +302,7 @@ func NewSnapshotStorageMetaManager(
 }
 
 func NewLogStorageMetaManager(
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
@@ -426,6 +426,6 @@ func (manager *StorageMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	return runner, nil
 }
 
-func (manager *StorageMetaManager[K, SV, LV, M]) TryGetStorage() objstore.ExternalStorage {
+func (manager *StorageMetaManager[K, SV, LV, M]) TryGetStorage() objstore.Storage {
 	return manager.storage
 }

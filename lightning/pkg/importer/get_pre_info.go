@@ -266,7 +266,7 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdhttp
 type PreImportInfoGetterImpl struct {
 	cfg              *config.Config
 	getPreInfoCfg *ropts.GetPreInfoConfig
-	srcStorage    objstore.ExternalStorage
+	srcStorage    objstore.Storage
 	ioWorkers     *worker.Pool
 	encBuilder       encode.EncodingBuilder
 	targetInfoGetter TargetInfoGetter
@@ -284,7 +284,7 @@ type PreImportInfoGetterImpl struct {
 func NewPreImportInfoGetter(
 	cfg *config.Config,
 	dbMetas []*mydump.MDDatabaseMeta,
-	srcStorage objstore.ExternalStorage,
+	srcStorage objstore.Storage,
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
 	encBuilder encode.EncodingBuilder,

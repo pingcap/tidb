@@ -395,8 +395,8 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-	storage objstore.ExternalStorage
-	backend *backuppb.StorageBackend
+	storage    objstore.Storage
+	backend    *backuppb.StorageBackend
 	apiVersion kvrpcpb.APIVersion
 
 	cipher           *backuppb.CipherInfo
@@ -529,15 +529,15 @@ func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 }
 
 // GetStorage gets storage for this backup.
-func (bc *Client) GetStorage() objstore.ExternalStorage {
+func (bc *Client) GetStorage() objstore.Storage {
 	return bc.storage
 }
 
-// SetStorageAndCheckNotInUse sets ExternalStorage for client and check storage not in used by others.
+// SetStorageAndCheckNotInUse sets Storage for client and check storage not in used by others.
 func (bc *Client) SetStorageAndCheckNotInUse(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
-	opts *objstore.ExternalStorageOptions,
+	opts *objstore.Options,
 ) error {
 	err := bc.SetStorage(ctx, backend, opts)
 	if err != nil {
@@ -652,11 +652,11 @@ func (bc *Client) getProgressRange(r rtree.KeyRange, sharedFreeListG *btree.Free
 	}
 }
 
-// SetStorage sets ExternalStorage for client.
+// SetStorage sets Storage for client.
 func (bc *Client) SetStorage(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
-	opts *objstore.ExternalStorageOptions,
+	opts *objstore.Options,
 ) error {
 	var err error
 
@@ -701,7 +701,7 @@ func (bc *Client) BuildBackupRangeAndSchema(
 // CheckBackupStorageIsLocked checks whether backups is locked.
 // which means we found other backup progress already write
 // some data files into the same backup directory or cloud prefix.
-func CheckBackupStorageIsLocked(ctx context.Context, s objstore.ExternalStorage) error {
+func CheckBackupStorageIsLocked(ctx context.Context, s objstore.Storage) error {
 	exist, err := s.FileExists(ctx, metautil.LockFile)
 	if err != nil {
 		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)

@@ -73,7 +73,7 @@ func TestByteReader(t *testing.T) {
 	err := st.WriteFile(context.Background(), "testfile", []byte("abcde"))
 	require.NoError(t, err)
 
-	newRsc := func() objstore.ExternalFileReader {
+	newRsc := func() objstore.FileReader {
 		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
@@ -170,7 +170,7 @@ func TestUnexpectedEOF(t *testing.T) {
 	err := st.WriteFile(context.Background(), "testfile", []byte("0123456789"))
 	require.NoError(t, err)
 
-	newRsc := func() objstore.ExternalFileReader {
+	newRsc := func() objstore.FileReader {
 		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
@@ -199,7 +199,7 @@ func TestEmptyContent(t *testing.T) {
 	err = st.WriteFile(context.Background(), "testfile", []byte(""))
 	require.NoError(t, err)
 
-	newRsc := func() objstore.ExternalFileReader {
+	newRsc := func() objstore.FileReader {
 		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc

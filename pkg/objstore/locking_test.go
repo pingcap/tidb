@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createMockStorage(t *testing.T) (objstore.ExternalStorage, string) {
+func createMockStorage(t *testing.T) (objstore.Storage, string) {
 	tempdir := t.TempDir()
 	storage, err := objstore.New(context.Background(), &backup.StorageBackend{
 		Backend: &backup.StorageBackend_Local{

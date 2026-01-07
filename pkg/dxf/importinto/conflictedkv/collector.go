@@ -70,7 +70,7 @@ func (r *CollectResult) Merge(other *CollectResult) {
 // Collector collects info about conflicted rows.
 type Collector struct {
 	logger         *zap.Logger
-	store          objstore.ExternalStorage
+	store          objstore.Storage
 	filenamePrefix string
 	kvGroup        string
 	handler        Handler
@@ -79,14 +79,14 @@ type Collector struct {
 
 	fileSeq      int
 	currFileSize int64
-	writer       objstore.ExternalFileWriter
+	writer       objstore.FileWriter
 }
 
 // NewCollector creates a new conflicted KV info collector.
 func NewCollector(
 	targetTbl table.Table,
 	logger *zap.Logger,
-	objStore objstore.ExternalStorage,
+	objStore objstore.Storage,
 	store tidbkv.Storage,
 	filenamePrefix string,
 	kvGroup string,

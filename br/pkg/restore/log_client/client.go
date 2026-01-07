@@ -202,7 +202,7 @@ type LogClient struct {
 	keepaliveConf keepalive.ClientParameters
 
 	rawKVClient *rawkv.RawKVBatchClient
-	storage     objstore.ExternalStorage
+	storage     objstore.Storage
 
 	// unsafeSession is not thread-safe.
 	// Currently, it is only utilized in some initialization and post-handle functions.
@@ -427,7 +427,7 @@ func (rc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
 	rc.upstreamClusterID = upstreamClusterID
 }
 
-func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *objstore.ExternalStorageOptions) error {
+func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *objstore.Options) error {
 	var err error
 	rc.storage, err = objstore.New(ctx, backend, opts)
 	if err != nil {
@@ -997,7 +997,7 @@ func (rc *LogClient) RestoreKVFiles(
 
 type FullBackupStorageConfig struct {
 	Backend *backuppb.StorageBackend
-	Opts    *objstore.ExternalStorageOptions
+	Opts    *objstore.Options
 }
 
 type GetIDMapConfig struct {

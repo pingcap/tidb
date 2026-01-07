@@ -58,7 +58,7 @@ const (
 // with only one file for data and stat.
 type OneFileWriter struct {
 	// storage related.
-	store    objstore.ExternalStorage
+	store    objstore.Storage
 	kvStore  *KeyValueStore
 	kvBuffer *membuf.Buffer
 
@@ -73,8 +73,8 @@ type OneFileWriter struct {
 	rnd            *rand.Rand
 	dataFile       string
 	statFile       string
-	dataWriter     objstore.ExternalFileWriter
-	statWriter     objstore.ExternalFileWriter
+	dataWriter     objstore.FileWriter
+	statWriter     objstore.FileWriter
 
 	onClose OnWriterCloseFunc
 	closed  bool
@@ -89,7 +89,7 @@ type OneFileWriter struct {
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
 	recordedDupCnt int
 	dupFile        string
-	dupWriter      objstore.ExternalFileWriter
+	dupWriter      objstore.FileWriter
 	dupKVStore     *KeyValueStore
 
 	minKey []byte

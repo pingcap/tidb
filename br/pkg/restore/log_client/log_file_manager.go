@@ -81,7 +81,7 @@ type streamMetadataHelper interface {
 		offset uint64,
 		length uint64,
 		compressionType backuppb.CompressionType,
-		storage objstore.ExternalStorage,
+		storage objstore.Storage,
 		encryptionInfo *encryptionpb.FileEncryptionInfo,
 	) ([]byte, error)
 	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
@@ -108,7 +108,7 @@ type LogFileManager struct {
 	// (the startTS in these entries belong to [shiftStartTS, startTS]).
 	shiftStartTS uint64
 
-	storage objstore.ExternalStorage
+	storage objstore.Storage
 	helper  streamMetadataHelper
 
 	withMigrationBuilder *WithMigrationsBuilder
@@ -125,7 +125,7 @@ type LogFileManager struct {
 type LogFileManagerInit struct {
 	StartTS   uint64
 	RestoreTS uint64
-	Storage   objstore.ExternalStorage
+	Storage   objstore.Storage
 
 	MigrationsBuilder         *WithMigrationsBuilder
 	Migrations                *WithMigrations
@@ -225,7 +225,7 @@ func (lm *LogFileManager) streamingMetaByTS(ctx context.Context) (MetaNameIter, 
 	return filtered, nil
 }
 
-func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s objstore.ExternalStorage) (MetaNameIter, error) {
+func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s objstore.Storage) (MetaNameIter, error) {
 	opt := &objstore.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
@@ -513,7 +513,7 @@ func (lm *LogFileManager) Close() {
 	}
 }
 
-func Subcompactions(ctx context.Context, prefix string, s objstore.ExternalStorage, shiftStartTS, restoredTS uint64) SubCompactionIter {
+func Subcompactions(ctx context.Context, prefix string, s objstore.Storage, shiftStartTS, restoredTS uint64) SubCompactionIter {
 	return iter.FlatMap(objstore.UnmarshalDir(
 		ctx,
 		&objstore.WalkOption{SubDir: prefix},
@@ -529,6 +529,6 @@ func Subcompactions(ctx context.Context, prefix string, s objstore.ExternalStora
 	})
 }
 
-func LoadMigrations(ctx context.Context, s objstore.ExternalStorage) iter.TryNextor[*backuppb.Migration] {
+func LoadMigrations(ctx context.Context, s objstore.Storage) iter.TryNextor[*backuppb.Migration] {
 	return objstore.UnmarshalDir(ctx, &objstore.WalkOption{SubDir: "v1/migrations/"}, s, func(t *backuppb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
 }

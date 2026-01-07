@@ -1128,7 +1128,7 @@ func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) (bool, erro
 type SnapshotRestoreConfig struct {
 	*RestoreConfig
 	piTRTaskInfo           *PiTRTaskInfo
-	logRestoreStorage      objstore.ExternalStorage
+	logRestoreStorage      objstore.Storage
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
 }

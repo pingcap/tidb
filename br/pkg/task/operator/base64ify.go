@@ -20,7 +20,7 @@ func runEncode(ctx context.Context, cfg Base64ifyConfig) error {
 		return err
 	}
 	if cfg.LoadCerd {
-		_, err := objstore.New(ctx, s, &objstore.ExternalStorageOptions{
+		_, err := objstore.New(ctx, s, &objstore.Options{
 			SendCredentials: true,
 		})
 		if err != nil {

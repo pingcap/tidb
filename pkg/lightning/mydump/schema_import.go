@@ -69,12 +69,12 @@ type SchemaImporter struct {
 	logger      log.Logger
 	db          *sql.DB
 	sqlMode     mysql.SQLMode
-	store       objstore.ExternalStorage
+	store       objstore.Storage
 	concurrency int
 }
 
 // NewSchemaImporter creates a new SchemaImporter instance.
-func NewSchemaImporter(logger log.Logger, sqlMode mysql.SQLMode, db *sql.DB, store objstore.ExternalStorage, concurrency int) *SchemaImporter {
+func NewSchemaImporter(logger log.Logger, sqlMode mysql.SQLMode, db *sql.DB, store objstore.Storage, concurrency int) *SchemaImporter {
 	return &SchemaImporter{
 		logger:      logger,
 		db:          db,

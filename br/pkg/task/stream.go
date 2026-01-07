@@ -168,7 +168,7 @@ func DefaultStreamConfig(flagsDef func(*pflag.FlagSet)) StreamConfig {
 	return cfg
 }
 
-func (cfg *StreamConfig) makeStorage(ctx context.Context) (objstore.ExternalStorage, error) {
+func (cfg *StreamConfig) makeStorage(ctx context.Context) (objstore.Storage, error) {
 	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -363,7 +363,7 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 			return nil, errors.Trace(err)
 		}
 
-		opts := objstore.ExternalStorageOptions{
+		opts := objstore.Options{
 			NoCredentials:            cfg.NoCreds,
 			SendCredentials:          cfg.SendCreds,
 			CheckS3ObjectLockOptions: true,
@@ -1879,12 +1879,12 @@ func rangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRu
 	return errors.Trace(err)
 }
 
-func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) objstore.ExternalStorageOptions {
+func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) objstore.Options {
 	var httpClient *http.Client
 	if u.GetGcs() == nil {
 		httpClient = objstore.GetDefaultHTTPClient(cfg.MetadataDownloadBatchSize)
 	}
-	return objstore.ExternalStorageOptions{
+	return objstore.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 		HTTPClient:      httpClient,
@@ -1927,7 +1927,7 @@ func getLogInfo(
 
 func getLogInfoFromStorage(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -1967,7 +1967,7 @@ func getLogInfoFromStorage(
 	}, nil
 }
 
-func getGlobalCheckpointFromStorage(ctx context.Context, s objstore.ExternalStorage) (uint64, error) {
+func getGlobalCheckpointFromStorage(ctx context.Context, s objstore.Storage) (uint64, error) {
 	var globalCheckPointTS uint64 = 0
 	opt := objstore.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
 	err := s.WalkDir(ctx, &opt, func(path string, size int64) error {

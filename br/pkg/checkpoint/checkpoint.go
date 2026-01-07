@@ -657,7 +657,7 @@ func parseCheckpointData[K KeyType, V ValueType](
 // and return the total time cost in the past executions
 func walkCheckpointFile[K KeyType, V ValueType](
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	cipher *backuppb.CipherInfo,
 	subDir string,
 	fn func(groupKey K, value V) error,
@@ -681,7 +681,7 @@ func walkCheckpointFile[K KeyType, V ValueType](
 }
 
 // load checkpoint meta data from external storage and unmarshal back
-func loadCheckpointMeta[T any](ctx context.Context, s objstore.ExternalStorage, path string, m *T) error {
+func loadCheckpointMeta[T any](ctx context.Context, s objstore.Storage, path string, m *T) error {
 	data, err := s.ReadFile(ctx, path)
 	if err != nil {
 		return errors.Trace(err)
@@ -732,7 +732,7 @@ func parseCheckpointChecksum(
 // walk the whole checkpoint checksum files and retrieve checksum information of tables calculated
 func loadCheckpointChecksum(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	subDir string,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
 	var pastDureTime time.Duration = 0
@@ -750,7 +750,7 @@ func loadCheckpointChecksum(
 	return checkpointChecksum, pastDureTime, errors.Trace(err)
 }
 
-func saveCheckpointMetadata[T any](ctx context.Context, s objstore.ExternalStorage, meta *T, path string) error {
+func saveCheckpointMetadata[T any](ctx context.Context, s objstore.Storage, meta *T, path string) error {
 	data, err := json.Marshal(meta)
 	if err != nil {
 		return errors.Trace(err)
@@ -760,7 +760,7 @@ func saveCheckpointMetadata[T any](ctx context.Context, s objstore.ExternalStora
 	return errors.Trace(err)
 }
 
-func removeCheckpointData(ctx context.Context, s objstore.ExternalStorage, subDir string) error {
+func removeCheckpointData(ctx context.Context, s objstore.Storage, subDir string) error {
 	var (
 		// Generate one file every 30 seconds, so there are only 1200 files in 10 hours.
 		removedFileNames = make([]string, 0, 1200)

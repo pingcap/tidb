@@ -510,7 +510,7 @@ func NewMergeKVIter(
 	ctx context.Context,
 	paths []string,
 	pathsStartOffset []uint64,
-	exStorage objstore.ExternalStorage,
+	exStorage objstore.Storage,
 	readBufferSize int,
 	checkHotspot bool,
 	outerConcurrency int,
@@ -634,7 +634,7 @@ var errMergePropBaseIterClosed = errors.New("mergePropBaseIter is closed")
 func newMergePropBaseIter(
 	ctx context.Context,
 	multiStat MultipleFilesStat,
-	exStorage objstore.ExternalStorage,
+	exStorage objstore.Storage,
 ) (*mergePropBaseIter, error) {
 	var limit int64
 	if multiStat.MaxOverlappingNum <= 0 {
@@ -798,7 +798,7 @@ type MergePropIter struct {
 func NewMergePropIter(
 	ctx context.Context,
 	multiStat []MultipleFilesStat,
-	exStorage objstore.ExternalStorage,
+	exStorage objstore.Storage,
 ) (*MergePropIter, error) {
 	// sort the multiStat by minKey
 	// otherwise, if the number of readers is less than the weight, the kv may not in order

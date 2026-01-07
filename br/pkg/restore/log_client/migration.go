@@ -247,7 +247,7 @@ func (wm *WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 	})
 }
 
-func (wm *WithMigrations) Compactions(ctx context.Context, s objstore.ExternalStorage) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+func (wm *WithMigrations) Compactions(ctx context.Context, s objstore.Storage) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 	compactionDirIter := iter.FromSlice(wm.compactionDirs)
 	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 		// name is the absolute path in external storage.
@@ -255,7 +255,7 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s objstore.ExternalSt
 	})
 }
 
-func (wm *WithMigrations) IngestedSSTs(ctx context.Context, s objstore.ExternalStorage) iter.TryNextor[*backuppb.IngestedSSTs] {
+func (wm *WithMigrations) IngestedSSTs(ctx context.Context, s objstore.Storage) iter.TryNextor[*backuppb.IngestedSSTs] {
 	filteredOut := iter.FilterOut(stream.LoadIngestedSSTs(ctx, s, wm.fullBackups), func(ebk stream.IngestedSSTsGroup) bool {
 		gts := ebk.GroupTS()
 		// Note: if a backup happens during restoring, though its `backupts` is less than the ingested ssts' groupts,

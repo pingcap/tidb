@@ -126,7 +126,7 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
 
-func prepareKVFiles(t *testing.T, store objstore.ExternalStorage, contents [][]KVPair) (dataFiles, statFiles []string) {
+func prepareKVFiles(t *testing.T, store objstore.Storage, contents [][]KVPair) (dataFiles, statFiles []string) {
 	ctx := context.Background()
 	for i, c := range contents {
 		var summary *WriterSummary
@@ -172,7 +172,7 @@ func TestEngineOnDup(t *testing.T) {
 		{Key: []byte{3}, Value: []byte("sds")},
 	}}
 
-	getEngineFn := func(store objstore.ExternalStorage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
+	getEngineFn := func(store objstore.Storage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
 		return NewExternalEngine(
 			ctx,
 			store, inDataFiles, inStatFiles,

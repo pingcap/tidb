@@ -64,7 +64,7 @@ func effectsOf(efs []objstore.Effect) effects {
 	return out
 }
 
-func fakeDataFiles(s objstore.ExternalStorage, base, item int) (result []*backuppb.DataFileInfo) {
+func fakeDataFiles(s objstore.Storage, base, item int) (result []*backuppb.DataFileInfo) {
 	ctx := context.Background()
 	for i := base; i < base+item; i++ {
 		path := fmt.Sprintf("%04d_to_%04d.log", i, i+2)
@@ -79,7 +79,7 @@ func fakeDataFiles(s objstore.ExternalStorage, base, item int) (result []*backup
 	return
 }
 
-func fakeDataFilesV2(s objstore.ExternalStorage, base, item int) (result []*backuppb.DataFileGroup) {
+func fakeDataFilesV2(s objstore.Storage, base, item int) (result []*backuppb.DataFileGroup) {
 	ctx := context.Background()
 	for i := base; i < base+item; i++ {
 		path := fmt.Sprintf("%04d_to_%04d.log", i, i+2)
@@ -130,7 +130,7 @@ func tsOfFileGroup(dfs []*backuppb.DataFileGroup) (uint64, uint64) {
 	return minTS, maxTS
 }
 
-func fakeStreamBackup(s objstore.ExternalStorage) error {
+func fakeStreamBackup(s objstore.Storage) error {
 	ctx := context.Background()
 	base := 0
 	for i := range 6 {
@@ -157,7 +157,7 @@ func fakeStreamBackup(s objstore.ExternalStorage) error {
 	return nil
 }
 
-func fakeStreamBackupV2(s objstore.ExternalStorage) error {
+func fakeStreamBackupV2(s objstore.Storage) error {
 	ctx := context.Background()
 	base := 0
 	for i := range 6 {
@@ -369,7 +369,7 @@ func TestTruncateSafepointForGCS(t *testing.T) {
 		CredentialsBlob: "Fake Credentials",
 	}
 
-	l, err := objstore.NewGCSStorage(ctx, gcs, &objstore.ExternalStorageOptions{
+	l, err := objstore.NewGCSStorage(ctx, gcs, &objstore.Options{
 		SendCredentials:  false,
 		CheckPermissions: []objstore.Permission{objstore.AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
@@ -437,7 +437,7 @@ func TestReplaceMetadataTs(t *testing.T) {
 	require.Equal(t, m.MaxTs, uint64(4))
 }
 
-func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s objstore.ExternalStorage) string {
+func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s objstore.Storage) string {
 	path := fmt.Sprintf("extbackupmeta_%08d", sn)
 	bs, err := fb.Marshal()
 	if err != nil {
@@ -613,7 +613,7 @@ func mt(ops ...metaOp) *backuppb.Metadata {
 }
 
 // pmt is abbrev. of persisted meta.
-func pmt(s objstore.ExternalStorage, path string, mt *backuppb.Metadata) {
+func pmt(s objstore.Storage, path string, mt *backuppb.Metadata) {
 	data, err := mt.Marshal()
 	if err != nil {
 		panic(err)
@@ -624,7 +624,7 @@ func pmt(s objstore.ExternalStorage, path string, mt *backuppb.Metadata) {
 	}
 }
 
-func pmlt(s objstore.ExternalStorage, path string, mt *backuppb.Metadata, logPath func(i int) string) {
+func pmlt(s objstore.Storage, path string, mt *backuppb.Metadata, logPath func(i int) string) {
 	for i, g := range mt.FileGroups {
 		g.Path = logPath(i)
 		maxLen := uint64(0)
@@ -638,7 +638,7 @@ func pmlt(s objstore.ExternalStorage, path string, mt *backuppb.Metadata, logPat
 	pmt(s, path, mt)
 }
 
-func pmig(s objstore.ExternalStorage, num uint64, mt *backuppb.Migration) string {
+func pmig(s objstore.Storage, num uint64, mt *backuppb.Migration) string {
 	numS := fmt.Sprintf("%08d", num)
 	name := fmt.Sprintf("%s_%08X.mgrt", numS, hashMigration(mt))
 	if num == baseMigrationSN {
@@ -728,7 +728,7 @@ func m_2(
 }
 
 // clean the files in the external storage
-func cleanFiles(ctx context.Context, s objstore.ExternalStorage) error {
+func cleanFiles(ctx context.Context, s objstore.Storage) error {
 	names := make([]string, 0)
 	err := s.WalkDir(ctx, &objstore.WalkOption{}, func(path string, size int64) error {
 		names = append(names, path)
@@ -755,7 +755,7 @@ func logName(storeId int64, minTS, maxTS uint64) string {
 }
 
 // generate the files to the external storage
-func generateFiles(ctx context.Context, s objstore.ExternalStorage, metas []*backuppb.Metadata, tmpDir string) error {
+func generateFiles(ctx context.Context, s objstore.Storage, metas []*backuppb.Metadata, tmpDir string) error {
 	if err := cleanFiles(ctx, s); err != nil {
 		return err
 	}
@@ -786,7 +786,7 @@ func generateFiles(ctx context.Context, s objstore.ExternalStorage, metas []*bac
 }
 
 // check the files in the external storage
-func checkFiles(ctx context.Context, s objstore.ExternalStorage, metas []*backuppb.Metadata, t *testing.T) {
+func checkFiles(ctx context.Context, s objstore.Storage, metas []*backuppb.Metadata, t *testing.T) {
 	pathSet := make(map[string]struct{})
 	for _, meta := range metas {
 		metaPath := metaName(meta.StoreId)

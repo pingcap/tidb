@@ -429,7 +429,7 @@ func (w *testOneFileWriter) WriteRow(ctx context.Context, key, val []byte, _ dbk
 }
 
 func TestOnefileWriterOnDup(t *testing.T) {
-	getWriterFn := func(store objstore.ExternalStorage, b *WriterBuilder) testWriter {
+	getWriterFn := func(store objstore.Storage, b *WriterBuilder) testWriter {
 		writer := b.BuildOneFile(store, "/onefile", "0")
 		writer.InitPartSizeAndLogger(context.Background(), 1024)
 		return &testOneFileWriter{OneFileWriter: writer}
@@ -471,7 +471,7 @@ func TestOneFileWriterOnDupRemove(t *testing.T) {
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
 	var summary *WriterSummary
-	doGetWriter := func(store objstore.ExternalStorage, builder *WriterBuilder) *OneFileWriter {
+	doGetWriter := func(store objstore.Storage, builder *WriterBuilder) *OneFileWriter {
 		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove)
 		writer := builder.BuildOneFile(store, "/onefile", "0")
 		writer.InitPartSizeAndLogger(ctx, 1024)

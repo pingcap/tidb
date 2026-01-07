@@ -25,7 +25,7 @@ type statsReader struct {
 	byteReader *byteReader
 }
 
-func newStatsReader(ctx context.Context, store objstore.ExternalStorage, name string, bufSize int) (*statsReader, error) {
+func newStatsReader(ctx context.Context, store objstore.Storage, name string, bufSize int) (*statsReader, error) {
 	sr, err := openStoreReaderAndSeek(ctx, store, name, 0, 250*1024)
 	if err != nil {
 		return nil, err

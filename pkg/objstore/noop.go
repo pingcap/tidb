@@ -34,7 +34,7 @@ func (*noopStorage) FileExists(_ context.Context, _ string) (bool, error) {
 }
 
 // Open a Reader by file path.
-func (*noopStorage) Open(_ context.Context, _ string, _ *ReaderOption) (ExternalFileReader, error) {
+func (*noopStorage) Open(_ context.Context, _ string, _ *ReaderOption) (FileReader, error) {
 	return noopReader{}, nil
 }
 
@@ -47,17 +47,17 @@ func (*noopStorage) URI() string {
 	return "noop:///"
 }
 
-// Create implements ExternalStorage interface.
-func (*noopStorage) Create(_ context.Context, _ string, _ *WriterOption) (ExternalFileWriter, error) {
+// Create implements Storage interface.
+func (*noopStorage) Create(_ context.Context, _ string, _ *WriterOption) (FileWriter, error) {
 	return &NoopWriter{}, nil
 }
 
-// Rename implements ExternalStorage interface.
+// Rename implements Storage interface.
 func (*noopStorage) Rename(_ context.Context, _, _ string) error {
 	return nil
 }
 
-// Close implements ExternalStorage interface.
+// Close implements Storage interface.
 func (*noopStorage) Close() {}
 
 func newNoopStorage() *noopStorage {
@@ -85,12 +85,12 @@ func (noopReader) GetFileSize() (int64, error) {
 // NoopWriter is a writer that does nothing.
 type NoopWriter struct{}
 
-// Write implements ExternalFileWriter interface.
+// Write implements FileWriter interface.
 func (NoopWriter) Write(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Close implements ExternalFileWriter interface.
+// Close implements FileWriter interface.
 func (NoopWriter) Close(_ context.Context) error {
 	return nil
 }

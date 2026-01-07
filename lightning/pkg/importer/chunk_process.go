@@ -61,7 +61,7 @@ func newChunkProcessor(
 	cfg *config.Config,
 	chunk *checkpoints.ChunkCheckpoint,
 	ioWorkers *worker.Pool,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	tableInfo *model.TableInfo,
 ) (*chunkProcessor, error) {
 	parser, err := openParser(ctx, cfg, chunk, ioWorkers, store, tableInfo)
@@ -80,7 +80,7 @@ func openParser(
 	cfg *config.Config,
 	chunk *checkpoints.ChunkCheckpoint,
 	ioWorkers *worker.Pool,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)

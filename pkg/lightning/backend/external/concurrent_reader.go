@@ -29,7 +29,7 @@ type concurrentFileReader struct {
 	concurrency    int
 	readBufferSize int
 
-	storage objstore.ExternalStorage
+	storage objstore.Storage
 	name    string
 
 	offset   int64
@@ -39,7 +39,7 @@ type concurrentFileReader struct {
 // newConcurrentFileReader creates a new concurrentFileReader.
 func newConcurrentFileReader(
 	ctx context.Context,
-	st objstore.ExternalStorage,
+	st objstore.Storage,
 	name string,
 	offset int64,
 	fileSize int64,

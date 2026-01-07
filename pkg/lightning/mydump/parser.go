@@ -675,7 +675,7 @@ func ReadUntil(parser Parser, pos int64) error {
 func OpenReader(
 	ctx context.Context,
 	fileMeta *SourceFileMeta,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	decompressCfg objstore.DecompressConfig,
 ) (reader objstore.ReadSeekCloser, err error) {
 	switch {

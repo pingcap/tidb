@@ -262,7 +262,7 @@ func (m *MetadataHelper) ReadFile(
 	offset uint64,
 	length uint64,
 	compressionType backuppb.CompressionType,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	var err error
@@ -422,7 +422,7 @@ func FilterPathByTs(path string, left, right uint64) string {
 // read metadata content from external_storage.
 func FastUnmarshalMetaData(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	startTS uint64,
 	endTS uint64,
 	metaDataWorkerPoolSize uint,

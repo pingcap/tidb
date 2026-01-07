@@ -282,7 +282,7 @@ func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder 
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	prefix string,
 	writerID string,
 ) *Writer {
@@ -321,7 +321,7 @@ func (b *WriterBuilder) Build(
 // BuildOneFile builds a new one file Writer. The writer will create only one
 // file under the prefix of "{prefix}/{writerID}".
 func (b *WriterBuilder) BuildOneFile(
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	prefix string,
 	writerID string,
 ) *OneFileWriter {
@@ -424,7 +424,7 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 
 // Writer is used to write data into external storage.
 type Writer struct {
-	store          objstore.ExternalStorage
+	store          objstore.Storage
 	writerID       string
 	groupOffset    int
 	currentSeq     int
@@ -811,7 +811,7 @@ func (w *Writer) reCalculateKVSize() int64 {
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
 	dataFile, statFile string,
-	data, stats objstore.ExternalFileWriter,
+	data, stats objstore.FileWriter,
 	err error,
 ) {
 	dataPath := filepath.Join(w.getPartitionedPrefix(), strconv.Itoa(w.currentSeq))
@@ -834,7 +834,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	return dataPath, statPath, dataWriter, statsWriter, nil
 }
 
-func (w *Writer) createDupWriter(ctx context.Context) (string, objstore.ExternalFileWriter, error) {
+func (w *Writer) createDupWriter(ctx context.Context) (string, objstore.FileWriter, error) {
 	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
 	writer, err := w.store.Create(ctx, path, &objstore.WriterOption{
 		Concurrency: 20,

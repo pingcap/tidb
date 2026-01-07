@@ -167,7 +167,7 @@ type DataDivideConfig struct {
 	// when nil, no limit.
 	IOWorkers *worker.Pool
 	// we need it read row-count for parquet, and to read line terminator to split large CSV files
-	Store     objstore.ExternalStorage
+	Store     objstore.Storage
 	TableMeta *MDTableMeta
 	// whether to skip reading parquet row count
 	SkipParquetRowCount bool
@@ -184,7 +184,7 @@ type DataDivideConfig struct {
 func NewDataDivideConfig(cfg *config.Config,
 	columns int,
 	ioWorkers *worker.Pool,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	meta *MDTableMeta,
 ) *DataDivideConfig {
 	return &DataDivideConfig{

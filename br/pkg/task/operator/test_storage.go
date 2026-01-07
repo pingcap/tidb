@@ -150,7 +150,7 @@ type TestStorageConfig struct {
 type TestContext struct {
 	Ctx           context.Context
 	Report        *TestReport
-	Store         objstore.ExternalStorage
+	Store         objstore.Storage
 	PauseWhenFail bool
 }
 
@@ -239,7 +239,7 @@ func RunTestStorage(ctx context.Context, cfg TestStorageConfig) error {
 		return errors.Annotate(err, "failed to parse storage backend")
 	}
 
-	store, err := objstore.New(ctx, backend, &objstore.ExternalStorageOptions{
+	store, err := objstore.New(ctx, backend, &objstore.Options{
 		SendCredentials: true,
 	})
 	if err != nil {

@@ -141,9 +141,9 @@ type pitrCollector struct {
 	// Immutable state.
 
 	// taskStorage is the log backup storage.
-	taskStorage objstore.ExternalStorage
+	taskStorage objstore.Storage
 	// restoreStorage is where the running restoration from.
-	restoreStorage objstore.ExternalStorage
+	restoreStorage objstore.Storage
 	// name is a human-friendly identity to this restoration.
 	// When restart from a checkpoint, a new name will be generated.
 	name string

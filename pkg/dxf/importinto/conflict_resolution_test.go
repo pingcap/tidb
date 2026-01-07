@@ -42,7 +42,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func writeConflictKVFile(t *testing.T, kvGroup string, objStore objstore.ExternalStorage, kvs []*external.KVPair) *engineapi.ConflictInfo {
+func writeConflictKVFile(t *testing.T, kvGroup string, objStore objstore.Storage, kvs []*external.KVPair) *engineapi.ConflictInfo {
 	t.Helper()
 	ctx := context.Background()
 	var summary *external.WriterSummary

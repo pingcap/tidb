@@ -23,7 +23,7 @@ type Writer struct {
 	tctx       *tcontext.Context
 	conf       *Config
 	conn       *sql.Conn
-	extStorage objstore.ExternalStorage
+	extStorage objstore.Storage
 	fileFmt    FileFormat
 	metrics    *metrics
 
@@ -40,7 +40,7 @@ func NewWriter(
 	id int64,
 	config *Config,
 	conn *sql.Conn,
-	externalStore objstore.ExternalStorage,
+	externalStore objstore.Storage,
 	metrics *metrics,
 ) *Writer {
 	sw := &Writer{

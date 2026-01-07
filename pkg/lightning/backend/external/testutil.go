@@ -40,7 +40,7 @@ func testReadAndCompare(
 	ctx context.Context,
 	t *testing.T,
 	kvs []common.KvPair,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	datas []string,
 	stats []string,
 	startKey dbkv.Key,

@@ -187,7 +187,7 @@ type PipelineContext struct {
 
 	// pipeline item tool client
 	KvClient   kv.Client
-	ExtStorage objstore.ExternalStorage
+	ExtStorage objstore.Storage
 	Glue       glue.Glue
 }
 
@@ -561,7 +561,7 @@ func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, s
 
 func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	builder *PipelineConcurrentBuilder,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
 ) {

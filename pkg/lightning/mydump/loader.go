@@ -61,7 +61,7 @@ func NewMDDatabaseMeta(charSet string) *MDDatabaseMeta {
 }
 
 // GetSchema gets the schema SQL for a source database.
-func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store objstore.ExternalStorage) string {
+func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store objstore.Storage) string {
 	if m.SchemaFile.FileMeta.Path != "" {
 		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 		if err != nil {
@@ -126,7 +126,7 @@ func NewMDTableMeta(charSet string) *MDTableMeta {
 }
 
 // GetSchema gets the table-creating SQL for a source table.
-func (m *MDTableMeta) GetSchema(ctx context.Context, store objstore.ExternalStorage) (string, error) {
+func (m *MDTableMeta) GetSchema(ctx context.Context, store objstore.Storage) (string, error) {
 	schemaFilePath := m.SchemaFile.FileMeta.Path
 	if len(schemaFilePath) <= 0 {
 		return "", errors.Errorf("schema file is missing for the table '%s.%s'", m.DB, m.Name)
@@ -254,8 +254,8 @@ func NewLoaderCfg(cfg *config.Config) LoaderConfig {
 
 // MDLoader is for 'Mydumper File Loader', which loads the files in the data source and generates a set of metadata.
 type MDLoader struct {
-	store objstore.ExternalStorage
-	dbs   []*MDDatabaseMeta
+	store      objstore.Storage
+	dbs        []*MDDatabaseMeta
 	filter     filter.Filter
 	router     *regexprrouter.RouteTable
 	fileRouter FileRouter
@@ -294,7 +294,7 @@ func NewLoader(ctx context.Context, cfg LoaderConfig, opts ...MDLoaderSetupOptio
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
-	s, err := objstore.New(ctx, u, &objstore.ExternalStorageOptions{})
+	s, err := objstore.New(ctx, u, &objstore.Options{})
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
@@ -304,7 +304,7 @@ func NewLoader(ctx context.Context, cfg LoaderConfig, opts ...MDLoaderSetupOptio
 
 // NewLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
 func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
-	store objstore.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
+	store objstore.Storage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
 
@@ -578,7 +578,7 @@ type FileIterator interface {
 }
 
 type allFileIterator struct {
-	store        objstore.ExternalStorage
+	store        objstore.Storage
 	maxScanFiles int
 }
 
@@ -831,7 +831,7 @@ func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 }
 
 // GetStore gets the external storage used by the loader.
-func (l *MDLoader) GetStore() objstore.ExternalStorage {
+func (l *MDLoader) GetStore() objstore.Storage {
 	return l.store
 }
 
@@ -854,7 +854,7 @@ func (l *MDLoader) GetAllFiles() map[string]FileInfo {
 func calculateFileBytes(ctx context.Context,
 	dataFile string,
 	compressType objstore.CompressType,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	offset int64) (tot int, pos int64, err error) {
 	bytes := make([]byte, sampleCompressedFileSize)
 	reader, err := store.Open(ctx, dataFile, nil)
@@ -905,7 +905,7 @@ func calculateFileBytes(ctx context.Context,
 // EstimateRealSizeForFile estimate the real size for the file.
 // If the file is not compressed, the real size is the same as the file size.
 // If the file is compressed, the real size is the estimated uncompressed size.
-func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store objstore.ExternalStorage) int64 {
+func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store objstore.Storage) int64 {
 	if fileMeta.Compression == CompressionNone {
 		return fileMeta.FileSize
 	}
@@ -922,7 +922,7 @@ func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store
 }
 
 // SampleFileCompressRatio samples the compress ratio of the compressed file. Exported for test.
-func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store objstore.ExternalStorage) (float64, error) {
+func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store objstore.Storage) (float64, error) {
 	failpoint.Inject("SampleFileCompressPercentage", func(val failpoint.Value) {
 		switch v := val.(type) {
 		case string:

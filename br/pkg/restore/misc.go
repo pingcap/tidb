@@ -164,7 +164,7 @@ func unmarshalLogRestoreTableIDsBlocklistFile(data []byte) (*LogRestoreTableIDsB
 
 func fastWalkLogRestoreTableIDsBlocklistFile(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	filterOutFn func(restoreCommitTs, restoreStartTs uint64) bool,
 	executionFn func(ctx context.Context, filename string, restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64) error,
 ) error {
@@ -209,7 +209,7 @@ func fastWalkLogRestoreTableIDsBlocklistFile(
 // CheckTableTrackerContainsTableIDsFromBlocklistFiles checks whether pitr id tracker contains the filtered table IDs from blocklist file.
 func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	tracker *utils.PiTRIdTracker,
 	startTs, restoredTs uint64,
 	tableNameByTableId func(tableId int64) string,
@@ -256,7 +256,7 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 // TruncateLogRestoreTableIDsBlocklistFiles truncates the blocklist files whose restore commit ts is not larger than truncate until ts.
 func TruncateLogRestoreTableIDsBlocklistFiles(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	untilTs uint64,
 ) error {
 	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, restoreTargetTs uint64) bool {

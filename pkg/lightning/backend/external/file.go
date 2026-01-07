@@ -29,7 +29,7 @@ const (
 
 // KeyValueStore stores key-value pairs and maintains the range properties.
 type KeyValueStore struct {
-	dataWriter objstore.ExternalFileWriter
+	dataWriter objstore.FileWriter
 
 	rc     *rangePropertiesCollector
 	ctx    context.Context
@@ -41,7 +41,7 @@ type KeyValueStore struct {
 // rangePropertiesCollector.
 func NewKeyValueStore(
 	ctx context.Context,
-	dataWriter objstore.ExternalFileWriter,
+	dataWriter objstore.FileWriter,
 	rangePropertiesCollector *rangePropertiesCollector,
 ) *KeyValueStore {
 	kvStore := &KeyValueStore{

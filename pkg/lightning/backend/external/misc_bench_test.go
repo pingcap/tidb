@@ -34,7 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func openTestingStorage(t *testing.T) objstore.ExternalStorage {
+func openTestingStorage(t *testing.T) objstore.Storage {
 	if *testingStorageURI == "" {
 		t.Skip("testingStorageURI is not set")
 	}
@@ -261,7 +261,7 @@ func (s *randomKeySource) outputSize() int {
 }
 
 func createEvenlyDistributedFiles(
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	fileSize, fileCount int,
 	subDir string,
 ) (int, kv.Key, kv.Key) {
@@ -306,7 +306,7 @@ func createEvenlyDistributedFiles(
 }
 
 func createAscendingFiles(
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	fileSize, fileCount int,
 	subDir string,
 ) (int, kv.Key, kv.Key) {

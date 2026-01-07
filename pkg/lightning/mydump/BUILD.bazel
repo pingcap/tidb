@@ -92,7 +92,6 @@ go_test(
         "//pkg/lightning/log",
         "//pkg/lightning/worker",
         "//pkg/objstore",
-        "//pkg/objstore/mockobjstore",
         "//pkg/parser",
         "//pkg/parser/mysql",
         "//pkg/table",

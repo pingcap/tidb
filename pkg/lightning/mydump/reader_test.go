@@ -24,7 +24,6 @@ import (
 
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/mockobjstore"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )

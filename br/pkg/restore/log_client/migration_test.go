@@ -480,7 +480,7 @@ func asIfTS(ts uint64) efOP {
 	}
 }
 
-func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s objstore.ExternalStorage) string {
+func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s objstore.Storage) string {
 	path := fmt.Sprintf("extbackupmeta_%08d", sn)
 	bs, err := fb.Marshal()
 	if err != nil {

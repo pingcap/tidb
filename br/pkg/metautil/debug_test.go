@@ -34,7 +34,7 @@ func flushMetaFile(
 	t *testing.T,
 	fname string,
 	metaFile *backuppb.MetaFile,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	cipher *backuppb.CipherInfo,
 ) *backuppb.File {
 	content, err := metaFile.Marshal()
@@ -62,7 +62,7 @@ func flushStatsFile(
 	t *testing.T,
 	fname string,
 	statsFile *backuppb.StatsFile,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	cipher *backuppb.CipherInfo,
 ) *backuppb.StatsFileIndex {
 	content, err := proto.Marshal(statsFile)

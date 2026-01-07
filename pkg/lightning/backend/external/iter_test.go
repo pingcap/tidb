@@ -37,7 +37,7 @@ type trackOpenMemStorage struct {
 	opened atomic.Int32
 }
 
-func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *objstore.ReaderOption) (objstore.ExternalFileReader, error) {
+func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *objstore.ReaderOption) (objstore.FileReader, error) {
 	s.opened.Inc()
 	r, err := s.MemStorage.Open(ctx, path, nil)
 	if err != nil {
@@ -47,12 +47,12 @@ func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *objstore
 }
 
 type trackOpenFileReader struct {
-	objstore.ExternalFileReader
+	objstore.FileReader
 	store *trackOpenMemStorage
 }
 
 func (r *trackOpenFileReader) Close() error {
-	err := r.ExternalFileReader.Close()
+	err := r.FileReader.Close()
 	if err != nil {
 		return err
 	}
@@ -320,7 +320,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 }
 
 type eofReader struct {
-	objstore.ExternalFileReader
+	objstore.FileReader
 }
 
 func (r eofReader) Seek(_ int64, _ int) (int64, error) {
@@ -651,7 +651,7 @@ func (s *slowOpenStorage) Open(
 	ctx context.Context,
 	filePath string,
 	o *objstore.ReaderOption,
-) (objstore.ExternalFileReader, error) {
+) (objstore.FileReader, error) {
 	time.Sleep(s.sleep)
 	s.openCnt.Inc()
 	return s.MemStorage.Open(ctx, filePath, o)

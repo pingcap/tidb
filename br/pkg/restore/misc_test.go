@@ -186,7 +186,7 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 }
 
 func writeBlocklistFile(
-	ctx context.Context, t *testing.T, s objstore.ExternalStorage,
+	ctx context.Context, t *testing.T, s objstore.Storage,
 	restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64,
 ) {
 	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, rewriteTs, tableIds, dbIds)
@@ -254,7 +254,7 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	require.Contains(t, err.Error(), "table_100")
 }
 
-func filesCount(ctx context.Context, s objstore.ExternalStorage) int {
+func filesCount(ctx context.Context, s objstore.Storage) int {
 	count := 0
 	s.WalkDir(ctx, &objstore.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
 		count += 1

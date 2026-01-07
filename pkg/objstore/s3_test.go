@@ -329,7 +329,7 @@ func TestS3Storage(t *testing.T) {
 			Backend: &backuppb.StorageBackend_S3{
 				S3: test.s3,
 			},
-		}, &ExternalStorageOptions{
+		}, &Options{
 			SendCredentials:  test.sendCredential,
 			CheckPermissions: test.hackPermission,
 		})
@@ -454,7 +454,7 @@ func TestS3URI(t *testing.T) {
 	}
 	backend, err := ParseBackend("s3://bucket/prefix/", options)
 	require.NoError(t, err)
-	storage, err := New(context.Background(), backend, &ExternalStorageOptions{})
+	storage, err := New(context.Background(), backend, &Options{})
 	require.NoError(t, err)
 	require.Equal(t, "s3://bucket/prefix/", storage.URI())
 }
@@ -1376,7 +1376,7 @@ func TestSendCreds(t *testing.T) {
 	}
 	backend, err := ParseBackend("s3://bucket/prefix/", &backendOpt)
 	require.NoError(t, err)
-	opts := &ExternalStorageOptions{
+	opts := &Options{
 		SendCredentials: true,
 	}
 	_, err = New(context.TODO(), backend, opts)
@@ -1397,7 +1397,7 @@ func TestSendCreds(t *testing.T) {
 	}
 	backend, err = ParseBackend("s3://bucket/prefix/", &backendOpt)
 	require.NoError(t, err)
-	opts = &ExternalStorageOptions{
+	opts = &Options{
 		SendCredentials: false,
 	}
 	_, err = New(context.TODO(), backend, opts)
@@ -1516,7 +1516,7 @@ func TestS3StorageBucketRegion(t *testing.T) {
 			t.Log(name)
 			es, err := New(context.Background(),
 				&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}},
-				&ExternalStorageOptions{})
+				&Options{})
 			require.NoError(t, err)
 			ss, ok := es.(*S3Storage)
 			require.True(t, ok)
@@ -1564,7 +1564,7 @@ func TestRetryError(t *testing.T) {
 		SecretAccessKey: "none",
 		Provider:        "skip check region",
 		ForcePathStyle:  true,
-	}, &ExternalStorageOptions{})
+	}, &Options{})
 	require.NoError(t, err)
 	err = s.WriteFile(ctx, "reset", []byte(errString))
 	require.NoError(t, err)

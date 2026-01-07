@@ -145,7 +145,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 	defer mgr.Close()
 
 	client := backup.NewBackupClient(ctx, mgr)
-	opts := objstore.ExternalStorageOptions{
+	opts := objstore.Options{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,

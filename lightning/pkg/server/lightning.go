@@ -333,7 +333,7 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 		if err != nil {
 			panic(err)
 		}
-		s, err := objstore.New(context.Background(), b, &objstore.ExternalStorageOptions{})
+		s, err := objstore.New(context.Background(), b, &objstore.Options{})
 		if err != nil {
 			panic(err)
 		}
@@ -512,7 +512,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		if err != nil {
 			return common.NormalizeError(err)
 		}
-		s, err = objstore.New(ctx, u, &objstore.ExternalStorageOptions{})
+		s, err = objstore.New(ctx, u, &objstore.Options{})
 		if err != nil {
 			return common.NormalizeError(err)
 		}

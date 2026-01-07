@@ -37,7 +37,7 @@ import (
 func MergeOverlappingFilesV2(
 	ctx context.Context,
 	multiFileStat []MultipleFilesStat,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	startKey []byte,
 	endKey []byte,
 	partSize int64,

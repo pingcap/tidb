@@ -187,7 +187,7 @@ func TestLocalFileReadRange(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, w.Close(ctx))
 
-	checkContent := func(r ExternalFileReader, expected string) {
+	checkContent := func(r FileReader, expected string) {
 		buf := make([]byte, 10)
 		n, _ := r.Read(buf)
 		require.Equal(t, expected, string(buf[:n]))

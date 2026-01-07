@@ -37,14 +37,14 @@ func createMockCluster(t *testing.T) *mock.Cluster {
 	return m
 }
 
-func GetRandomStorage(t *testing.T) objstore.ExternalStorage {
+func GetRandomStorage(t *testing.T) objstore.Storage {
 	base := t.TempDir()
 	es, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	return es
 }
 
-func GetSchemasFromMeta(t *testing.T, es objstore.ExternalStorage) []*metautil.Table {
+func GetSchemasFromMeta(t *testing.T, es objstore.Storage) []*metautil.Table {
 	ctx := context.Background()
 	metaBytes, err := es.ReadFile(ctx, metautil.MetaFile)
 	require.NoError(t, err)

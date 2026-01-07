@@ -107,7 +107,7 @@ func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 }
 
 // GCSStorage defines some standard operations for BR/Lightning on the GCS storage.
-// It implements the `ExternalStorage` interface.
+// It implements the `Storage` interface.
 type GCSStorage struct {
 	gcs       *backuppb.GCS
 	idx       *atomic.Int64
@@ -121,7 +121,7 @@ type GCSStorage struct {
 }
 
 // CopyFrom implements Copier.
-func (s *GCSStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+func (s *GCSStorage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
 	es, ok := e.(*GCSStorage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "GCSStorage.CopyFrom supports only GCSStorage, get %T", e)
@@ -147,7 +147,7 @@ func (s *GCSStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopyS
 	return nil
 }
 
-// MarkStrongConsistency implements ExternalStorage interface.
+// MarkStrongConsistency implements Storage interface.
 func (s *GCSStorage) MarkStrongConsistency() {
 	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
 }
@@ -255,7 +255,7 @@ func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) 
 }
 
 // Open a Reader by file path.
-func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
+func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
 	object := s.objectName(path)
 	handle := s.GetBucketHandle().Object(object)
 
@@ -342,13 +342,13 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	return nil
 }
 
-// URI implements ExternalStorage interface.
+// URI implements Storage interface.
 func (s *GCSStorage) URI() string {
 	return "gcs://" + s.gcs.Bucket + "/" + s.gcs.Prefix
 }
 
-// Create implements ExternalStorage interface.
-func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (ExternalFileWriter, error) {
+// Create implements Storage interface.
+func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (FileWriter, error) {
 	// NewGCSWriter requires real testing environment on Google Cloud.
 	mockGCS := intest.InTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
 	if wo == nil || wo.Concurrency <= 1 || mockGCS {
@@ -384,7 +384,7 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return s.DeleteFile(ctx, oldFileName)
 }
 
-// Close implements ExternalStorage interface.
+// Close implements Storage interface.
 func (s *GCSStorage) Close() {
 	s.clientCancel()
 	for _, client := range s.clients {
@@ -400,7 +400,7 @@ var mustReportCredErr = false
 const gcsClientCnt = 16
 
 // NewGCSStorage creates a GCS external storage implementation.
-func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
+func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *Options) (*GCSStorage, error) {
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {
 		clientOps = append(clientOps, option.WithoutAuthentication())

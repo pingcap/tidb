@@ -44,7 +44,7 @@ func getStatsFileName(physicalID int64) string {
 
 // A lightweight function wrapper to dump the statistic
 type StatsWriter struct {
-	storage objstore.ExternalStorage
+	storage objstore.Storage
 	cipher  *backuppb.CipherInfo
 
 	// final stats file indexes
@@ -56,7 +56,7 @@ type StatsWriter struct {
 }
 
 func newStatsWriter(
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	cipher *backuppb.CipherInfo,
 ) *StatsWriter {
 	return &StatsWriter{
@@ -157,7 +157,7 @@ func (s *StatsWriter) BackupStatsDone(ctx context.Context) ([]*backuppb.StatsFil
 
 func RestoreStats(
 	ctx context.Context,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	cipher *backuppb.CipherInfo,
 	statsHandler *handle.Handle,
 	newTableInfo *model.TableInfo,
@@ -178,7 +178,7 @@ func RestoreStats(
 
 func downloadStats(
 	ctx context.Context,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	cipher *backuppb.CipherInfo,
 	statsFileIndexes []*backuppb.StatsFileIndex,
 	rewriteIDMap map[int64]int64,

@@ -130,7 +130,7 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
-	storage           objstore.ExternalStorage
+	storage           objstore.Storage
 	dataFiles         []string
 	statsFiles        []string
 	startKey          []byte
@@ -177,7 +177,7 @@ type Engine struct {
 	recordedDupCnt  int
 	recordedDupSize int64
 	dupFile         string
-	dupWriter       objstore.ExternalFileWriter
+	dupWriter       objstore.FileWriter
 	dupKVStore      *KeyValueStore
 }
 
@@ -190,7 +190,7 @@ const (
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
 	ctx context.Context,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	dataFiles []string,
 	statsFiles []string,
 	startKey []byte,
@@ -248,7 +248,7 @@ func NewExternalEngine(
 
 func getFilesReadConcurrency(
 	ctx context.Context,
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	statsFiles []string,
 	startKey, endKey []byte,
 ) ([]uint64, []uint64, error) {

@@ -38,7 +38,7 @@ const (
 // DecodeStatsFile decodes the stats file to json format, it is called by br debug
 func DecodeStatsFile(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	cipher *backuppb.CipherInfo,
 	schemas []*backuppb.Schema,
 ) error {
@@ -79,7 +79,7 @@ func DecodeStatsFile(
 // DecodeMetaFile decodes the meta file to json format, it is called by br debug
 func DecodeMetaFile(
 	ctx context.Context,
-	s objstore.ExternalStorage,
+	s objstore.Storage,
 	cipher *backuppb.CipherInfo,
 	metaIndex *backuppb.MetaFile,
 ) error {

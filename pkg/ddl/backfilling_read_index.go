@@ -129,7 +129,7 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 	subtask *proto.Subtask,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
-	extStore objstore.ExternalStorage,
+	extStore objstore.Storage,
 ) error {
 	pipe, err := r.buildExternalStorePipeline(wctx, extStore, subtask.TaskID, subtask.ID, sm, concurrency)
 	if err != nil {
@@ -208,7 +208,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	var (
 		accessRec = &recording.AccessStats{}
-		objStore  objstore.ExternalStorage
+		objStore  objstore.Storage
 	)
 	if r.isGlobalSort() {
 		accessRec, objStore, err = handle.NewObjStoreWithRecording(ctx, r.cloudStorageURI)
@@ -295,7 +295,7 @@ func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource 
 	return nil
 }
 
-func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore objstore.ExternalStorage) error {
+func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore objstore.Storage) error {
 	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish", r.backend)
 	if !r.isGlobalSort() {
 		return nil
@@ -413,7 +413,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 
 func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	wctx *workerpool.Context,
-	extStore objstore.ExternalStorage,
+	extStore objstore.Storage,
 	taskID int64,
 	subtaskID int64,
 	sm *BackfillSubTaskMeta,

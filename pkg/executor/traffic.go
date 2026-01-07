@@ -375,9 +375,9 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 		return readers, nil
 	}
 
-	var store objstore.ExternalStorage
+	var store objstore.Storage
 	if mockStore := ctx.Value(trafficStoreKey); mockStore != nil {
-		store = mockStore.(objstore.ExternalStorage)
+		store = mockStore.(objstore.Storage)
 	} else {
 		store, err = objstore.NewWithDefaultOpt(ctx, backend)
 		if err != nil {

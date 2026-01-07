@@ -58,7 +58,7 @@ func seekPropsOffsets(
 	ctx context.Context,
 	starts []kv.Key,
 	paths []string,
-	exStorage objstore.ExternalStorage,
+	exStorage objstore.Storage,
 ) (_ [][]uint64, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
@@ -143,7 +143,7 @@ func seekPropsOffsets(
 //   - p00000000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195/one-file
 func GetAllFileNames(
 	ctx context.Context,
-	store objstore.ExternalStorage,
+	store objstore.Storage,
 	nonPartitionedDir string,
 ) ([]string, error) {
 	var data []string
@@ -188,7 +188,7 @@ func GetAllFileNames(
 
 // CleanUpFiles delete all data and stat files under the same non-partitioned dir.
 // see randPartitionedPrefix for how we partition the files.
-func CleanUpFiles(ctx context.Context, store objstore.ExternalStorage, nonPartitionedDir string) error {
+func CleanUpFiles(ctx context.Context, store objstore.Storage, nonPartitionedDir string) error {
 	failpoint.Inject("skipCleanUpFiles", func() {
 		failpoint.Return(nil)
 	})
@@ -201,7 +201,7 @@ func CleanUpFiles(ctx context.Context, store objstore.ExternalStorage, nonPartit
 
 // MockExternalEngine generates an external engine with the given keys and values.
 func MockExternalEngine(
-	storage objstore.ExternalStorage,
+	storage objstore.Storage,
 	keys [][]byte,
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
@@ -452,7 +452,7 @@ func (m BaseExternalMeta) Marshal(alias any) ([]byte, error) {
 
 // WriteJSONToExternalStorage writes the serialized external meta JSON to external storage.
 // Usage: Store external meta after appropriate modifications.
-func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store objstore.ExternalStorage, a any) error {
+func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store objstore.Storage, a any) error {
 	if m.ExternalPath == "" {
 		return nil
 	}
@@ -465,7 +465,7 @@ func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store 
 
 // ReadJSONFromExternalStorage reads and unmarshals JSON from external storage into the provided alias.
 // Usage: Retrieve external meta for further processing.
-func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store objstore.ExternalStorage, a any) error {
+func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store objstore.Storage, a any) error {
 	if m.ExternalPath == "" {
 		return nil
 	}

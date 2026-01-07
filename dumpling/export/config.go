@@ -133,8 +133,8 @@ type Config struct {
 	TransactionalConsistency bool
 	EscapeBackslash          bool
 	DumpEmptyDatabase        bool
-	PosAfterConnect bool
-	CompressType    objstore.CompressType
+	PosAfterConnect          bool
+	CompressType             objstore.CompressType
 
 	Host     string
 	Port     int
@@ -181,11 +181,11 @@ type Config struct {
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
 
-	Labels        prometheus.Labels       `json:"-"`
-	PromFactory   promutil.Factory        `json:"-"`
-	PromRegistry  promutil.Registry        `json:"-"`
-	ExtStorage    objstore.ExternalStorage `json:"-"`
-	MinTLSVersion uint16                   `json:"-"`
+	Labels        prometheus.Labels `json:"-"`
+	PromFactory   promutil.Factory  `json:"-"`
+	PromRegistry  promutil.Registry `json:"-"`
+	ExtStorage    objstore.Storage  `json:"-"`
+	MinTLSVersion uint16            `json:"-"`
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
@@ -703,7 +703,7 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
-func (conf *Config) createExternalStorage(ctx context.Context) (objstore.ExternalStorage, error) {
+func (conf *Config) createExternalStorage(ctx context.Context) (objstore.Storage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
 	}
@@ -713,7 +713,7 @@ func (conf *Config) createExternalStorage(ctx context.Context) (objstore.Externa
 	}
 
 	// TODO: support setting httpClient with certification later
-	return objstore.New(ctx, b, &objstore.ExternalStorageOptions{})
+	return objstore.New(ctx, b, &objstore.Options{})
 }
 
 const (

@@ -45,7 +45,7 @@ type testBackup struct {
 	backupClient *backup.Client
 
 	cluster *mock.Cluster
-	storage objstore.ExternalStorage
+	storage objstore.Storage
 }
 
 // locks used to solve race when mock then behaviour when store drops
