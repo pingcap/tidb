@@ -1503,7 +1503,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
 		}
 		sets, restoreSchedulersConfigFromCheckpoint, newRestoreStartTS, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, cfg.RestoreStartTS, hash, cpEnabledAndExists)
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, cfg.RestoreStartTS, logRestoredTS, hash, cpEnabledAndExists)
 		if err != nil {
 			return errors.Trace(err)
 		}
