@@ -28,6 +28,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/trace"
@@ -111,16 +113,28 @@ func init() {
 var Enable = tracing.Enable
 
 // IsEnabled returns whether the specified category is enabled.
-var IsEnabled = tracing.IsEnabled
-
-// Disable disables trace events for the specified categories.
-var Disable = tracing.Disable
-
-// SetCategories sets the enabled categories to exactly the specified value.
-var SetCategories = tracing.SetCategories
+func IsEnabled(category tracing.TraceCategory) bool {
+	if kerneltype.IsClassic() && !intest.InTest {
+		return false
+	}
+	fr := GetFlightRecorder()
+	if fr == nil {
+		return false
+	}
+	if uint64(fr.enabledCategories)&uint64(category) == 0 {
+		return false
+	}
+	return true
+}
 
 // GetEnabledCategories returns the currently enabled categories.
-var GetEnabledCategories = tracing.GetEnabledCategories
+func GetEnabledCategories() TraceCategory {
+	fr := GetFlightRecorder()
+	if fr == nil {
+		return TraceCategory(0)
+	}
+	return fr.enabledCategories
+}
 
 // NormalizeMode converts a user-supplied tracing mode string into its canonical representation.
 func NormalizeMode(mode string) (string, error) {

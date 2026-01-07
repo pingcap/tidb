@@ -534,3 +534,13 @@ select c_int from t where c_str is not null for update;
 alter table t add index idx_4 (c_str);
 rollback;
 
+# TestIssue64948
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;
+CREATE TABLE ttl_src (created_at TIMESTAMP) TTL = `created_at` + INTERVAL 1 HOUR;
+CREATE TEMPORARY TABLE temp_local LIKE ttl_src;
+SHOW CREATE TABLE temp_local;
+CREATE GLOBAL TEMPORARY TABLE temp_global LIKE ttl_src ON COMMIT DELETE ROWS;
+SHOW CREATE TABLE temp_global;
+CREATE TABLE normal_copy LIKE ttl_src;
+SHOW CREATE TABLE normal_copy;
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;

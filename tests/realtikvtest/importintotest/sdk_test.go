@@ -124,7 +124,7 @@ func (s *mockGCSSuite) TestImportSDK() {
 
 	// 11. Test JobManager.CancelJob with failpoint
 	s.tk.MustExec("TRUNCATE TABLE t")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted", "pause")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeJobStarted", "pause")
 
 	jobID2, err := sdk.SubmitJob(ctx, sql)
 	s.NoError(err)
@@ -134,7 +134,7 @@ func (s *mockGCSSuite) TestImportSDK() {
 	s.NoError(err)
 
 	// Unpause
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted")
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeJobStarted")
 
 	// Verify status is cancelled
 	s.Eventually(func() bool {
