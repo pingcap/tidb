@@ -28,6 +28,20 @@ const (
 	// ToleranceFactor is an arbitrary value used in (some) floating point
 	// comparisons to account for precision errors
 	ToleranceFactor = 0.00001
+
+	// SeekFactor is a simplified cost factor for a single seek operation.
+	// We model a seek as equivalent to scanning 10 rows with 8-byte width, based on
+	// experimental results. See https://github.com/pingcap/tidb/issues/62499#issuecomment-3301796153
+	// for the methodology behind this value.
+	// This value is also used in the cost model for seek cost in IndexJoin, PhysicalIndexScan,
+	// and PhysicalTableScan. SeekFactor = 10 * math.Log2(8) = 30 so we use 30 directly here
+	SeekFactor = 30
+
+	// SortFactor is a simplified cost factor for a single sort operation.
+	// We model a scan as equivalent to sorting 45 rows with 8-byte width, based on
+	// experimental results. See []
+	// for the methodology behind this value.
+	SortFactor = 1.0 / 135.0
 )
 
 // AggFuncFactor is the basic factor for aggregation.
