@@ -76,9 +76,9 @@ func TestFTSUnsupportedCasesForTiCI(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIndexSuccess", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIndexSuccess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
 	}()
 
 	tk.MustExec("create table t(title TEXT, body TEXT)")
@@ -139,9 +139,9 @@ func TestFTSParser(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
 	}()
 
 	tk.MustExec("create table tx (a TEXT, FULLTEXT (a))")

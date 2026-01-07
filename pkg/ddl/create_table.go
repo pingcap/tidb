@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -152,6 +153,10 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 			return tbInfo, errors.Trace(err)
 		}
 
+		if err := createTiCIIndexes(jobCtx, job.SchemaName, tbInfo); err != nil {
+			return tbInfo, errors.Trace(err)
+		}
+
 		return tbInfo, nil
 	default:
 		return tbInfo, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
@@ -197,6 +202,57 @@ func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableIn
 
 	failpoint.InjectCall("handleAutoIncID")
 	return nil
+}
+
+func createTiCIIndexes(jobCtx *jobContext, schemaName string, tblInfo *model.TableInfo) error {
+	if tblInfo == nil {
+		return nil
+	}
+
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
+
+	for _, index := range tblInfo.Indices {
+		if !index.IsTiCIIndex() {
+			continue
+		}
+		if err := tici.CreateFulltextIndex(ctx, jobCtx.store, tblInfo, index, schemaName); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// dropTiCIIndexes drops TiCI indexes in a best-effort manner.
+// It never blocks TiDB DDL progress: failures are logged as warnings.
+func dropTiCIIndexes(jobCtx *jobContext, tblInfo *model.TableInfo) {
+	if tblInfo == nil {
+		return
+	}
+
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
+
+	for _, index := range tblInfo.Indices {
+		if !index.IsTiCIIndex() {
+			continue
+		}
+		if err := tici.DropFullTextIndex(ctx, jobCtx.store, tblInfo.ID, index.ID); err != nil {
+			logutil.DDLLogger().Warn(
+				"drop TiCI index failed when dropping table",
+				zap.Error(err),
+				zap.Int64("table_id", tblInfo.ID),
+				zap.String("table", tblInfo.Name.L),
+				zap.Int64("index_id", index.ID),
+				zap.String("index", index.Name.L),
+			)
+		}
+	}
 }
 
 func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -1383,6 +1439,8 @@ func BuildTableInfo(
 				columnarIndexType = model.ColumnarIndexTypeInverted
 			case ast.IndexTypeFulltext:
 				columnarIndexType = model.ColumnarIndexTypeFulltext
+			case ast.IndexTypeHybrid:
+				columnarIndexType = model.ColumnarIndexTypeHybrid
 			default:
 				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
 			}
