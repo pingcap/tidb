@@ -896,9 +896,9 @@ func TestInitStatsMemoryFullBlocksBucketsButKeepsTopN(t *testing.T) {
 	require.NotEqual(t, "0", bucketCount, "table should have buckets for this test")
 
 	// Simulate memory becoming full before buckets are loaded, so buckets are blocked.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/mockStatsCacheTotalMemory", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/mockBucketsLoadMemoryLimit", "return(1)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/mockStatsCacheTotalMemory"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/mockBucketsLoadMemoryLimit"))
 	}()
 
 	h.Clear()
