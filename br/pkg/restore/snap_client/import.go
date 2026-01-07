@@ -63,7 +63,7 @@ const (
 
 const (
 	// Todo: make it configable
-	gRPCTimeOut = 25 * time.Minute
+	gRPCTimeOut = 200 * time.Minute
 )
 
 // RewriteMode is a mode flag that tells the TiKV how to handle the rewrite rules.
