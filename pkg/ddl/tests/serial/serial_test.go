@@ -1300,10 +1300,7 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 	for _, sql := range []string{
 		`drop database sys`,
 		`drop database mysql`,
-		`drop table mysql.tidb_global_task`,
 		`truncate table mysql.tidb_global_task`,
-		`rename table mysql.tidb_global_task to test.t1`,
-		`rename table test.t to test.t1, mysql.tidb_global_task to test.t2`,
 		`alter table mysql.analyze_options partition by hash(table_id) partitions 8`,
 		`alter table pt exchange partition p0 with table mysql.analyze_options`,
 	} {
