@@ -254,7 +254,7 @@ type IndexInfo struct {
 	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
 	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
 	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
-	// Version of global index key format, currently only used non-clustered, non-unique global indexes.
+	// Version of global index key format, only used for non-clustered, non-unique global indexes.
 	// 0=legacy/unique/clustered,
 	// 1=v1 non-unique non-clustered with partition ID in key and value.
 	// 2=v2 non-unique non-clustered with partition ID in key only (TODO).

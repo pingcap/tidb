@@ -102,7 +102,6 @@ func TestGlobalIndexVersion0(t *testing.T) {
 	require.NotNil(t, globalIdx, "Global index idx_b not found")
 	require.True(t, globalIdx.Global, "Index should be global")
 
-	// Verify the version is set to GlobalIndexVersionCurrent (2)
 	require.Equal(t, model.GlobalIndexVersionLegacy, globalIdx.GlobalIndexVersion,
 		"Global index should have version %d", model.GlobalIndexVersionLegacy)
 
@@ -200,7 +199,6 @@ func TestGlobalIndexVersion1(t *testing.T) {
 	require.NotNil(t, globalIdx, "Global index idx_b not found")
 	require.True(t, globalIdx.Global, "Index should be global")
 
-	// Verify the version is set to GlobalIndexVersionCurrent (2)
 	require.Equal(t, model.GlobalIndexVersionV1, globalIdx.GlobalIndexVersion,
 		"Global index should have version %d", model.GlobalIndexVersionV1)
 
