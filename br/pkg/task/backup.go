@@ -519,14 +519,14 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		gcSafePointKeeperCancel()
 		// set the ttl to 0 to remove the gc-safe-point
 		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
+		if err := utils.UpdateServiceSafePointWithStorage(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp); err != nil {
 			log.Warn("failed to update service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
-	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
+	err = utils.StartServiceSafePointKeeperWithStorage(cctx, mgr.GetPDClient(), mgr.GetStorage(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
