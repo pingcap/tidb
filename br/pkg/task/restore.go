@@ -1184,8 +1184,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UpstreamClusterID == 0 {
 		cfg.UpstreamClusterID = backupMeta.ClusterId
 	}
-	schemaVersionPair := snapclient.SchemaVersionPairT{}
 	if loadStatsPhysical || loadSysTablePhysical {
+		schemaVersionPair := snapclient.SchemaVersionPairT{}
 		upstreamClusterVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
 		if upstreamClusterVersion == nil {
 			log.Warn("The cluster version from backupmeta is invalid. Fallback to logically load system tables.",
@@ -1750,7 +1750,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
 		StatsConcurrency:    cfg.StatsConcurrency,
-		SchemaVersionPair:   schemaVersionPair,
 		RestoreTS:           restoreTS,
 
 		KvClient:   mgr.GetStorage().GetClient(),
