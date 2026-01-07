@@ -324,18 +324,16 @@ func filterOutOtherCondition4ConvertAntiJoin(inner int, sf []expression.Expressi
 	}
 }
 
-func vaildProj4ConvertAntiJoin(outerSchSet *intset.FastIntSet, proj *LogicalProjection) bool {
+func vaildProj4ConvertAntiJoin(proj *LogicalProjection) bool {
 	if proj == nil {
 		return true
 	}
 	// Sometimes there is a projection between select and join.
-	// We require that this projection does not make additional changes to its outer columns,
+	// We require that this projection does not make additional changes to any columns,
 	// then we can continue converting to a semi join.
 	for idx, c := range proj.Schema().Columns {
-		if outerSchSet.Has(int(c.UniqueID)) {
-			if !c.Equals(proj.Exprs[idx]) {
-				return false
-			}
+		if !c.Equals(proj.Exprs[idx]) {
+			return false
 		}
 	}
 	return true
@@ -388,7 +386,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 		return !innerSch.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
 	joinOuterKeySch := intset.NewFastIntSet()
-	if !vaildProj4ConvertAntiJoin(&outerSchSet, proj) {
+	if !vaildProj4ConvertAntiJoin(proj) {
 		return nil, false
 	}
 	iter := iterutil.Concat(
