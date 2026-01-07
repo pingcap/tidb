@@ -31,11 +31,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
 
@@ -645,27 +643,6 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 
 func (tm *TableMappingManager) IsEmpty() bool {
 	return len(tm.DBReplaceMap) == 0
-}
-
-// CheckExistingDBAndTables checks if there are any existing database/tables with the same name in the cluster.
-func (tm *TableMappingManager) CheckExistingDBAndTables(ctx context.Context, schema infoschema.InfoSchema) error {
-	for dbId, dbReplace := range tm.DBReplaceMap {
-		dbNameCtr := ast.NewCIStr(dbReplace.Name)
-		if !dbReplace.FilteredOut && dbReplace.DbID < 0 {
-			if schema.SchemaExists(dbNameCtr) {
-				return errors.Errorf("found existing database(upstream id: %d) with the same name: %s", dbId, dbReplace.Name)
-			}
-		}
-		for tableId, tableReplace := range dbReplace.TableMap {
-			if !tableReplace.FilteredOut && tableReplace.TableID < 0 {
-				if schema.TableExists(dbNameCtr, ast.NewCIStr(tableReplace.Name)) {
-					return errors.Errorf("found existing table(upstream id: %d, table id: %d) with the same name: %s",
-						dbId, tableId, tableReplace.Name)
-				}
-			}
-		}
-	}
-	return nil
 }
 
 func (tm *TableMappingManager) ReplaceTemporaryIDs(
