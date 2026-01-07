@@ -112,10 +112,10 @@ func TestJSONEffects(t *testing.T) {
 	require.NoError(t, err)
 
 	expectedJSON := `[
-        {"type":"storage.EffPut","effect":{"file":"example.txt","content":"SGVsbG8sIHdvcmxk"}},
-        {"type":"storage.EffDeleteFiles","effect":{"files":["old_file.txt","temp.txt"]}},
-        {"type":"storage.EffDeleteFile","effect":"obsolete.txt"},
-        {"type":"storage.EffRename","effect":{"from":"old_name.txt","to":"new_name.txt"}}
+        {"type":"objstore.EffPut","effect":{"file":"example.txt","content":"SGVsbG8sIHdvcmxk"}},
+        {"type":"objstore.EffDeleteFiles","effect":{"files":["old_file.txt","temp.txt"]}},
+        {"type":"objstore.EffDeleteFile","effect":"obsolete.txt"},
+        {"type":"objstore.EffRename","effect":{"from":"old_name.txt","to":"new_name.txt"}}
     ]`
 
 	require.JSONEq(t, expectedJSON, string(buf), "Output JSON should match expected JSON")
