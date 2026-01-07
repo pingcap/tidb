@@ -1002,6 +1002,7 @@ func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []st
 	tableCols := e.Table.VisibleCols()
 	mappings := make([]*FieldMapping, 0, len(tableCols))
 	names := make([]string, 0, len(tableCols))
+	tableInfo := e.Table.Meta()
 	for _, v := range tableCols {
 		// Data for generated column is generated from the other rows rather than from the parsed data.
 		fieldMapping := &FieldMapping{
@@ -1012,8 +1013,8 @@ func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []st
 		// like _tidb_origin_ts, _tidb_soft_delete_time, if user is not explicitly specifying them,
 		// load data should ignore them.
 		col := v.ColumnInfo
-		if (e.TableInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
-			(e.TableInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L) {
+		if (tableInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+			(tableInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L) {
 			continue
 		}
 
