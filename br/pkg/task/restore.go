@@ -1523,6 +1523,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Info("try to reuse restore start timestamp for blocklist",
+			zap.Uint64("new restore start ts", newRestoreStartTS),
+			zap.Uint64("old restore start ts", cfg.RestoreStartTS),
+		)
 		cfg.RestoreStartTS = newRestoreStartTS
 		if restoreSchedulersConfigFromCheckpoint != nil {
 			// The last range rule will be dropped when the last restore quits.
