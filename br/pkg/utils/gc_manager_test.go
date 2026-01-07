@@ -275,8 +275,8 @@ func TestUnifiedGCManager_UpdateServiceSafePoint(t *testing.T) {
 	require.Equal(t, 1, pdClient.updateServiceCalls)
 	require.Equal(t, "br-test", pdClient.lastServiceID)
 	require.Equal(t, int64(300), pdClient.lastTTL)
-	// Note: lastSafePoint is what was passed to UpdateServiceGCSafePoint
-	require.Equal(t, uint64(2334), pdClient.lastSafePoint)
+	// Note: UpdateServiceSafePoint passes BackupTS-1 to prevent GC at BackupTS
+	require.Equal(t, sp.BackupTS-1, pdClient.lastSafePoint)
 
 	// Test 2: Delete safepoint (TTL = 0)
 	sp.TTL = 0
