@@ -612,6 +612,12 @@ func (c *Column) ReserveString(n int) {
 	c.reserve(n, 8)
 }
 
+// ReserveStringWithSizeHint changes the column capacity to store n strings of a predetermined size.
+// example: a 36 character text format UUID: ReserveStringWithSizeHint(1, 36) for a single entry.
+func (c *Column) ReserveStringWithSizeHint(n int, size int) {
+	c.reserve(n, size)
+}
+
 // ReserveBytes changes the column capacity to store n bytes elements and set the length to zero.
 func (c *Column) ReserveBytes(n int) {
 	c.reserve(n, 8)
