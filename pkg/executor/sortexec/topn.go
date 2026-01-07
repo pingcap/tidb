@@ -366,7 +366,7 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 	}
 
 	needMoreChunks := true
-	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit && needMoreChunks {
+	for (uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit) || needMoreChunks {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		err := exec.Next(ctx, e.Children(0), srcChk)
 		if err != nil {
@@ -390,7 +390,7 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 			e.chkHeap.rowChunks.Add(srcChk)
 		}
 
-		// TODO(x) add random failpoint?
+		injectTopNRandomFail(1)
 	}
 
 	e.chkHeap.initPtrs()
@@ -627,8 +627,8 @@ func (e *TopNExec) executeRankTopN() {
 		close(e.resultChannel)
 	}()
 
-	// As the input rows are prefix-ordered, it's
-	// unnecessary to receive more chunks and we
+	// The input rows are prefix-ordered, it's
+	// unnecessary to receive more chunks as we
 	// have received all chunks now.
 	slices.SortFunc(e.chkHeap.rowPtrs, e.chkHeap.keyColumnsCompare)
 
@@ -817,4 +817,12 @@ func GetResultForTest(topnExec *TopNExec) []int64 {
 		}
 		result = append(result, row.row.GetInt64(0))
 	}
+}
+
+// SetPrefixKeyFieldsForTest sets prefix key fields for testing the RankTopN path.
+func (e *TopNExec) SetPrefixKeyFieldsForTest(prefixKeyFieldTypes []expression.Expression, prefixKeyColIdxs []int, prefixKeyCharCounts []int, prefixKeyFieldCollators []collate.Collator) {
+	e.prefixKeyFieldTypes = prefixKeyFieldTypes
+	e.prefixKeyColIdxs = prefixKeyColIdxs
+	e.prefixKeyCharCounts = prefixKeyCharCounts
+	e.prefixKeyFieldCollators = prefixKeyFieldCollators
 }
