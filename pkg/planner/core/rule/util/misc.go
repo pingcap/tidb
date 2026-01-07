@@ -181,7 +181,7 @@ var ApplyPredicateSimplificationForJoin func(sctx base.PlanContext, predicates [
 
 // ApplyPredicateSimplification is a hook for other packages to simplify the expression.
 var ApplyPredicateSimplification func(sctx base.PlanContext, predicates []expression.Expression,
-	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
+	propagateConstant, isDataSourcePushedDownConds bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
 
 var childSchemaSlicePool = zeropool.New[[]*expression.Schema](func() []*expression.Schema {
 	return make([]*expression.Schema, 0, 4)
