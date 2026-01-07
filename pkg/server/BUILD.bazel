@@ -24,7 +24,6 @@ go_library(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
-        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errno",

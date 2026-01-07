@@ -172,6 +172,12 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 	object := s.objectName(name)
 	err := s.GetBucketHandle().Object(object).Delete(ctx)
+	// for delete single file, files are deleted should be considered
+	if err != nil {
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
+			return nil
+		}
+	}
 	return errors.Trace(err)
 }
 
@@ -404,7 +410,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 					clientOps = append(clientOps, option.WithoutAuthentication())
 					goto skipHandleCred
 				}
-				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--%s'", gcsCredentialsFile, err)
+				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--%s'", err, gcsCredentialsFile)
 			}
 			if opts.SendCredentials {
 				if len(creds.JSON) <= 0 {

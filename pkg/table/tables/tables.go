@@ -1044,7 +1044,7 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	if err != nil {
 		return nil, err
 	}
-	value, err := txn.Get(context.TODO(), key)
+	value, err := kv.GetValue(context.TODO(), txn, key)
 	if err != nil {
 		return nil, err
 	}

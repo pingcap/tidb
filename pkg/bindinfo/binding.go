@@ -142,13 +142,13 @@ func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode,
 
 // MatchSQLBinding returns the matched binding for this statement.
 func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
-	defer func(begin time.Time) {
-		sctx.GetSessionVars().DurationOptimizer.BindingMatch = time.Since(begin)
-	}(time.Now())
 	return matchSQLBinding(sctx, stmtNode, nil)
 }
 
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
+	defer func(begin time.Time) {
+		sctx.GetSessionVars().DurationOptimizer.BindingMatch = time.Since(begin)
+	}(time.Now())
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	if !useBinding || stmtNode == nil {
 		return
