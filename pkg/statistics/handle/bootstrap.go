@@ -582,7 +582,7 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 // Returns a map where keys are table IDs that have bucket entries.
 func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
 	// Query to find table_ids that have buckets in the given range
-	sql := "select /*+ USE_INDEX(stats_buckets, tbl) */ distinct table_id from mysql.stats_buckets" +
+	sql := "select /*+ USE_INDEX(stats_buckets, tbl) */ HIGH_PRIORITY distinct table_id from mysql.stats_buckets" +
 		" where is_index = 1" +
 		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
 		" and table_id < " + strconv.FormatInt(tableRange[1], 10)
