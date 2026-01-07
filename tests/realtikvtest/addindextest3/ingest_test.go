@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -976,6 +977,11 @@ func TestIngestConcurrentJobCleanupRace(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("DXF is always enabled on nextgen")
 	}
+	oldProcs := runtime.GOMAXPROCS(0)
+	if oldProcs < 8 {
+		runtime.GOMAXPROCS(8)
+		defer runtime.GOMAXPROCS(oldProcs)
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -992,12 +998,19 @@ func TestIngestConcurrentJobCleanupRace(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t2 values (%d, %d);", i, i))
 	}
 
-	// Track that both jobs actually enter ingest mode
-	job1IngestCnt := atomic.Int32{}
-	job2IngestCnt := atomic.Int32{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
-		// This callback is called for each row written in ingest mode
-		// We use table name from the goroutine to distinguish jobs
+	// Ensure both jobs enter ingest and overlap at the ingest stage.
+	ingestBarrier := make(chan struct{})
+	ingestCalls := atomic.Int32{}
+	ingestTimedOut := atomic.Bool{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/beforeBackendIngest", func() {
+		if ingestCalls.Add(1) == 2 {
+			close(ingestBarrier)
+		}
+		select {
+		case <-ingestBarrier:
+		case <-time.After(10 * time.Second):
+			ingestTimedOut.Store(true)
+		}
 	})
 
 	// Start two add index jobs concurrently
@@ -1013,12 +1026,10 @@ func TestIngestConcurrentJobCleanupRace(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		_, err1 = tk1.Exec("alter table t1 add index idx1(b);")
-		job1IngestCnt.Store(1)
 	}()
 	go func() {
 		defer wg.Done()
 		_, err2 = tk2.Exec("alter table t2 add index idx2(b);")
-		job2IngestCnt.Store(1)
 	}()
 
 	wg.Wait()
@@ -1027,9 +1038,8 @@ func TestIngestConcurrentJobCleanupRace(t *testing.T) {
 	require.NoError(t, err1)
 	require.NoError(t, err2)
 
-	// Verify both jobs completed
-	require.Equal(t, int32(1), job1IngestCnt.Load(), "job1 should have completed")
-	require.Equal(t, int32(1), job2IngestCnt.Load(), "job2 should have completed")
+	require.False(t, ingestTimedOut.Load(), "ingest jobs did not overlap")
+	require.GreaterOrEqual(t, ingestCalls.Load(), int32(2), "both jobs should enter ingest")
 
 	// Verify both jobs used ingest mode
 	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
@@ -1122,19 +1132,21 @@ func TestIngestCancelCleanupOrder(t *testing.T) {
 	tkCancel.MustExec("use addindexlit;")
 
 	// Cancel after backfill starts (WriteReorganization state with running backfill)
-	var jobID int64
+	var jobID atomic.Int64
 	backfillStarted := atomic.Bool{}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex {
-			jobID = job.ID
+			jobID.Store(job.ID)
 		}
 	})
 	cancelOnce := sync.Once{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunReorgJobAndHandleErr", func() {
+	cancelIssued := atomic.Bool{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/beforeBackendIngest", func() {
 		backfillStarted.Store(true)
-		if jobID > 0 {
+		if jobID.Load() > 0 {
 			cancelOnce.Do(func() {
-				_, _ = tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", jobID))
+				cancelIssued.Store(true)
+				_, _ = tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", jobID.Load()))
 			})
 		}
 	})
@@ -1147,6 +1159,7 @@ func TestIngestCancelCleanupOrder(t *testing.T) {
 
 	// Key assertion: backfill actually started before cancel
 	require.True(t, backfillStarted.Load(), "backfill should have started before cancel")
+	require.True(t, cancelIssued.Load(), "cancel should be issued after ingest starts")
 
 	// Verify no panic occurred and table is consistent
 	tk.MustExec("admin check table t;")
