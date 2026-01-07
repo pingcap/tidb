@@ -417,8 +417,9 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
-		Return(realEncBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})).
-		AnyTimes()
+		DoAndReturn(func(_ context.Context, _ *encode.EncodingConfig) (encode.Encoder, error) {
+			return realEncBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})
+		}).AnyTimes()
 	mockEncBuilder.EXPECT().MakeEmptyRows().Return(realEncBuilder.MakeEmptyRows()).AnyTimes()
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(mockEngineWriter, nil)
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).

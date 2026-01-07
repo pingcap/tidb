@@ -783,7 +783,7 @@ outloop:
 	if rowSize > 0 && kvSize > rowSize {
 		resultIndexRatio = float64(kvSize) / float64(rowSize)
 	}
-	logutil.Logger(ctx).Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
+	logutil.Logger(ctx).Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", resultIndexRatio), zap.Bool("IsSourceOrder", isRowOrdered))
 	return resultIndexRatio, isRowOrdered, nil
 }
 
