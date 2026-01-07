@@ -1085,7 +1085,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
 		sc.InExplainAnalyzeStmt = true
-		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
+		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
+		sc.ExplainFormat = strings.ToLower(explainForStmt.Format)
+		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
 	}
 
 	// TODO: Many same bool variables here.

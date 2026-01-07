@@ -693,6 +693,13 @@ func (e *Explain) prepareSchema() error {
 		format = types.ExplainFormatROW
 		e.Format = types.ExplainFormatROW
 	}
+	// Ensure StmtCtx.ExplainFormat is set early so shouldRemoveColumnNumbers can access it
+	// This needs to be set before any ExplainInfo() calls are made
+	if e.SCtx() != nil {
+		stmtCtx := e.SCtx().GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		stmtCtx.ExplainFormat = format
+	}
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
@@ -841,6 +848,10 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = rows
 		return nil
+	}
+	// Ensure StmtCtx.ExplainFormat is set to match e.Format so shouldRemoveColumnNumbers can access it
+	if e.SCtx() != nil {
+		e.SCtx().GetSessionVars().StmtCtx.ExplainFormat = strings.ToLower(e.Format)
 	}
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache, types.ExplainFormatPlanTree:
@@ -1086,6 +1097,12 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 	estCost = "N/A"
 	costFormula = "N/A"
 	sctx := p.SCtx()
+	// Ensure StmtCtx.ExplainFormat is set before calling ExplainInfo() so shouldRemoveColumnNumbers can access it
+	if sctx != nil {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		stmtCtx.ExplainFormat = strings.ToLower(format)
+	}
 	if isPhysicalPlan {
 		if format != types.ExplainFormatPlanTree {
 			estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)

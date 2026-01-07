@@ -451,12 +451,20 @@ const columnPrefix = "Column#"
 
 // shouldRemoveColumnNumbers checks if column numbers should be removed based on the explain format.
 // This is used for plan_tree format to show "Column" instead of "Column#<number>".
-// Note: ExplainFormat is normalized to lowercase when set, so no conversion is needed here.
+// Note: ExplainFormat is normalized to lowercase when set, but we use strings.ToLower as a defensive measure
+// in case the format wasn't normalized in some code path.
 func shouldRemoveColumnNumbers(ctx ParamValues) bool {
 	if evalCtx, ok := ctx.(EvalContext); ok {
 		if sessionCtx, ok := evalCtx.(*sessionexpr.EvalContext); ok {
-			format := sessionCtx.Sctx().GetSessionVars().StmtCtx.ExplainFormat
-			if format == types.ExplainFormatPlanTree {
+			stmtCtx := sessionCtx.Sctx().GetSessionVars().StmtCtx
+			// Only check format if we're actually in an explain statement
+			if !stmtCtx.InExplainStmt {
+				return false
+			}
+			format := stmtCtx.ExplainFormat
+			// Use ToLower defensively in case format wasn't normalized in some code path
+			formatLower := strings.ToLower(strings.TrimSpace(format))
+			if formatLower == types.ExplainFormatPlanTree {
 				return true
 			}
 		}
@@ -466,7 +474,7 @@ func shouldRemoveColumnNumbers(ctx ParamValues) bool {
 
 // StringWithCtx implements Expression interface.
 func (col *Column) StringWithCtx(ctx ParamValues, redact string) string {
-	return col.string(redact, false)
+	return col.string(redact, shouldRemoveColumnNumbers(ctx))
 }
 
 // StringWithCtxForExplain implements Expression interface with option to remove column numbers for plan_tree format.
