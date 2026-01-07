@@ -1519,11 +1519,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.piTRTaskInfo != nil {
 			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
 		}
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, hash, cpEnabledAndExists)
+		sets, restoreSchedulersConfigFromCheckpoint, newRestoreStartTS, err := client.InitCheckpoint(
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, cfg.RestoreStartTS, hash, cpEnabledAndExists)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		cfg.RestoreStartTS = newRestoreStartTS
 		if restoreSchedulersConfigFromCheckpoint != nil {
 			// The last range rule will be dropped when the last restore quits.
 			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
