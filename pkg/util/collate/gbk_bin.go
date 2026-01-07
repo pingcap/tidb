@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"golang.org/x/text/encoding"
 )
 
@@ -92,6 +93,11 @@ func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 // Pattern implements Collator interface.
 func (*gbkBinCollator) Pattern() WildcardPattern {
 	return &gbkBinPattern{}
+}
+
+// ImmutablePrefixKey implements Collator interface
+func (*gbkBinCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+	return hack.Slice(str)[:stringutil.GetCharsByteCount(str, prefixCharCount)]
 }
 
 // use binPattern directly, they are totally same.

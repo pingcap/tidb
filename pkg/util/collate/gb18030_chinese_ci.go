@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"unicode/utf8"
 
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -87,6 +88,11 @@ func (*gb18030ChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 // Pattern implements Collator interface.
 func (*gb18030ChineseCICollator) Pattern() WildcardPattern {
 	return &gb18030ChineseCIPattern{}
+}
+
+// ImmutablePrefixKey implements Collator interface
+func (*gb18030ChineseCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+	return hack.Slice(str)[:stringutil.GetCharsByteCount(str, prefixCharCount)]
 }
 
 type gb18030ChineseCIPattern struct {

@@ -75,7 +75,7 @@ type Collator interface {
 	//   input string: 12345
 	//   prefixCharCount: 3
 	//   only "123" will be converted and returned
-	ImmutablePrefixKey(str string, prefixCharCount int) []byte
+	ImmutablePrefixKey(str string, prefixCharCount int) []byte // TODO(x) add ut for all implementations
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.
@@ -439,10 +439,10 @@ func init() {
 	newCollatorIDMap[CollationName2ID("ascii_bin")] = &binPaddingCollator{}
 	newCollatorMap["latin1_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[CollationName2ID("latin1_bin")] = &binPaddingCollator{}
-	newCollatorMap["utf8mb4_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[CollationName2ID("utf8mb4_bin")] = &binPaddingCollator{}
-	newCollatorMap["utf8_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[CollationName2ID("utf8_bin")] = &binPaddingCollator{}
+	newCollatorMap["utf8mb4_bin"] = &UTF8BinPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_bin")] = &UTF8BinPaddingCollator{}
+	newCollatorMap["utf8_bin"] = &UTF8BinPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("utf8_bin")] = &UTF8BinPaddingCollator{}
 	newCollatorMap["utf8mb4_0900_bin"] = &derivedBinCollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_0900_bin")] = &derivedBinCollator{}
 	newCollatorMap["utf8mb4_general_ci"] = &generalCICollator{}
