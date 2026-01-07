@@ -2224,11 +2224,6 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if cfg.PiTRTableTracker != nil {
 		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 	}
-	// check if there are any existing database/tables with the same name in the cluster.
-	err = cfg.tableMappingManager.CheckExistingDBAndTables(ctx, client.GetDomain().InfoSchema())
-	if err != nil {
-		return errors.Trace(err)
-	}
 	// replace temp id with read global id
 	err = cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 	if err != nil {
