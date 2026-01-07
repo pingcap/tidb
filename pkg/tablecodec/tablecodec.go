@@ -1249,9 +1249,12 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
 		// Only use the new format for version >= V1. Legacy indexes (version 0) use the old format.
 		if idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+			if tblInfo.HasClusteredIndex() {
+				return nil, false, errors.New("clustered index is not supported in GlobalIndexVersionV1+")
+			}
 			ph, ok := h.(kv.PartitionHandle)
-			if !ok || tblInfo.HasClusteredIndex() {
-				return nil, false, errors.New("clustered index or not a partition handle in GlobalIndexVersionV1+")
+			if !ok {
+				return nil, false, errors.New("handle is not a PartitionHandle in GlobalIndexVersionV1+")
 			}
 			// Encode as: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
 			key = append(key, PartitionIDFlag)
