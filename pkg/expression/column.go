@@ -451,11 +451,12 @@ const columnPrefix = "Column#"
 
 // shouldRemoveColumnNumbers checks if column numbers should be removed based on the explain format.
 // This is used for plan_tree format to show "Column" instead of "Column#<number>".
+// Note: ExplainFormat is normalized to lowercase when set, so no conversion is needed here.
 func shouldRemoveColumnNumbers(ctx ParamValues) bool {
 	if evalCtx, ok := ctx.(EvalContext); ok {
 		if sessionCtx, ok := evalCtx.(*sessionexpr.EvalContext); ok {
 			format := sessionCtx.Sctx().GetSessionVars().StmtCtx.ExplainFormat
-			if strings.ToLower(format) == types.ExplainFormatPlanTree {
+			if format == types.ExplainFormatPlanTree {
 				return true
 			}
 		}
@@ -465,7 +466,7 @@ func shouldRemoveColumnNumbers(ctx ParamValues) bool {
 
 // StringWithCtx implements Expression interface.
 func (col *Column) StringWithCtx(ctx ParamValues, redact string) string {
-	return col.string(redact, shouldRemoveColumnNumbers(ctx))
+	return col.string(redact, false)
 }
 
 // StringWithCtxForExplain implements Expression interface with option to remove column numbers for plan_tree format.
