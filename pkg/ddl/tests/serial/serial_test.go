@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -1281,8 +1280,7 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("those forbidden DDLs are only for next-gen")
 	}
-	store, domain := testkit.CreateMockStoreAndDomain(t)
-	de := domain.DDLExecutor()
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int)")
@@ -1308,10 +1306,4 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 			require.ErrorIs(t, tk.ExecToErr(sql), dbterror.ErrForbiddenDDL)
 		})
 	}
-	testDB, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("mysql"))
-	require.True(t, ok)
-	tbl, err := domain.InfoSchema().TableByName(context.Background(), testDB.Name, ast.NewCIStr("tidb_global_task"))
-	require.NoError(t, err)
-	err = testutil.SetTableMode(tk.Session(), t, store, de, testDB, tbl.Meta(), model.TableModeImport)
-	require.ErrorIs(t, err, dbterror.ErrForbiddenDDL)
 }

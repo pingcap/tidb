@@ -5790,15 +5790,11 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 			schema.Name, fmt.Sprintf("TableID: %d", args.TableID))
 	}
 
-	tblInfo := table.Meta()
-	if isReservedSchemaObjInNextGen(tblInfo.ID) {
-		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change table mode of system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
-	}
-	ok = validateTableMode(tblInfo.Mode, args.TableMode)
+	ok = validateTableMode(table.Meta().Mode, args.TableMode)
 	if !ok {
-		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tblInfo.Mode, args.TableMode, tblInfo.Name.O)
+		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
 	}
-	if tblInfo.Mode == args.TableMode {
+	if table.Meta().Mode == args.TableMode {
 		return nil
 	}
 
@@ -5814,7 +5810,7 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
 				Database: schema.Name.L,
-				Table:    tblInfo.Name.L,
+				Table:    table.Meta().Name.L,
 			},
 		},
 	}
