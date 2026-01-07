@@ -34,9 +34,4 @@ type Filter interface {
 	// SkipLoadSchema returns true when the given DB should not be loaded during
 	// a full schema load.
 	SkipLoadSchema(dbInfo *model.DBInfo) bool
-
-	// SkipMDLCheck returns true when the MDL check can be skipped for the given
-	// table IDs. latestIS is the newest InfoSchema cached by the loader. It can
-	// be nil when the loader hasn't loaded any schema yet.
-	SkipMDLCheck(tableIDs map[int64]struct{}, latestIS infoschema.InfoSchema) bool
 }

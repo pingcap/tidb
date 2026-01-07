@@ -197,10 +197,6 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 }
 
 func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
-	if s.loader.filter != nil {
-		return s.loader.filter.SkipMDLCheck(tableIDs, s.InfoSchema())
-	}
-
 	if !s.crossKS {
 		return false
 	}

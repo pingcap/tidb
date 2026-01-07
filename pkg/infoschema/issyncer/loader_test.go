@@ -68,19 +68,6 @@ func (f *testNameFilter) SkipLoadSchema(dbInfo *model.DBInfo) bool {
 	return !f.allow(dbInfo.Name)
 }
 
-func (f *testNameFilter) SkipMDLCheck(tableIDs map[int64]struct{}, latestIS infoschema.InfoSchema) bool {
-	if f == nil || f.allow == nil || latestIS == nil {
-		return false
-	}
-	for id := range tableIDs {
-		db, ok := latestIS.SchemaByID(id)
-		if !(ok && f.allow(db.Name)) {
-			return false
-		}
-	}
-	return true
-}
-
 func TestLoadFromTS(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
