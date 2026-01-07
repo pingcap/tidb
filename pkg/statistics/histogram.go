@@ -1218,6 +1218,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 				r = math.Min(r, nowScalar)
 				predWidth = r - l
 			}
+		} else {
+			// Log warning but continue without the "cap to now()" optimization
+			statslogutil.StatsLogger().Warn("failed to get current time for datetime range estimation, continuing without capping to now()", zap.Error(err))
 		}
 	}
 
