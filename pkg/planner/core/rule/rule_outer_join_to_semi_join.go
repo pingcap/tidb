@@ -48,8 +48,13 @@ import (
 type OuterJoinToSemiJoin struct{}
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (o *OuterJoinToSemiJoin) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
+func (o *OuterJoinToSemiJoin) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	result, isChanged := o.recursivePlan(p)
+	if isChanged {
+		cp := &ColumnPruner{}
+		pruner, c, err := cp.Optimize(ctx, result)
+		return pruner, isChanged || c, err
+	}
 	return result, isChanged, nil
 }
 
