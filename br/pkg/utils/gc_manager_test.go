@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
+	unistoretikv "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -42,120 +42,100 @@ func (m *mockStorage) GetCodec() tikv.Codec {
 	return m.codec
 }
 
-// mockGCStatesClient implements pdgc.GCStatesClient interface (partial for testing)
-type mockGCStatesClient struct {
-	sync.Mutex
-	pdgc.GCStatesClient
-	keyspaceID             uint32
-	barriers               map[string]*pdgc.GCBarrierInfo
-	setGCBarrierCalls      int
-	deleteGCBarrierCalls   int
-	lastBarrierID          string
-	lastBarrierTS          uint64
-	lastTTL                time.Duration
-	getGCStateCalls        int
-	setGCBarrierShouldFail bool
+// mockGCStatesClientWithTracking wraps the real GC states client with call tracking
+// for test verification. This uses the validated implementation from GCStatesManagerForTest.
+type mockGCStatesClientWithTracking struct {
+	inner                pdgc.GCStatesClient
+	mu                   sync.Mutex
+	setGCBarrierCalls    int
+	deleteGCBarrierCalls int
+	lastBarrierID        string
+	lastBarrierTS        uint64
+	lastTTL              time.Duration
+	getGCStateCalls      int
 }
 
-func newMockGCStatesClient(keyspaceID uint32) *mockGCStatesClient {
-	return &mockGCStatesClient{
-		keyspaceID: keyspaceID,
-		barriers:   make(map[string]*pdgc.GCBarrierInfo),
-	}
-}
-
-func (m *mockGCStatesClient) GetGCState(ctx context.Context) (pdgc.GCState, error) {
-	m.Lock()
-	defer m.Unlock()
+func (m *mockGCStatesClientWithTracking) GetGCState(ctx context.Context) (pdgc.GCState, error) {
+	m.mu.Lock()
 	m.getGCStateCalls++
-
-	// Return GC safepoint > 0 to pass CheckGCSafePoint
-	return pdgc.GCState{
-		KeyspaceID:   m.keyspaceID,
-		GCSafePoint:  2333,
-		TxnSafePoint: 2334,
-		GCBarriers:   nil, // Will be populated if barriers exist
-	}, nil
+	m.mu.Unlock()
+	return m.inner.GetGCState(ctx)
 }
 
-func (m *mockGCStatesClient) SetGCBarrier(ctx context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GCBarrierInfo, error) {
-	m.Lock()
-	defer m.Unlock()
-
-	if m.setGCBarrierShouldFail {
-		return nil, errors.New("mock SetGCBarrier failure")
-	}
-
+func (m *mockGCStatesClientWithTracking) SetGCBarrier(ctx context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GCBarrierInfo, error) {
+	m.mu.Lock()
 	m.setGCBarrierCalls++
 	m.lastBarrierID = barrierID
 	m.lastBarrierTS = barrierTS
 	m.lastTTL = ttl
-
-	barrier := pdgc.NewGCBarrierInfo(barrierID, barrierTS, ttl, time.Now())
-	m.barriers[barrierID] = barrier
-	return barrier, nil
+	m.mu.Unlock()
+	return m.inner.SetGCBarrier(ctx, barrierID, barrierTS, ttl)
 }
 
-func (m *mockGCStatesClient) DeleteGCBarrier(ctx context.Context, barrierID string) (*pdgc.GCBarrierInfo, error) {
-	m.Lock()
-	defer m.Unlock()
-
+func (m *mockGCStatesClientWithTracking) DeleteGCBarrier(ctx context.Context, barrierID string) (*pdgc.GCBarrierInfo, error) {
+	m.mu.Lock()
 	m.deleteGCBarrierCalls++
-	barrier, exists := m.barriers[barrierID]
-	if !exists {
-		return nil, errors.Errorf("barrier %s not found", barrierID)
-	}
-	delete(m.barriers, barrierID)
-	return barrier, nil
+	m.mu.Unlock()
+	return m.inner.DeleteGCBarrier(ctx, barrierID)
 }
 
-// mockPDClientWithGCStates implements pd.Client interface with GCStatesClient support
+func (m *mockGCStatesClientWithTracking) SetGlobalGCBarrier(ctx context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GlobalGCBarrierInfo, error) {
+	return m.inner.SetGlobalGCBarrier(ctx, barrierID, barrierTS, ttl)
+}
+
+func (m *mockGCStatesClientWithTracking) DeleteGlobalGCBarrier(ctx context.Context, barrierID string) (*pdgc.GlobalGCBarrierInfo, error) {
+	return m.inner.DeleteGlobalGCBarrier(ctx, barrierID)
+}
+
+func (m *mockGCStatesClientWithTracking) GetAllKeyspacesGCStates(ctx context.Context) (pdgc.ClusterGCStates, error) {
+	return m.inner.GetAllKeyspacesGCStates(ctx)
+}
+
+// mockPDClientWithGCStates implements pd.Client interface using GCStatesManagerForTest
+// This provides complete, validated mock behavior with call tracking for assertions.
 type mockPDClientWithGCStates struct {
-	sync.Mutex
 	pd.Client
-	gcStatesClients          map[uint32]*mockGCStatesClient
-	updateServiceCalls       int
-	lastServiceID            string
-	lastTTL                  int64
-	lastSafePoint            uint64
-	updateServiceShouldFail  bool
+	mu                      sync.Mutex
+	gcManager               *unistoretikv.GCStatesManagerForTest
+	gcStatesClients         map[uint32]*mockGCStatesClientWithTracking
+	updateServiceCalls      int
+	lastServiceID           string
+	lastTTL                 int64
+	lastSafePoint           uint64
 }
 
 func newMockPDClientWithGCStates() *mockPDClientWithGCStates {
 	return &mockPDClientWithGCStates{
-		gcStatesClients: make(map[uint32]*mockGCStatesClient),
+		gcManager:       unistoretikv.NewGCStatesManagerForTest(),
+		gcStatesClients: make(map[uint32]*mockGCStatesClientWithTracking),
 	}
 }
 
 func (m *mockPDClientWithGCStates) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
-	m.Lock()
-	defer m.Unlock()
-
-	if m.updateServiceShouldFail {
-		return 0, errors.New("mock UpdateServiceGCSafePoint failure")
-	}
-
+	m.mu.Lock()
 	m.updateServiceCalls++
 	m.lastServiceID = serviceID
 	m.lastTTL = ttl
 	m.lastSafePoint = safePoint
+	m.mu.Unlock()
 
-	// Return current gc safepoint (used by CheckGCSafePoint)
-	return 2333, nil
+	return m.gcManager.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
 }
 
 func (m *mockPDClientWithGCStates) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
-	// Mock implementation - just return the current GC safepoint
-	return 2333, nil
+	return m.gcManager.UpdateGCSafePoint(ctx, safePoint)
 }
 
 func (m *mockPDClientWithGCStates) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	cli, exists := m.gcStatesClients[keyspaceID]
 	if !exists {
-		cli = newMockGCStatesClient(keyspaceID)
+		// Wrap the real client with tracking
+		cli = &mockGCStatesClientWithTracking{
+			inner: m.gcManager.GetGCStatesClient(keyspaceID),
+		}
 		m.gcStatesClients[keyspaceID] = cli
 	}
 	return cli
@@ -321,9 +301,12 @@ func TestKeyspaceGCManager_UpdateServiceSafePoint(t *testing.T) {
 	require.Equal(t, uint64(2999), gcClient.lastBarrierTS) // BackupTS - 1
 	require.Equal(t, time.Duration(600)*time.Second, gcClient.lastTTL)
 
-	// Verify barrier was stored
-	_, exists := gcClient.barriers["br-barrier"]
-	require.True(t, exists)
+	// Verify barrier was stored using GetGCState
+	state, err := gcClient.GetGCState(ctx)
+	require.NoError(t, err)
+	require.Len(t, state.GCBarriers, 1)
+	require.Equal(t, "br-barrier", state.GCBarriers[0].BarrierID)
+	require.Equal(t, uint64(2999), state.GCBarriers[0].BarrierTS)
 
 	// Test 2: Delete barrier (TTL = 0)
 	sp.TTL = 0
@@ -331,9 +314,10 @@ func TestKeyspaceGCManager_UpdateServiceSafePoint(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, gcClient.deleteGCBarrierCalls)
 
-	// Verify barrier was deleted
-	_, exists = gcClient.barriers["br-barrier"]
-	require.False(t, exists)
+	// Verify barrier was deleted using GetGCState
+	state, err = gcClient.GetGCState(ctx)
+	require.NoError(t, err)
+	require.Empty(t, state.GCBarriers)
 }
 
 func TestUnifiedGCManager_StartServiceSafePointKeeper(t *testing.T) {
@@ -451,28 +435,47 @@ func TestKeyspaceGCManager_ErrorHandling(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	gcClient := pdClient.gcStatesClients[keyspaceID]
 
-	// Test 1: SetGCBarrier failure
-	gcClient.setGCBarrierShouldFail = true
+	// Test 1: SetGCBarrier with invalid parameters (validated by real implementation)
+	// First advance txn safe point to test barrier behind txn safe point error
+	gcController := pdClient.gcManager.GetGCInternalController(keyspaceID)
+	_, err = gcController.AdvanceTxnSafePoint(ctx, 5000)
+	require.NoError(t, err)
+
+	// Now try to set barrier behind txn safe point (should fail)
 	sp := utils.BRServiceSafePoint{
 		ID:       "br-error",
 		TTL:      60,
-		BackupTS: 2700,
+		BackupTS: 4000, // Behind txn safe point 5000
 	}
 
 	err = mgr.UpdateServiceSafePoint(ctx, sp)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "mock SetGCBarrier failure")
+	require.Contains(t, err.Error(), "behind")
 
-	// Reset error flag
-	gcClient.setGCBarrierShouldFail = false
+	// Test 2: SetGCBarrier with valid parameters (should succeed)
+	sp2 := utils.BRServiceSafePoint{
+		ID:       "br-valid",
+		TTL:      60,
+		BackupTS: 6000, // Ahead of txn safe point
+	}
+	err = mgr.UpdateServiceSafePoint(ctx, sp2)
+	require.NoError(t, err)
 
-	// Test 2: DeleteGCBarrier on non-existent barrier (should succeed - no-op)
-	sp.TTL = 0
-	err = mgr.UpdateServiceSafePoint(ctx, sp)
-	// Note: Current implementation may or may not error on this, depending on implementation
-	// Just verify no panic
+	// Test 3: Delete barrier (should succeed)
+	sp2.TTL = 0
+	err = mgr.UpdateServiceSafePoint(ctx, sp2)
+	require.NoError(t, err)
+
+	// Test 4: Delete non-existent barrier (should return nil/no error)
+	sp3 := utils.BRServiceSafePoint{
+		ID:       "non-existent",
+		TTL:      0,
+		BackupTS: 7000,
+	}
+	err = mgr.UpdateServiceSafePoint(ctx, sp3)
+	// Should not panic or error - deleting non-existent barrier is a no-op
+	require.NoError(t, err)
 }
 
 func TestStorageAwareWrappers(t *testing.T) {
