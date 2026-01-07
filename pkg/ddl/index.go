@@ -2442,6 +2442,19 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 
+	// For global indexes V1+ on partitioned tables, we need to wrap the handle
+	// with the partition ID to create a PartitionHandle.
+	// This is critical for non-clustered tables after EXCHANGE PARTITION,
+	// where duplicate _tidb_rowid values exist across partitions.
+	// Legacy indexes (version 0) don't use PartitionHandle in the key.
+	hasGlobalIndexV1 := false
+	for _, index := range w.indexes {
+		if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+			hasGlobalIndexV1 = true
+			break
+		}
+	}
+	
 	// taskDone means that the reorged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
@@ -2457,19 +2470,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				return false, nil
 			}
 
-			// For global indexes V1+ on partitioned tables, we need to wrap the handle
-			// with the partition ID to create a PartitionHandle.
-			// This is critical for non-clustered tables after EXCHANGE PARTITION,
-			// where duplicate _tidb_rowid values exist across partitions.
-			// Legacy indexes (version 0) don't use PartitionHandle in the key.
 			actualHandle := handle
-			hasGlobalIndexV1 := false
-			for _, index := range w.indexes {
-				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
-					hasGlobalIndexV1 = true
-					break
-				}
-			}
 			if hasGlobalIndexV1 {
 				// Wrap the handle with partition ID for global indexes V1+
 				actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
