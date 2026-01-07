@@ -4,14 +4,20 @@ package utils_test
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/badger"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	unistoretikv "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/lockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -91,23 +97,82 @@ func (m *mockGCStatesClientWithTracking) GetAllKeyspacesGCStates(ctx context.Con
 	return m.inner.GetAllKeyspacesGCStates(ctx)
 }
 
-// mockPDClientWithGCStates implements pd.Client interface using GCStatesManagerForTest
+// mockPDClientWithGCStates implements pd.Client interface using full MockPD
 // This provides complete, validated mock behavior with call tracking for assertions.
 type mockPDClientWithGCStates struct {
 	pd.Client
 	mu                      sync.Mutex
-	gcManager               *unistoretikv.GCStatesManagerForTest
+	mockPD                  *unistoretikv.MockPD
 	gcStatesClients         map[uint32]*mockGCStatesClientWithTracking
 	updateServiceCalls      int
 	lastServiceID           string
 	lastTTL                 int64
 	lastSafePoint           uint64
+	// Test resources for cleanup
+	db      *badger.DB
+	dbPath  string
+	logPath string
+	rm      *unistoretikv.MockRegionManager
 }
 
-func newMockPDClientWithGCStates() *mockPDClientWithGCStates {
+// createTestDB creates a BadgerDB instance for testing
+func createTestDB(t *testing.T) (*badger.DB, string, string, error) {
+	dbPath := t.TempDir()
+	logPath := t.TempDir()
+	subPath := fmt.Sprintf("/%d", 0)
+	opts := badger.DefaultOptions
+	opts.Dir = filepath.Join(dbPath, subPath)
+	opts.ValueDir = filepath.Join(logPath, subPath)
+	opts.ManagedTxns = true
+	db, err := badger.Open(opts)
+	return db, dbPath, logPath, err
+}
+
+func newMockPDClientWithGCStates(t *testing.T) *mockPDClientWithGCStates {
+	// Create BadgerDB instance
+	db, dbPath, logPath, err := createTestDB(t)
+	require.NoError(t, err)
+
+	// Create DBBundle
+	dbBundle := &mvcc.DBBundle{
+		DB:        db,
+		LockStore: lockstore.NewMemStore(4096),
+	}
+
+	// Create MockRegionManager
+	rm, err := unistoretikv.NewMockRegionManager(dbBundle, 1, unistoretikv.RegionOptions{
+		StoreAddr:  "127.0.0.1:10086",
+		PDAddr:     "127.0.0.1:2379",
+		RegionSize: 96 * 1024 * 1024,
+	})
+	require.NoError(t, err)
+
+	// Create MockPD with the region manager
+	mockPD := unistoretikv.NewMockPD(rm)
+
 	return &mockPDClientWithGCStates{
-		gcManager:       unistoretikv.NewGCStatesManagerForTest(),
+		mockPD:          mockPD,
 		gcStatesClients: make(map[uint32]*mockGCStatesClientWithTracking),
+		db:              db,
+		dbPath:          dbPath,
+		logPath:         logPath,
+		rm:              rm,
+	}
+}
+
+// Cleanup cleans up test resources
+func (m *mockPDClientWithGCStates) Cleanup() {
+	if m.rm != nil {
+		_ = m.rm.Close()
+	}
+	if m.db != nil {
+		_ = m.db.Close()
+	}
+	if m.dbPath != "" {
+		_ = os.RemoveAll(m.dbPath)
+	}
+	if m.logPath != "" {
+		_ = os.RemoveAll(m.logPath)
 	}
 }
 
@@ -119,11 +184,11 @@ func (m *mockPDClientWithGCStates) UpdateServiceGCSafePoint(ctx context.Context,
 	m.lastSafePoint = safePoint
 	m.mu.Unlock()
 
-	return m.gcManager.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+	return m.mockPD.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
 }
 
 func (m *mockPDClientWithGCStates) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
-	return m.gcManager.UpdateGCSafePoint(ctx, safePoint)
+	return m.mockPD.UpdateGCSafePoint(ctx, safePoint)
 }
 
 func (m *mockPDClientWithGCStates) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient {
@@ -134,7 +199,7 @@ func (m *mockPDClientWithGCStates) GetGCStatesClient(keyspaceID uint32) pdgc.GCS
 	if !exists {
 		// Wrap the real client with tracking
 		cli = &mockGCStatesClientWithTracking{
-			inner: m.gcManager.GetGCStatesClient(keyspaceID),
+			inner: m.mockPD.GetGCStatesClient(keyspaceID),
 		}
 		m.gcStatesClients[keyspaceID] = cli
 	}
@@ -154,7 +219,8 @@ func TestNewGCSafePointManager_WithoutKeyspace(t *testing.T) {
 	newCfg.KeyspaceName = ""
 	config.StoreGlobalConfig(&newCfg)
 
-	pdClient := newMockPDClientWithGCStates()
+	pdClient := newMockPDClientWithGCStates(t)
+	t.Cleanup(pdClient.Cleanup)
 	storage := &mockStorage{
 		codec: &mockCodec{keyspaceID: 0},
 	}
@@ -190,7 +256,8 @@ func TestNewGCSafePointManager_WithKeyspace(t *testing.T) {
 	newCfg.KeyspaceName = "test_keyspace"
 	config.StoreGlobalConfig(&newCfg)
 
-	pdClient := newMockPDClientWithGCStates()
+	pdClient := newMockPDClientWithGCStates(t)
+	t.Cleanup(pdClient.Cleanup)
 	keyspaceID := uint32(123)
 	storage := &mockStorage{
 		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
@@ -233,7 +300,8 @@ func TestUnifiedGCManager_UpdateServiceSafePoint(t *testing.T) {
 	newCfg.KeyspaceName = ""
 	config.StoreGlobalConfig(&newCfg)
 
-	pdClient := newMockPDClientWithGCStates()
+	pdClient := newMockPDClientWithGCStates(t)
+	t.Cleanup(pdClient.Cleanup)
 	storage := &mockStorage{
 		codec: &mockCodec{keyspaceID: 0},
 	}
@@ -275,7 +343,8 @@ func TestKeyspaceGCManager_UpdateServiceSafePoint(t *testing.T) {
 	newCfg.KeyspaceName = "test_ks"
 	config.StoreGlobalConfig(&newCfg)
 
-	pdClient := newMockPDClientWithGCStates()
+	pdClient := newMockPDClientWithGCStates(t)
+	t.Cleanup(pdClient.Cleanup)
 	keyspaceID := uint32(456)
 	storage := &mockStorage{
 		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
@@ -329,7 +398,8 @@ func TestUnifiedGCManager_StartServiceSafePointKeeper(t *testing.T) {
 	newCfg.KeyspaceName = ""
 	config.StoreGlobalConfig(&newCfg)
 
-	pdClient := newMockPDClientWithGCStates()
+	pdClient := newMockPDClientWithGCStates(t)
+	t.Cleanup(pdClient.Cleanup)
 	storage := &mockStorage{
 		codec: &mockCodec{keyspaceID: 0},
 	}
@@ -373,7 +443,8 @@ func TestKeyspaceGCManager_StartServiceSafePointKeeper(t *testing.T) {
 	newCfg.KeyspaceName = "test_ks"
 	config.StoreGlobalConfig(&newCfg)
 
-	pdClient := newMockPDClientWithGCStates()
+	pdClient := newMockPDClientWithGCStates(t)
+	t.Cleanup(pdClient.Cleanup)
 	keyspaceID := uint32(789)
 	storage := &mockStorage{
 		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
@@ -425,7 +496,8 @@ func TestKeyspaceGCManager_ErrorHandling(t *testing.T) {
 	newCfg.KeyspaceName = "test_ks"
 	config.StoreGlobalConfig(&newCfg)
 
-	pdClient := newMockPDClientWithGCStates()
+	pdClient := newMockPDClientWithGCStates(t)
+	t.Cleanup(pdClient.Cleanup)
 	keyspaceID := uint32(999)
 	storage := &mockStorage{
 		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
@@ -438,7 +510,7 @@ func TestKeyspaceGCManager_ErrorHandling(t *testing.T) {
 
 	// Test 1: SetGCBarrier with invalid parameters (validated by real implementation)
 	// First advance txn safe point to test barrier behind txn safe point error
-	gcController := pdClient.gcManager.GetGCInternalController(keyspaceID)
+	gcController := pdClient.mockPD.GetGCInternalController(keyspaceID)
 	_, err = gcController.AdvanceTxnSafePoint(ctx, 5000)
 	require.NoError(t, err)
 
@@ -486,7 +558,8 @@ func TestStorageAwareWrappers(t *testing.T) {
 	newCfg1 := originalCfg
 	newCfg1.KeyspaceName = ""
 	config.StoreGlobalConfig(&newCfg1)
-	pdClient1 := newMockPDClientWithGCStates()
+	pdClient1 := newMockPDClientWithGCStates(t)
+	t.Cleanup(pdClient1.Cleanup)
 	storage1 := &mockStorage{
 		codec: &mockCodec{keyspaceID: 0},
 	}
@@ -506,7 +579,8 @@ func TestStorageAwareWrappers(t *testing.T) {
 	newCfg2 := originalCfg
 	newCfg2.KeyspaceName = "test_ks"
 	config.StoreGlobalConfig(&newCfg2)
-	pdClient2 := newMockPDClientWithGCStates()
+	pdClient2 := newMockPDClientWithGCStates(t)
+	t.Cleanup(pdClient2.Cleanup)
 	keyspaceID := uint32(111)
 	storage2 := &mockStorage{
 		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
