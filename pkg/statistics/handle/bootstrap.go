@@ -785,6 +785,11 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 }
 
 func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
+	failpoint.Inject("mockStatsCacheTotalMemory", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			totalMemory = uint64(v)
+		}
+	})
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
