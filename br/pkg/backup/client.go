@@ -130,24 +130,21 @@ func NewBackupContext(round uint64, store *metapb.Store, onComplete func(storeID
 	}
 }
 
-// WithBackupOperation sets the common backup operation fields
+// WithBackupOperation sets all backup operation fields including client and channels
 func (ctx *BackupContext) WithBackupOperation(
+	client backuppb.BackupClient,
+	responseCh chan *ResponseAndStore,
 	limiter *ResourceConcurrentLimiter,
 	request backuppb.BackupRequest,
 	concurrency uint,
 	stateNotifier chan BackupRetryPolicy,
 ) *BackupContext {
+	ctx.Client = client
+	ctx.ResponseCh = responseCh
 	ctx.Limiter = limiter
 	ctx.Request = request
 	ctx.Concurrency = concurrency
 	ctx.StateNotifier = stateNotifier
-	return ctx
-}
-
-// WithInitial extends a BackupContext with initial backup start configuration
-func (ctx *BackupContext) WithInitial(client backuppb.BackupClient, responseCh chan *ResponseAndStore) *BackupContext {
-	ctx.Client = client
-	ctx.ResponseCh = responseCh
 	return ctx
 }
 
@@ -163,39 +160,8 @@ func (ctx *BackupContext) WithRestart(
 	return ctx
 }
 
-// validateStore performs comprehensive store validation and optional client acquisition
-
-// validateAndPrepareStore performs store validation and preparation for backup
-func (s *MainBackupSender) validateAndPrepareStore(ctx context.Context, backupCtx *BackupContext) error {
-	// Basic input validation
-	if backupCtx == nil {
-		return errors.New("backup context cannot be nil")
-	}
-	if backupCtx.Store == nil || backupCtx.Store.GetId() == 0 {
-		return errors.New("store ID must be set")
-	}
-
-	// For non-restarts, require client and response channel to be pre-set
-	if !backupCtx.IsRestart {
-		if backupCtx.Client == nil {
-			return errors.New("backup client must be set")
-		}
-		if backupCtx.ResponseCh == nil {
-			return errors.New("response channel must be set")
-		}
-	}
-
-	// Restart validation is now done before calling StartStoreBackup
-
-	return nil
-}
-
-// StartOrRestartStoreBackup handles both starting and restarting store backups
+// StartStoreBackup handles both starting and restarting store backups
 func (s *MainBackupSender) StartStoreBackup(ctx context.Context, backupCtx *BackupContext) (context.Context, context.CancelFunc, error) {
-	// Unified validation and preparation (handles all input validation and store checks)
-	if err := s.validateAndPrepareStore(ctx, backupCtx); err != nil {
-		return nil, nil, err
-	}
 
 	// Handle restart-specific resource management
 	if backupCtx.IsRestart {
@@ -349,16 +315,15 @@ func (bc *Client) resolveTransactionLocks(handleCtx context.Context, round uint6
 	}
 }
 
-// infinite loop to backup ranges on all tikv stores
-// if one client grpc disconnected. resend backup request to this store.
-// if new tikv store joined. send backup request to new store.
-// if one tikv store rebooted. consider leader changes, resend backup request to all stores.
-// if one tikv store disconnected. consider leader changes, resend backup request to all stores.
+// RunLoop manages distributed backup across TiKV stores, handling:
+// - New store joins: Send backup requests to new stores
+// - Store reboots: Handle leader changes, redistribute backup requests
+// - Store alive but leader evicted: Handle leader changes, retry backup on idle store
+// - Client disconnections: Reconnect and retry failed operations
 func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
-	// a flag to indicate the backup round
-	// one backup round try to backup all ranges on all tikv stores.
-	// ideally, backup should be finished in one round
-	// unless the cluster state changed or some kv errors occurred.
+	// Round counter for backup iterations. Each round attempts to backup
+	// all remaining ranges across all TiKV stores. Ideally completes in
+	// one round, unless cluster topology changes or KV errors occur.
 	round := uint64(0)
 	// reset grpc connection every round except key_locked error.
 	resetConnections := true
@@ -370,24 +335,25 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	onStoreBackupComplete := func(storeID uint64) {
 		storeBackupCompletionTimes[storeID] = time.Now()
 	}
+
+	// Main backup round loop - each iteration attempts to backup remaining ranges
 mainLoop:
 	for {
 		round += 1
-		// sleep to prevent triggering too many backup rounds during TiKV cluster abnormal states.
+		// Rate limiting to prevent excessive rounds during cluster instability
 		time.Sleep(RoundSleepInterval)
+
 		logutil.CL(ctx).Info("Starting backup round",
 			zap.Uint64("round", round),
 			zap.Bool("reset-connections", resetConnections))
 
-		// initialize round-specific variables
-		// create error context to track and limit errors during this backup round
-		errContext := utils.NewErrorContext("MainBackupLoop", 10)
-
-		// a channel to collect all store backup results
+		// TiKV retries ~5m for some errors, so 5 is fine for unknowns.
+		errContext := utils.NewErrorContext("MainBackupLoop", 5)
+		// create channels for sending/collecting all store backup results
 		globalBackupResultCh := make(chan *ResponseAndStore)
-		// channel slices to receive backup region result from different tikv stores
 		storeBackupResultChMap := make(map[uint64]chan *ResponseAndStore)
-		// track when each store backup started for timeout detection
+
+		// track when each store backup end time for idle detection
 		storeBackupCompletionTimes = make(map[uint64]time.Time)
 
 		// mainCtx used to control mainLoop
@@ -396,17 +362,14 @@ mainLoop:
 
 		// handleCtx used to control handleLoop
 		// every round has another infinite loop to handle all tikv backup responses
-		// until backup finished, store state changed or error occurred.
+		// until this round finished, store state changed or error occurred.
 		handleCtx, handleCancel := context.WithCancel(mainCtx)
 
-		// Compute the left ranges that are not backed up yet
 		start := time.Now()
-
-		// collect transaction locks encountered during this round for resolution
 		var allTxnLocks []*txnlock.Lock
+
 		select {
 		case <-ctx.Done():
-			// ctx cancel outside
 			mainCancel()
 			return ctx.Err()
 		default:
@@ -417,8 +380,7 @@ mainLoop:
 				return getIncompleteErr
 			}
 			if len(loop.BackupReq.SubRanges) == 0 {
-				// all range backuped
-				logutil.CL(ctx).Info("Backup round completed successfully - all ranges backed up",
+				logutil.CL(ctx).Info("Backup completed successfully - all ranges backed up",
 					zap.Uint64("round", round),
 					zap.Int("txn-locks-resolved", len(allTxnLocks)))
 				mainCancel()
@@ -433,7 +395,6 @@ mainLoop:
 
 		allStores, err := bc.getBackupStores(mainCtx, loop.ReplicaReadLabel)
 		if err != nil {
-			// PD connection should already be established, so this error is likely temporary and retryable
 			logutil.CL(mainCtx).Error("Failed to retrieve backup stores from PD - will retry in next round",
 				zap.Uint64("round", round),
 				zap.Error(err),
@@ -444,7 +405,7 @@ mainLoop:
 		for _, store := range allStores {
 			storeID := store.GetId()
 
-			// Check store liveness
+			// Verify store health before attempting backup
 			if err := utils.CheckStoreLiveness(store); err != nil {
 				logutil.CL(mainCtx).Warn("Store temporarily unavailable - skipping for this round",
 					zap.Uint64("round", round),
@@ -453,7 +414,6 @@ mainLoop:
 				continue
 			}
 
-			// Acquire client
 			cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, resetConnections)
 			if err != nil {
 				logutil.CL(ctx).Error("Failed to prepare store for backup - will retry in next round",
@@ -464,18 +424,19 @@ mainLoop:
 				bc.cleanupRound(handleCancel, mainCancel, &resetConnections)
 				continue mainLoop
 			}
+
+			// Set up response channel for this store's backup results
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
+
+			// Create and launch backup operation for this store
 			backupCtx := NewBackupContext(round, store, onStoreBackupComplete).
-				WithBackupOperation(loop.Limiter, loop.BackupReq, loop.Concurrency, loop.StateNotifier).
-				WithInitial(cli, ch)
+				WithBackupOperation(cli, ch, loop.Limiter, loop.BackupReq, loop.Concurrency, loop.StateNotifier)
 			loop.BackupSender.StartStoreBackup(mainCtx, backupCtx)
 		}
-		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
-		// reset ticker for periodic incomplete ranges update
+
 		incompleteRangesUpdateTicker.Reset(IncompleteRangesUpdateInterval)
-		// ticker to check for store backup timeouts (every 30 seconds)
 		storeTimeoutCheckTicker := time.NewTicker(30 * time.Second)
 		defer storeTimeoutCheckTicker.Stop()
 	handleLoop:
@@ -489,24 +450,27 @@ mainLoop:
 					mainCancel()
 					return err
 				}
+
 			case <-storeTimeoutCheckTicker.C:
-				// check for stores that have been idle for more than 1 minute
 				now := time.Now()
 				for storeID, endTime := range storeBackupCompletionTimes {
-					if now.Sub(endTime) > time.Minute {
+					if now.Sub(endTime) > 10*time.Minute {
 						logutil.CL(mainCtx).Warn("Store backup timeout detected - triggering restart for idle store",
 							zap.Uint64("storeID", storeID),
 							zap.Uint64("round", round),
 							zap.Duration("idle-time", now.Sub(endTime)))
 
 						delete(storeBackupCompletionTimes, storeID)
-						// Send restart notification to state notifier - let existing handler deal with it
-						// Use non-blocking send to avoid issues if receiver is busy
+
+						// Non-blocking notification to avoid blocking the monitoring loop
 						go func() {
 							select {
 							case <-mainCtx.Done():
 								return
 							case loop.StateNotifier <- BackupRetryPolicy{One: storeID}:
+								logutil.CL(mainCtx).Info("Store backup restart triggered for idle store",
+									zap.Uint64("storeID", storeID),
+									zap.Uint64("round", round))
 							}
 						}()
 					}
@@ -518,6 +482,7 @@ mainLoop:
 					bc.cleanupRound(handleCancel, mainCancel, &resetConnections)
 					continue mainLoop
 				}
+
 				if storeBackupInfo.One != 0 {
 					storeID := storeBackupInfo.One
 					logutil.CL(mainCtx).Info("Received store state change notification - retrying backup for store",
@@ -532,7 +497,7 @@ mainLoop:
 							zap.Error(err))
 						continue
 					}
-					// Validate store and acquire client for restart
+
 					if err := utils.CheckStoreLiveness(store); err != nil {
 						logutil.CL(mainCtx).Warn("Store became unavailable during restart - skipping",
 							zap.Uint64("storeID", storeID),
@@ -550,29 +515,19 @@ mainLoop:
 						continue
 					}
 
-					// Create response channel for restart (same as initial backup)
 					restartCh := make(chan *ResponseAndStore)
 					storeBackupResultChMap[storeID] = restartCh
 
-					// Create restart context using structured inheritance pattern
 					retryCtx := NewBackupContext(round, store, onStoreBackupComplete).
 						WithRestart(
 							handleCancel,
 							func(ctx context.Context, round uint64) {
-								// Create global channel and start collection
 								loop.CollectStoreBackupsAsync(ctx, round, storeBackupResultChMap, globalBackupResultCh)
 							},
-						).WithBackupOperation(
-						// Backup operation fields needed for restart
-						loop.Limiter,
-						loop.BackupReq,
-						loop.Concurrency,
-						loop.StateNotifier,
-					).WithInitial(cli, restartCh) // Client and response channel set for restart
+						).WithBackupOperation(cli, restartCh, loop.Limiter, loop.BackupReq, loop.Concurrency, loop.StateNotifier)
 
 					newHandleCtx, newHandleCancel, err := loop.StartStoreBackup(mainCtx, retryCtx)
 					if err != nil {
-						// retry failed, try next round
 						bc.cleanupRound(handleCancel, mainCancel, &resetConnections)
 						continue mainLoop
 					}
@@ -582,12 +537,12 @@ mainLoop:
 				}
 			case respAndStore, ok := <-globalBackupResultCh:
 				if !ok {
-					// resolve all txn locks before next round starts
+					// Round complete - resolve transaction locks and prepare for next round
 					bc.resolveTransactionLocks(handleCtx, round, allTxnLocks, loop)
 					resetConnections = false
-					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
 				}
+
 				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree)
 				if err != nil {
 					// if error occurred here, stop the backup process
