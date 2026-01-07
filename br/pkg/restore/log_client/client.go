@@ -2020,14 +2020,14 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		gcSafePointKeeperCancel()
 		// set the ttl to 0 to remove the gc-safe-point
 		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
+		if err := utils.UpdateServiceSafePointWithStorage(ctx, pdClient, rc.GetDomain().Store(), sp); err != nil {
 			log.Warn("failed to update service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
-	err = utils.StartServiceSafePointKeeper(cctx, pdClient, sp)
+	err = utils.StartServiceSafePointKeeperWithStorage(cctx, pdClient, rc.GetDomain().Store(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
