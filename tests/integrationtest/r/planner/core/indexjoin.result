@@ -48,14 +48,13 @@ rollback;
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
 id	task	access object	operator info
 Projection	root		planner__core__indexjoin.t.a, Column, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-└─Projection	root		Column, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-  └─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
-    ├─IndexReader(Build)	root		index:IndexFullScan
-    │ └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
-      └─IndexReader	root		index:Selection
-        └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
-          └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
+└─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+    └─IndexReader	root		index:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
+        └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
 select /*+ INL_JOIN(tmp) */ t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a order by t1.a, tmp.count_b;
 a	count_b
 1	3
@@ -67,15 +66,14 @@ a	count_b
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b;
 id	task	access object	operator info
 Projection	root		planner__core__indexjoin.t.a, Column, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-└─Projection	root		Column, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-  └─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a), eq(planner__core__indexjoin.t1.b, Column)
-    ├─IndexReader(Build)	root		index:Selection
-    │ └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
-    │   └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
-      └─IndexReader	root		index:Selection
-        └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
-          └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
+└─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a), eq(planner__core__indexjoin.t1.b, Column)
+  ├─IndexReader(Build)	root		index:Selection
+  │ └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
+  │   └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+    └─IndexReader	root		index:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
+        └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
 select /*+ INL_JOIN(tmp) */  t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b order by  t1.a, tmp.count_b;
 a	count_b
 select /*+ HASH_JOIN(tmp) */  t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b order by  t1.a, tmp.count_b;
@@ -83,15 +81,14 @@ a	count_b
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.count_b = t1.b;
 id	task	access object	operator info
 Projection	root		planner__core__indexjoin.t.a, Column, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-└─Projection	root		Column, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-  └─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.t1.b, Column)]
-    ├─HashAgg(Build)	root		group by:planner__core__indexjoin.t.a, funcs:count(Column)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
-    │ └─IndexReader	root		index:HashAgg
-    │   └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column
-    │     └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
-    └─IndexReader(Probe)	root		index:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
-        └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+└─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.t1.b, Column)]
+  ├─HashAgg(Build)	root		group by:planner__core__indexjoin.t.a, funcs:count(Column)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+  │ └─IndexReader	root		index:HashAgg
+  │   └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column
+  │     └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	root		index:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
+      └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a;
 id	task	access object	operator info
 Projection	root		planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
@@ -195,14 +192,13 @@ HashJoin	root		inner join, equal:[eq(Column, planner__core__indexjoin.t1.b)]
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
 id	task	access object	operator info
 Projection	root		planner__core__indexjoin.t.a, Column, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-└─Projection	root		Column, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-  └─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
-    ├─IndexReader(Build)	root		index:IndexFullScan
-    │ └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
-      └─IndexReader	root		index:Selection
-        └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
-          └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
+└─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+    └─IndexReader	root		index:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
+        └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ b, a from t group by b, a) tmp, t1 where tmp.a=t1.a;
 id	task	access object	operator info
 Projection	root		planner__core__indexjoin.t.b, planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
