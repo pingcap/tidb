@@ -2079,7 +2079,7 @@ func (p *PiTRTaskInfo) hasTiFlashItemsInCheckpoint() bool {
 }
 
 func (p *PiTRTaskInfo) getRestoreStartTS(ctx context.Context, pdClient pd.Client) (uint64, error) {
-	if p.CheckpointInfo != nil && p.CheckpointInfo.Metadata != nil && p.CheckpointInfo.Metadata.RestoreStartTS != 0 {
+	if p.CheckpointInfo != nil && p.CheckpointInfo.Metadata != nil {
 		return p.CheckpointInfo.Metadata.RestoreStartTS, nil
 	}
 	return restore.GetTSWithRetry(ctx, pdClient)
