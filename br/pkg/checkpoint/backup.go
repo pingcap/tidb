@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 )
 
 type BackupKeyType = string
@@ -52,7 +52,7 @@ func valueMarshalerForBackup(group *RangeGroup[BackupKeyType, BackupValueType]) 
 // only for test
 func StartCheckpointBackupRunnerForTest(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage objstore.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	tick time.Duration,
 	timer GlobalTimer,
@@ -70,7 +70,7 @@ func StartCheckpointBackupRunnerForTest(
 
 func StartCheckpointRunnerForBackup(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage objstore.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
@@ -117,7 +117,7 @@ func AppendForBackup(
 // and return the total time cost in the past executions
 func WalkCheckpointFileForBackup(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s objstore.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	fn func(BackupKeyType, BackupValueType) error,
 ) (time.Duration, error) {
@@ -134,7 +134,7 @@ type CheckpointMetadataForBackup struct {
 }
 
 // load checkpoint metadata from the external storage
-func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadataForBackup, error) {
+func LoadCheckpointMetadata(ctx context.Context, s objstore.ExternalStorage) (*CheckpointMetadataForBackup, error) {
 	m := &CheckpointMetadataForBackup{}
 	err := loadCheckpointMeta(ctx, s, CheckpointMetaPathForBackup, m)
 	if err != nil {
@@ -145,10 +145,10 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 }
 
 // save the checkpoint metadata into the external storage
-func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadataForBackup) error {
+func SaveCheckpointMetadata(ctx context.Context, s objstore.ExternalStorage, meta *CheckpointMetadataForBackup) error {
 	return saveCheckpointMetadata(ctx, s, meta, CheckpointMetaPathForBackup)
 }
 
-func RemoveCheckpointDataForBackup(ctx context.Context, s storage.ExternalStorage) error {
+func RemoveCheckpointDataForBackup(ctx context.Context, s objstore.ExternalStorage) error {
 	return removeCheckpointData(ctx, s, CheckpointBackupDir)
 }

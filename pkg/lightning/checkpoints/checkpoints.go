@@ -31,7 +31,6 @@ import (
 
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -1126,14 +1126,14 @@ type FileCheckpointsDB struct {
 	checkpoints checkpointspb.CheckpointsModel
 	ctx         context.Context
 	path        string
-	fileName    string
-	exStorage   storage.ExternalStorage
+	fileName  string
+	exStorage objstore.ExternalStorage
 }
 
 func newFileCheckpointsDB(
 	ctx context.Context,
 	path string,
-	exStorage storage.ExternalStorage,
+	exStorage objstore.ExternalStorage,
 	fileName string,
 ) (*FileCheckpointsDB, error) {
 	cpdb := &FileCheckpointsDB{
@@ -1202,14 +1202,14 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 func NewFileCheckpointsDBWithExstorageFileName(
 	ctx context.Context,
 	path string,
-	s storage.ExternalStorage,
+	s objstore.ExternalStorage,
 	fileName string,
 ) (*FileCheckpointsDB, error) {
 	return newFileCheckpointsDB(ctx, path, s, fileName)
 }
 
 // createExstorageByCompletePath create ExternalStorage by completePath and return fileName.
-func createExstorageByCompletePath(ctx context.Context, completePath string) (storage.ExternalStorage, string, error) {
+func createExstorageByCompletePath(ctx context.Context, completePath string) (objstore.ExternalStorage, string, error) {
 	if completePath == "" {
 		return nil, "", nil
 	}
@@ -1217,11 +1217,11 @@ func createExstorageByCompletePath(ctx context.Context, completePath string) (st
 	if err != nil {
 		return nil, "", errors.Trace(err)
 	}
-	u, err := storage.ParseBackend(newPath, nil)
+	u, err := objstore.ParseBackend(newPath, nil)
 	if err != nil {
 		return nil, "", errors.Trace(err)
 	}
-	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
+	s, err := objstore.New(ctx, u, &objstore.ExternalStorageOptions{})
 	if err != nil {
 		return nil, "", errors.Trace(err)
 	}
@@ -1233,7 +1233,7 @@ func separateCompletePath(completePath string) (fileName string, newPath string,
 	if completePath == "" {
 		return "", "", nil
 	}
-	purl, err := storage.ParseRawURL(completePath)
+	purl, err := objstore.ParseRawURL(completePath)
 	if err != nil {
 		return "", "", errors.Trace(err)
 	}

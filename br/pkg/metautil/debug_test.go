@@ -24,8 +24,8 @@ import (
 	"github.com/gogo/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +34,7 @@ func flushMetaFile(
 	t *testing.T,
 	fname string,
 	metaFile *backuppb.MetaFile,
-	storage storage.ExternalStorage,
+	storage objstore.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 ) *backuppb.File {
 	content, err := metaFile.Marshal()
@@ -62,7 +62,7 @@ func flushStatsFile(
 	t *testing.T,
 	fname string,
 	statsFile *backuppb.StatsFile,
-	storage storage.ExternalStorage,
+	storage objstore.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 ) *backuppb.StatsFileIndex {
 	content, err := proto.Marshal(statsFile)
@@ -89,7 +89,7 @@ func flushStatsFile(
 func TestDecodeMetaFile(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	s, err := storage.NewLocalStorage(base)
+	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	cipher := &backuppb.CipherInfo{CipherType: 1}
 	file1 := flushMetaFile(ctx, t, "data", &backuppb.MetaFile{

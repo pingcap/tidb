@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/exp/slices"
 )
@@ -115,7 +115,7 @@ func (rc *SnapClient) CreateTablesTest(
 
 func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 	builder *PipelineConcurrentBuilder,
-	s storage.ExternalStorage,
+	s objstore.ExternalStorage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
 ) {

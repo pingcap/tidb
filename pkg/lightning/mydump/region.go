@@ -23,9 +23,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
@@ -167,7 +167,7 @@ type DataDivideConfig struct {
 	// when nil, no limit.
 	IOWorkers *worker.Pool
 	// we need it read row-count for parquet, and to read line terminator to split large CSV files
-	Store     storage.ExternalStorage
+	Store     objstore.ExternalStorage
 	TableMeta *MDTableMeta
 	// whether to skip reading parquet row count
 	SkipParquetRowCount bool
@@ -184,7 +184,7 @@ type DataDivideConfig struct {
 func NewDataDivideConfig(cfg *config.Config,
 	columns int,
 	ioWorkers *worker.Pool,
-	store storage.ExternalStorage,
+	store objstore.ExternalStorage,
 	meta *MDTableMeta,
 ) *DataDivideConfig {
 	return &DataDivideConfig{

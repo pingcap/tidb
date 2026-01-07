@@ -19,14 +19,14 @@ import (
 
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
 type TestRestoreSchemaSuite struct {
 	Mock     *mock.Cluster
 	MockGlue *gluemock.MockGlue
-	Storage  storage.ExternalStorage
+	Storage  objstore.ExternalStorage
 }
 
 func CreateRestoreSchemaSuite(t *testing.T) *TestRestoreSchemaSuite {
@@ -36,7 +36,7 @@ func CreateRestoreSchemaSuite(t *testing.T) *TestRestoreSchemaSuite {
 	s.Mock, err = mock.NewCluster()
 	require.NoError(t, err)
 	base := t.TempDir()
-	s.Storage, err = storage.NewLocalStorage(base)
+	s.Storage, err = objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	require.NoError(t, s.Mock.Start())
 	t.Cleanup(func() {

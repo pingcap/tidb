@@ -12,8 +12,8 @@ import (
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -25,9 +25,9 @@ func TestStartWithComparator(t *testing.T) {
 	require.False(t, comparator.Compare([]byte("aa_key"), []byte("bb")))
 }
 
-func fakeStorage(t *testing.T) storage.ExternalStorage {
+func fakeStorage(t *testing.T) objstore.ExternalStorage {
 	baseDir := t.TempDir()
-	s, err := storage.NewLocalStorage(baseDir)
+	s, err := objstore.NewLocalStorage(baseDir)
 	require.NoError(t, err)
 	return s
 }
@@ -105,7 +105,7 @@ func fakeCFs() (defaultCFs, writeCFs []*cf) {
 	return
 }
 
-func fakeDataFile(t *testing.T, s storage.ExternalStorage) (defaultCFDataFile, writeCFDataFile *backuppb.DataFileInfo) {
+func fakeDataFile(t *testing.T, s objstore.ExternalStorage) (defaultCFDataFile, writeCFDataFile *backuppb.DataFileInfo) {
 	const (
 		defaultCFFile = "default_cf"
 		writeCFFile   = "write_cf"

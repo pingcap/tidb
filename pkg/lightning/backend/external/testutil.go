@@ -21,10 +21,10 @@ import (
 	"testing"
 
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +40,7 @@ func testReadAndCompare(
 	ctx context.Context,
 	t *testing.T,
 	kvs []common.KvPair,
-	store storage.ExternalStorage,
+	store objstore.ExternalStorage,
 	datas []string,
 	stats []string,
 	startKey dbkv.Key,

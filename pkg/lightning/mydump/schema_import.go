@@ -22,10 +22,10 @@ import (
 
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -69,12 +69,12 @@ type SchemaImporter struct {
 	logger      log.Logger
 	db          *sql.DB
 	sqlMode     mysql.SQLMode
-	store       storage.ExternalStorage
+	store       objstore.ExternalStorage
 	concurrency int
 }
 
 // NewSchemaImporter creates a new SchemaImporter instance.
-func NewSchemaImporter(logger log.Logger, sqlMode mysql.SQLMode, db *sql.DB, store storage.ExternalStorage, concurrency int) *SchemaImporter {
+func NewSchemaImporter(logger log.Logger, sqlMode mysql.SQLMode, db *sql.DB, store objstore.ExternalStorage, concurrency int) *SchemaImporter {
 	return &SchemaImporter{
 		logger:      logger,
 		db:          db,

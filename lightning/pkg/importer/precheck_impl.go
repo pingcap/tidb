@@ -31,7 +31,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -431,14 +431,14 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 		Message:  "Lightning has the correct storage permission",
 	}
 
-	u, err := storage.ParseBackend(ci.cfg.Mydumper.SourceDir, nil)
+	u, err := objstore.ParseBackend(ci.cfg.Mydumper.SourceDir, nil)
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
-	_, err = storage.New(ctx, u, &storage.ExternalStorageOptions{
-		CheckPermissions: []storage.Permission{
-			storage.ListObjects,
-			storage.GetObject,
+	_, err = objstore.New(ctx, u, &objstore.ExternalStorageOptions{
+		CheckPermissions: []objstore.Permission{
+			objstore.ListObjects,
+			objstore.GetObject,
 		},
 	})
 	if err != nil {
@@ -516,7 +516,7 @@ func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*precheck.Check
 		Passed:   true,
 		Message:  "local source dir and temp-kv dir are in different disks",
 	}
-	sourceDir := strings.TrimPrefix(ci.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)
+	sourceDir := strings.TrimPrefix(ci.cfg.Mydumper.SourceDir, objstore.LocalURIPrefix)
 	same, err := common.SameDisk(sourceDir, ci.cfg.TikvImporter.SortedKVDir)
 	if err != nil {
 		return nil, errors.Trace(err)

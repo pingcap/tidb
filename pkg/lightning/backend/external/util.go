@@ -30,10 +30,10 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -58,7 +58,7 @@ func seekPropsOffsets(
 	ctx context.Context,
 	starts []kv.Key,
 	paths []string,
-	exStorage storage.ExternalStorage,
+	exStorage objstore.ExternalStorage,
 ) (_ [][]uint64, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
@@ -143,13 +143,13 @@ func seekPropsOffsets(
 //   - p00000000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195/one-file
 func GetAllFileNames(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store objstore.ExternalStorage,
 	nonPartitionedDir string,
 ) ([]string, error) {
 	var data []string
 
 	err := store.WalkDir(ctx,
-		&storage.WalkOption{},
+		&objstore.WalkOption{},
 		func(path string, size int64) error {
 			// extract the first dir
 			bs := hack.Slice(path)
@@ -188,7 +188,7 @@ func GetAllFileNames(
 
 // CleanUpFiles delete all data and stat files under the same non-partitioned dir.
 // see randPartitionedPrefix for how we partition the files.
-func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartitionedDir string) error {
+func CleanUpFiles(ctx context.Context, store objstore.ExternalStorage, nonPartitionedDir string) error {
 	failpoint.Inject("skipCleanUpFiles", func() {
 		failpoint.Return(nil)
 	})
@@ -201,7 +201,7 @@ func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartiti
 
 // MockExternalEngine generates an external engine with the given keys and values.
 func MockExternalEngine(
-	storage storage.ExternalStorage,
+	storage objstore.ExternalStorage,
 	keys [][]byte,
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
@@ -452,7 +452,7 @@ func (m BaseExternalMeta) Marshal(alias any) ([]byte, error) {
 
 // WriteJSONToExternalStorage writes the serialized external meta JSON to external storage.
 // Usage: Store external meta after appropriate modifications.
-func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store objstore.ExternalStorage, a any) error {
 	if m.ExternalPath == "" {
 		return nil
 	}
@@ -465,7 +465,7 @@ func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store 
 
 // ReadJSONFromExternalStorage reads and unmarshals JSON from external storage into the provided alias.
 // Usage: Retrieve external meta for further processing.
-func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store objstore.ExternalStorage, a any) error {
 	if m.ExternalPath == "" {
 		return nil
 	}

@@ -26,8 +26,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	extstorage "github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -38,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/tidbvar"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -312,7 +312,7 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 	cloudURI := vardef.CloudStorageURI.Load()
 	if s, ok := store.(kv.StorageWithPD); ok {
 		// When setting the cloudURI value by SQL, we already checked the effectiveness, so we don't need to check it again here.
-		u, _ := extstorage.ParseRawURL(cloudURI)
+		u, _ := objstore.ParseRawURL(cloudURI)
 		if len(u.Path) != 0 {
 			u.Path = path.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10))
 			return u.String()
@@ -372,9 +372,9 @@ func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.Tu
 
 // NewObjStoreWithRecording creates an object storage for global sort with
 // request recording.
-func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.AccessStats, extstorage.ExternalStorage, error) {
+func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.AccessStats, objstore.ExternalStorage, error) {
 	rec := &recording.AccessStats{}
-	store, err := newObjStore(ctx, uri, &extstorage.ExternalStorageOptions{
+	store, err := newObjStore(ctx, uri, &objstore.ExternalStorageOptions{
 		AccessRecording: rec,
 	})
 	if err != nil {
@@ -384,16 +384,16 @@ func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.Acces
 }
 
 // NewObjStore creates an object storage for global sort.
-func NewObjStore(ctx context.Context, uri string) (extstorage.ExternalStorage, error) {
+func NewObjStore(ctx context.Context, uri string) (objstore.ExternalStorage, error) {
 	return newObjStore(ctx, uri, nil)
 }
 
-func newObjStore(ctx context.Context, uri string, opts *extstorage.ExternalStorageOptions) (extstorage.ExternalStorage, error) {
-	storeBackend, err := extstorage.ParseBackend(uri, nil)
+func newObjStore(ctx context.Context, uri string, opts *objstore.ExternalStorageOptions) (objstore.ExternalStorage, error) {
+	storeBackend, err := objstore.ParseBackend(uri, nil)
 	if err != nil {
 		return nil, err
 	}
-	store, err := extstorage.New(ctx, storeBackend, opts)
+	store, err := objstore.New(ctx, storeBackend, opts)
 	if err != nil {
 		return nil, err
 	}

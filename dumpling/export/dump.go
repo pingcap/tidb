@@ -18,13 +18,14 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/tidb/pkg/objstore"
+
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/dumpling/cli"
@@ -60,7 +61,7 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore storage.ExternalStorage
+	extStore objstore.ExternalStorage
 	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
@@ -75,11 +76,11 @@ type Dumper struct {
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
-		b, err := storage.ParseBackend(path, nil)
+		b, err := objstore.ParseBackend(path, nil)
 		if err != nil {
 			panic(err)
 		}
-		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
+		s, err := objstore.New(context.Background(), b, &objstore.ExternalStorageOptions{})
 		if err != nil {
 			panic(err)
 		}

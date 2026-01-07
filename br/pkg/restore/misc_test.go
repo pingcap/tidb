@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
@@ -164,7 +164,7 @@ func TestParseLogRestoreTableIDsBlocklistFileName(t *testing.T) {
 func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, 0xFFFFFCCCFFFFF, []int64{1, 2, 3}, []int64{4})
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 }
 
 func writeBlocklistFile(
-	ctx context.Context, t *testing.T, s storage.ExternalStorage,
+	ctx context.Context, t *testing.T, s objstore.ExternalStorage,
 	restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64,
 ) {
 	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, rewriteTs, tableIds, dbIds)
@@ -206,7 +206,7 @@ func fakeTrackerID(tableIds []int64) *utils.PiTRIdTracker {
 func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	writeBlocklistFile(ctx, t, stg, 100, 10, 50, []int64{100, 101, 102}, []int64{103})
 	writeBlocklistFile(ctx, t, stg, 200, 20, 60, []int64{200, 201, 202}, []int64{203})
@@ -254,9 +254,9 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	require.Contains(t, err.Error(), "table_100")
 }
 
-func filesCount(ctx context.Context, s storage.ExternalStorage) int {
+func filesCount(ctx context.Context, s objstore.ExternalStorage) int {
 	count := 0
-	s.WalkDir(ctx, &storage.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
+	s.WalkDir(ctx, &objstore.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
 		count += 1
 		return nil
 	})
@@ -266,7 +266,7 @@ func filesCount(ctx context.Context, s storage.ExternalStorage) int {
 func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	writeBlocklistFile(ctx, t, stg, 100, 10, 50, []int64{100, 101, 102}, []int64{103})
 	writeBlocklistFile(ctx, t, stg, 200, 20, 60, []int64{200, 201, 202}, []int64{203})
@@ -518,7 +518,7 @@ func TestRegionScanner(t *testing.T) {
 func TestFilteringBoundaryConditions(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 
 	// Create a blocklist file with restoreCommitTs=100, restoreStartTs=50
@@ -573,7 +573,7 @@ func TestFilteringBoundaryConditions(t *testing.T) {
 func TestBlocklistWithEmptyArrays(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 
 	testCases := []struct {

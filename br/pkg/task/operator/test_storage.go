@@ -13,7 +13,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -136,7 +136,7 @@ func formatBytes(bytes int64) string {
 
 // TestStorageConfig is the configuration for testing external storage.
 type TestStorageConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	// CleanupOnSuccess indicates whether to cleanup test files on success
 	CleanupOnSuccess bool
@@ -150,7 +150,7 @@ type TestStorageConfig struct {
 type TestContext struct {
 	Ctx           context.Context
 	Report        *TestReport
-	Store         storage.ExternalStorage
+	Store         objstore.ExternalStorage
 	PauseWhenFail bool
 }
 
@@ -182,7 +182,7 @@ func (tc *TestContext) AddResult(result TestResult) {
 
 // DefineFlagsForTestStorageConfig defines flags for test-storage command.
 func DefineFlagsForTestStorageConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "The external storage URI to test.")
 	flags.Bool("cleanup", true, "Whether to cleanup test files on success.")
 	flags.Bool("pause-when-fail", false, "Pause the test when a case fails for debugging.")
@@ -234,12 +234,12 @@ func RunTestStorage(ctx context.Context, cfg TestStorageConfig) error {
 	}
 
 	// Parse and create storage
-	backend, err := storage.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
+	backend, err := objstore.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Annotate(err, "failed to parse storage backend")
 	}
 
-	store, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{
+	store, err := objstore.New(ctx, backend, &objstore.ExternalStorageOptions{
 		SendCredentials: true,
 	})
 	if err != nil {
@@ -475,7 +475,7 @@ func testOpenWithRange(tc *TestContext, name string, expectedData []byte) {
 
 	startOffset := int64(100)
 	endOffset := int64(200)
-	reader, err := tc.Store.Open(tc.Ctx, name, &storage.ReaderOption{
+	reader, err := tc.Store.Open(tc.Ctx, name, &objstore.ReaderOption{
 		StartOffset: &startOffset,
 		EndOffset:   &endOffset,
 	})
@@ -665,7 +665,7 @@ func testWalkDir(tc *TestContext) {
 	}
 
 	var fileCount int
-	err := tc.Store.WalkDir(tc.Ctx, &storage.WalkOption{}, func(path string, size int64) error {
+	err := tc.Store.WalkDir(tc.Ctx, &objstore.WalkOption{}, func(path string, size int64) error {
 		fileCount++
 		return nil
 	})
@@ -717,7 +717,7 @@ func testWalkDirWithSubDir(tc *TestContext, testFile string, testData []byte) {
 
 	// Walk the subdirectory
 	var fileCount int
-	err := tc.Store.WalkDir(tc.Ctx, &storage.WalkOption{
+	err := tc.Store.WalkDir(tc.Ctx, &objstore.WalkOption{
 		SubDir: testDirName,
 	}, func(path string, size int64) error {
 		fileCount++
@@ -781,7 +781,7 @@ func testWalkDirWithPagination(tc *TestContext, testData []byte) {
 	// This forces WalkDir to make multiple internal requests
 	pageSize := int64(3)
 
-	opt := &storage.WalkOption{
+	opt := &objstore.WalkOption{
 		SubDir:    paginationTestDir,
 		ListCount: pageSize, // Small page size to force multiple internal pages
 	}

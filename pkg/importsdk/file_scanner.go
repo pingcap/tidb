@@ -20,10 +20,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"go.uber.org/zap"
 )
 
@@ -39,20 +39,20 @@ type FileScanner interface {
 
 type fileScanner struct {
 	sourcePath string
-	db         *sql.DB
-	store      storage.ExternalStorage
-	loader     *mydump.MDLoader
+	db     *sql.DB
+	store  objstore.ExternalStorage
+	loader *mydump.MDLoader
 	logger     log.Logger
 	config     *SDKConfig
 }
 
 // NewFileScanner creates a new FileScanner
 func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDKConfig) (FileScanner, error) {
-	u, err := storage.ParseBackend(sourcePath, nil)
+	u, err := objstore.ParseBackend(sourcePath, nil)
 	if err != nil {
 		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s, err=%v", sourcePath, err)
 	}
-	store, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
+	store, err := objstore.New(ctx, u, &objstore.ExternalStorageOptions{})
 	if err != nil {
 		return nil, errors.Annotatef(ErrCreateExternalStorage, "source=%s, err=%v", sourcePath, err)
 	}

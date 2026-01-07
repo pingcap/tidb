@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
@@ -44,7 +44,7 @@ func getStatsFileName(physicalID int64) string {
 
 // A lightweight function wrapper to dump the statistic
 type StatsWriter struct {
-	storage storage.ExternalStorage
+	storage objstore.ExternalStorage
 	cipher  *backuppb.CipherInfo
 
 	// final stats file indexes
@@ -56,7 +56,7 @@ type StatsWriter struct {
 }
 
 func newStatsWriter(
-	storage storage.ExternalStorage,
+	storage objstore.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 ) *StatsWriter {
 	return &StatsWriter{
@@ -157,7 +157,7 @@ func (s *StatsWriter) BackupStatsDone(ctx context.Context) ([]*backuppb.StatsFil
 
 func RestoreStats(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage objstore.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	statsHandler *handle.Handle,
 	newTableInfo *model.TableInfo,
@@ -178,7 +178,7 @@ func RestoreStats(
 
 func downloadStats(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage objstore.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	statsFileIndexes []*backuppb.StatsFileIndex,
 	rewriteIDMap map[int64]int64,

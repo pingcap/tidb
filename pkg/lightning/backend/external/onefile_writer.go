@@ -23,12 +23,12 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -58,8 +58,8 @@ const (
 // with only one file for data and stat.
 type OneFileWriter struct {
 	// storage related.
-	store    storage.ExternalStorage
-	kvStore  *KeyValueStore
+	store   objstore.ExternalStorage
+	kvStore *KeyValueStore
 	kvBuffer *membuf.Buffer
 
 	// Statistic information per writer.
@@ -72,9 +72,9 @@ type OneFileWriter struct {
 	filenamePrefix string
 	rnd            *rand.Rand
 	dataFile       string
-	statFile       string
-	dataWriter     storage.ExternalFileWriter
-	statWriter     storage.ExternalFileWriter
+	statFile   string
+	dataWriter objstore.ExternalFileWriter
+	statWriter objstore.ExternalFileWriter
 
 	onClose OnWriterCloseFunc
 	closed  bool
@@ -88,9 +88,9 @@ type OneFileWriter struct {
 	currDupCnt int
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
 	recordedDupCnt int
-	dupFile        string
-	dupWriter      storage.ExternalFileWriter
-	dupKVStore     *KeyValueStore
+	dupFile    string
+	dupWriter  objstore.ExternalFileWriter
+	dupKVStore *KeyValueStore
 
 	minKey []byte
 	maxKey []byte
@@ -109,7 +109,7 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	}
 
 	dataFile := filepath.Join(w.getPartitionedPrefix(), "one-file")
-	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
+	dataWriter, err := w.store.Create(ctx, dataFile, &objstore.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    w.partSize,
 	})
@@ -117,7 +117,7 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 		return err
 	}
 	statFile := filepath.Join(w.getPartitionedPrefix()+statSuffix, "one-file")
-	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
+	statWriter, err := w.store.Create(ctx, statFile, &objstore.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    MinUploadPartSize,
 	})
@@ -141,7 +141,7 @@ func (w *OneFileWriter) lazyInitDupFile(ctx context.Context) error {
 	}
 
 	dupFile := filepath.Join(w.getPartitionedPrefix()+dupSuffix, "one-file")
-	dupWriter, err := w.store.Create(ctx, dupFile, &storage.WriterOption{
+	dupWriter, err := w.store.Create(ctx, dupFile, &objstore.WriterOption{
 		// too many duplicates will cause duplicate resolution part very slow,
 		// we temporarily use 1 as we don't expect too many duplicates, if there
 		// are, it will be slow anyway.
