@@ -7198,5 +7198,8 @@ func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIS
 }
 
 func isReservedSchemaObjInNextGen(id int64) bool {
+	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
+		failpoint.Return(false)
+	})
 	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
 }
