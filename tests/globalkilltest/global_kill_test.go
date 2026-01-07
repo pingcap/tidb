@@ -840,3 +840,51 @@ func TestConnIDUpgradeAndDowngrade(t *testing.T) {
 	conn.mustBe32(t)
 	conn.Close()
 }
+
+func TestKillQueryOnIdleConnection(t *testing.T) {
+	s := createGlobalKillSuite(t, true)
+	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
+
+	// tidb1 & conn1a,conn1b
+	port1 := *tidbStartPort + 1
+	tidb1, err := s.startTiDBWithPD(port1, *tidbStatusPort+1, *pdClientPath)
+	require.NoError(t, err)
+	defer s.stopService("tidb1", tidb1, true)
+
+	db1, err := s.connectTiDB(port1)
+	require.NoError(t, err)
+	defer db1.Close()
+
+	db2, err := s.connectTiDB(port1)
+	require.NoError(t, err)
+	defer db2.Close()
+
+	ctx := context.TODO()
+	conn1, err := db1.Conn(ctx)
+	require.NoError(t, err)
+	defer conn1.Close()
+
+	var connID1 uint64
+	err = conn1.QueryRowContext(ctx, "SELECT CONNECTION_ID();").Scan(&connID1)
+	require.NoError(t, err)
+
+	conn2, err := db2.Conn(ctx)
+	require.NoError(t, err)
+	defer conn2.Close()
+
+	rows, err := conn1.QueryContext(ctx, "select 1")
+	require.NoError(t, err)
+	rows.Close()
+	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL QUERY %v", connID1))
+	require.NoError(t, err)
+	// verify connection is still alive
+	rows, err = conn1.QueryContext(ctx, "select 1")
+	require.NoError(t, err)
+	rows.Close()
+
+	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL CONNECTION %v", connID1))
+	require.NoError(t, err)
+	// verify connection is closed
+	rows, err = conn1.QueryContext(ctx, "select 1")
+	require.Error(t, err)
+}

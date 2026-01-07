@@ -992,7 +992,7 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, ru
 			}
 		}
 	}
-	killQuery(conn, maxExecutionTime, runaway)
+	killQuery(conn, query, maxExecutionTime, runaway)
 }
 
 // UpdateTLSConfig implements the SessionManager interface.
@@ -1005,7 +1005,7 @@ func (s *Server) GetTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
-func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
+func killQuery(conn *clientConn, query, maxExecutionTime, runaway bool) {
 	sessVars := conn.ctx.GetSessionVars()
 	if runaway {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.RunawayQueryExceeded)
@@ -1021,11 +1021,12 @@ func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	if cancelFunc != nil {
 		cancelFunc()
 	}
-	if conn.bufReadConn != nil {
+	if !query && conn.bufReadConn != nil {
 		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
 			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 		}
 	}
+
 	sessVars.SQLKiller.FinishResultSet()
 }
 
@@ -1052,7 +1053,7 @@ func (s *Server) KillAllConnections() {
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
 		}
-		killQuery(conn, false, false)
+		killQuery(conn, false, false, false)
 	}
 
 	s.KillSysProcesses()
