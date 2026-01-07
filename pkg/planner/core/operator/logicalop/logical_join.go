@@ -324,8 +324,25 @@ func filterOutOtherCondition4ConvertAntiJoin(inner int, sf []expression.Expressi
 	}
 }
 
+func vaildProj4ConvertAntiJoin(outerSchSet *intset.FastIntSet, proj *LogicalProjection) bool {
+	if proj == nil {
+		return true
+	}
+	// Sometimes there is a projection between select and join.
+	// We require that this projection does not make additional changes to its outer columns,
+	// then we can continue converting to a semi join.
+	for idx, c := range proj.Schema().Columns {
+		if outerSchSet.Has(int(c.UniqueID)) {
+			if !c.Equals(proj.Exprs[idx]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // CanConvertAntiJoin is used in outer-join-to-semi-join rule.
-func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema) (_ *LogicalProjection, selConditionColInOuter bool) {
+func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (result *LogicalProjection, selConditionColInOuter bool) {
 	if len(ret) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
 		// ret can only have one expression.
 		// The inner expression can definitely be pushed down, so ret must be the outer expression.
@@ -371,6 +388,9 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 		return !innerSch.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
 	joinOuterKeySch := intset.NewFastIntSet()
+	if !vaildProj4ConvertAntiJoin(&outerSchSet, proj) {
+		return nil, false
+	}
 	iter := iterutil.Concat(
 		filterOutNullEQ4ConvertAntiJoin(innerChildIdx, p.EqualConditions),
 		filterOutOtherCondition4ConvertAntiJoin(innerChildIdx, p.OtherConditions))
@@ -380,10 +400,13 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 	selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
 	// proj is to generate the NULL values for the columns of the outer table, which is the
 	// expected result for this kind of anti-join query.
-	var proj *LogicalProjection
 	if selConditionColInOuter {
 		// column in IsNull expression is from the outer side columns in the eq/other condition.
-		proj = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+		if proj != nil {
+			result = p.generateProject4ConvertAntiJoin(&outerSchSet, proj.Schema())
+		} else {
+			result = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+		}
 	} else if outerSchSet.Has(int(isNullcol.UniqueID)) {
 		// column in IsNull expression is from the outer side columns.
 		// but it is not in the equal/other condition.
@@ -392,7 +415,11 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 		outerSch := p.Children()[1^innerChildIdx].Schema()
 		idx := outerSch.ColumnIndex(isNullcol)
 		if mysql.HasNotNullFlag(outerSch.Columns[idx].RetType.GetFlag()) {
-			proj = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+			if proj != nil {
+				result = p.generateProject4ConvertAntiJoin(&outerSchSet, proj.Schema())
+			} else {
+				result = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+			}
 			selConditionColInOuter = true
 		}
 	}
@@ -413,7 +440,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 		}
 		p.JoinType = base.AntiSemiJoin
 	}
-	return proj, selConditionColInOuter
+	return result, selConditionColInOuter
 }
 
 // generateProject4ConvertAntiJoin is generate projection and put it on the anti semi join which is from outer join.

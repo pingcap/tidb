@@ -50,11 +50,6 @@ type OuterJoinToSemiJoin struct{}
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (o *OuterJoinToSemiJoin) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	result, isChanged := o.recursivePlan(p)
-	if isChanged {
-		cp := &ColumnPruner{}
-		pruner, c, err := cp.Optimize(ctx, result)
-		return pruner, isChanged || c, err
-	}
 	return result, isChanged, nil
 }
 
@@ -62,17 +57,35 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 	var isChanged bool
 	for idx, child := range p.Children() {
 		if sel, ok := child.(*logicalop.LogicalSelection); ok {
-			join, ok := sel.Children()[0].(*logicalop.LogicalJoin)
-			if ok {
-				proj, ok := join.CanConvertAntiJoin(sel.Conditions, sel.Schema())
+			switch cc := sel.Children()[0].(type) {
+			case *logicalop.LogicalJoin:
+				proj, ok := cc.CanConvertAntiJoin(sel.Conditions, sel.Schema(), nil)
 				if ok {
 					if proj != nil {
-						proj.SetChildren(join)
+						proj.SetChildren(cc)
 						p.SetChild(idx, proj)
 					} else {
-						p.SetChild(idx, join)
+						p.SetChild(idx, cc)
 					}
 					isChanged = true
+				}
+			case *logicalop.LogicalProjection:
+				join, ok := cc.Children()[0].(*logicalop.LogicalJoin)
+				if ok {
+					proj, ok := join.CanConvertAntiJoin(sel.Conditions, sel.Schema(), cc)
+					if ok {
+						if proj != nil {
+							// projection <- projection <- anti semi join
+							proj.SetChildren(join)
+							cc.SetChildren(proj)
+							p.SetChild(idx, cc)
+						} else {
+							// projection <- anti semi join
+							cc.SetChildren(join)
+							p.SetChild(idx, cc)
+						}
+						isChanged = true
+					}
 				}
 			}
 		}
