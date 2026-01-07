@@ -52,7 +52,6 @@ type DefaultJobOrchestrator struct {
 	logger            log.Logger
 	sdk               importsdk.SDK
 
-	mu         sync.Mutex
 	activeJobs []*ImportJob
 }
 
@@ -111,9 +110,7 @@ func (o *DefaultJobOrchestrator) SubmitAndWait(ctx context.Context, tables []*im
 		return nil
 	}
 
-	o.mu.Lock()
 	o.activeJobs = jobs
-	o.mu.Unlock()
 
 	o.logger.Info("all jobs submitted", zap.Int("count", len(jobs)))
 
@@ -128,9 +125,7 @@ func (o *DefaultJobOrchestrator) SubmitAndWait(ctx context.Context, tables []*im
 
 // Cancel cancels all active jobs.
 func (o *DefaultJobOrchestrator) Cancel(ctx context.Context) error {
-	o.mu.Lock()
 	jobs := o.activeJobs
-	o.mu.Unlock()
 
 	if len(jobs) == 0 {
 		return nil
@@ -174,7 +169,7 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 	)
 
 	eg, egCtx := errgroup.WithContext(ctx)
-	sem := make(chan struct{}, o.submitConcurrency)
+	eg.SetLimit(o.submitConcurrency)
 
 	// Note: In Go 1.22+, the loop variable 'table' is scoped to each iteration,
 	// so it is safe to capture directly in the goroutine below.
@@ -184,9 +179,7 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 			continue
 		}
 		eg.Go(func() error {
-			// Acquire semaphore to limit concurrent submissions
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			logger := o.logger.With(zap.String("database", table.Database), zap.String("table", table.Table))
 
 			// Check if we can resume an existing job
 			cp, err := o.cpMgr.Get(egCtx, common.UniqueTable(table.Database, table.Table))
@@ -195,21 +188,14 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 			}
 
 			if cp != nil && cp.Status == CheckpointStatusFinished {
-				o.logger.Info("table already completed in previous run",
-					zap.String("database", table.Database),
-					zap.String("table", table.Table),
-				)
+				logger.Info("table already completed in previous run")
 				return nil
 			}
 
 			var job *ImportJob
 			if cp != nil && cp.JobID > 0 && cp.Status == CheckpointStatusRunning {
 				// Resume existing running job
-				o.logger.Info("resuming previously running job",
-					zap.String("database", table.Database),
-					zap.String("table", table.Table),
-					zap.Int64("jobID", cp.JobID),
-				)
+				logger.Info("resuming previously running job", zap.Int64("jobID", cp.JobID))
 				job = &ImportJob{
 					JobID:     cp.JobID,
 					TableMeta: table,
@@ -219,17 +205,12 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 				// Need to submit new job
 				// This handles: no checkpoint, failed checkpoint, or cancelled checkpoint
 				if cp != nil {
-					o.logger.Info("previous job failed or cancelled, submitting new job",
-						zap.String("database", table.Database),
-						zap.String("table", table.Table),
+					logger.Info("previous job failed or cancelled, submitting new job",
 						zap.String("previousStatus", cp.Status.String()),
 						zap.Int64("previousJobID", cp.JobID),
 					)
 				} else {
-					o.logger.Info("submitting new import job",
-						zap.String("database", table.Database),
-						zap.String("table", table.Table),
-					)
+					logger.Info("submitting new import job")
 				}
 
 				job, err = o.submitter.SubmitTable(egCtx, table)

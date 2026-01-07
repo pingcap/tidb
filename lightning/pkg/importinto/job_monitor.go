@@ -97,9 +97,7 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 		case <-logTicker.C:
 			m.logProgress(len(jobs), stats)
 		case <-ticker.C:
-			failpoint.Inject("SlowDownPolling", func() {
-				time.Sleep(time.Second)
-			})
+			failpoint.Inject("SlowDownPolling", nil)
 			// Get detailed status for each job
 			statuses, err := m.sdk.GetJobsByGroup(ctx, groupKey)
 			if err != nil {
@@ -223,9 +221,10 @@ func (m *DefaultJobMonitor) handleFailures(
 		for _, status := range statuses {
 			// Only cancel jobs that are not completed (finished, failed, or cancelled)
 			if !status.IsCompleted() {
-				m.logger.Info("cancelling job", zap.Int64("jobID", status.JobID))
+				logger := m.logger.With(zap.Int64("jobID", status.JobID))
+				logger.Info("cancelling job")
 				if err := m.sdk.CancelJob(ctx, status.JobID); err != nil {
-					m.logger.Warn("failed to cancel job", zap.Int64("jobID", status.JobID), zap.Error(err))
+					logger.Warn("failed to cancel job", zap.Error(err))
 				}
 			}
 		}
@@ -235,12 +234,17 @@ func (m *DefaultJobMonitor) handleFailures(
 }
 
 func (m *DefaultJobMonitor) logJobCompletion(job *ImportJob, status *importsdk.JobStatus) {
+	logger := m.logger.With(
+		zap.Int64("jobID", job.JobID),
+		zap.String("database", job.TableMeta.Database),
+		zap.String("table", job.TableMeta.Table),
+	)
 	if status.IsFinished() {
-		m.logger.Info("job completed successfully", zap.Int64("jobID", job.JobID), zap.String("database", job.TableMeta.Database), zap.String("table", job.TableMeta.Table), zap.Int64("importedRows", status.ImportedRows))
+		logger.Info("job completed successfully", zap.Int64("importedRows", status.ImportedRows))
 	} else if status.IsFailed() {
-		m.logger.Error("job failed", zap.Int64("jobID", job.JobID), zap.String("database", job.TableMeta.Database), zap.String("table", job.TableMeta.Table), zap.String("error", status.ResultMessage))
+		logger.Error("job failed", zap.String("error", status.ResultMessage))
 	} else if status.IsCancelled() {
-		m.logger.Warn("job was cancelled", zap.Int64("jobID", job.JobID), zap.String("database", job.TableMeta.Database), zap.String("table", job.TableMeta.Table))
+		logger.Warn("job was cancelled")
 	}
 }
 

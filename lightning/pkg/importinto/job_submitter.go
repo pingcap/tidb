@@ -18,7 +18,6 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -108,14 +107,6 @@ func (s *DefaultJobSubmitter) buildImportOptions(tableMeta *importsdk.TableMeta)
 		}
 	}
 
-	if cfg.TikvImporter.DiskQuota > 0 && cfg.TikvImporter.DiskQuota != config.UnlimitedQuota {
-		opts.DiskQuota = units.BytesSize(float64(cfg.TikvImporter.DiskQuota))
-	}
-
-	if cfg.TikvImporter.StoreWriteBWLimit > 0 {
-		opts.MaxWriteSpeed = units.BytesSize(float64(cfg.TikvImporter.StoreWriteBWLimit))
-	}
-
 	opts.SplitFile = cfg.Mydumper.StrictFormat
 
 	maxTypeError := cfg.App.MaxError.Type.Load()
@@ -126,16 +117,6 @@ func (s *DefaultJobSubmitter) buildImportOptions(tableMeta *importsdk.TableMeta)
 	// Set character set
 	if cfg.Mydumper.DataCharacterSet != "" && cfg.Mydumper.DataCharacterSet != "binary" {
 		opts.CharacterSet = cfg.Mydumper.DataCharacterSet
-	}
-
-	// Set checksum option based on post-restore config
-	switch cfg.PostRestore.Checksum {
-	case config.OpLevelRequired:
-		opts.ChecksumTable = "required"
-	case config.OpLevelOptional:
-		opts.ChecksumTable = "optional"
-	case config.OpLevelOff:
-		opts.ChecksumTable = "off"
 	}
 
 	if cfg.Mydumper.SourceDir != "" {
