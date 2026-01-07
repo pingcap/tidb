@@ -1873,8 +1873,7 @@ func TestCheckSystemTableConstraint(t *testing.T) {
 
 			err := checkSystemTableConstraint(tblInfo)
 			if len(tt.errMsg) > 0 {
-				require.Error(t, err)
-				require.Contains(t, err.Error(), tt.errMsg)
+				require.ErrorContains(t, err, tt.errMsg)
 			} else {
 				require.NoError(t, err)
 			}
