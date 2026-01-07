@@ -1033,13 +1033,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 		tbInfo.Columns = append(tbInfo.Columns, softDeleteCol)
 	}
 
-	if (tbInfo.IsActiveActive || tbInfo.SoftdeleteInfo != nil) && tbInfo.TempTableType != model.TempTableNone {
-		// Temporary table can not work together with active-active or soft-delete features.
-		// This combination is meanless, temporary tables do not persist data, while active-active or soft-delete features
-		// are used by data replication.
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Temporary table can not work with active-active or softdelete feature")
-	}
-
 	return nil
 }
 

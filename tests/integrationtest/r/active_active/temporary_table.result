@@ -1,8 +1,8 @@
 create temporary table t (id int) softdelete retention 7 day;
-Error 8200 (HY000): Unsupported Temporary table can not work with active-active or softdelete feature
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
 create temporary table t (id int) active_active = 'on' softdelete retention 7 day;
-Error 8200 (HY000): Unsupported Temporary table can not work with active-active or softdelete feature
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
 create global temporary table t (id int) softdelete retention 7 day on commit delete rows;
-Error 8200 (HY000): Unsupported Temporary table can not work with active-active or softdelete feature
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
 create global temporary table t (id int) active_active = 'on' softdelete retention 7 day on commit delete rows;
-Error 8200 (HY000): Unsupported Temporary table can not work with active-active or softdelete feature
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
