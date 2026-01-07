@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/mockobjstore"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -168,7 +169,7 @@ func TestExportStatementHandleNonEOFError(t *testing.T) {
 
 	ctx := context.TODO()
 
-	mockStorage := mockobjstore.NewMockExternalStorage(controller)
+	mockStorage := mockobjstore.NewMockStorage(controller)
 	mockStorage.EXPECT().
 		Open(ctx, "no-perm-file", nil).
 		Return(AlwaysErrorReadSeekCloser{}, nil)
