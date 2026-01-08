@@ -42,13 +42,6 @@ type mockSafePoint struct {
 	minServiceSafepoint uint64
 }
 
-func (m *mockSafePoint) GetServiceSafePoint(serviceID string) (uint64, bool) {
-	m.Lock()
-	defer m.Unlock()
-	safepoint, ok := m.services[serviceID]
-	return safepoint, ok
-}
-
 func (m *mockSafePoint) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
 	m.Lock()
 	defer m.Unlock()
