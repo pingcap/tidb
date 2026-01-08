@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -37,7 +37,7 @@ func getEncodedData(key, value []byte) []byte {
 
 func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
 	rc := &rangePropertiesCollector{
@@ -136,7 +136,7 @@ func TestKVReadWrite(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
 	rc := &rangePropertiesCollector{

@@ -11,7 +11,6 @@ go_test(
     flaky = True,
     shard_count = 14,
     deps = [
-        "//br/pkg/storage",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
@@ -27,6 +26,7 @@ go_test(
         "//pkg/lightning/backend/external",
         "//pkg/lightning/backend/local",
         "//pkg/meta/model",
+        "//pkg/objstore",
         "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/store/helper",

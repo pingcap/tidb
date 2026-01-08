@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -45,7 +45,7 @@ type testBackup struct {
 	backupClient *backup.Client
 
 	cluster *mock.Cluster
-	storage storage.ExternalStorage
+	storage objstore.Storage
 }
 
 // locks used to solve race when mock then behaviour when store drops
@@ -122,7 +122,7 @@ func createBackupSuite(t *testing.T) *testBackup {
 	s.cluster, err = mock.NewCluster()
 	require.NoError(t, err)
 	base := t.TempDir()
-	s.storage, err = storage.NewLocalStorage(base)
+	s.storage, err = objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	require.NoError(t, s.cluster.Start())
 

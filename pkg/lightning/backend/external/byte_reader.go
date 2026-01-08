@@ -23,8 +23,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -46,7 +46,7 @@ var (
 // data to improve throughput.
 type byteReader struct {
 	ctx           context.Context
-	storageReader storage.ExternalFileReader
+	storageReader objstore.FileReader
 
 	// curBuf is either smallBuf or concurrentReader.largeBuf.
 	curBuf       [][]byte
@@ -56,7 +56,7 @@ type byteReader struct {
 
 	concurrentReader struct {
 		largeBufferPool *membuf.Buffer
-		store           storage.ExternalStorage
+		store           objstore.Storage
 		filename        string
 		concurrency     int
 		bufSizePerConc  int
@@ -74,12 +74,12 @@ type byteReader struct {
 
 func openStoreReaderAndSeek(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store objstore.Storage,
 	name string,
 	initFileOffset uint64,
 	prefetchSize int,
-) (storage.ExternalFileReader, error) {
-	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{
+) (objstore.FileReader, error) {
+	storageReader, err := store.Open(ctx, name, &objstore.ReaderOption{
 		StartOffset:  aws.Int64(int64(initFileOffset)),
 		PrefetchSize: prefetchSize,
 	})
@@ -94,7 +94,7 @@ func openStoreReaderAndSeek(
 // concurrent reading mode.
 func newByteReader(
 	ctx context.Context,
-	storageReader storage.ExternalFileReader,
+	storageReader objstore.FileReader,
 	bufSize int,
 ) (r *byteReader, err error) {
 	defer func() {
@@ -115,7 +115,7 @@ func newByteReader(
 }
 
 func (r *byteReader) enableConcurrentRead(
-	store storage.ExternalStorage,
+	store objstore.Storage,
 	filename string,
 	concurrency int,
 	bufSizePerConc int,
