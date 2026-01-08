@@ -157,20 +157,21 @@ func (w *externalStorage) Close() {
 	}
 }
 
-type fileWriterWrapper struct {
+type fileWriter struct {
 	ctx    context.Context
 	writer storage.ExternalFileWriter
 }
 
-func NewExternalFileWriterWrap(ctx context.Context, writer storage.ExternalFileWriter) io.WriteCloser {
-	return &fileWriterWrapper{ctx: ctx, writer: writer}
+// NewFileWriter creates a new io.WriteCloser from storage.ExternalFileWriter.
+func NewFileWriter(ctx context.Context, writer storage.ExternalFileWriter) io.WriteCloser {
+	return &fileWriter{ctx: ctx, writer: writer}
 }
 
-func (w *fileWriterWrapper) Write(p []byte) (int, error) {
+func (w *fileWriter) Write(p []byte) (int, error) {
 	return w.writer.Write(w.ctx, p)
 }
 
-func (w *fileWriterWrapper) Close() error {
+func (w *fileWriter) Close() error {
 	return w.writer.Close(w.ctx)
 }
 
