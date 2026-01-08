@@ -792,3 +792,51 @@ func BenchmarkDatumsToStringLongStr(b *testing.B) {
 		}
 	}
 }
+<<<<<<< HEAD
+=======
+
+func BenchmarkDatumTruncatedStringify(b *testing.B) {
+	d1 := NewStringDatum(strings.Repeat("1", 128))
+	d2 := NewIntDatum(2)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = d1.TruncatedStringify()
+		_ = d2.TruncatedStringify()
+	}
+}
+
+func TestIsPrintable(t *testing.T) {
+	testcases := []struct {
+		input string
+		valid bool
+	}{
+		{string([]byte{0x61, 0x62, 0x63}), true},             // abc
+		{string([]byte{0x61, 0x0, 0x62, 0x63}), false},       // a<NUL>bc
+		{string([]byte{0x61, 0x62, 0x63, 0xc3, 0xa9}), true}, // abcé
+		{string([]byte{0x61, 0x62, 0x63, 0xc3}), false},      // abc<half char>
+	}
+
+	for _, tc := range testcases {
+		r := isPrintable(tc.input)
+		require.Equal(t, tc.valid, r, "%v (0x%X) expected printable: %v (but got %v)",
+			tc.input, tc.input, tc.valid, r)
+	}
+}
+
+func BenchmarkIsPrintable(b *testing.B) {
+	inputs := []string{
+		"abc",
+		"abcé",
+		string([]byte{0x61, 0x0, 0x62, 0x63}), // broken: contains NUL
+		string([]byte{0x61, 0x62, 0x63, 0xc3, 0xa9}), // broken: contains half char
+		strings.Repeat("abc", 1000),                  // longer string
+	}
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		for _, input := range inputs {
+			isPrintable(input)
+		}
+	}
+}
+>>>>>>> 2a5e1bb6f7b (types: print argument as hex literal if non-printable (#65384))
