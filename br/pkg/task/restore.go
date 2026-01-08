@@ -1564,10 +1564,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
-		// set the ttl to 0 to remove the gc-safe-point
-		sp.TTL = 0
-		if err := utils.UpdateServiceSafePointWithStorage(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp); err != nil {
-			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+		// remove the gc-safe-point
+		if err := utils.DeleteServiceSafePoint(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp.ID); err != nil {
+			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
@@ -1576,7 +1575,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
-	err = utils.StartServiceSafePointKeeperWithStorage(cctx, mgr.GetPDClient(), mgr.GetStorage(), sp)
+	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), mgr.GetStorage(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}

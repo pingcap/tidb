@@ -441,7 +441,7 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePo
 			"failed to check gc safePoint, ts %v", sp.BackupTS)
 	}
 
-	err = utils.UpdateServiceSafePointWithStorage(ctx, s.mgr.GetPDClient(), s.mgr.GetStorage(), sp)
+	err = utils.SetServiceSafePoint(ctx, s.mgr.GetPDClient(), s.mgr.GetStorage(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
