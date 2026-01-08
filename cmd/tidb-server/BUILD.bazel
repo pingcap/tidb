@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/cmd/tidb-server",
     visibility = ["//visibility:private"],
     deps = [
+        "//br/pkg/storage",
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -15,6 +16,7 @@ go_library(
         "//pkg/executor/mppcoordmanager",
         "//pkg/extension",
         "//pkg/extension/_import",
+        "//pkg/external",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/metrics",
