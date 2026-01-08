@@ -483,7 +483,16 @@ func TestKeyspaceGCManager_StartServiceSafePointKeeper(t *testing.T) {
 	cancel()
 	time.Sleep(100 * time.Millisecond)
 
-	// Verify DeleteGCBarrier was called on cleanup
+	// Verify DeleteGCBarrier was NOT called by keeper itself
+	// (Cleanup should be done by caller via UpdateServiceSafePoint(TTL=0))
+	require.Equal(t, 0, gcClient.deleteGCBarrierCalls)
+
+	// Simulate the cleanup that the caller (backup.go/restore.go) would do
+	sp.TTL = 0
+	err = mgr.UpdateServiceSafePoint(context.Background(), sp)
+	require.NoError(t, err)
+
+	// Now DeleteGCBarrier should have been called
 	require.Equal(t, 1, gcClient.deleteGCBarrierCalls)
 }
 
