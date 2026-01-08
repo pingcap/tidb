@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"go.uber.org/zap"
 )
 
@@ -209,7 +210,7 @@ func (l *LocalStorage) URI() string {
 }
 
 // Open a Reader by file path, path is a relative path to base path.
-func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (FileReader, error) {
+func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (objectio.Reader, error) {
 	//nolint: gosec
 	f, err := os.Open(filepath.Join(l.base, path))
 	if err != nil {
@@ -273,7 +274,7 @@ func (f *localFile) GetFileSize() (int64, error) {
 }
 
 // Create implements Storage interface.
-func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (FileWriter, error) {
+func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (objectio.Writer, error) {
 	filename := filepath.Join(l.base, name)
 	dir := filepath.Dir(filename)
 	err := os.MkdirAll(dir, 0750)

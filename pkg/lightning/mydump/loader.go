@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -853,7 +854,7 @@ func (l *MDLoader) GetAllFiles() map[string]FileInfo {
 
 func calculateFileBytes(ctx context.Context,
 	dataFile string,
-	compressType objstore.CompressType,
+	compressType objectio.CompressType,
 	store objstore.Storage,
 	offset int64) (tot int, pos int64, err error) {
 	bytes := make([]byte, sampleCompressedFileSize)
@@ -863,7 +864,7 @@ func calculateFileBytes(ctx context.Context,
 	}
 	defer reader.Close()
 
-	decompressConfig := objstore.DecompressConfig{ZStdDecodeConcurrency: 1}
+	decompressConfig := objectio.DecompressConfig{ZStdDecodeConcurrency: 1}
 	compressReader, err := objstore.NewLimitedInterceptReader(reader, compressType, decompressConfig, offset)
 	if err != nil {
 		return 0, 0, errors.Trace(err)

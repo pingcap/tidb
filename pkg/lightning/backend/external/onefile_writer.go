@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -73,8 +74,8 @@ type OneFileWriter struct {
 	rnd            *rand.Rand
 	dataFile       string
 	statFile       string
-	dataWriter     objstore.FileWriter
-	statWriter     objstore.FileWriter
+	dataWriter     objectio.Writer
+	statWriter     objectio.Writer
 
 	onClose OnWriterCloseFunc
 	closed  bool
@@ -89,7 +90,7 @@ type OneFileWriter struct {
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
 	recordedDupCnt int
 	dupFile        string
-	dupWriter      objstore.FileWriter
+	dupWriter      objectio.Writer
 	dupKVStore     *KeyValueStore
 
 	minKey []byte

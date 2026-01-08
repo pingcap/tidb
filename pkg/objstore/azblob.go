@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
@@ -636,7 +637,7 @@ func (s *AzureBlobStorage) DeleteFiles(ctx context.Context, names []string) erro
 }
 
 // Open implements the StorageReader interface.
-func (s *AzureBlobStorage) Open(ctx context.Context, name string, o *ReaderOption) (FileReader, error) {
+func (s *AzureBlobStorage) Open(ctx context.Context, name string, o *ReaderOption) (objectio.Reader, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	resp, err := client.GetProperties(ctx, nil)
 	if err != nil {
@@ -714,7 +715,7 @@ func (s *AzureBlobStorage) URI() string {
 const azblobChunkSize = 64 * 1024 * 1024
 
 // Create implements the StorageWriter interface.
-func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOption) (FileWriter, error) {
+func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOption) (objectio.Writer, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	uploader := &azblobUploader{
 		blobClient: client,
@@ -727,7 +728,7 @@ func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOptio
 		cpkInfo:  s.cpkInfo,
 	}
 
-	uploaderWriter := newBufferedWriter(uploader, azblobChunkSize, NoCompression, nil)
+	uploaderWriter := objectio.NewBufferedWriter(uploader, azblobChunkSize, objectio.NoCompression, nil)
 	return uploaderWriter, nil
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -676,7 +677,7 @@ func OpenReader(
 	ctx context.Context,
 	fileMeta *SourceFileMeta,
 	store objstore.Storage,
-	decompressCfg objstore.DecompressConfig,
+	decompressCfg objectio.DecompressConfig,
 ) (reader objstore.ReadSeekCloser, err error) {
 	switch {
 	case fileMeta.Type == SourceTypeParquet:

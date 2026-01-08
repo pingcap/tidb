@@ -52,6 +52,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
@@ -1024,7 +1025,7 @@ func (rs *S3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
+func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (objectio.Reader, error) {
 	start := int64(0)
 	end := int64(0)
 	prefetchSize := 0
@@ -1318,7 +1319,7 @@ func (r *s3ObjectReader) GetFileSize() (int64, error) {
 }
 
 // createUploader create multi upload request.
-func (rs *S3Storage) createUploader(ctx context.Context, name string) (FileWriter, error) {
+func (rs *S3Storage) createUploader(ctx context.Context, name string) (objectio.Writer, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
@@ -1369,8 +1370,8 @@ func (s *s3ObjectWriter) Close(_ context.Context) error {
 }
 
 // Create creates multi upload request.
-func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOption) (FileWriter, error) {
-	var uploader FileWriter
+func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOption) (objectio.Writer, error) {
+	var uploader objectio.Writer
 	var err error
 	if option == nil || option.Concurrency <= 1 {
 		uploader, err = rs.createUploader(ctx, name)
@@ -1407,7 +1408,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, rs.accessRec)
+	uploaderWriter := objectio.NewBufferedWriter(uploader, bufSize, objectio.NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 

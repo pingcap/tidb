@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -154,7 +155,7 @@ type Storage interface {
 	DeleteFile(ctx context.Context, name string) error
 	// Open a Reader by file path. path is relative path to storage base path.
 	// Some implementation will use the given ctx as the inner context of the reader.
-	Open(ctx context.Context, path string, option *ReaderOption) (FileReader, error)
+	Open(ctx context.Context, path string, option *ReaderOption) (objectio.Reader, error)
 	// DeleteFiles delete the files in storage
 	DeleteFiles(ctx context.Context, names []string) error
 	// WalkDir traverse all the files in a dir.
@@ -171,26 +172,11 @@ type Storage interface {
 	// Create opens a file writer by path. path is relative path to storage base
 	// path. The old file under same path will be overwritten. Currently only s3
 	// implemented WriterOption.
-	Create(ctx context.Context, path string, option *WriterOption) (FileWriter, error)
+	Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
 	// Close release the resources of the storage.
 	Close()
-}
-
-// FileReader represents the streaming external file reader.
-type FileReader interface {
-	io.ReadSeekCloser
-	// GetFileSize returns the file size.
-	GetFileSize() (int64, error)
-}
-
-// FileWriter represents the streaming external file writer.
-type FileWriter interface {
-	// Write writes to buffer and if chunk is filled will upload it
-	Write(ctx context.Context, p []byte) (int, error)
-	// Close writes final chunk and completes the upload
-	Close(ctx context.Context) error
 }
 
 // Options are backend-independent options provided to New.

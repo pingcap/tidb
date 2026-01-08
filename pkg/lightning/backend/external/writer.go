@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -811,7 +812,7 @@ func (w *Writer) reCalculateKVSize() int64 {
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
 	dataFile, statFile string,
-	data, stats objstore.FileWriter,
+	data, stats objectio.Writer,
 	err error,
 ) {
 	dataPath := filepath.Join(w.getPartitionedPrefix(), strconv.Itoa(w.currentSeq))
@@ -834,7 +835,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	return dataPath, statPath, dataWriter, statsWriter, nil
 }
 
-func (w *Writer) createDupWriter(ctx context.Context) (string, objstore.FileWriter, error) {
+func (w *Writer) createDupWriter(ctx context.Context) (string, objectio.Writer, error) {
 	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
 	writer, err := w.store.Create(ctx, path, &objstore.WriterOption{
 		Concurrency: 20,

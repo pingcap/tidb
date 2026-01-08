@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package objstore
+package objectio_test
 
 import (
 	"bytes"
@@ -25,8 +25,35 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/stretchr/testify/require"
 )
+
+func getStore(t *testing.T, uri string, changeStoreFn func(s objstore.Storage) objstore.Storage) objstore.Storage {
+	t.Helper()
+	backend, err := objstore.ParseBackend(uri, nil)
+	require.NoError(t, err)
+	ctx := context.Background()
+	storage, err := objstore.Create(ctx, backend, true)
+	require.NoError(t, err)
+	return changeStoreFn(storage)
+}
+
+func writeFile(t *testing.T, storage objstore.Storage, fileName string, lines []string) {
+	t.Helper()
+	ctx := context.Background()
+	writer, err := storage.Create(ctx, fileName, nil)
+	require.NoError(t, err)
+	for _, str := range lines {
+		p := []byte(str)
+		written, err2 := writer.Write(ctx, p)
+		require.Nil(t, err2)
+		require.Len(t, p, written)
+	}
+	err = writer.Close(ctx)
+	require.NoError(t, err)
+}
 
 func TestExternalFileWriter(t *testing.T) {
 	dir := t.TempDir()
@@ -37,22 +64,11 @@ func TestExternalFileWriter(t *testing.T) {
 	}
 	testFn := func(test *testcase, t *testing.T) {
 		t.Log(test.name)
-		backend, err := ParseBackend("local://"+filepath.ToSlash(dir), nil)
-		require.NoError(t, err)
-		ctx := context.Background()
-		storage, err := Create(ctx, backend, true)
-		require.NoError(t, err)
+		storage := getStore(t, "local://"+filepath.ToSlash(dir), func(s objstore.Storage) objstore.Storage {
+			return s
+		})
 		fileName := strings.ReplaceAll(test.name, " ", "-") + ".txt"
-		writer, err := storage.Create(ctx, fileName, nil)
-		require.NoError(t, err)
-		for _, str := range test.content {
-			p := []byte(str)
-			written, err2 := writer.Write(ctx, p)
-			require.Nil(t, err2)
-			require.Len(t, p, written)
-		}
-		err = writer.Close(ctx)
-		require.NoError(t, err)
+		writeFile(t, storage, fileName, test.content)
 		content, err := os.ReadFile(filepath.Join(dir, fileName))
 		require.NoError(t, err)
 		require.Equal(t, strings.Join(test.content, ""), string(content))
@@ -101,39 +117,42 @@ func TestExternalFileWriter(t *testing.T) {
 	}
 }
 
+func createSuffixString(compressType objectio.CompressType) string {
+	txtSuffix := ".txt"
+	switch compressType {
+	case objectio.Gzip:
+		txtSuffix += ".gz"
+	case objectio.Snappy:
+		txtSuffix += ".snappy"
+	case objectio.Zstd:
+		txtSuffix += ".zst"
+	default:
+		return ""
+	}
+	return txtSuffix
+}
+
 func TestCompressReaderWriter(t *testing.T) {
 	dir := t.TempDir()
 
 	type testcase struct {
 		name         string
 		content      []string
-		compressType CompressType
+		compressType objectio.CompressType
 	}
 	testFn := func(test *testcase, t *testing.T) {
 		t.Log(test.name)
-		backend, err := ParseBackend("local://"+filepath.ToSlash(dir), nil)
-		require.NoError(t, err)
-		ctx := context.Background()
-		storage, err := Create(ctx, backend, true)
-		require.NoError(t, err)
-		storage = WithCompression(storage, test.compressType, DecompressConfig{})
 		suffix := createSuffixString(test.compressType)
 		fileName := strings.ReplaceAll(test.name, " ", "-") + suffix
-		writer, err := storage.Create(ctx, fileName, nil)
-		require.NoError(t, err)
-		for _, str := range test.content {
-			p := []byte(str)
-			written, err2 := writer.Write(ctx, p)
-			require.Nil(t, err2)
-			require.Len(t, p, written)
-		}
-		err = writer.Close(ctx)
-		require.NoError(t, err)
+		storage := getStore(t, "local://"+filepath.ToSlash(dir), func(s objstore.Storage) objstore.Storage {
+			return objstore.WithCompression(s, test.compressType, objectio.DecompressConfig{})
+		})
+		writeFile(t, storage, fileName, test.content)
 
 		// make sure compressed file is written correctly
 		file, err := os.Open(filepath.Join(dir, fileName))
 		require.NoError(t, err)
-		r, err := newCompressReader(test.compressType, DecompressConfig{}, file)
+		r, err := objectio.NewCompressReader(test.compressType, objectio.DecompressConfig{}, file)
 		require.NoError(t, err)
 		var bf bytes.Buffer
 		_, err = bf.ReadFrom(r)
@@ -141,6 +160,7 @@ func TestCompressReaderWriter(t *testing.T) {
 		require.Equal(t, strings.Join(test.content, ""), bf.String())
 
 		// test withCompression Open
+		ctx := context.Background()
 		r, err = storage.Open(ctx, fileName, nil)
 		require.NoError(t, err)
 		content, err := io.ReadAll(r)
@@ -149,7 +169,7 @@ func TestCompressReaderWriter(t *testing.T) {
 
 		require.Nil(t, file.Close())
 	}
-	compressTypeArr := []CompressType{Gzip, Snappy, Zstd}
+	compressTypeArr := []objectio.CompressType{objectio.Gzip, objectio.Snappy, objectio.Zstd}
 
 	tests := []testcase{
 		{
@@ -196,7 +216,7 @@ func TestNewCompressReader(t *testing.T) {
 
 	// default cfg(decode asynchronously)
 	prevRoutineCnt := runtime.NumGoroutine()
-	r, err := newCompressReader(Zstd, DecompressConfig{}, bytes.NewReader(compressedData))
+	r, err := objectio.NewCompressReader(objectio.Zstd, objectio.DecompressConfig{}, bytes.NewReader(compressedData))
 	currRoutineCnt := runtime.NumGoroutine()
 	require.NoError(t, err)
 	require.Greater(t, currRoutineCnt, prevRoutineCnt)
@@ -206,8 +226,8 @@ func TestNewCompressReader(t *testing.T) {
 
 	// sync decode
 	prevRoutineCnt = runtime.NumGoroutine()
-	config := DecompressConfig{ZStdDecodeConcurrency: 1}
-	r, err = newCompressReader(Zstd, config, bytes.NewReader(compressedData))
+	config := objectio.DecompressConfig{ZStdDecodeConcurrency: 1}
+	r, err = objectio.NewCompressReader(objectio.Zstd, config, bytes.NewReader(compressedData))
 	require.NoError(t, err)
 	currRoutineCnt = runtime.NumGoroutine()
 	require.Equal(t, prevRoutineCnt, currRoutineCnt)

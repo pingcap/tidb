@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"go.uber.org/multierr"
 )
 
@@ -152,7 +153,7 @@ func (d *Batched) Rename(ctx context.Context, oldName, newName string) error {
 }
 
 // Create implements the Storage interface.
-func (d *Batched) Create(ctx context.Context, path string, option *WriterOption) (FileWriter, error) {
+func (d *Batched) Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error) {
 	return nil, errors.Annotatef(berrors.ErrStorageUnknown, "ExternalStorage.Create isn't allowed in batch mode for now.")
 }
 

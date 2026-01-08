@@ -30,6 +30,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/stretchr/testify/require"
 )
 
@@ -464,7 +465,7 @@ func TestAzblobSeekToEndShouldNotError(t *testing.T) {
 }
 
 type wr struct {
-	w   FileWriter
+	w   objectio.Writer
 	ctx context.Context
 }
 

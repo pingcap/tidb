@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package objstore
+package objectio
 
 import (
 	"bytes"
@@ -49,39 +49,26 @@ type DecompressConfig struct {
 	ZStdDecodeConcurrency int
 }
 
-type flusher interface {
+type Flusher interface {
 	Flush() error
 }
 
-type emptyFlusher struct{}
+// EmptyFlusher empty Flusher.
+type EmptyFlusher struct{}
 
-func (*emptyFlusher) Flush() error {
+// Flush do flush.
+func (*EmptyFlusher) Flush() error {
 	return nil
 }
 
 type interceptBuffer interface {
 	io.WriteCloser
-	flusher
+	Flusher
 	Len() int
 	Cap() int
 	Bytes() []byte
 	Reset()
 	Compressed() bool
-}
-
-func createSuffixString(compressType CompressType) string {
-	txtSuffix := ".txt"
-	switch compressType {
-	case Gzip:
-		txtSuffix += ".gz"
-	case Snappy:
-		txtSuffix += ".snappy"
-	case Zstd:
-		txtSuffix += ".zst"
-	default:
-		return ""
-	}
-	return txtSuffix
 }
 
 func newInterceptBuffer(chunkSize int, compressType CompressType) interceptBuffer {
@@ -91,7 +78,8 @@ func newInterceptBuffer(chunkSize int, compressType CompressType) interceptBuffe
 	return newSimpleCompressBuffer(chunkSize, compressType)
 }
 
-func newCompressWriter(compressType CompressType, w io.Writer) simpleCompressWriter {
+// NewCompressWriter creates a compress writer
+func NewCompressWriter(compressType CompressType, w io.Writer) SimpleCompressWriter {
 	switch compressType {
 	case Gzip:
 		return gzip.NewWriter(w)
@@ -108,7 +96,9 @@ func newCompressWriter(compressType CompressType, w io.Writer) simpleCompressWri
 	}
 }
 
-func newCompressReader(compressType CompressType, cfg DecompressConfig, r io.Reader) (io.Reader, error) {
+// NewCompressReader read compressed data.
+// only for test now.
+func NewCompressReader(compressType CompressType, cfg DecompressConfig, r io.Reader) (io.Reader, error) {
 	switch compressType {
 	case Gzip:
 		return gzip.NewReader(r)
@@ -145,14 +135,14 @@ func newNoCompressionBuffer(chunkSize int) *noCompressionBuffer {
 	return &noCompressionBuffer{bytes.NewBuffer(make([]byte, 0, chunkSize))}
 }
 
-type simpleCompressWriter interface {
+type SimpleCompressWriter interface {
 	io.WriteCloser
-	flusher
+	Flusher
 }
 
 type simpleCompressBuffer struct {
 	*bytes.Buffer
-	compressWriter simpleCompressWriter
+	compressWriter SimpleCompressWriter
 	cap            int
 }
 
@@ -190,23 +180,25 @@ func newSimpleCompressBuffer(chunkSize int, compressType CompressType) *simpleCo
 	return &simpleCompressBuffer{
 		Buffer:         bf,
 		cap:            chunkSize,
-		compressWriter: newCompressWriter(compressType, bf),
+		compressWriter: NewCompressWriter(compressType, bf),
 	}
 }
 
-type bufferedWriter struct {
+// BufferedWriter is a buffered writer
+type BufferedWriter struct {
 	buf       interceptBuffer
-	writer    FileWriter
+	writer    Writer
 	accessRec *recording.AccessStats
 }
 
-func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
+// Write implements objstoreapi.Writer.
+func (u *BufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 	n, err := u.write0(ctx, p)
 	u.accessRec.RecWrite(n)
 	return n, errors.Trace(err)
 }
 
-func (u *bufferedWriter) write0(ctx context.Context, p []byte) (int, error) {
+func (u *BufferedWriter) write0(ctx context.Context, p []byte) (int, error) {
 	bytesWritten := 0
 	for u.buf.Len()+len(p) > u.buf.Cap() {
 		// We won't fit p in this chunk
@@ -238,7 +230,7 @@ func (u *bufferedWriter) write0(ctx context.Context, p []byte) (int, error) {
 	return bytesWritten, errors.Trace(err)
 }
 
-func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
+func (u *BufferedWriter) uploadChunk(ctx context.Context) error {
 	if u.buf.Len() == 0 {
 		return nil
 	}
@@ -248,7 +240,8 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-func (u *bufferedWriter) Close(ctx context.Context) error {
+// Close implements objstoreapi.Writer.
+func (u *BufferedWriter) Close(ctx context.Context) error {
 	u.buf.Close()
 	err := u.uploadChunk(ctx)
 	if err != nil {
@@ -257,14 +250,19 @@ func (u *bufferedWriter) Close(ctx context.Context) error {
 	return u.writer.Close(ctx)
 }
 
-// NewUploaderWriter wraps the Writer interface over an uploader.
-func NewUploaderWriter(writer FileWriter, chunkSize int, compressType CompressType) FileWriter {
-	return newBufferedWriter(writer, chunkSize, compressType, nil)
+// GetWriter get the underlying writer.
+func (u *BufferedWriter) GetWriter() Writer {
+	return u.writer
 }
 
-// newBufferedWriter is used to build a buffered writer.
-func newBufferedWriter(writer FileWriter, chunkSize int, compressType CompressType, accessRec *recording.AccessStats) *bufferedWriter {
-	return &bufferedWriter{
+// NewUploaderWriter wraps the Writer interface over an uploader.
+func NewUploaderWriter(writer Writer, chunkSize int, compressType CompressType) Writer {
+	return NewBufferedWriter(writer, chunkSize, compressType, nil)
+}
+
+// NewBufferedWriter is used to build a buffered writer.
+func NewBufferedWriter(writer Writer, chunkSize int, compressType CompressType, accessRec *recording.AccessStats) *BufferedWriter {
+	return &BufferedWriter{
 		writer:    writer,
 		buf:       newInterceptBuffer(chunkSize, compressType),
 		accessRec: accessRec,

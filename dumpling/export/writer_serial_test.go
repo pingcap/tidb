@@ -10,7 +10,7 @@ import (
 
 	"github.com/pingcap/errors"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +21,7 @@ func TestWriteMeta(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;\n"
 	specCmts := []string{"/*!40103 SET TIME_ZONE='+00:00' */;"}
 	meta := newMockMetaIR("t1", createTableStmt, specCmts)
-	writer := objstore.NewBufferWriter()
+	writer := objectio.NewBufferWriter()
 
 	err := WriteMeta(tcontext.Background(), meta, writer)
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestWriteInsert(t *testing.T) {
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
 	}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	bf := objstore.NewBufferWriter()
+	bf := objectio.NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	m := newMetrics(conf.PromFactory, conf.Labels)
@@ -86,7 +86,7 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	rowErr := errors.New("mock row error")
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	tableIR.rowErr = rowErr
-	bf := objstore.NewBufferWriter()
+	bf := objectio.NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	m := newMetrics(conf.PromFactory, conf.Labels)
@@ -117,7 +117,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
-	bf := objstore.NewBufferWriter()
+	bf := objectio.NewBufferWriter()
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
@@ -227,7 +227,7 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	rowErr := errors.New("mock row error")
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.rowErr = rowErr
-	bf := objstore.NewBufferWriter()
+	bf := objectio.NewBufferWriter()
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
@@ -263,7 +263,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		conf.CsvOutputDialect = CSVDialectDefault
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
-		bf := objstore.NewBufferWriter()
+		bf := objectio.NewBufferWriter()
 		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 		require.NoError(t, err)
 		require.Equal(t, uint64(4), n)
@@ -281,7 +281,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		conf.CsvOutputDialect = CSVDialectRedshift
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
-		bf := objstore.NewBufferWriter()
+		bf := objectio.NewBufferWriter()
 		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 		require.NoError(t, err)
 		require.Equal(t, uint64(4), n)
@@ -299,7 +299,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		conf.CsvOutputDialect = CSVDialectBigQuery
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
-		bf := objstore.NewBufferWriter()
+		bf := objectio.NewBufferWriter()
 		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 		require.NoError(t, err)
 		require.Equal(t, uint64(4), n)
@@ -329,7 +329,7 @@ func TestSQLDataTypes(t *testing.T) {
 		tableData := [][]driver.Value{{origin}}
 		colType := []string{sqlType}
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
-		bf := objstore.NewBufferWriter()
+		bf := objectio.NewBufferWriter()
 
 		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 		m := newMetrics(conf.PromFactory, conf.Labels)

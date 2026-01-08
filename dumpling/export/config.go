@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -134,7 +135,7 @@ type Config struct {
 	EscapeBackslash          bool
 	DumpEmptyDatabase        bool
 	PosAfterConnect          bool
-	CompressType             objstore.CompressType
+	CompressType             objectio.CompressType
 
 	Host     string
 	Port     int
@@ -672,18 +673,18 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 }
 
 // ParseCompressType parses compressType string to storage.CompressType
-func ParseCompressType(compressType string) (objstore.CompressType, error) {
+func ParseCompressType(compressType string) (objectio.CompressType, error) {
 	switch compressType {
 	case "", "no-compression":
-		return objstore.NoCompression, nil
+		return objectio.NoCompression, nil
 	case "gzip", "gz":
-		return objstore.Gzip, nil
+		return objectio.Gzip, nil
 	case "snappy":
-		return objstore.Snappy, nil
+		return objectio.Snappy, nil
 	case "zstd", "zst":
-		return objstore.Zstd, nil
+		return objectio.Zstd, nil
 	default:
-		return objstore.NoCompression, errors.Errorf("unknown compress type %s", compressType)
+		return objectio.NoCompression, errors.Errorf("unknown compress type %s", compressType)
 	}
 }
 

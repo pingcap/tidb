@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -215,7 +216,7 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return objstore.InterceptDecompressReader(addedSeekReader, compressTp2, objstore.DecompressConfig{
+			return objstore.InterceptDecompressReader(addedSeekReader, compressTp2, objectio.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 		}}}
@@ -782,7 +783,7 @@ func (s *SimpleSeekerOnReadCloser) Close() error {
 	return s.r.Close()
 }
 
-// GetFileSize implements storage.FileReader.
+// GetFileSize implements storage.Reader.
 func (*SimpleSeekerOnReadCloser) GetFileSize() (int64, error) {
 	return 0, errors.Errorf("unsupported GetFileSize on SimpleSeekerOnReadCloser")
 }

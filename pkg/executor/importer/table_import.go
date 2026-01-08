@@ -47,7 +47,7 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -318,7 +318,7 @@ func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, e.dataStore, objstore.DecompressConfig{
+			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, e.dataStore, objectio.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 			if err != nil {

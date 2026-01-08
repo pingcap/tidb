@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"go.uber.org/zap"
 )
 
@@ -227,7 +228,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 
 func (m *globalMetadata) writeGlobalMetaData() error {
 	// keep consistent with mydumper. Never compress metadata
-	fileWriter, tearDown, err := buildFileWriter(m.tctx, m.storage, metadataPath, objstore.NoCompression)
+	fileWriter, tearDown, err := buildFileWriter(m.tctx, m.storage, metadataPath, objectio.NoCompression)
 	if err != nil {
 		return err
 	}
