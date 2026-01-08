@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 	"sync"
 
@@ -154,6 +155,23 @@ func (w *externalStorage) Close() {
 		w.storage.Close()
 		w.storage = nil
 	}
+}
+
+type fileWriterWrapper struct {
+	ctx    context.Context
+	writer storage.ExternalFileWriter
+}
+
+func NewExternalFileWriterWrap(ctx context.Context, writer storage.ExternalFileWriter) io.WriteCloser {
+	return &fileWriterWrapper{ctx: ctx, writer: writer}
+}
+
+func (w *fileWriterWrapper) Write(p []byte) (int, error) {
+	return w.writer.Write(w.ctx, p)
+}
+
+func (w *fileWriterWrapper) Close() error {
+	return w.writer.Close(w.ctx)
 }
 
 // CreateExternalStorage creates a global external storage.
