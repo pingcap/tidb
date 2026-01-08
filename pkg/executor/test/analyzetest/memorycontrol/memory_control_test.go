@@ -214,3 +214,43 @@ func TestMemQuotaAnalyze2(t *testing.T) {
 	tk.MustExec("set global tidb_mem_quota_analyze=128;")
 	tk.MustExecToErr("analyze table tbl_2;")
 }
+
+// TestAnalyzeMemoryLeakOnSessionClose tests that short-lived sessions
+// that execute ANALYZE statements don't cause memory leaks.
+// This is a regression test for issue #65489.
+func TestAnalyzeMemoryLeakOnSessionClose(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	// Clean up any existing child trackers from GlobalAnalyzeMemoryTracker
+	oldChildTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	for _, tracker := range oldChildTrackers {
+		tracker.Detach()
+	}
+	defer func() {
+		// Restore old trackers
+		for _, tracker := range oldChildTrackers {
+			tracker.AttachTo(executor.GlobalAnalyzeMemoryTracker)
+		}
+	}()
+
+	// Verify no child trackers at the start
+	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	require.Len(t, childTrackers, 0)
+
+	// Simulate short-lived sessions that execute ANALYZE on a non-existent table
+	// This reproduces the memory leak scenario described in the issue
+	for i := 0; i < 100; i++ {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		// Run ANALYZE on non-existent table (fails quickly)
+		_ = tk.ExecToErr("analyze table not_exists with 256 buckets, 100 topn")
+		// Close the session immediately after ANALYZE
+		tk.Session().Close()
+	}
+
+	// After closing all sessions, GlobalAnalyzeMemoryTracker should have no children
+	// If the fix is working, all session trackers should be detached
+	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	require.Len(t, childTrackers, 0, "GlobalAnalyzeMemoryTracker should have no children after all sessions closed")
+}
+
