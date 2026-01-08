@@ -115,6 +115,8 @@ const (
 	SplitRegionCommand = "SPLIT REGION"
 	// UpdateCommand represents UPDATE statement
 	UpdateCommand = "UPDATE"
+	// RecoverValuesCommand represents RECOVER VALUES statement
+	RecoverValuesCommand = "RECOVER VALUES"
 )
 
 // Show Statements
@@ -836,6 +838,11 @@ func (n *SplitRegionStmt) SEMCommand() string {
 // SEMCommand returns the command string for the statement.
 func (n *UpdateStmt) SEMCommand() string {
 	return UpdateCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *RecoverValuesStmt) SEMCommand() string {
+	return RecoverValuesCommand
 }
 
 // Miscellaneous Statements

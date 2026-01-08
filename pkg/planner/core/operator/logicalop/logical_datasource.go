@@ -124,6 +124,8 @@ type DataSource struct {
 
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
+
+	DisableSoftDeleteFilter bool
 }
 
 // Init initializes DataSource.
