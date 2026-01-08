@@ -235,7 +235,7 @@ func (s *mockGCWorkerSuite) mustGet(t *testing.T, key string, ts uint64) string 
 	snap := s.store.GetSnapshot(kv.Version{Ver: ts})
 	value, err := snap.Get(context.TODO(), []byte(key))
 	require.NoError(t, err)
-	return string(value)
+	return string(value.Value)
 }
 
 func (s *mockGCWorkerSuite) mustGetNone(t *testing.T, key string, ts uint64) {

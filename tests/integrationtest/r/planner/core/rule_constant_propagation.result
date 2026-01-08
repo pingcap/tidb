@@ -120,16 +120,15 @@ HashJoin	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.
 explain format='plan_tree' select * from t, (select id, count(name) from s where s.id>1 group by id) tmp where t.id=tmp.id; -- can't, constant propagation can't through the aggregation node;
 id	task	access object	operator info
 Projection	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, planner__core__rule_constant_propagation.s.id, Column#7
-└─Projection	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, Column#7, planner__core__rule_constant_propagation.s.id
-  └─HashJoin	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.t.id)]
-    ├─HashAgg(Build)	root		group by:planner__core__rule_constant_propagation.s.id, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__rule_constant_propagation.s.id)->planner__core__rule_constant_propagation.s.id
-    │ └─TableReader	root		data:HashAgg
-    │   └─HashAgg	cop[tikv]		group by:planner__core__rule_constant_propagation.s.id, funcs:count(planner__core__rule_constant_propagation.s.name)->Column#8
-    │     └─Selection	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-    │       └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
-        └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─HashJoin	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.t.id)]
+  ├─HashAgg(Build)	root		group by:planner__core__rule_constant_propagation.s.id, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__rule_constant_propagation.s.id)->planner__core__rule_constant_propagation.s.id
+  │ └─TableReader	root		data:HashAgg
+  │   └─HashAgg	cop[tikv]		group by:planner__core__rule_constant_propagation.s.id, funcs:count(planner__core__rule_constant_propagation.s.name)->Column#8
+  │     └─Selection	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+  │       └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
+      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t, (select id from s where s.id>1 order by id limit 2) tmp where t.id=tmp.id; -- can't, constant propagation can't through the sort node;
 id	task	access object	operator info
 Projection	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, planner__core__rule_constant_propagation.s.id

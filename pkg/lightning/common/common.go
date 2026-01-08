@@ -25,6 +25,8 @@ import (
 const (
 	// IndexEngineID is the engine ID for index engine.
 	IndexEngineID = -1
+	// AllTables is the special table name to represent all tables.
+	AllTables = "all"
 )
 
 // DefaultImportantVariables is used in ObtainImportantVariables to retrieve the system

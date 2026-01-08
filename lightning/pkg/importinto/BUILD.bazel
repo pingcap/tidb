@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "importinto",
+    srcs = ["checkpoint.go"],
+    importpath = "github.com/pingcap/tidb/lightning/pkg/importinto",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/lightning/common",
+        "//pkg/lightning/config",
+        "//pkg/lightning/log",
+        "//pkg/objstore",
+        "@com_github_joho_sqltocsv//:sqltocsv",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "importinto_test",
+    timeout = "short",
+    srcs = ["checkpoint_test.go"],
+    embed = [":importinto"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/lightning/common",
+        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -1907,11 +1907,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				err = e.AlterCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
-			if !vardef.EnableCheckConstraint.Load() {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
-			} else {
-				err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
-			}
+			err = e.DropCheckConstraint(sctx, ident, ast.NewCIStr(spec.Constraint.Name))
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
@@ -5779,7 +5775,8 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 
 	table, ok := is.TableByID(e.ctx, args.TableID)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(
+			schema.Name, fmt.Sprintf("TableID: %d", args.TableID))
 	}
 
 	ok = validateTableMode(table.Meta().Mode, args.TableMode)

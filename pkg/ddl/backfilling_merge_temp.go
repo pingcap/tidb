@@ -20,10 +20,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -123,7 +123,8 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	collector := &mergeTempIndexCollector{}
 
 	srcOp := NewTempIndexScanTaskSource(wctx, e.store, e.physicalTable, meta.StartKey, meta.EndKey)
-	mergeOp := NewMergeTempIndexOperator(wctx, e.store, e.physicalTable, e.idxInfo, e.job.ID, e.task.RequiredSlots, e.batchCnt, e.job.ReorgMeta)
+	mergeOp := NewMergeTempIndexOperator(wctx, e.store, e.physicalTable, e.idxInfo, e.job.ID,
+		int(e.GetResource().CPU.Capacity()), e.batchCnt, e.job.ReorgMeta)
 	sinkOp := newTempIndexResultSink(wctx, e.physicalTable, collector)
 
 	operator.Compose(srcOp, mergeOp)

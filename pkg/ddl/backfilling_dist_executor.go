@@ -19,15 +19,15 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
@@ -90,7 +90,7 @@ func (m *BackfillSubTaskMeta) Marshal() ([]byte, error) {
 	return m.BaseExternalMeta.Marshal(m)
 }
 
-func decodeBackfillSubTaskMeta(ctx context.Context, extStore storage.ExternalStorage, raw []byte) (*BackfillSubTaskMeta, error) {
+func decodeBackfillSubTaskMeta(ctx context.Context, extStore objstore.Storage, raw []byte) (*BackfillSubTaskMeta, error) {
 	var subtask BackfillSubTaskMeta
 	err := json.Unmarshal(raw, &subtask)
 	if err != nil {
@@ -116,7 +116,7 @@ func decodeBackfillSubTaskMeta(ctx context.Context, extStore storage.ExternalSto
 	return &subtask, nil
 }
 
-func writeExternalBackfillSubTaskMeta(ctx context.Context, extStore storage.ExternalStorage, subtask *BackfillSubTaskMeta, externalPath string) error {
+func writeExternalBackfillSubTaskMeta(ctx context.Context, extStore objstore.Storage, subtask *BackfillSubTaskMeta, externalPath string) error {
 	if extStore == nil {
 		return nil
 	}
@@ -183,7 +183,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().RequiredSlots)
+		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepMergeTempIndex:
 		return newMergeTempIndexExecutor(&s.task.TaskBase, jobMeta, store, tbl)
 	default:

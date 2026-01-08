@@ -146,20 +146,20 @@
       {
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
-          "StreamAgg_20 1.00 71701.80 root  funcs:count(1)->Column#10",
-          "└─HashJoin_92 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
-          "  ├─TableReader_63(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_62",
-          "  │ └─ExchangeSender_62 3.00 1044634.01 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │   └─Projection_61 3.00 1044634.01 mpp[tiflash]  test.t1.b",
-          "  │     └─HashJoin_46 3.00 1044634.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  │       ├─ExchangeReceiver_40(Build) 3.00 580476.40 mpp[tiflash]  ",
-          "  │       │ └─ExchangeSender_39 3.00 580188.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "  │       │   └─Selection_38 3.00 580188.40 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │       │     └─TableFullScan_37 3.00 580174.00 mpp[tiflash] table:t1 keep order:false",
-          "  │       └─Selection_42(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "  │         └─TableFullScan_41 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
-          "  └─IndexReader_76(Probe) 3.00 45.23 root  index:IndexFullScan_75",
-          "    └─IndexFullScan_75 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
+          "StreamAgg_21 1.00 71701.80 root  funcs:count(1)->Column#10",
+          "└─HashJoin_93 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "  ├─TableReader_64(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_63",
+          "  │ └─ExchangeSender_63 3.00 1044634.01 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Projection_62 3.00 1044634.01 mpp[tiflash]  test.t1.b",
+          "  │     └─HashJoin_47 3.00 1044634.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  │       ├─ExchangeReceiver_41(Build) 3.00 580476.40 mpp[tiflash]  ",
+          "  │       │ └─ExchangeSender_40 3.00 580188.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "  │       │   └─Selection_39 3.00 580188.40 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │       │     └─TableFullScan_38 3.00 580174.00 mpp[tiflash] table:t1 keep order:false",
+          "  │       └─Selection_43(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
+          "  │         └─TableFullScan_42 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
+          "  └─IndexReader_77(Probe) 3.00 45.23 root  index:IndexFullScan_76",
+          "    └─IndexFullScan_76 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
         ]
       },
       {

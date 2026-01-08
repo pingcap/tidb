@@ -640,23 +640,34 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 
+	// Record start time before buildExecutor() to include TSO waiting time in maxExecutionTime timeout.
+	// buildExecutor() may block waiting for TSO, so we should start the timer earlier.
+	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
+	cmd := byte(cmd32)
+	var execStartTime time.Time
+	var pi processinfoSetter
+	if raw, ok := sctx.(processinfoSetter); ok {
+		pi = raw
+		execStartTime = time.Now()
+	}
+
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
 	}
 
-	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
-	cmd := byte(cmd32)
-	var pi processinfoSetter
-	if raw, ok := sctx.(processinfoSetter); ok {
-		pi = raw
+	if pi != nil {
 		sql := a.getSQLForProcessInfo()
 		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
+		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
+			maxExecutionTime = 0
+		}
+		pi.SetProcessInfo(sql, execStartTime, cmd, maxExecutionTime)
 	}
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)

@@ -467,7 +467,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 		}
 	}
 
-	values, err := txn.BatchGet(context.Background(), e.batchKeys)
+	values, err := kv.BatchGetValue(context.Background(), txn, e.batchKeys)
 	if err != nil {
 		return err
 	}
@@ -621,7 +621,7 @@ func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte
 		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
 		return true
 	})
-	values, err := txn.BatchGet(context.Background(), e.batchKeys)
+	values, err := kv.BatchGetValue(context.Background(), txn, e.batchKeys)
 	if err != nil {
 		return nil, err
 	}
