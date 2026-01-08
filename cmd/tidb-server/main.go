@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	_ "github.com/pingcap/tidb/pkg/extension/_import"
+	"github.com/pingcap/tidb/pkg/external"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -322,6 +324,8 @@ func main() {
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
+	setupExternalStorage(keyspaceName)
+
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreDDLOwnerMgrAndDomain(keyspaceName)
@@ -994,4 +998,16 @@ func enablePyroscope() {
 			log.Fatal("fail to start pyroscope", zap.Error(err))
 		}
 	}
+}
+
+func setupExternalStorage(namespace string) {
+	cfg := config.GetGlobalConfig()
+	path := cfg.ExternalStoragePath
+	if len(path) == 0 {
+		path = cfg.TempDir
+	}
+	logutil.BgLogger().Info("initialize external storage", zap.String("path", path), zap.String("namespace", namespace))
+
+	err := external.CreateExternalStorage(path, namespace, &storage.ExternalStorageOptions{})
+	terror.MustNil(err)
 }
