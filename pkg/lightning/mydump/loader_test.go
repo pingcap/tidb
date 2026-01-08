@@ -1196,19 +1196,16 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 
 	// Generate file with 2 row groups and estimate row size based on 1st group.
 	md.WriteParquetFile(s.sourceDir, fileName, pc, 2, count)
-	checkRes, err := md.PrecheckParquet(ctx, store, fileName)
+	_, avgRowSize, err := md.SampleStatisticsFromParquet(ctx, store, fileName)
 	require.NoError(t, err)
 
-	var expectedAvgRowSize float64
+	expectedAvgRowSize := 1.0
 	if count > 0 {
 		expectedAvgRowSize = float64(totalRowSize) / float64(count)
-	} else {
-		expectedAvgRowSize = 1.0
-		require.EqualValues(t, 2.0, checkRes.SizeExpansionRatio)
 	}
 
 	// expected error within 10%
-	require.InDelta(t, expectedAvgRowSize, checkRes.AvgRowSize, expectedAvgRowSize*0.1)
+	require.InDelta(t, expectedAvgRowSize, avgRowSize, expectedAvgRowSize*0.1)
 }
 
 func TestSampleParquetDataSize(t *testing.T) {

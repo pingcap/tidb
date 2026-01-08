@@ -29,13 +29,12 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
@@ -56,11 +55,17 @@ var (
 	// during precheck. It is used to validate that parsing a parquet file
 	// does not consume excessive memory. If the peak memory usage exceeds this
 	// limit, the precheck will fail to prevent potential OOM during the actual
-	// import. This value is chosen as an experimental value since we don't know
-	// the actual memory for the worker. Here we assume that worker nodes has
-	// >= 2GiB/core, where half of the memory is allocated to the external writer.
+	// import.
+	//
+	// This value is chosen experimentally based on the assumption that worker nodes
+	// have at least 2GiB of memory per core. Due to memory taken by OS, Kubernetes,
+	// and sidecars (metrics/log collectors), the usable memory on a node with
+	// CPU:MEM 1:2 is only around 1.8GiB per core. Assuming half of the memory is
+	// allocated to the external writer, we set this limit to 460 MiB to ensure
+	// safe operation.
+	//
 	// Exported for test.
-	ParquetParserMemoryLimit int64 = 512 << 20 // 512MB
+	ParquetParserMemoryLimit int64 = 460 * units.MiB
 )
 
 var (
@@ -666,25 +671,77 @@ func NewParquetParser(
 	return parser, nil
 }
 
-// ParquetPrecheckResult is the result of parquet import check.
-type ParquetPrecheckResult struct {
-	AvgRowSize         float64
-	SizeExpansionRatio float64
-}
-
-// PrecheckParquet checks whether the import file is valid to import.
-func PrecheckParquet(
+// SampleStatisticsFromParquet samples row size and compression ratio for this file.
+func SampleStatisticsFromParquet(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	path string,
-) (*ParquetPrecheckResult, error) {
-	failpoint.Inject("skipCheckForParquet", func() {
-		failpoint.Return(&ParquetPrecheckResult{1.0, 1.0}, nil)
-	})
+) (
+	parquetCompressRatio float64,
+	avgRowSize float64,
+	err error,
+) {
+	r, err := store.Open(ctx, path, nil)
+	if err != nil {
+		return 1, 0, err
+	}
+
+	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
+	if err != nil {
+		return 1, 0, err
+	}
+
+	//nolint: errcheck
+	defer parser.Close()
+
+	var rowSize int64
+
+	reader := parser.readers[0]
+	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
+		return 1, 0, nil
+	}
+
+	var (
+		totalReadRows = reader.MetaData().NumRows
+		readRows      = min(totalReadRows, int64(1024))
+		rowCount      int64
+	)
+
+	for range readRows {
+		err = parser.ReadRow()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				break
+			}
+			return 1, 0, err
+		}
+		lastRow := parser.LastRow()
+		rowSize += int64(lastRow.Length)
+		parser.RecycleRow(lastRow)
+		rowCount++
+	}
+
+	avgRowSize = float64(rowSize) / float64(rowCount)
+	parquetCompressRatio = float64(rowSize) / float64(reader.MetaData().GetSourceFileSize())
+	return
+}
+
+// ValidateParquetFile performs a validation of a Parquet file.
+// It attempts to parse the file and track parser memory usage to detect
+// cases that may cause excessive memory consumption during import. If the
+// observed peak allocation exceeds `ParquetParserMemoryLimit`, a warning is
+// logged. Since this validation doesn't prevent the import, it's best-effort:
+// it does not return an error and only logs warnings when problems are detected.
+func ValidateParquetFile(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	path string,
+) {
+	logger := logutil.Logger(ctx)
 
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	allocator := &trackingAllocator{}
@@ -692,50 +749,33 @@ func PrecheckParquet(
 
 	if err != nil {
 		if goerrors.Is(err, common.ErrParquetSchemaInvalid) {
-			return nil, exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
-				"parquet file schema invalid")
+			logger.Warn("the schema of parquet file is invalid",
+				zap.String("path", path), zap.Error(err))
 		}
-		return nil, err
+		return
 	}
 
 	//nolint: errcheck
 	defer parser.Close()
 
 	reader := parser.readers[0]
-
-	// The file is empty, use 1.0 and 2.0 as row size and ratio respectively.
-	if len(reader.MetaData().RowGroups) == 0 ||
-		reader.MetaData().RowGroups[0].NumRows == 0 {
-		return &ParquetPrecheckResult{1.0, 2.0}, nil
+	if len(reader.MetaData().RowGroups) == 0 {
+		return
 	}
 
-	var (
-		rowSize  int64
-		rowCount int64
-	)
 	for range reader.MetaData().RowGroups[0].NumRows {
-		err = parser.ReadRow()
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				break
-			}
-			return nil, err
+		if err = parser.ReadRow(); err != nil {
+			return
 		}
-		rowCount++
-		lastRow := parser.LastRow()
-		rowSize += int64(lastRow.Length)
-		parser.RecycleRow(lastRow)
+
 		if allocator.peakAllocation.Load() >= ParquetParserMemoryLimit {
-			return nil, exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
-				"parquet files are too large and may cause OOM, consider changing to CSV format")
+			logger.Warn("the memory consumption of parquet parser exceeds the limit during precheck",
+				zap.String("path", path),
+				zap.String("limit", units.HumanSize(float64(ParquetParserMemoryLimit))),
+			)
+			return
 		}
 	}
-
-	fileSize := reader.MetaData().GetSourceFileSize()
-	avgRowSize := float64(rowSize) / float64(rowCount)
-	sizeExpansionRatio := (float64)(rowSize) / float64(fileSize)
-
-	return &ParquetPrecheckResult{avgRowSize, sizeExpansionRatio}, nil
 }
 
 // addressOf returns the address of a buffer, return 0 if the buffer is nil or

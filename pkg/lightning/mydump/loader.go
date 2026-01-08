@@ -268,6 +268,11 @@ type RawFile struct {
 	Size int64
 }
 
+type parquetInfo struct {
+	rowSize          float64 // the average row size of the parquet file
+	compressionRatio float64 // the estimated compression ratio of the parquet file
+}
+
 type mdLoaderSetup struct {
 	sourceID      string
 	loader        *MDLoader
@@ -478,10 +483,10 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		// process file size for parquet files
 		if info.FileMeta.Type == SourceTypeParquet {
 			v, _ := s.sampledParquetInfos.Load(info.TableName.String())
-			checkRes, _ := v.(ParquetPrecheckResult)
-			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * checkRes.SizeExpansionRatio)
+			pinfo, _ := v.(parquetInfo)
+			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) / pinfo.compressionRatio)
 			// Postpone reading the row count to `MakeTableRegion` if necessary.
-			info.FileMeta.Rows = int64(float64(info.FileMeta.RealSize) / checkRes.AvgRowSize)
+			info.FileMeta.Rows = int64(float64(info.FileMeta.RealSize) / pinfo.rowSize)
 
 			if m, ok := metric.FromContext(ctx); ok {
 				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, info.TableName.String()).Add(float64(info.FileMeta.Rows))
@@ -621,17 +626,17 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 	case SourceTypeParquet:
 		tableName := info.TableName.String()
 
-		// Only check once for each table
-		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, ParquetPrecheckResult{})
+		// Only sample once for each table
+		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, parquetInfo{})
 		if !loaded {
-			checkRes, err := PrecheckParquet(ctx, s.loader.GetStore(), path)
+			compressionRatio, rowSize, err := SampleStatisticsFromParquet(ctx, s.loader.GetStore(), info.FileMeta.Path)
 			if err != nil {
-				logger.Error("check parquet file meets error", zap.String("category", "loader"),
+				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
 					zap.Stringer("type", res.Type), zap.Error(err))
 				return nil, errors.Trace(err)
 			}
-			s.sampledParquetInfos.Store(tableName, *checkRes)
+			s.sampledParquetInfos.Store(tableName, parquetInfo{rowSize, compressionRatio})
 		}
 	}
 
