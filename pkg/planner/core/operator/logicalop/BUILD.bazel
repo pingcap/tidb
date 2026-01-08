@@ -76,7 +76,6 @@ go_library(
         "//pkg/util/hint",
         "//pkg/util/intest",
         "//pkg/util/intset",
-        "//pkg/util/iter",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
         "//pkg/util/size",
