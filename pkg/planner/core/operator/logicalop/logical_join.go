@@ -422,10 +422,10 @@ Currently, we only support projections with column mapping relationships, not tr
 	Projection[null->col1,null->col2,col3,col4] <- anti semi join[outer side: col1 col2, inner side: col3 col4]
 
 */
-func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (resultProj *LogicalProjection, selConditionColInOuter bool) {
-	if len(ret) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
-		// ret can only have one expression.
-		// The inner expression can definitely be pushed down, so ret must be the outer expression.
+func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (resultProj *LogicalProjection, selConditionColInOuter bool) {
+	if len(selectCond) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
+		// selectCond can only have one expression.
+		// The inner expression can definitely be pushed down, so selectCond must be the outer expression.
 		// If they are semantically similar, leaving only one and the other should be eliminable.
 		return nil, false
 	}
@@ -445,7 +445,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 	var sf *expression.ScalarFunction
 	var ok bool
 	var isNullcol *expression.Column
-	sf, ok = ret[0].(*expression.ScalarFunction)
+	sf, ok = selectCond[0].(*expression.ScalarFunction)
 	if !ok || sf == nil {
 		return nil, false
 	}
