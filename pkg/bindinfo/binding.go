@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -161,8 +162,9 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 	// record the normalization result into info to avoid repeat normalization next time.
 	var noDBDigest string
 	var tableNames []*ast.TableName
+	var cache *BindingCacheItem
 	if item, ok := sctx.GetSessionVars().StmtCtx.MatchSQLBindingCache[stmtNode]; ok {
-		cache := item.(*BindingCacheItem)
+		cache = item.(*BindingCacheItem)
 		return cache.binding, cache.matched, cache.scope
 	}
 	_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
@@ -170,6 +172,14 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 
 	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
 	if binding, matched := sessionHandle.MatchSessionBinding(sctx, noDBDigest, tableNames); matched {
+		intest.AssertFunc(func() bool {
+			if cache == nil {
+				return true
+			}
+			return cache.matched == true &&
+				cache.binding == binding &&
+				cache.scope == metrics.ScopeSession
+		})
 		sctx.GetSessionVars().StmtCtx.MatchSQLBindingCache[stmtNode] = &BindingCacheItem{
 			binding: binding,
 			matched: matched,
@@ -186,13 +196,21 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 			// After hitting the cache, update the usage time of the bind.
 			binding.UpdateLastUsedAt()
 		}
+		intest.AssertFunc(func() bool {
+			if cache == nil {
+				return true
+			}
+			return cache.matched == true &&
+				cache.binding == binding &&
+				cache.scope == metrics.ScopeGlobal
+		})
 		sctx.GetSessionVars().StmtCtx.MatchSQLBindingCache[stmtNode] = &BindingCacheItem{
 			binding: binding,
 			matched: matched,
 			scope:   metrics.ScopeGlobal}
 		return binding, matched, metrics.ScopeGlobal
 	}
-
+	intest.Assert(cache == nil || cache.matched == false)
 	return
 }
 
