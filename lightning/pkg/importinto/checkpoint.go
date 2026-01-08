@@ -27,10 +27,10 @@ import (
 
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 )
 
 // CheckpointStatus represents the status of a table import job.
@@ -163,7 +163,7 @@ func (*NoopCheckpointManager) Close() error { return nil }
 // FileCheckpointManager implements CheckpointManager using a local file.
 type FileCheckpointManager struct {
 	filePath    string
-	storage     *storage.LocalStorage
+	storage     *objstore.LocalStorage
 	checkpoints map[string]*TableCheckpoint
 	mu          sync.RWMutex
 }
@@ -182,7 +182,7 @@ func (m *FileCheckpointManager) Initialize(ctx context.Context) error {
 	defer m.mu.Unlock()
 
 	dir := filepath.Dir(m.filePath)
-	st, err := storage.NewLocalStorage(dir)
+	st, err := objstore.NewLocalStorage(dir)
 	if err != nil {
 		return errors.Trace(err)
 	}

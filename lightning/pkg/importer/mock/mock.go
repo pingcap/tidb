@@ -21,11 +21,11 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -57,14 +57,14 @@ type DBSourceData struct {
 type ImportSource struct {
 	dbSrcDataMap  map[string]*DBSourceData
 	dbFileMetaMap map[string]*mydump.MDDatabaseMeta
-	srcStorage    storage.ExternalStorage
+	srcStorage    objstore.Storage
 }
 
 // NewImportSource creates a ImportSource object.
 func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, error) {
 	ctx := context.Background()
 	dbFileMetaMap := make(map[string]*mydump.MDDatabaseMeta)
-	mapStore := storage.NewMemStorage()
+	mapStore := objstore.NewMemStorage()
 	for dbName, dbData := range dbSrcDataMap {
 		dbFileInfo := mydump.FileInfo{
 			TableName: filter.Table{
@@ -150,7 +150,7 @@ func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, erro
 }
 
 // GetStorage gets the External Storage object on the mock source.
-func (m *ImportSource) GetStorage() storage.ExternalStorage {
+func (m *ImportSource) GetStorage() objstore.Storage {
 	return m.srcStorage
 }
 

@@ -424,7 +424,7 @@ func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s', thread=1`, gcsEndpoint, sortStorageURI)
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/br/pkg/storage/GCSReadUnexpectedEOF", "return(0)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/objstore/GCSReadUnexpectedEOF", "return(0)")
 	s.tk.MustExec("truncate table t")
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)

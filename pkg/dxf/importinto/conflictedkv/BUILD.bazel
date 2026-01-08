@@ -12,7 +12,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
         "//pkg/dxf/framework/handle",
         "//pkg/executor/importer",
         "//pkg/kv",
@@ -21,6 +20,7 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/lightning/verification",
         "//pkg/meta/model",
+        "//pkg/objstore",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
@@ -48,7 +48,6 @@ go_test(
     flaky = True,
     shard_count = 6,
     deps = [
-        "//br/pkg/storage",
         "//pkg/config/kerneltype",
         "//pkg/executor/importer",
         "//pkg/kv",
@@ -57,6 +56,7 @@ go_test(
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/common",
         "//pkg/lightning/verification",
+        "//pkg/objstore",
         "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/table",

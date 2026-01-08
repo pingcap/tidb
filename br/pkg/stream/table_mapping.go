@@ -81,7 +81,8 @@ type tableMetaValue struct {
 // 4. after all above steps, it uses the genGenGlobalIDs method to generate a batch of ids in one call and replace
 // the dummy ids, it builds the final state of the db replace map
 type TableMappingManager struct {
-	DBReplaceMap map[UpstreamID]*DBReplace
+	DBReplaceMap  map[UpstreamID]*DBReplace
+	fromPitrIdMap bool
 
 	// used during scanning log to identify already seen id mapping. For example after exchange partition, the
 	// exchanged-in table already had an id mapping can be identified in the partition so don't allocate a new id.
@@ -101,9 +102,18 @@ type TableMappingManager struct {
 	PreallocatedRange [2]int64
 }
 
+func (tm *TableMappingManager) SetFromPiTRIDMap() {
+	tm.fromPitrIdMap = true
+}
+
+func (tm *TableMappingManager) IsFromPiTRIDMap() bool {
+	return tm.fromPitrIdMap
+}
+
 func NewTableMappingManager() *TableMappingManager {
 	return &TableMappingManager{
 		DBReplaceMap:          make(map[UpstreamID]*DBReplace),
+		fromPitrIdMap:         false,
 		globalIdMap:           make(map[UpstreamID]DownstreamID),
 		tempIDCounter:         InitialTempId,
 		tempDefaultKVTableMap: make(map[tableMetaKey]*tableMetaValue),
@@ -314,12 +324,16 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
 
 	if dbValue, exists := tm.tempDefaultKVDbMap[idx]; exists {
 		dbValue.count--
-		if dbValue.count <= 0 {
-			delete(tm.tempDefaultKVDbMap, idx)
+		if dbValue.count < 0 {
+			log.Warn("write cf kvs are more than default cf kvs for database",
+				zap.Int64("db-id", dbId),
+				zap.Uint64("start-ts", startTs),
+				zap.Uint64("commit-ts", commitTs),
+				zap.String("value", base64.StdEncoding.EncodeToString(value)))
 		}
 		return tm.parseDBValueAndUpdateIdMapping(dbId, dbValue.name, commitTs, collector)
 	}
-	log.Error("default cf kv is lost when processing write cf kv for database",
+	log.Warn("default cf kv is lost when processing write cf kv for database",
 		zap.Int64("db-id", dbId),
 		zap.Uint64("start-ts", startTs),
 		zap.Uint64("commit-ts", commitTs),
@@ -486,8 +500,13 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(
 	}
 	if tableValue, exists := tm.tempDefaultKVTableMap[idx]; exists {
 		tableValue.count--
-		if tableValue.count <= 0 {
-			delete(tm.tempDefaultKVTableMap, idx)
+		if tableValue.count < 0 {
+			log.Warn("write cf kvs are more than default cf kvs for table",
+				zap.Int64("db-id", dbId),
+				zap.Int64("table-id", tableId),
+				zap.Uint64("start-ts", startTs),
+				zap.Uint64("commit-ts", commitTs),
+				zap.String("value", base64.StdEncoding.EncodeToString(value)))
 		}
 		return tm.parseTableValueAndUpdateIdMapping(dbId, tableId, commitTs, tableValue.info, collector)
 	}

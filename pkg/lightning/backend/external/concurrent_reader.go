@@ -19,7 +19,7 @@ import (
 	"io"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -29,7 +29,7 @@ type concurrentFileReader struct {
 	concurrency    int
 	readBufferSize int
 
-	storage storage.ExternalStorage
+	storage objstore.Storage
 	name    string
 
 	offset   int64
@@ -39,7 +39,7 @@ type concurrentFileReader struct {
 // newConcurrentFileReader creates a new concurrentFileReader.
 func newConcurrentFileReader(
 	ctx context.Context,
-	st storage.ExternalStorage,
+	st objstore.Storage,
 	name string,
 	offset int64,
 	fileSize int64,
@@ -78,7 +78,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 		offset := r.offset
 		r.offset += int64(end)
 		eg.Go(func() error {
-			_, err := storage.ReadDataInRange(
+			_, err := objstore.ReadDataInRange(
 				r.ctx,
 				r.storage,
 				r.name,

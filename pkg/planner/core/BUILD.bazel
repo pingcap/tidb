@@ -75,7 +75,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/core",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -95,6 +94,7 @@ go_library(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",

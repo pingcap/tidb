@@ -35,13 +35,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
@@ -164,12 +164,12 @@ func unmarshalLogRestoreTableIDsBlocklistFile(data []byte) (*LogRestoreTableIDsB
 
 func fastWalkLogRestoreTableIDsBlocklistFile(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s objstore.Storage,
 	filterOutFn func(restoreCommitTs, restoreStartTs uint64) bool,
 	executionFn func(ctx context.Context, filename string, restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64) error,
 ) error {
 	filenames := make([]string, 0)
-	if err := s.WalkDir(ctx, &storage.WalkOption{SubDir: logRestoreTableIDBlocklistFilePrefix}, func(path string, _ int64) error {
+	if err := s.WalkDir(ctx, &objstore.WalkOption{SubDir: logRestoreTableIDBlocklistFilePrefix}, func(path string, _ int64) error {
 		restoreCommitTs, restoreStartTs, parsed := parseLogRestoreTableIDsBlocklistFileName(path)
 		if parsed {
 			if filterOutFn(restoreCommitTs, restoreStartTs) {
@@ -209,7 +209,7 @@ func fastWalkLogRestoreTableIDsBlocklistFile(
 // CheckTableTrackerContainsTableIDsFromBlocklistFiles checks whether pitr id tracker contains the filtered table IDs from blocklist file.
 func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s objstore.Storage,
 	tracker *utils.PiTRIdTracker,
 	startTs, restoredTs uint64,
 	tableNameByTableId func(tableId int64) string,
@@ -226,9 +226,10 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 		for _, tableId := range tableIds {
 			if tracker.ContainsTableId(tableId) || tracker.ContainsPartitionId(tableId) {
 				return errors.Errorf(
-					"cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) before snapshot backup(at %d). "+
-						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup.",
-					tableId, tableNameByTableId(tableId), restoredTs, restoreCommitTs, startTs)
+					"cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) after snapshot backup(at %d). "+
+						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup(BackupTS > %d) "+
+						"or older restored ts(RestoreTS < %d).",
+					tableId, tableNameByTableId(tableId), restoredTs, restoreCommitTs, startTs, restoreCommitTs, restoreStartTs)
 			}
 			// the meta kv may not be backed by log restore
 			if checkTableIdLost(tableId) {
@@ -256,7 +257,7 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 // TruncateLogRestoreTableIDsBlocklistFiles truncates the blocklist files whose restore commit ts is not larger than truncate until ts.
 func TruncateLogRestoreTableIDsBlocklistFiles(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s objstore.Storage,
 	untilTs uint64,
 ) error {
 	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, restoreTargetTs uint64) bool {

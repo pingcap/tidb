@@ -19,8 +19,8 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -119,7 +119,7 @@ var DialectBinaryFormatMap = map[CSVDialect]BinaryFormat{
 
 // Config is the dump config for dumpling
 type Config struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 
 	SpecifiedTables          bool
 	AllowCleartextPasswords  bool
@@ -134,7 +134,7 @@ type Config struct {
 	EscapeBackslash          bool
 	DumpEmptyDatabase        bool
 	PosAfterConnect          bool
-	CompressType             storage.CompressType
+	CompressType             objstore.CompressType
 
 	Host     string
 	Port     int
@@ -181,11 +181,11 @@ type Config struct {
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
 
-	Labels        prometheus.Labels       `json:"-"`
-	PromFactory   promutil.Factory        `json:"-"`
-	PromRegistry  promutil.Registry       `json:"-"`
-	ExtStorage    storage.ExternalStorage `json:"-"`
-	MinTLSVersion uint16                  `json:"-"`
+	Labels        prometheus.Labels `json:"-"`
+	PromFactory   promutil.Factory  `json:"-"`
+	PromRegistry  promutil.Registry `json:"-"`
+	ExtStorage    objstore.Storage  `json:"-"`
+	MinTLSVersion uint16            `json:"-"`
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
@@ -306,7 +306,7 @@ func timestampDirName() string {
 
 // DefineFlags defines flags of dumpling's configuration
 func (*Config) DefineFlags(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringSliceP(flagDatabase, "B", nil, "Databases to dump")
 	flags.StringSliceP(flagTablesList, "T", nil, "Comma delimited table list to dump; must be qualified table names")
 	flags.StringP(flagHost, "h", "127.0.0.1", "The host to connect to")
@@ -672,18 +672,18 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 }
 
 // ParseCompressType parses compressType string to storage.CompressType
-func ParseCompressType(compressType string) (storage.CompressType, error) {
+func ParseCompressType(compressType string) (objstore.CompressType, error) {
 	switch compressType {
 	case "", "no-compression":
-		return storage.NoCompression, nil
+		return objstore.NoCompression, nil
 	case "gzip", "gz":
-		return storage.Gzip, nil
+		return objstore.Gzip, nil
 	case "snappy":
-		return storage.Snappy, nil
+		return objstore.Snappy, nil
 	case "zstd", "zst":
-		return storage.Zstd, nil
+		return objstore.Zstd, nil
 	default:
-		return storage.NoCompression, errors.Errorf("unknown compress type %s", compressType)
+		return objstore.NoCompression, errors.Errorf("unknown compress type %s", compressType)
 	}
 }
 
@@ -703,17 +703,17 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
-func (conf *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
+func (conf *Config) createExternalStorage(ctx context.Context) (objstore.Storage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
 	}
-	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
+	b, err := objstore.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// TODO: support setting httpClient with certification later
-	return storage.New(ctx, b, &storage.ExternalStorageOptions{})
+	return objstore.New(ctx, b, &objstore.Options{})
 }
 
 const (
