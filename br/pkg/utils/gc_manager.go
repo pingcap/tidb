@@ -6,12 +6,9 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
 )
 
 // GCSafePointManager abstracts GC operations, supporting both global and keyspace-level GC.
@@ -32,6 +29,10 @@ func NewGCSafePointManager(pdClient pd.Client, storage kv.Storage) (GCSafePointM
 
 	if keyspaceName == "" {
 		return newGlobalGCManager(pdClient), nil
+	}
+
+	if storage == nil {
+		panic("storage is required for keyspace mode")
 	}
 
 	codec := storage.GetCodec()
@@ -67,21 +68,6 @@ func SetServiceSafePoint(
 		return errors.Trace(err)
 	}
 	return mgr.SetServiceSafePoint(ctx, sp)
-}
-
-// CheckGCSafePoint checks whether the ts is older than GC safepoint.
-// Note: It ignores errors other than exceed GC safepoint.
-func CheckGCSafePoint(ctx context.Context, pdClient pd.Client, ts uint64) error {
-	// TODO: use PDClient.GetGCSafePoint instead once PD client exports it.
-	safePoint, err := getGCSafePoint(ctx, pdClient)
-	if err != nil {
-		log.Warn("fail to get GC safe point", zap.Error(err))
-		return nil
-	}
-	if ts <= safePoint {
-		return errors.Annotatef(berrors.ErrBackupGCSafepointExceeded, "GC safepoint %d exceed TS %d", safePoint, ts)
-	}
-	return nil
 }
 
 // DeleteServiceSafePoint removes the service safe point with the appropriate GCSafePointManager.

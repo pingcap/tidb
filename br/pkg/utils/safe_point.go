@@ -77,6 +77,22 @@ func checkGCSafePointByManager(ctx context.Context, mgr GCSafePointManager, ts u
 	return nil
 }
 
+
+// CheckGCSafePoint checks whether the ts is older than GC safepoint.
+// Note: It ignores errors other than exceed GC safepoint.
+func CheckGCSafePoint(ctx context.Context, pdClient pd.Client, ts uint64) error {
+	// TODO: use PDClient.GetGCSafePoint instead once PD client exports it.
+	safePoint, err := getGCSafePoint(ctx, pdClient)
+	if err != nil {
+		log.Warn("fail to get GC safe point", zap.Error(err))
+		return nil
+	}
+	if ts <= safePoint {
+		return errors.Annotatef(berrors.ErrBackupGCSafepointExceeded, "GC safepoint %d exceed TS %d", safePoint, ts)
+	}
+	return nil
+}
+
 // StartServiceSafePointKeeperInner starts a goroutine to periodically update the service safe point.
 // It uses the provided GCSafePointManager to set the safe point.
 // The keeper will run until the context is canceled.
