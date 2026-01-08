@@ -45,7 +45,7 @@ const finishJobTemplateBody = `UPDATE %s
 
 var (
 	finishJobTemplateSoftdelete = fmt.Sprintf(finishJobTemplateBody, "mysql.tidb_softdelete_table_status", "")
-	finishJobTemplateTTL        = fmt.Sprintf(finishJobTemplateBody, "mysql.tidb_ttl_table_status", "last_job_ttl_expire = current_job_ttl_expire,")
+	finishJobTemplateTTL        = fmt.Sprintf(finishJobTemplateBody, "mysql.tidb_ttl_table_status", "last_job_ttl_expire = current_job_ttl_expire")
 )
 
 const removeTaskForJobTemplate = "DELETE FROM mysql.tidb_ttl_task WHERE job_id = %?"

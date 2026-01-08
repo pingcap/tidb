@@ -1177,7 +1177,6 @@ var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.TiDBTTLTableStatusTableID, Name: "tidb_ttl_table_status", SQL: CreateTiDBTTLTableStatusTable},
 	{ID: metadef.TiDBTTLTaskTableID, Name: "tidb_ttl_task", SQL: CreateTiDBTTLTaskTable},
 	{ID: metadef.TiDBTTLJobHistoryTableID, Name: "tidb_ttl_job_history", SQL: CreateTiDBTTLJobHistoryTable},
-	{ID: metadef.TiDBSoftDeleteTableStatusTableID, Name: "tidb_softdelete_table_status", SQL: CreateTiDBSoftDeleteTableStatusTable},
 	{ID: metadef.TiDBGlobalTaskTableID, Name: "tidb_global_task", SQL: CreateTiDBGlobalTaskTable},
 	{ID: metadef.TiDBGlobalTaskHistoryTableID, Name: "tidb_global_task_history", SQL: CreateTiDBGlobalTaskHistoryTable},
 	{ID: metadef.TiDBImportJobsTableID, Name: "tidb_import_jobs", SQL: CreateTiDBImportJobsTable},
@@ -1192,6 +1191,7 @@ var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: CreateIndexAdvisorResultsTable},
 	{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: CreateTiDBKernelOptionsTable},
 	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: CreateTiDBWorkloadValuesTable},
+	{ID: metadef.TiDBSoftDeleteTableStatusTableID, Name: "tidb_softdelete_table_status", SQL: CreateTiDBSoftDeleteTableStatusTable},
 	// NOTE: if you need to add more tables to 'mysql' database, please also add
 	// an entry to versionedBootstrapSchemas, to make sure the table is created
 	// correctly in nextgen kennel.
