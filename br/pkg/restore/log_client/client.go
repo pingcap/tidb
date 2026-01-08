@@ -231,6 +231,10 @@ type LogClient struct {
 	restoreStat  restoreStatistics
 }
 
+func (rc *LogClient) SetRestoreID(restoreID uint64) {
+	rc.restoreID = restoreID
+}
+
 type restoreStatistics struct {
 	// restoreSSTKVSize is the total size (Original KV length) of KV pairs restored from SST files.
 	restoreSSTKVSize uint64
@@ -615,7 +619,7 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 
 func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	ctx context.Context,
-	startTS, restoredTS uint64,
+	restoreStartTS, startTS, restoredTS uint64,
 	gcRatio string,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
@@ -651,6 +655,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
 	if err := logCheckpointMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{
 		UpstreamClusterID: rc.upstreamClusterID,
+		RestoreStartTS:    restoreStartTS,
 		RestoredTS:        restoredTS,
 		StartTS:           startTS,
 		RewriteTS:         rc.currentTS,
@@ -1002,7 +1007,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	hasFullBackupStorageConfig,
 	loadSavedIDMap bool,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-	tableMappingManger *stream.TableMappingManager,
+	tableMappingManager *stream.TableMappingManager,
 ) error {
 	var (
 		err        error
@@ -1041,7 +1046,8 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 
 	stream.LogDBReplaceMap("base db replace info", dbReplaces)
 	if len(dbReplaces) != 0 {
-		tableMappingManger.MergeBaseDBReplace(dbReplaces)
+		tableMappingManager.SetFromPiTRIDMap()
+		tableMappingManager.MergeBaseDBReplace(dbReplaces)
 	}
 	return nil
 }
