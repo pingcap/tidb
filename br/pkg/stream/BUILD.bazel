@@ -34,7 +34,6 @@ go_library(
         "//br/pkg/utils/iter",
         "//pkg/ddl",
         "//pkg/domain",
-        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/metadef",
