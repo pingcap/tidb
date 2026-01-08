@@ -889,7 +889,6 @@ func TestKillQueryOnIdleConnection(t *testing.T) {
 	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL CONNECTION %v", connID1))
 	require.NoError(t, err)
 	// verify connection is closed
-	rows, err = conn1.QueryContext(ctx, "select 1")
+	_, err = conn1.ExecContext(ctx, "select 1")
 	require.Error(t, err)
-	require.Nil(t, rows)
 }
