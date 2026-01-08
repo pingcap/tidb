@@ -92,8 +92,8 @@ func (m *mockGCManager) SetServiceSafePoint(ctx context.Context, sp utils.BRServ
 	return err
 }
 
-func (m *mockGCManager) DeleteServiceSafePoint(ctx context.Context, id string) error {
-	_, err := m.pdClient.UpdateServiceGCSafePoint(ctx, id, 0, 0)
+func (m *mockGCManager) DeleteServiceSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
+	_, err := m.pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, 0, 0)
 	return err
 }
 
@@ -152,7 +152,7 @@ func TestStartServiceSafePointKeeper(t *testing.T) {
 	}
 	for i, cs := range cases {
 		ctx, cancel := context.WithCancel(context.Background())
-		err := utils.StartServiceSafePointKeeper(ctx, cs.sp, mgr)
+		err := utils.StartServiceSafePointKeeperInner(ctx, cs.sp, mgr)
 		if cs.ok {
 			require.NoErrorf(t, err, "case #%d, %v", i, cs)
 		} else {

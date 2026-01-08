@@ -77,10 +77,10 @@ func checkGCSafePointByManager(ctx context.Context, mgr GCSafePointManager, ts u
 	return nil
 }
 
-// startServiceSafePointKeeper starts a goroutine to periodically update the service safe point.
+// StartServiceSafePointKeeperInner starts a goroutine to periodically update the service safe point.
 // It uses the provided GCSafePointManager to set the safe point.
 // The keeper will run until the context is canceled.
-func startServiceSafePointKeeper(
+func StartServiceSafePointKeeperInner(
 	ctx context.Context,
 	sp BRServiceSafePoint,
 	mgr GCSafePointManager,
