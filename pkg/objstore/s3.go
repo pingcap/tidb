@@ -1526,7 +1526,8 @@ func (tr *tidbRetryer) RetryDelay(attempt int, err error) (time.Duration, error)
 		delay = minDelay
 	}
 
-	log.Warn("failed to request s3, retrying", zap.Error(err), zap.Duration("backoff", delay))
+	log.Warn("failed to request s3, retrying", zap.Int("attempt", attempt),
+		zap.Duration("backoff", delay), zap.Error(err))
 	return delay, nil
 }
 
