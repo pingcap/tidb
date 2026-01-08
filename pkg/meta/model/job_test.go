@@ -21,6 +21,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
@@ -162,6 +163,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	require.Equal(t, 400, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 144, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -269,6 +271,9 @@ func TestString(t *testing.T) {
 		{ActionAlterTablePlacement, "alter table placement"},
 		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},
+		{ActionAlterTableAffinity, "alter table affinity"},
+		{ActionAlterTableSoftDeleteInfo, "alter soft delete info"},
+		{ActionModifySchemaSoftDeleteAndActiveActive, "modify schema soft delete and active active"},
 	}
 
 	for _, v := range acts {
@@ -294,4 +299,65 @@ func TestJobEncodeV2(t *testing.T) {
 	args := &TruncateTableArgs{}
 	require.NoError(t, json.Unmarshal(j.RawArgs, args))
 	require.EqualValues(t, j.args[0], args)
+}
+
+func TestJobVerInUse(t *testing.T) {
+	if kerneltype.IsClassic() {
+		require.Equal(t, JobVersion1, GetJobVerInUse())
+	} else {
+		require.Equal(t, JobVersion2, GetJobVerInUse())
+	}
+}
+
+func TestJobCheckInvolvingSchemaInfo(t *testing.T) {
+	cases := []struct {
+		job    *Job
+		errStr string
+	}{
+		// cases without explicit InvolvingSchemaInfo
+		{job: &Job{SchemaName: "", TableName: ""}, errStr: "must involve only one type of object"},
+		{job: &Job{SchemaName: "", TableName: "t1"}, errStr: "must have non-empty name set"},
+		{job: &Job{SchemaName: "", TableName: "*"}, errStr: "must have non-empty name set"},
+		// GetInvolvingSchemaInfo will convert this into test.* automatically.
+		{job: &Job{SchemaName: "test", TableName: ""}},
+		{job: &Job{SchemaName: "test", TableName: "t"}},
+		{job: &Job{SchemaName: "test", TableName: "*"}},
+		// GetInvolvingSchemaInfo will convert this into *.* automatically.
+		{job: &Job{SchemaName: "*", TableName: ""}},
+		{job: &Job{SchemaName: "*", TableName: "t"}, errStr: "operating on all databases, must not set table name"},
+		{job: &Job{SchemaName: "*", TableName: "*"}},
+
+		// cases with explicit InvolvingSchemaInfo
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Policy: "p"}}}},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Policy: "*"}}}},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{ResourceGroup: "r"}}}},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{ResourceGroup: "*"}}}},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Policy: "p", ResourceGroup: "r"}}}, errStr: "must involve only one type of object"},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Policy: "p", Database: "d"}}}, errStr: "must involve only one type of object"},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "d", ResourceGroup: "r"}}}, errStr: "must involve only one type of object"},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Policy: "p", Database: "d", ResourceGroup: "r"}}}, errStr: "must involve only one type of object"},
+
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "", Table: ""}}}, errStr: "must involve only one type of object"},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "", Table: "t"}}}, errStr: "must have non-empty name set"},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "", Table: "*"}}}, errStr: "must have non-empty name set"},
+
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "d", Table: ""}}}, errStr: "must have non-empty name set"},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "d", Table: "t"}}}},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "d", Table: "*"}}}},
+
+		// note: we won't adjust for explicit InvolvingSchemaInfo in this case.
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "*", Table: ""}}}, errStr: "must have non-empty name set"},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "*", Table: "t"}}}, errStr: "operating on all databases, must not set table name"},
+		{job: &Job{InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "*", Table: "*"}}}},
+	}
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			err := c.job.CheckInvolvingSchemaInfo()
+			if c.errStr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, c.errStr)
+			}
+		})
+	}
 }

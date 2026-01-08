@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // RestrictedSQLExecutor is an interface provides executing restricted sql statement.
@@ -65,6 +67,7 @@ type ExecOption struct {
 	TrackSysProcID     uint64
 	IgnoreWarning      bool
 	UseCurSession      bool
+	EnableDDLAnalyze   bool
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
@@ -73,6 +76,11 @@ type OptionFuncAlias = func(option *ExecOption)
 // ExecOptionIgnoreWarning tells ExecRestrictedStmt/SQL to ignore the warnings.
 var ExecOptionIgnoreWarning = func(option *ExecOption) {
 	option.IgnoreWarning = true
+}
+
+// ExecOptionEnableDDLAnalyze tells ExecRestrictedStmt/SQL analyze to include reorg state index.
+var ExecOptionEnableDDLAnalyze = func(option *ExecOption) {
+	option.EnableDDLAnalyze = true
 }
 
 // ExecOptionAnalyzeVer1 tells ExecRestrictedStmt/SQL to collect statistics with version1.
@@ -248,6 +256,18 @@ func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chun
 		}
 		req = chunk.Renew(req, maxChunkSize)
 	}
+}
+
+// DrainRecordSetAndClose fetches the rows in the RecordSet and closes it.
+func DrainRecordSetAndClose(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chunk.Row, error) {
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			// Log the close error but don't override the main error
+			logutil.BgLogger().Error("failed to close recordSet in DrainRecordSetAndClose", zap.Error(closeErr))
+		}
+	}()
+
+	return DrainRecordSet(ctx, rs, maxChunkSize)
 }
 
 // ExecSQL executes the sql and returns the result.

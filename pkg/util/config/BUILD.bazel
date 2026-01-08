@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "config",
+    srcs = ["config.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/config",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/logutil",
+        "@com_github_burntsushi_toml//:toml",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)

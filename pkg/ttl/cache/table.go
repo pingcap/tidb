@@ -450,34 +450,31 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 
 func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage,
 	startKey, endKey kv.Key, splitCnt int) ([]kv.KeyRange, error) {
+	maxSleep := 20000
+	if intest.InTest {
+		maxSleep = 500 // reduce the max sleep time in test
+	}
+
 	regionCache := store.GetRegionCache()
-	regionIDs, err := regionCache.ListRegionIDsInKeyRange(
-		tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
+	regions, err := regionCache.LocateKeyRange(
+		tikv.NewBackofferWithVars(ctx, maxSleep, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
 
-	regionsCnt := len(regionIDs)
+	regionsCnt := len(regions)
 	regionsPerRange := regionsCnt / splitCnt
 	oversizeCnt := regionsCnt % splitCnt
 	ranges := make([]kv.KeyRange, 0, min(regionsCnt, splitCnt))
-	for len(regionIDs) > 0 {
-		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
-			regionIDs[0])
-		if err != nil {
-			return nil, err
-		}
+	for len(regions) > 0 {
+		startRegion := regions[0]
 
 		endRegionIdx := regionsPerRange - 1
 		if oversizeCnt > 0 {
 			endRegionIdx++
 		}
 
-		endRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
-			regionIDs[endRegionIdx])
-		if err != nil {
-			return nil, err
-		}
+		endRegion := regions[endRegionIdx]
 
 		rangeStartKey := kv.Key(startRegion.StartKey)
 		if rangeStartKey.Cmp(startKey) < 0 {
@@ -491,7 +488,7 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 
 		ranges = append(ranges, kv.KeyRange{StartKey: rangeStartKey, EndKey: rangeEndKey})
 		oversizeCnt--
-		regionIDs = regionIDs[endRegionIdx+1:]
+		regions = regions[endRegionIdx+1:]
 	}
 	logutil.BgLogger().Info("TTL table raw key ranges split",
 		zap.Int("regionsCnt", regionsCnt),
@@ -672,7 +669,7 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 		}
 	}
 
-	for i := 0; i < brokenGroupEmptyBytes; i++ {
+	for range brokenGroupEmptyBytes {
 		if encodedVal[brokenGroupEndIdx] > 0 {
 			break
 		}

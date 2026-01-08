@@ -19,7 +19,7 @@ import (
 	"math"
 	"math/bits"
 	"math/rand"
-	"reflect"
+	"slices"
 	"time"
 	"unsafe"
 
@@ -125,30 +125,45 @@ func newColumn(ts, capacity int) *Column {
 func newFixedLenColumn(elemLen, capacity int) *Column {
 	return &Column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, getDataMemCap(capacity, elemLen)),
-		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
+		data:       make([]byte, 0, getInitDataMemCap(capacity, elemLen)),
+		nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
 	}
 }
 
 // newVarLenColumn creates a variable length Column with initial data capacity.
 func newVarLenColumn(capacity int) *Column {
 	return &Column{
-		offsets:    make([]int64, 1, getOffsetsCap(capacity)),
-		data:       make([]byte, 0, getDataMemCap(estimatedElemLen, capacity)),
-		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
+		offsets:    make([]int64, 1, getInitOffsetsCap(capacity)),
+		data:       make([]byte, 0, getInitDataMemCap(capacity, estimatedElemLen)),
+		nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
 	}
 }
 
-func getDataMemCap(capacity int, elemLen int) int64 {
+func getInitDataMemCap(capacity int, elemLen int) int64 {
 	return int64(elemLen * capacity)
 }
 
-func getNullBitmapCap(capacity int) int64 {
+func getInitNullBitmapCap(capacity int) int64 {
 	return int64((capacity + 7) >> 3)
 }
 
-func getOffsetsCap(capacity int) int64 {
+func getInitOffsetsCap(capacity int) int64 {
 	return int64(capacity + 1)
+}
+
+// GetNullBitmapCap returns the capacity of nullBitmap
+func (c *Column) GetNullBitmapCap() int {
+	return cap(c.nullBitmap)
+}
+
+// GetOffsetCap returns the capacity of offsets
+func (c *Column) GetOffsetCap() int {
+	return cap(c.offsets)
+}
+
+// GetDataCap returns the capacity of data
+func (c *Column) GetDataCap() int {
+	return cap(c.data)
 }
 
 func (c *Column) typeSize() int {
@@ -158,7 +173,8 @@ func (c *Column) typeSize() int {
 	return VarElemLen
 }
 
-func (c *Column) isFixed() bool {
+// IsFixed returns true when the length of element in column is fixed
+func (c *Column) IsFixed() bool {
 	return c.elemBuf != nil
 }
 
@@ -199,7 +215,7 @@ func (c *Column) reset() {
 	if len(c.offsets) > 0 {
 		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
 		c.offsets = c.offsets[:1]
-	} else if !c.isFixed() {
+	} else if !c.IsFixed() {
 		c.offsets = append(c.offsets, 0)
 	}
 	c.data = c.data[:0]
@@ -246,6 +262,42 @@ func (c *Column) appendNullBitmap(notNull bool) {
 	}
 }
 
+// Reserve allocates some memory for the column
+func (c *Column) Reserve(moreBytesNumNullBitmapNeed int64, moreBytesNumDataNeed int64, moreBytesNumOffsetNeed int64) {
+	currentNullBitmapLen := int64(len(c.nullBitmap))
+	nullBitmapExpectedCap := currentNullBitmapLen + moreBytesNumNullBitmapNeed
+	if int64(cap(c.nullBitmap)) < nullBitmapExpectedCap {
+		c.nullBitmap = slices.Grow(c.nullBitmap, int(nullBitmapExpectedCap))
+	}
+
+	currentDataLen := int64(len(c.data))
+	dataExpectedCap := currentDataLen + moreBytesNumDataNeed
+	if int64(cap(c.data)) < dataExpectedCap {
+		c.data = slices.Grow(c.data, int(dataExpectedCap))
+	}
+
+	currentOffsetLen := int64(len(c.offsets))
+	offsetExpectedCap := currentOffsetLen + moreBytesNumOffsetNeed
+	if int64(cap(c.offsets)) < offsetExpectedCap {
+		c.offsets = slices.Grow(c.offsets, int(offsetExpectedCap))
+	}
+}
+
+// CalculateLenDeltaForAppendCellNTimesForNullBitMap calculates the memory usage of nullBitmap for `AppendCellNTimes` function
+func (c *Column) CalculateLenDeltaForAppendCellNTimesForNullBitMap(times int) int64 {
+	return max(0, int64(((c.length+times+7)>>3)-len(c.nullBitmap)))
+}
+
+// CalculateLenDeltaForAppendCellNTimesForFixedElem calculates the memory usage of fixed elem for `AppendCellNTimes` function
+func (*Column) CalculateLenDeltaForAppendCellNTimesForFixedElem(src *Column, times int) int64 {
+	return int64(len(src.elemBuf) * times)
+}
+
+// CalculateLenDeltaForAppendCellNTimesForVarElem calculates the memory usage of variable length elem for `AppendCellNTimes` function
+func (*Column) CalculateLenDeltaForAppendCellNTimesForVarElem(src *Column, pos, times int) int64 {
+	return (src.offsets[pos+1] - src.offsets[pos]) * int64(times)
+}
+
 // AppendCellNTimes append the pos-th Cell in source column to target column N times
 func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 	notNull := !src.IsNull(pos)
@@ -254,14 +306,16 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 	} else {
 		c.appendMultiSameNullBitmap(notNull, times)
 	}
-	if c.isFixed() {
+	if c.IsFixed() {
 		elemLen := len(src.elemBuf)
 		offset := pos * elemLen
+
 		for range times {
 			c.data = append(c.data, src.data[offset:offset+elemLen]...)
 		}
 	} else {
 		start, end := src.offsets[pos], src.offsets[pos+1]
+
 		for range times {
 			c.data = append(c.data, src.data[start:end]...)
 			c.offsets = append(c.offsets, int64(len(c.data)))
@@ -298,7 +352,7 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 // AppendNNulls append n nulls to the column
 func (c *Column) AppendNNulls(n int) {
 	c.appendMultiSameNullBitmap(false, n)
-	if c.isFixed() {
+	if c.IsFixed() {
 		for range n {
 			c.data = append(c.data, c.elemBuf...)
 		}
@@ -314,7 +368,7 @@ func (c *Column) AppendNNulls(n int) {
 // AppendNull appends a null value into this Column.
 func (c *Column) AppendNull() {
 	c.appendNullBitmap(false)
-	if c.isFixed() {
+	if c.IsFixed() {
 		c.data = append(c.data, c.elemBuf...)
 	} else {
 		c.offsets = append(c.offsets, c.offsets[c.length])
@@ -400,7 +454,7 @@ var (
 func (c *Column) resize(n, typeSize int, isNull bool) {
 	sizeData := n * typeSize
 	if cap(c.data) >= sizeData {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = sizeData
+		c.data = c.data[:sizeData]
 	} else {
 		c.data = make([]byte, sizeData)
 	}
@@ -413,7 +467,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 	newNulls := false
 	sizeNulls := (n + 7) >> 3
 	if cap(c.nullBitmap) >= sizeNulls {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = sizeNulls
+		c.nullBitmap = c.nullBitmap[:sizeNulls]
 	} else {
 		c.nullBitmap = make([]byte, sizeNulls)
 		newNulls = true
@@ -440,7 +494,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 	}
 
 	if cap(c.elemBuf) >= typeSize {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.elemBuf)).Len = typeSize
+		c.elemBuf = c.elemBuf[:typeSize]
 	} else {
 		c.elemBuf = make([]byte, typeSize)
 	}
@@ -558,6 +612,12 @@ func (c *Column) ReserveString(n int) {
 	c.reserve(n, 8)
 }
 
+// ReserveStringWithSizeHint changes the column capacity to store n strings of a predetermined size.
+// example: a 36 character text format UUID: ReserveStringWithSizeHint(1, 36) for a single entry.
+func (c *Column) ReserveStringWithSizeHint(n int, size int) {
+	c.reserve(n, size)
+}
+
 // ReserveBytes changes the column capacity to store n bytes elements and set the length to zero.
 func (c *Column) ReserveBytes(n int) {
 	c.reserve(n, 8)
@@ -583,60 +643,61 @@ func (c *Column) ReserveEnum(n int) {
 	c.reserve(n, 8)
 }
 
-func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
-	header.Data = (*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Data
-	header.Len = c.length
-	header.Cap = cap(c.data) / typeSize
-}
-
 // Int64s returns an int64 slice stored in this Column.
 func (c *Column) Int64s() []int64 {
-	var res []int64
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeInt64)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*int64)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Uint64s returns a uint64 slice stored in this Column.
 func (c *Column) Uint64s() []uint64 {
-	var res []uint64
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeUint64)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*uint64)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Float32s returns a float32 slice stored in this Column.
 func (c *Column) Float32s() []float32 {
-	var res []float32
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat32)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*float32)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Float64s returns a float64 slice stored in this Column.
 func (c *Column) Float64s() []float64 {
-	var res []float64
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat64)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*float64)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // GoDurations returns a Golang time.Duration slice stored in this Column.
 // Different from the Row.GetDuration method, the argument Fsp is ignored, so the user should handle it outside.
 func (c *Column) GoDurations() []time.Duration {
-	var res []time.Duration
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeGoDuration)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*time.Duration)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Decimals returns a MyDecimal slice stored in this Column.
 func (c *Column) Decimals() []types.MyDecimal {
-	var res []types.MyDecimal
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeMyDecimal)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*types.MyDecimal)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // Times returns a Time slice stored in this Column.
 func (c *Column) Times() []types.Time {
-	var res []types.Time
-	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeTime)
-	return res
+	if len(c.data) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*types.Time)(unsafe.Pointer(&c.data[0])), c.length)
 }
 
 // GetInt64 returns the int64 in the specific row.
@@ -726,13 +787,21 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 // GetRaw returns the underlying raw bytes in the specific row.
 func (c *Column) GetRaw(rowID int) []byte {
 	var data []byte
-	if c.isFixed() {
+	if c.IsFixed() {
 		elemLen := len(c.elemBuf)
 		data = c.data[rowID*elemLen : rowID*elemLen+elemLen]
 	} else {
 		data = c.data[c.offsets[rowID]:c.offsets[rowID+1]]
 	}
 	return data
+}
+
+// GetRawLength returns the length of the raw
+func (c *Column) GetRawLength(rowID int) int {
+	if c.IsFixed() {
+		return len(c.elemBuf)
+	}
+	return int(c.offsets[rowID+1] - c.offsets[rowID])
 }
 
 // SetRaw sets the raw bytes for the rowIdx-th element.
@@ -748,7 +817,7 @@ func (c *Column) reconstruct(sel []int) {
 	if sel == nil {
 		return
 	}
-	if c.isFixed() {
+	if c.IsFixed() {
 		elemLen := len(c.elemBuf)
 		for dst, src := range sel {
 			idx := dst >> 3
@@ -819,7 +888,7 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		dst.reset()
 	}
 
-	if c.isFixed() {
+	if c.IsFixed() {
 		elemLen := len(c.elemBuf)
 		dst.elemBuf = make([]byte, elemLen)
 		for _, i := range sel {
@@ -849,7 +918,7 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 // The caller should ensure that all these columns have the same
 // length, and data stored in the result column is fixed-length type.
 func (c *Column) MergeNulls(cols ...*Column) {
-	if !c.isFixed() {
+	if !c.IsFixed() {
 		panic("result column should be fixed-length type")
 	}
 	for _, col := range cols {
@@ -879,7 +948,7 @@ func (c *Column) ContainsVeryLargeElement() bool {
 	if c.length == 0 {
 		return false
 	}
-	if c.isFixed() {
+	if c.IsFixed() {
 		return false
 	}
 	if c.offsets[c.length] <= math.MaxUint32 {

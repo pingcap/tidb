@@ -20,13 +20,17 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
@@ -36,37 +40,72 @@ import (
 )
 
 func TestIsRetryableError(t *testing.T) {
+	// url errors
+	require.True(t, IsRetryableError(&url.Error{}))
+	require.True(t, IsRetryableError(&url.Error{Err: io.EOF}))
+	require.False(t, IsRetryableError(&url.Error{Err: fmt.Errorf("net/http: request canceled")}))
+	require.False(t, IsRetryableError(&url.Error{Err: fmt.Errorf("net/http: request canceled while waiting for connection")}))
+	require.True(t, IsRetryableError(&url.Error{Err: fmt.Errorf("dummy error")}))
+	require.True(t, IsRetryableError(&url.Error{Err: fmt.Errorf("use of closed network connection")}))
+
 	require.False(t, IsRetryableError(context.Canceled))
-	require.False(t, IsRetryableError(context.DeadlineExceeded))
+	// previously, we don't retry on context deadline exceeded, but we do retry
+	// on GRPC codes.DeadlineExceeded, the reason seems to be "context deadline exceeded"
+	// might not be related to network issue, but GRPC codes.DeadlineExceeded is.
+	// but in the local backend, we only add context.WithTimeout when accessing
+	// network resource.
+	// we add it to retryable errors as we might set the Dial Timeout when creating
+	// ETCD client, it might report context deadline exceeded error, the error is:
+	// "[Lightning:KV:ErrCreateKVClient]create kv client error: context deadline exceeded"
+	require.True(t, IsRetryableError(context.DeadlineExceeded))
+	require.True(t, IsRetryableError(ErrCreateKVClient.Wrap(context.DeadlineExceeded).GenWithStackByArgs()))
 	require.True(t, IsRetryableError(ErrWriteTooSlow))
 	require.False(t, IsRetryableError(io.EOF))
 	require.False(t, IsRetryableError(&net.AddrError{}))
 	require.False(t, IsRetryableError(&net.DNSError{}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTimeout: true}))
+	require.True(t, IsRetryableError(&net.DNSError{IsTemporary: true}))
+
+	// inner syscall errors
+	require.True(t, IsRetryableError(&net.DNSError{UnwrapErr: &os.SyscallError{Err: syscall.ECONNREFUSED}}))
+	require.True(t, IsRetryableError(&net.DNSError{UnwrapErr: &os.SyscallError{Err: syscall.EPIPE}}))
+	require.True(t, IsRetryableError(&net.DNSError{UnwrapErr: &os.SyscallError{Err: syscall.ECONNRESET}}))
+	require.False(t, IsRetryableError(&net.DNSError{UnwrapErr: &os.SyscallError{Err: syscall.ENETDOWN}}))
+
+	// request error
+	require.False(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusBadRequest})))
+	require.False(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusNotFound})))
+	require.True(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusInternalServerError})))
 
 	// kv errors
-	require.True(t, IsRetryableError(ErrKVNotLeader))
-	require.True(t, IsRetryableError(ErrKVEpochNotMatch))
-	require.True(t, IsRetryableError(ErrKVServerIsBusy))
-	require.True(t, IsRetryableError(ErrKVRegionNotFound))
-	require.True(t, IsRetryableError(ErrKVReadIndexNotReady))
-	require.True(t, IsRetryableError(ErrKVIngestFailed))
-	require.True(t, IsRetryableError(ErrKVRaftProposalDropped))
-	require.True(t, IsRetryableError(ErrKVNotLeader.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVEpochNotMatch.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVServerIsBusy.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVRegionNotFound.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVReadIndexNotReady.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVIngestFailed.GenWithStack("test")))
-	require.True(t, IsRetryableError(ErrKVRaftProposalDropped.GenWithStack("test")))
-	require.False(t, IsRetryableError(ErrKVDiskFull.GenWithStack("test")))
+	require.True(t, IsRetryableError(errors.Annotatef(errdef.ErrNoLeader.GenWithStackByArgs(123), "when write to tikv, expected leader id %d", 111)))
+	require.True(t, IsRetryableError(errdef.ErrKVNotLeader))
+	require.True(t, IsRetryableError(errdef.ErrKVEpochNotMatch))
+	require.True(t, IsRetryableError(errdef.ErrKVServerIsBusy))
+	require.True(t, IsRetryableError(errdef.ErrKVRegionNotFound))
+	require.True(t, IsRetryableError(errdef.ErrKVReadIndexNotReady))
+	require.True(t, IsRetryableError(errdef.ErrKVIngestFailed))
+	require.True(t, IsRetryableError(errdef.ErrKVRaftProposalDropped))
+	require.True(t, IsRetryableError(errdef.ErrKVNotLeader.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVEpochNotMatch.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVServerIsBusy.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVRegionNotFound.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVReadIndexNotReady.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVIngestFailed.GenWithStack("test")))
+	require.True(t, IsRetryableError(errdef.ErrKVRaftProposalDropped.GenWithStack("test")))
+	require.False(t, IsRetryableError(errdef.ErrKVDiskFull.GenWithStack("test")))
 
-	// tidb error
-	require.True(t, IsRetryableError(drivererr.ErrRegionUnavailable))
-	require.True(t, IsRetryableError(drivererr.ErrTiKVStaleCommand))
-	require.True(t, IsRetryableError(drivererr.ErrTiKVServerTimeout))
-	require.True(t, IsRetryableError(drivererr.ErrTiKVServerBusy))
-	require.True(t, IsRetryableError(drivererr.ErrUnknown))
+	for _, err := range []error{
+		// tidb error
+		drivererr.ErrRegionUnavailable,
+		drivererr.ErrTiKVStaleCommand,
+		drivererr.ErrTiKVServerTimeout,
+		drivererr.ErrTiKVServerBusy,
+		drivererr.ErrPDServerTimeout,
+		drivererr.ErrUnknown,
+	} {
+		require.True(t, IsRetryableError(errors.Annotate(err, "failed")))
+	}
 
 	// net: connection refused
 	_, err := net.Dial("tcp", "localhost:65533")
@@ -78,33 +117,41 @@ func TestIsRetryableError(t *testing.T) {
 
 	// MySQL Errors
 	require.False(t, IsRetryableError(&mysql.MySQLError{}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrUnknown}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrLockDeadlock}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerTimeout}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerBusy}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrRegionUnavailable}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflictInTiDB}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflict}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaExpired}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaChanged}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTxnRetryable}))
+	for _, errNumber := range []uint16{
+		tmysql.ErrUnknown,
+		tmysql.ErrLockDeadlock,
+		tmysql.ErrPDServerTimeout,
+		tmysql.ErrTiKVServerTimeout,
+		tmysql.ErrTiKVServerBusy,
+		tmysql.ErrResolveLockTimeout,
+		tmysql.ErrRegionUnavailable,
+		tmysql.ErrWriteConflictInTiDB,
+		tmysql.ErrWriteConflict,
+		tmysql.ErrInfoSchemaExpired,
+		tmysql.ErrInfoSchemaChanged,
+		tmysql.ErrTxnRetryable,
+	} {
+		require.True(t, IsRetryableError(&mysql.MySQLError{Number: errNumber}))
+	}
 
 	// gRPC Errors
 	require.False(t, IsRetryableError(status.Error(codes.Canceled, "")))
 	require.True(t, IsRetryableError(status.Error(codes.Unknown, "region 1234 is not fully replicated")))
 	require.True(t, IsRetryableError(status.Error(codes.Unknown, "No such file or directory: while stat a file "+
 		"for size: /...../63992d9c-fbc8-4708-b963-32495b299027_32279707_325_5280_write.sst: No such file or directory")))
-	require.True(t, IsRetryableError(status.Error(codes.DeadlineExceeded, "")))
-	require.True(t, IsRetryableError(status.Error(codes.NotFound, "")))
-	require.True(t, IsRetryableError(status.Error(codes.AlreadyExists, "")))
-	require.True(t, IsRetryableError(status.Error(codes.PermissionDenied, "")))
-	require.True(t, IsRetryableError(status.Error(codes.ResourceExhausted, "")))
-	require.True(t, IsRetryableError(status.Error(codes.Aborted, "")))
-	require.True(t, IsRetryableError(status.Error(codes.OutOfRange, "")))
-	require.True(t, IsRetryableError(status.Error(codes.Unavailable, "")))
-	require.True(t, IsRetryableError(status.Error(codes.DataLoss, "")))
+	for _, code := range []codes.Code{
+		codes.DeadlineExceeded,
+		codes.NotFound,
+		codes.AlreadyExists,
+		codes.PermissionDenied,
+		codes.ResourceExhausted,
+		codes.Aborted,
+		codes.OutOfRange,
+		codes.Unavailable,
+		codes.DataLoss,
+	} {
+		require.True(t, IsRetryableError(status.Error(code, "")))
+	}
 
 	// sqlmock errors
 	require.False(t, IsRetryableError(fmt.Errorf("call to database Close was not expected")))

@@ -186,10 +186,13 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	if !hasNullArg || retFieldTp == nil {
 		return
 	}
-	for _, arg := range args {
-		if isNull(arg) {
-			*arg.GetType(ctx) = *retFieldTp
-			arg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+	for i, arg := range args {
+		argflags := arg.GetType(ctx)
+		if isNull(arg) && !(argflags.Equals(retFieldTp) && mysql.HasNotNullFlag(retFieldTp.GetFlag())) {
+			newarg := arg.Clone()
+			*newarg.GetType(ctx) = *retFieldTp.Clone()
+			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+			args[i] = newarg
 		}
 	}
 }
@@ -198,13 +201,6 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
 func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
-	defer func() {
-		if err == nil && ret != nil && checkOrInit != nil {
-			if sf, ok := ret.(*ScalarFunction); ok {
-				ret, err = checkOrInit(sf)
-			}
-		}
-	}()
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
@@ -248,8 +244,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 			ctx.GetEvalCtx().AppendWarning(err)
 		}
 	}
-	funcArgs := make([]Expression, len(args))
-	copy(funcArgs, args)
+	funcArgs := slices.Clone(args)
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
@@ -273,6 +268,13 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		RetType:  retType,
 		Function: f,
 	}
+	if checkOrInit != nil {
+		sf2, err := checkOrInit(sf)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sf = sf2
+	}
 	if fold == 1 {
 		return FoldConstant(ctx, sf), nil
 	} else if fold == -1 {
@@ -291,9 +293,9 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 }
 
 // ScalarFunctionCallBack is the definition of callback of calling a newFunction.
-type ScalarFunctionCallBack func(function *ScalarFunction) (Expression, error)
+type ScalarFunctionCallBack func(function *ScalarFunction) (*ScalarFunction, error)
 
-func defaultScalarFunctionCheck(function *ScalarFunction) (Expression, error) {
+func defaultScalarFunctionCheck(function *ScalarFunction) (*ScalarFunction, error) {
 	// todo: more scalar function init actions can be added here, or setting up with customized init callback.
 	if function.FuncName.L == ast.Grouping {
 		if !function.Function.(*BuiltinGroupingImplSig).isMetaInited {
@@ -352,13 +354,8 @@ func (sf *ScalarFunction) Clone() Expression {
 		Function: sf.Function.Clone(),
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
-	if sf.hashcode != nil {
-		c.hashcode = make([]byte, len(sf.hashcode))
-		copy(c.hashcode, sf.hashcode)
-	}
 	if sf.canonicalhashcode != nil {
-		c.canonicalhashcode = make([]byte, len(sf.canonicalhashcode))
-		copy(c.canonicalhashcode, sf.canonicalhashcode)
+		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
@@ -383,13 +380,34 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	if !ok {
 		return false
 	}
+	// If they are the same object, they must be equal.
+	if sf == fun {
+		return true
+	}
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
 	if !sf.RetType.Equal(fun.RetType) {
 		return false
 	}
+	if sf.hashcode != nil && fun.hashcode != nil {
+		if intest.InTest {
+			assertCheckHashCode(sf)
+			assertCheckHashCode(fun)
+		}
+		return bytes.Equal(sf.hashcode, fun.hashcode)
+	}
 	return sf.Function.equal(ctx, fun.Function)
+}
+
+func assertCheckHashCode(sf *ScalarFunction) {
+	intest.Assert(intest.InTest)
+	copyhashcode := make([]byte, len(sf.hashcode))
+	copy(copyhashcode, sf.hashcode)
+	// avoid data race in the plan cache
+	s := sf.Clone().(*ScalarFunction)
+	ReHashCode(s)
+	intest.Assert(bytes.Equal(s.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
 }
 
 // IsCorrelated implements Expression interface.
@@ -561,6 +579,9 @@ func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (typ
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode() []byte {
 	if len(sf.hashcode) > 0 {
+		if intest.InTest {
+			assertCheckHashCode(sf)
+		}
 		return sf.hashcode
 	}
 	ReHashCode(sf)
@@ -726,6 +747,7 @@ func (sf *ScalarFunction) Equals(other any) bool {
 // ReHashCode is used after we change the argument in place.
 func ReHashCode(sf *ScalarFunction) {
 	sf.hashcode = sf.hashcode[:0]
+	sf.hashcode = slices.Grow(sf.hashcode, 1+len(sf.FuncName.L)+len(sf.GetArgs())*8+1)
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
@@ -736,6 +758,23 @@ func ReHashCode(sf *ScalarFunction) {
 	if sf.FuncName.L == ast.Cast {
 		evalTp := sf.RetType.EvalType()
 		sf.hashcode = append(sf.hashcode, byte(evalTp))
+	}
+	if sf.FuncName.L == ast.Grouping {
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(sf.Function.(*BuiltinGroupingImplSig).GetGroupingMode()))
+		marks := sf.Function.(*BuiltinGroupingImplSig).GetMetaGroupingMarks()
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(marks)))
+		for _, mark := range marks {
+			sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(mark)))
+			// we need to sort map keys to ensure the hashcode is deterministic.
+			keys := make([]uint64, 0, len(mark))
+			for k := range mark {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
+				sf.hashcode = codec.EncodeInt(sf.hashcode, int64(k))
+			}
+		}
 	}
 }
 

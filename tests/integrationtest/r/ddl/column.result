@@ -98,3 +98,17 @@ drop table t;
 create table t(a bit(32) default b'1111111111111111111111111111111');
 drop table t;
 create table t(id bigint primary key, i int unsigned DEFAULT (0));
+CREATE TABLE default_from_other_col (
+id bigint unsigned NOT NULL AUTO_INCREMENT,
+src_col timestamp NULL DEFAULT NULL,
+new_col timestamp NULL DEFAULT(src_col),
+PRIMARY KEY (id)
+);
+Error 1105 (HY000): column name is not yet supported as a default value
+create table default_from_other_col (id bigint primary key, src_col timestamp NULL DEFAULT NULL);
+alter table default_from_other_col add column new_col timestamp default(src_col);
+Error 1105 (HY000): column name is not yet supported as a default value
+alter table default_from_other_col add column new_col timestamp;
+alter table default_from_other_col modify column new_col timestamp default(src_col);
+Error 1105 (HY000): column name is not yet supported as a default value
+drop table default_from_other_col;

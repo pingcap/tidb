@@ -278,7 +278,7 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	params := make([]*funcParam, 0, 3)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		param, isConstNull, err := buildStringParam(ctx, &re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return ErrRegexp.GenWithStackByArgs(err)
@@ -311,7 +311,7 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.ResizeInt64(n, false)
 	result.MergeNulls(getBuffers(params)...)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -484,7 +484,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chun
 	params := make([]*funcParam, 0, 5)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		param, isConstNull, err := buildStringParam(ctx, &re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return err
@@ -547,7 +547,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chun
 	buffers := getBuffers(params)
 
 	// Start to calculate
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if isResultNull(buffers, i) {
 			result.AppendNull()
 			continue
@@ -581,10 +581,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chun
 		}
 
 		// Get occurrence
-		occurrence := params[3].getIntVal(i)
-		if occurrence < 1 {
-			occurrence = 1
-		}
+		occurrence := max(params[3].getIntVal(i), 1)
 
 		if !memorized {
 			// Get pattern and match type and then generate regexp
@@ -798,7 +795,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	params := make([]*funcParam, 0, 5)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		param, isConstNull, err := buildStringParam(ctx, &re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return ErrRegexp.GenWithStackByArgs(err)
@@ -873,7 +870,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	result.ResizeInt64(n, false)
 	result.MergeNulls(getBuffers(params)...)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -907,10 +904,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 		}
 
 		// Get occurrence
-		occurrence := params[3].getIntVal(i)
-		if occurrence < 1 {
-			occurrence = 1
-		}
+		occurrence := max(params[3].getIntVal(i), 1)
 
 		returnOption := params[4].getIntVal(i)
 		if returnOption != 0 && returnOption != 1 {
@@ -1275,7 +1269,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chu
 	params := make([]*funcParam, 0, 6)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		param, isConstNull, err := buildStringParam(ctx, &re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return ErrRegexp.GenWithStackByArgs(err)
@@ -1359,7 +1353,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chu
 	}
 
 	// Start to calculate
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if isResultNull(buffers, i) {
 			result.AppendNull()
 			continue

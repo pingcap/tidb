@@ -16,12 +16,14 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -34,11 +36,16 @@ var (
 	GetBootstrapVersion = getBootstrapVersion
 	// CurrentBootstrapVersion is used in test
 	CurrentBootstrapVersion = currentBootstrapVersion
+	// TiDBDDLTableVersionForTest is used in test
+	TiDBDDLTableVersionForTest = tidbDDLTableVersion
 )
 
 // CreateStoreAndBootstrap creates a mock store and bootstrap it.
 func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	testenv.SetGOMAXPROCSForTest()
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	dom, err := BootstrapSession(store)
@@ -49,7 +56,7 @@ func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 var sessionKitIDGenerator atomicutil.Uint64
 
 // CreateSessionAndSetID creates a session and set connection ID.
-func CreateSessionAndSetID(t *testing.T, store kv.Storage) sessiontypes.Session {
+func CreateSessionAndSetID(t *testing.T, store kv.Storage) sessionapi.Session {
 	se, err := CreateSession4Test(store)
 	se.SetConnectionID(sessionKitIDGenerator.Inc())
 	require.NoError(t, err)
@@ -57,7 +64,7 @@ func CreateSessionAndSetID(t *testing.T, store kv.Storage) sessiontypes.Session 
 }
 
 // MustExec executes a sql statement and asserts no error occurs.
-func MustExec(t *testing.T, se sessiontypes.Session, sql string, args ...any) {
+func MustExec(t *testing.T, se sessionapi.Session, sql string, args ...any) {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	if rs != nil {
@@ -66,13 +73,13 @@ func MustExec(t *testing.T, se sessiontypes.Session, sql string, args ...any) {
 }
 
 // MustExecToRecodeSet executes a sql statement and asserts no error occurs.
-func MustExecToRecodeSet(t *testing.T, se sessiontypes.Session, sql string, args ...any) sqlexec.RecordSet {
+func MustExecToRecodeSet(t *testing.T, se sessionapi.Session, sql string, args ...any) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	return rs
 }
 
-func exec(se sessiontypes.Session, sql string, args ...any) (sqlexec.RecordSet, error) {
+func exec(se sessionapi.Session, sql string, args ...any) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
 	if len(args) == 0 {
 		rs, err := se.Execute(ctx, sql)
@@ -91,4 +98,14 @@ func exec(se sessiontypes.Session, sql string, args ...any) (sqlexec.RecordSet, 
 		return nil, err
 	}
 	return rs, nil
+}
+
+// RevertVersionAndVariables reverts the version and variables in mysql.tidb and
+// mysql.global_variables for testing upgrade/downgrade.
+func RevertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
+	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
+	if ver <= version195 {
+		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
+		MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
+	}
 }

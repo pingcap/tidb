@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "replayer",
@@ -7,7 +7,25 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_spf13_afero//:afero",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "replayer_test",
+    timeout = "short",
+    srcs = ["replayer_test.go"],
+    embed = [":replayer"],
+    flaky = True,
+    shard_count = 2,
+    deps = [
+        "//pkg/config",
+        "@com_github_spf13_afero//:afero",
+        "@com_github_stretchr_testify//require",
     ],
 )

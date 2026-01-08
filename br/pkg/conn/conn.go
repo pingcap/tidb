@@ -296,7 +296,7 @@ func (mgr *Mgr) Close() {
 		if mgr.dom != nil {
 			mgr.dom.Close()
 		}
-		ddl.CloseOwnerManager()
+		ddl.CloseOwnerManager(mgr.storage)
 		tikv.StoreShuttingDown(1)
 		_ = mgr.storage.Close()
 	}

@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +59,8 @@ const (
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
+	// BackendImportInto is a constant for choosing the "ImportInto" backend in the configuration.
+	BackendImportInto = "import-into"
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -123,7 +126,7 @@ var (
 // It clones the original default filter,
 // so that the original value won't be changed when the returned slice's element is changed.
 func GetDefaultFilter() []string {
-	return append([]string{}, defaultFilter...)
+	return slices.Clone(defaultFilter)
 }
 
 // DBStore is the database connection information.
@@ -366,6 +369,8 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if l.RegionConcurrency > cpuCount {
 			l.RegionConcurrency = cpuCount
 		}
+	case BackendImportInto:
+		// TODO: set default values for import-into backend
 	}
 }
 
@@ -1010,13 +1015,7 @@ func (m *MydumperRuntime) adjustFilePath() error {
 		m.SourceDir = u.String()
 	}
 
-	found := false
-	for _, t := range supportedStorageTypes {
-		if u.Scheme == t {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(supportedStorageTypes, u.Scheme)
 	if !found {
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported data-source-dir url '%s', supported storage types are %s",
@@ -1190,6 +1189,8 @@ func (t *TikvImporter) adjust() error {
 		default:
 			return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
 		}
+	case BackendImportInto:
+		// TODO: add validation if necessary
 	default:
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported `tikv-importer.backend` (%s)",
@@ -1315,7 +1316,7 @@ func (d Duration) MarshalText() ([]byte, error) {
 
 // MarshalJSON implements json.Marshaler.
 func (d *Duration) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
+	return fmt.Appendf(nil, `"%s"`, d.Duration), nil
 }
 
 // Charset defines character set

@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -178,18 +179,10 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 			"region %d's leader is nil", cur.Region.Id)
 	}
-	if cur.Leader.StoreId == 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-			"region %d's leader's store id is 0", cur.Region.Id)
-	}
 	for _, r := range regions[1:] {
 		if r.Leader == nil {
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 				"region %d's leader is nil", r.Region.Id)
-		}
-		if r.Leader.StoreId == 0 {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
-				"region %d's leader's store id is 0", r.Region.Id)
 		}
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
@@ -217,15 +210,24 @@ func PaginateScanRegion(
 
 	var (
 		lastRegions []*RegionInfo
-		err         error
+		lastErr     error
 		backoffer   = NewWaitRegionOnlineBackoffer()
 	)
 	_ = utils.WithRetry(ctx, func() error {
+		var err error
+		defer func() {
+			lastErr = err
+		}()
 		regions := make([]*RegionInfo, 0, 16)
 		scanStartKey := startKey
 		for {
 			var batch []*RegionInfo
-			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			if lastErr != nil {
+				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			} else {
+				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit, opt.WithAllowFollowerHandle())
+			}
+
 			if err != nil {
 				err = errors.Annotatef(berrors.ErrPDBatchScanRegion.Wrap(err), "scan regions from start-key:%s, err: %s",
 					redact.Key(scanStartKey), err.Error())
@@ -259,7 +261,7 @@ func PaginateScanRegion(
 		return nil
 	}, backoffer)
 
-	return lastRegions, err
+	return lastRegions, lastErr
 }
 
 // checkPartRegionConsistency only checks the continuity of regions and the first region consistency.
@@ -306,7 +308,11 @@ func ScanRegionsWithRetry(
 	// because it's not easy to check multierr equals normal error.
 	// see https://github.com/pingcap/tidb/issues/33419.
 	_ = utils.WithRetry(ctx, func() error {
-		regions, err = client.ScanRegions(ctx, startKey, endKey, limit)
+		if err != nil {
+			regions, err = client.ScanRegions(ctx, startKey, endKey, limit)
+		} else {
+			regions, err = client.ScanRegions(ctx, startKey, endKey, limit, opt.WithAllowFollowerHandle())
+		}
 		if err != nil {
 			err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
 				redact.Key(startKey), err.Error())

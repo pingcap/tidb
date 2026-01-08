@@ -67,6 +67,9 @@ type SysVar struct {
 	// Deprecated: Hidden previously meant that the variable still responds to SET but doesn't show up in SHOW VARIABLES
 	// However, this feature is no longer used. All variables are visible.
 	Hidden bool
+	// Some variables are semantically global or instance vars. But we need to set it as session scope to pass the value down
+	// to executor and planner. However, we don't want these variables visible or setable for users.
+	InternalSessionVariable bool
 	// Aliases is a list of sysvars that should also be updated when this sysvar is updated.
 	// Updating aliases calls the SET function of the aliases, but does not update their aliases (preventing SET recursion)
 	Aliases []string
@@ -77,6 +80,8 @@ type SysVar struct {
 	GetGlobal func(context.Context, *SessionVars) (string, error)
 	// GetStateValue gets the value for session states, which is used for migrating sessions.
 	// We need a function to override GetSession sometimes, because GetSession may not return the real value.
+	// The first return value must be a valid value for the variable, and the second return value must be
+	// true if and only if the variable has been changed from the default.
 	GetStateValue func(*SessionVars) (string, bool, error)
 	// Depended indicates whether other variables depend on this one. That is, if this one is not correctly set,
 	// another variable cannot be set either.
@@ -88,6 +93,8 @@ type SysVar struct {
 	skipInit bool
 	// IsNoop defines if the sysvar is a noop included for MySQL compatibility
 	IsNoop bool
+	// IsInitedFromConfig defines if the sysvar is inited from the config file.
+	IsInitedFromConfig bool
 	// GlobalConfigName is the global config name of this global variable.
 	// If the global variable has the global config name,
 	// it should store the global config into PD(etcd) too when set global variable.
@@ -262,8 +269,16 @@ func (sv *SysVar) validateScope(scope vardef.ScopeFlag) error {
 	if scope == vardef.ScopeGlobal && !(sv.HasGlobalScope() || sv.HasInstanceScope()) {
 		return errLocalVariable.FastGenByArgs(sv.Name)
 	}
-	if scope == vardef.ScopeSession && !sv.HasSessionScope() {
-		return errGlobalVariable.FastGenByArgs(sv.Name)
+	if scope == vardef.ScopeInstance && !sv.HasInstanceScope() {
+		return errLocalVariable.FastGenByArgs(sv.Name)
+	}
+	if scope == vardef.ScopeSession {
+		if !sv.HasSessionScope() {
+			return errGlobalVariable.FastGenByArgs(sv.Name)
+		}
+		if sv.InternalSessionVariable {
+			return errUnknownSystemVariable.GenWithStackByArgs(sv.Name)
+		}
 	}
 	return nil
 }
@@ -465,7 +480,7 @@ func (sv *SysVar) SkipInit() bool {
 }
 
 // SkipSysvarCache returns true if the sysvar should not re-execute on peers
-// This doesn't make sense for the GC variables because they are based in tikv
+// NOTE: This doesn't make sense for the GC variables because they are based in tikv
 // tables. We'd effectively be reading and writing to the same table, which
 // could be in an unsafe manner. In future these variables might be converted
 // to not use a different table internally, but to do that we need to first
@@ -568,6 +583,8 @@ type GlobalVarAccessor interface {
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
+	// SetInstanceSysVar sets the instance system variable name to value.
+	SetInstanceSysVar(ctx context.Context, name string, value string) error
 	// SetGlobalSysVarOnly sets the global system variable without calling the validation function or updating aliases.
 	SetGlobalSysVarOnly(ctx context.Context, name string, value string, updateLocal bool) error
 	// GetTiDBTableValue gets a value from mysql.tidb for the key 'name'

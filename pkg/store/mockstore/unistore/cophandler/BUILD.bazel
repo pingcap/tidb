@@ -13,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/kv",
@@ -37,6 +38,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/context",
+        "//pkg/util/logutil",
         "//pkg/util/mock",
         "//pkg/util/rowcodec",
         "//pkg/util/timeutil",
@@ -45,12 +47,16 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_twmb_murmur3//:murmur3",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

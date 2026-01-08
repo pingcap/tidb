@@ -28,16 +28,6 @@ type regexpMemorizedSig struct {
 	memorizedErr    error
 }
 
-func (reg *regexpMemorizedSig) isMemorizedRegexpInitialized() bool {
-	return !(reg.memorizedRegexp == nil && reg.memorizedErr == nil)
-}
-
-func (reg *regexpMemorizedSig) memorize(compile func(string) (*regexp.Regexp, error), pattern string) {
-	re, err := compile(pattern)
-	reg.memorizedRegexp = re
-	reg.memorizedErr = err
-}
-
 func releaseBuffers(bf *baseBuiltinFunc, params []*funcParam) {
 	for _, pa := range params {
 		if pa.getCol() != nil {
@@ -67,7 +57,7 @@ func isResultNull(columns []*chunk.Column, i int) bool {
 
 func fillNullStringIntoResult(result *chunk.Column, num int) {
 	result.ReserveString(num)
-	for i := 0; i < num; i++ {
+	for range num {
 		result.AppendNull()
 	}
 }

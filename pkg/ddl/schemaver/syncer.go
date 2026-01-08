@@ -27,13 +27,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -56,6 +58,23 @@ var (
 	// and it's an exported variable for testing.
 	CheckVersFirstWaitTime = 50 * time.Millisecond
 )
+
+// SyncSummary is used to summarize the result of schema version synchronization.
+type SyncSummary struct {
+	// ServerCount is the total number of servers that have been checked.
+	ServerCount int
+	// AssumedServerCount is the number of assumed servers that have been checked.
+	// it's only used in nextgen.
+	AssumedServerCount int
+}
+
+// String implements fmt.Stringer interface.
+func (s *SyncSummary) String() string {
+	if s.AssumedServerCount > 0 {
+		return fmt.Sprintf("server count: %d, assumed server count: %d", s.ServerCount, s.AssumedServerCount)
+	}
+	return fmt.Sprintf("server count: %d", s.ServerCount)
+}
 
 // Syncer is used to synchronize schema version between the DDL owner and follower.
 // DDL owner and follower only depends on a subset of the methods of Syncer.
@@ -81,9 +100,15 @@ type Syncer interface {
 	Restart(ctx context.Context) error
 	// WaitVersionSynced wait until all servers' current schema version are equal
 	// or greater than latestVer.
-	WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64) error
+	// If checkAssumedSvr is true, it will check and wait the assumed keyspace
+	// servers too. it's only used on nextgen where MDL is always enabled.
+	WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, checkAssumedSvr bool) (*SyncSummary, error)
 	// SyncJobSchemaVerLoop syncs the schema versions on all TiDB nodes for DDL jobs.
 	SyncJobSchemaVerLoop(ctx context.Context)
+	// SetServerInfoSyncer sets the server info syncer.
+	// server info syncer is only used in WaitVersionSynced, so if it's this syncer
+	// is not used for DDL schema version synchronization, it can be nil.
+	SetServerInfoSyncer(svrInfoSyncer *serverinfo.Syncer)
 	// Close ends Syncer.
 	Close()
 }
@@ -92,8 +117,8 @@ type Syncer interface {
 type nodeVersions struct {
 	sync.Mutex
 	nodeVersions map[string]int64
-	// onceMatchFn is used to check if all the servers report the least version.
-	// If all the servers report the least version, i.e. return true, it will be
+	// onceMatchFn is used to check if all the servers report the latest version.
+	// If all the servers report the latest version, i.e. return true, it will be
 	// set to nil.
 	onceMatchFn func(map[string]int64) bool
 }
@@ -175,6 +200,9 @@ type etcdSyncer struct {
 	mu               sync.RWMutex
 	jobNodeVersions  map[int64]*nodeVersions
 	jobNodeVerPrefix string
+
+	// only used if this instance is used by DDL.
+	svrInfoSyncer *serverinfo.Syncer
 }
 
 // NewEtcdSyncer creates a new Syncer.
@@ -255,7 +283,7 @@ func (s *etcdSyncer) Restart(ctx context.Context) error {
 	}
 	s.storeSession(session)
 
-	childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)
+	childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 	defer cancel()
 	err = util.PutKVToEtcd(childCtx, s.etcdCli, putKeyRetryUnlimited, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.loadSession().Lease()))
@@ -279,7 +307,7 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 	ver := strconv.FormatInt(version, 10)
 	var err error
 	var path string
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		// If jobID is 0, it doesn't need to put into etcd `DDLAllSchemaVersionsByJob` key.
 		if jobID == 0 {
 			return nil
@@ -288,7 +316,7 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 		err = util.PutKVToEtcdMono(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
 	} else {
 		path = s.selfSchemaVerPath
-		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, path, ver,
+		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyRetryUnlimited, path, ver,
 			clientv3.WithLease(s.loadSession().Lease()))
 	}
 
@@ -315,14 +343,14 @@ func (s *etcdSyncer) removeSelfVersionPath() error {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerClear, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	err = util.DeleteKeyFromEtcd(s.selfSchemaVerPath, s.etcdCli, keyOpDefaultRetryCnt, util.KeyOpDefaultTimeout)
+	err = etcd.DeleteKeyFromEtcd(s.selfSchemaVerPath, s.etcdCli, keyOpDefaultRetryCnt, etcd.KeyOpDefaultTimeout)
 	return errors.Trace(err)
 }
 
 // WaitVersionSynced implements Syncer.WaitVersionSynced interface.
-func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64) error {
+func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, checkAssumedSvr bool) (*SyncSummary, error) {
 	startTime := time.Now()
-	if !vardef.EnableMDL.Load() {
+	if !vardef.IsMDLEnabled() {
 		time.Sleep(CheckVersFirstWaitTime)
 	}
 	notMatchVerCnt := 0
@@ -333,81 +361,22 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerCheckAllVersions, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	// If MDL is disabled, updatedMap is a cache. We need to ensure all the keys equal to the least version.
+	// If MDL is disabled, updatedMap is a cache. We need to ensure all the keys equal to the latest version.
 	// We can skip checking the key if it is checked in the cache(set by the previous loop).
-	// If MDL is enabled, updatedMap is used to check if all the servers report the least version.
-	// updatedMap is initialed to record all the server in every loop. We delete a server from the map if it gets the metadata lock(the key version equal the given version.
-	// updatedMap should be empty if all the servers get the metadata lock.
 	updatedMap := make(map[string]string)
 	for {
 		if err := ctx.Err(); err != nil {
 			// ctx is canceled or timeout.
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 
-		if vardef.EnableMDL.Load() {
-			serverInfos, err := infosync.GetAllServerInfo(ctx)
+		if vardef.IsMDLEnabled() {
+			res, synced, err := s.waitVersionSyncedWithMDL(ctx, jobID, latestVer, checkAssumedSvr)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			updatedMap = make(map[string]string)
-			instance2id := make(map[string]string)
-
-			for _, info := range serverInfos {
-				instance := disttaskutil.GenerateExecID(info)
-				// if some node shutdown abnormally and start, we might see some
-				// instance with different id, we should use the latest one.
-				if id, ok := instance2id[instance]; ok {
-					if info.StartTimestamp > serverInfos[id].StartTimestamp {
-						// Replace it.
-						delete(updatedMap, id)
-						updatedMap[info.ID] = fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
-						instance2id[instance] = info.ID
-					}
-				} else {
-					updatedMap[info.ID] = fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
-					instance2id[instance] = info.ID
-				}
-			}
-		}
-
-		// Check all schema versions.
-		if vardef.EnableMDL.Load() {
-			notifyCh := make(chan struct{})
-			var unmatchedNodeInfo atomic.Pointer[string]
-			matchFn := func(nodeVersions map[string]int64) bool {
-				if len(nodeVersions) == 0 {
-					return false
-				}
-				for tidbID, info := range updatedMap {
-					if nodeVer, ok := nodeVersions[tidbID]; !ok || nodeVer < latestVer {
-						linfo := info
-						unmatchedNodeInfo.Store(&linfo)
-						return false
-					}
-				}
-				close(notifyCh)
-				return true
-			}
-			item := s.jobSchemaVerMatchOrSet(jobID, matchFn)
-			select {
-			case <-notifyCh:
-				return nil
-			case <-ctx.Done():
-				item.clearMatchFn()
-				return errors.Trace(ctx.Err())
-			case <-time.After(time.Second):
-				item.clearMatchFn()
-				if info := unmatchedNodeInfo.Load(); info != nil {
-					logutil.DDLLogger().Info("syncer check all versions, someone is not synced",
-						zap.String("info", *info),
-						zap.Int64("ddl job id", jobID),
-						zap.Int64("ver", latestVer))
-				} else {
-					logutil.DDLLogger().Info("syncer check all versions, all nodes are not synced",
-						zap.Int64("ddl job id", jobID),
-						zap.Int64("ver", latestVer))
-				}
+			if synced {
+				return res, nil
 			}
 		} else {
 			// Get all the schema versions from ETCD.
@@ -422,7 +391,7 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 					continue
 				}
 
-				succ = isUpdatedLatestVersion(string(kv.Key), string(kv.Value), latestVer, notMatchVerCnt, intervalCnt, true)
+				succ = isUpdatedLatestVersion(string(kv.Key), string(kv.Value), latestVer, notMatchVerCnt, intervalCnt)
 				if !succ {
 					break
 				}
@@ -430,12 +399,86 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 			}
 
 			if succ {
-				return nil
+				return &SyncSummary{
+					ServerCount: len(updatedMap),
+				}, nil
 			}
 			time.Sleep(checkVersInterval)
 			notMatchVerCnt++
 		}
 	}
+}
+
+func (s *etcdSyncer) waitVersionSyncedWithMDL(
+	ctx context.Context,
+	jobID, latestVer int64,
+	checkAssumedSvr bool,
+) (*SyncSummary, bool, error) {
+	serverInfos, err := s.getServersForISSync(ctx, checkAssumedSvr)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// updatedMap is used to check if all the servers report the latest version.
+	// it's initialed to record all the server in every loop. We delete one server
+	// from it if the server gets the metadata lock, i.e. the server has synced to
+	// the 'latestVer' and there are no active sessions accessing tables related
+	// to the DDL job with old schema.
+	// updatedMap should be empty if all the servers get the metadata lock.
+	updatedMap, syncSum := calculateUpdatedMap(serverInfos)
+
+	notifyCh := make(chan struct{})
+	var unmatchedNodeInfo atomic.Pointer[string]
+	matchFn := func(nodeVersions map[string]int64) bool {
+		if len(nodeVersions) == 0 {
+			return false
+		}
+		for tidbID, info := range updatedMap {
+			if nodeVer, ok := nodeVersions[tidbID]; !ok || nodeVer < latestVer {
+				linfo := info
+				unmatchedNodeInfo.Store(&linfo)
+				return false
+			}
+		}
+		close(notifyCh)
+		return true
+	}
+	item := s.jobSchemaVerMatchOrSet(jobID, matchFn)
+	select {
+	case <-notifyCh:
+		return syncSum, true, nil
+	case <-ctx.Done():
+		item.clearMatchFn()
+		return nil, false, errors.Trace(ctx.Err())
+	case <-time.After(time.Second):
+		item.clearMatchFn()
+		if info := unmatchedNodeInfo.Load(); info != nil {
+			logutil.DDLLogger().Info("syncer check all versions, someone is not synced",
+				zap.String("info", *info),
+				zap.Int64("ddl job id", jobID),
+				zap.Int64("ver", latestVer))
+		} else {
+			logutil.DDLLogger().Info("syncer check all versions, all nodes are not synced",
+				zap.Int64("ddl job id", jobID),
+				zap.Int64("ver", latestVer))
+		}
+	}
+	return nil, false, nil
+}
+
+func (s *etcdSyncer) getServersForISSync(ctx context.Context, checkAssumedSvr bool) (map[string]*serverinfo.ServerInfo, error) {
+	svrs, err := s.svrInfoSyncer.GetAllServerInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if kerneltype.IsNextGen() && !checkAssumedSvr {
+		for k, svr := range svrs {
+			if svr.IsAssumed() {
+				delete(svrs, k)
+			}
+		}
+	}
+	return svrs, nil
 }
 
 // SyncJobSchemaVerLoop implements Syncer.SyncJobSchemaVerLoop interface.
@@ -544,6 +587,10 @@ func (s *etcdSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(map[string
 	return item
 }
 
+func (s *etcdSyncer) SetServerInfoSyncer(syncer *serverinfo.Syncer) {
+	s.svrInfoSyncer = syncer
+}
+
 func decodeJobVersionEvent(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType, prefix string) (jobID int64, tidbID string, schemaVer int64, valid bool) {
 	left := strings.TrimPrefix(string(kv.Key), prefix)
 	parts := strings.Split(left, "/")
@@ -564,14 +611,14 @@ func decodeJobVersionEvent(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType, prefi
 	return jobID, parts[1], schemaVer, true
 }
 
-func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int, nodeAlive bool) bool {
+func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int) bool {
 	ver, err := strconv.Atoi(val)
 	if err != nil {
 		logutil.DDLLogger().Info("syncer check all versions, convert value to int failed, continue checking.",
 			zap.String("ddl", key), zap.String("value", val), zap.Error(err))
 		return false
 	}
-	if int64(ver) < latestVer && nodeAlive {
+	if int64(ver) < latestVer {
 		if notMatchVerCnt%intervalCnt == 0 {
 			logutil.DDLLogger().Info("syncer check all versions, someone is not synced, continue checking",
 				zap.String("ddl", key), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
@@ -586,4 +633,46 @@ func (s *etcdSyncer) Close() {
 	if err != nil {
 		logutil.DDLLogger().Error("remove self version path failed", zap.Error(err))
 	}
+}
+
+func calculateUpdatedMap(serverInfos map[string]*serverinfo.ServerInfo) (map[string]string, *SyncSummary) {
+	updatedMap := make(map[string]string)
+	instance2id := make(map[string]string)
+	var assumedSvrCount int
+	for _, info := range serverInfos {
+		instance := disttaskutil.GenerateExecID(info)
+		// if some node shutdown abnormally and start, we might see some
+		// instance with different id, we should use the latest one.
+		if id, ok := instance2id[instance]; ok {
+			if info.StartTimestamp > serverInfos[id].StartTimestamp {
+				// Replace it.
+				delete(updatedMap, id)
+				if serverInfos[id].IsAssumed() {
+					assumedSvrCount--
+				}
+				updatedMap[info.ID] = getSvrInfoForLog(info)
+				instance2id[instance] = info.ID
+				if info.IsAssumed() {
+					assumedSvrCount++
+				}
+			}
+		} else {
+			updatedMap[info.ID] = getSvrInfoForLog(info)
+			instance2id[instance] = info.ID
+			if info.IsAssumed() {
+				assumedSvrCount++
+			}
+		}
+	}
+	return updatedMap, &SyncSummary{
+		ServerCount:        len(instance2id),
+		AssumedServerCount: assumedSvrCount,
+	}
+}
+
+func getSvrInfoForLog(info *serverinfo.ServerInfo) string {
+	if info.IsAssumed() {
+		return fmt.Sprintf("instance ip %s, port %d, id %s, origin keyspace %s", info.IP, info.Port, info.ID, info.Keyspace)
+	}
+	return fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
 }

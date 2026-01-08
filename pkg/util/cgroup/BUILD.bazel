@@ -8,6 +8,7 @@ go_library(
         "cgroup_cpu_linux.go",
         "cgroup_cpu_unsupport.go",
         "cgroup_memory.go",
+        "cgroup_memory_unsupport.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/cgroup",
     visibility = ["//visibility:public"],

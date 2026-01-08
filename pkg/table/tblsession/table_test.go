@@ -156,5 +156,5 @@ func TestSessionMutateContextFields(t *testing.T) {
 	require.Equal(t, int64(332), tmpTblHandler.GetDirtySize())
 	exchange, ok := ctx.GetExchangePartitionDMLSupport()
 	require.True(t, ok)
-	require.Same(t, ctx.GetDomainInfoSchema(), exchange.GetInfoSchemaToCheckExchangeConstraint())
+	require.Same(t, ctx.GetLatestInfoSchema(), exchange.GetInfoSchemaToCheckExchangeConstraint())
 }

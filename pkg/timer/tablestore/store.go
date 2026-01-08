@@ -375,13 +375,13 @@ func (s *tableTimerStoreCore) withSession(fn func(*syssession.Session) error) er
 				// Though `pool.WithSession` will discard a not committed transaction.
 				// We still rollback back here to make sure the assertion passes in `Pool.Put`.
 				terror.Log(err)
-				se.Close()
+				se.AvoidReuse()
 				return
 			}
 
 			if _, err = executeSQL(ctx, se, "SET @@time_zone=%?", originalTimeZone); err != nil {
 				terror.Log(err)
-				se.Close()
+				se.AvoidReuse()
 				return
 			}
 		}()

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/stretchr/testify/require"
@@ -95,6 +96,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
@@ -110,6 +112,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
@@ -121,6 +124,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
@@ -135,6 +139,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
@@ -148,6 +153,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
@@ -268,7 +274,7 @@ func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// They are just common background task and not related to the oom.
-	if !h.messageFilter.Empty() && !h.messageFilter.Exist(entry.Message) {
+	if !h.messageFilter.Exist(entry.Message) {
 		return nil
 	}
 	h.tracker = entry.Message
@@ -280,4 +286,30 @@ func (h *oomCapture) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.C
 		return ce.AddCore(e, h)
 	}
 	return ce
+}
+
+func TestOOMActionPriority(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t0(a int)")
+	tk.MustExec("insert into t0 values(1)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustExec("create table t3(a int)")
+	tk.MustExec("insert into t3 values(1)")
+	tk.MustExec("create table t4(a int)")
+	tk.MustExec("insert into t4 values(1)")
+	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
+	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(true)
+	// All actions are finished and removed.
+	require.Equal(t, action.GetPriority(), int64(memory.DefLogPriority))
 }

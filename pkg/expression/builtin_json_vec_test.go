@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -137,6 +139,13 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	},
 	ast.JSONQuote: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+	},
+	ast.JSONSumCrc32: {
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETJson},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP()},
+			geners:             []dataGenerator{newJSONArrayGener()}},
 	},
 }
 

@@ -98,8 +98,8 @@ drop table if exists t;
 CREATE TABLE t (a bigint unsigned PRIMARY KEY);
 INSERT INTO t VALUES (0),(1),(2),(3),(18446744073709551600),(18446744073709551605),(18446744073709551610),(18446744073709551615);
 ANALYZE TABLE t;
-EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a >= 0x1 AND a <= 0x2;
-EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a BETWEEN 0x1 AND 0x2;
+EXPLAIN FORMAT = 'plan_tree' SELECT a FROM t WHERE a >= 0x1 AND a <= 0x2;
+EXPLAIN FORMAT = 'plan_tree' SELECT a FROM t WHERE a BETWEEN 0x1 AND 0x2;
 SELECT a FROM t WHERE a BETWEEN 0xFFFFFFFFFFFFFFF5 AND X'FFFFFFFFFFFFFFFA';
 
 # TestIssue28935
@@ -569,7 +569,7 @@ analyze table t2;
 begin;
 --sorted_result
 select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
-explain format = 'brief' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
+explain format = 'plan_tree' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
 commit;
 set tidb_cost_model_version=default;
 
@@ -615,7 +615,6 @@ CREATE TABLE status_type (
   PRIMARY KEY (st_id) /*T![clustered_index] NONCLUSTERED */
 );
 --disable_result_log
-trace plan SELECT T_ID, T_S_SYMB, T_QTY, ST_NAME, TH_DTS FROM ( SELECT T_ID AS ID FROM TRADE WHERE T_CA_ID = 43000014236 ORDER BY T_DTS DESC LIMIT 10 ) T, TRADE, TRADE_HISTORY, STATUS_TYPE WHERE TRADE.T_ID = ID AND TRADE_HISTORY.TH_T_ID = TRADE.T_ID AND STATUS_TYPE.ST_ID = TRADE_HISTORY.TH_ST_ID ORDER BY TH_DTS DESC LIMIT 30;
 --enable_result_log
 set @@foreign_key_checks=default;
 
@@ -763,6 +762,15 @@ explain analyze select * from pt order by id limit 100000;      # expected dists
 -- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
 explain analyze select * from pt where val = 126 order by id limit 100;  # expected distsql concurrency 15
 
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=5)*/ * from t order by id;  # expected distsql concurrency 5
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=15)*/ * from t order by id;  # expected distsql concurrency 2
+
+
 # TestIssue55837
 CREATE TABLE test_55837 (col1 int(4) NOT NULL, col2 bigint(4) NOT NULL, KEY col2_index (col2));
 insert into test_55837 values(0,1725292800),(0,1725292800);
@@ -770,3 +778,23 @@ select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s'
 
 # TestIssue56641
 select ((exists (select 1)) * -5) as c1;
+
+# TestIssue59457
+SELECT IS_UUID(' 6ccd780c-baba-1026-8567-4cc3505b2a62 ');
+-- error 1411
+SELECT UUID_TO_BIN(' 6ccd780c-baba-1026-9564-5b8c656024db ');
+# TestIssue59456
+SELECT is_ipv4_mapped(NULL);
+SELECT IS_IPV4(NULL);
+SELECT IS_IPV4(IF(1, NULL, '127.0.0.1'));
+SELECT IS_IPV4_COMPAT(NULL);
+SELECT IS_IPV6(NULL + INTERVAL 1 DAY);
+
+# TestIssue62458 should no error
+CREATE TABLE test_62458 (c1 INT, c2 VARCHAR(255)) PARTITION BY LIST (c1) (PARTITION p1 VALUES IN (1, 2, 3), PARTITION p2 VALUES IN (4, 5, 6));
+CREATE UNIQUE INDEX i ON test_62458 (c1);
+DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
+# TestIssue62457 should raise error
+CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
+-- error 3146 
+ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;

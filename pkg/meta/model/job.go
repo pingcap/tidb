@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -97,97 +98,107 @@ const (
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
 	// not used
-	ActionAlterTableStatsOptions ActionType = 58
-	ActionAlterNoCacheTable      ActionType = 59
-	ActionCreateTables           ActionType = 60
-	ActionMultiSchemaChange      ActionType = 61
-	ActionFlashbackCluster       ActionType = 62
-	ActionRecoverSchema          ActionType = 63
-	ActionReorganizePartition    ActionType = 64
-	ActionAlterTTLInfo           ActionType = 65
-	ActionAlterTTLRemove         ActionType = 67
-	ActionCreateResourceGroup    ActionType = 68
-	ActionAlterResourceGroup     ActionType = 69
-	ActionDropResourceGroup      ActionType = 70
-	ActionAlterTablePartitioning ActionType = 71
-	ActionRemovePartitioning     ActionType = 72
-	ActionAddColumnarIndex       ActionType = 73
-	ActionModifyEngineAttribute  ActionType = 74
-	ActionAlterTableMode         ActionType = 75
+	ActionAlterTableStatsOptions                ActionType = 58
+	ActionAlterNoCacheTable                     ActionType = 59
+	ActionCreateTables                          ActionType = 60
+	ActionMultiSchemaChange                     ActionType = 61
+	ActionFlashbackCluster                      ActionType = 62
+	ActionRecoverSchema                         ActionType = 63
+	ActionReorganizePartition                   ActionType = 64
+	ActionAlterTTLInfo                          ActionType = 65
+	ActionAlterTTLRemove                        ActionType = 67
+	ActionCreateResourceGroup                   ActionType = 68
+	ActionAlterResourceGroup                    ActionType = 69
+	ActionDropResourceGroup                     ActionType = 70
+	ActionAlterTablePartitioning                ActionType = 71
+	ActionRemovePartitioning                    ActionType = 72
+	ActionAddColumnarIndex                      ActionType = 73
+	ActionModifyEngineAttribute                 ActionType = 74
+	ActionAlterTableMode                        ActionType = 75
+	ActionRefreshMeta                           ActionType = 76
+	ActionModifySchemaReadOnly                  ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableAffinity                    ActionType = 78
+	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
+	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
 )
 
 // ActionMap is the map of DDL ActionType to string.
 var ActionMap = map[ActionType]string{
-	ActionCreateSchema:                  "create schema",
-	ActionDropSchema:                    "drop schema",
-	ActionCreateTable:                   "create table",
-	ActionCreateTables:                  "create tables",
-	ActionDropTable:                     "drop table",
-	ActionAddColumn:                     "add column",
-	ActionDropColumn:                    "drop column",
-	ActionAddIndex:                      "add index",
-	ActionDropIndex:                     "drop index",
-	ActionAddForeignKey:                 "add foreign key",
-	ActionDropForeignKey:                "drop foreign key",
-	ActionTruncateTable:                 "truncate table",
-	ActionModifyColumn:                  "modify column",
-	ActionRebaseAutoID:                  "rebase auto_increment ID",
-	ActionRenameTable:                   "rename table",
-	ActionRenameTables:                  "rename tables",
-	ActionSetDefaultValue:               "set default value",
-	ActionShardRowID:                    "shard row ID",
-	ActionModifyTableComment:            "modify table comment",
-	ActionRenameIndex:                   "rename index",
-	ActionAddTablePartition:             "add partition",
-	ActionDropTablePartition:            "drop partition",
-	ActionCreateView:                    "create view",
-	ActionModifyTableCharsetAndCollate:  "modify table charset and collate",
-	ActionTruncateTablePartition:        "truncate partition",
-	ActionDropView:                      "drop view",
-	ActionRecoverTable:                  "recover table",
-	ActionModifySchemaCharsetAndCollate: "modify schema charset and collate",
-	ActionLockTable:                     "lock table",
-	ActionUnlockTable:                   "unlock table",
-	ActionRepairTable:                   "repair table",
-	ActionSetTiFlashReplica:             "set tiflash replica",
-	ActionUpdateTiFlashReplicaStatus:    "update tiflash replica status",
-	ActionAddPrimaryKey:                 "add primary key",
-	ActionDropPrimaryKey:                "drop primary key",
-	ActionCreateSequence:                "create sequence",
-	ActionAlterSequence:                 "alter sequence",
-	ActionDropSequence:                  "drop sequence",
-	ActionModifyTableAutoIDCache:        "modify auto id cache",
-	ActionRebaseAutoRandomBase:          "rebase auto_random ID",
-	ActionAlterIndexVisibility:          "alter index visibility",
-	ActionExchangeTablePartition:        "exchange partition",
-	ActionAddCheckConstraint:            "add check constraint",
-	ActionDropCheckConstraint:           "drop check constraint",
-	ActionAlterCheckConstraint:          "alter check constraint",
-	ActionAlterTableAttributes:          "alter table attributes",
-	ActionAlterTablePartitionPlacement:  "alter table partition placement",
-	ActionAlterTablePartitionAttributes: "alter table partition attributes",
-	ActionCreatePlacementPolicy:         "create placement policy",
-	ActionAlterPlacementPolicy:          "alter placement policy",
-	ActionDropPlacementPolicy:           "drop placement policy",
-	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
-	ActionAlterTablePlacement:           "alter table placement",
-	ActionAlterCacheTable:               "alter table cache",
-	ActionAlterNoCacheTable:             "alter table nocache",
-	ActionAlterTableStatsOptions:        "alter table statistics options",
-	ActionMultiSchemaChange:             "alter table multi-schema change",
-	ActionFlashbackCluster:              "flashback cluster",
-	ActionRecoverSchema:                 "flashback schema",
-	ActionReorganizePartition:           "alter table reorganize partition",
-	ActionAlterTTLInfo:                  "alter table ttl",
-	ActionAlterTTLRemove:                "alter table no_ttl",
-	ActionCreateResourceGroup:           "create resource group",
-	ActionAlterResourceGroup:            "alter resource group",
-	ActionDropResourceGroup:             "drop resource group",
-	ActionAlterTablePartitioning:        "alter table partition by",
-	ActionRemovePartitioning:            "alter table remove partitioning",
-	ActionAddColumnarIndex:              "add columnar index",
-	ActionModifyEngineAttribute:         "modify engine attribute",
-	ActionAlterTableMode:                "alter table mode",
+	ActionCreateSchema:                          "create schema",
+	ActionDropSchema:                            "drop schema",
+	ActionCreateTable:                           "create table",
+	ActionCreateTables:                          "create tables",
+	ActionDropTable:                             "drop table",
+	ActionAddColumn:                             "add column",
+	ActionDropColumn:                            "drop column",
+	ActionAddIndex:                              "add index",
+	ActionDropIndex:                             "drop index",
+	ActionAddForeignKey:                         "add foreign key",
+	ActionDropForeignKey:                        "drop foreign key",
+	ActionTruncateTable:                         "truncate table",
+	ActionModifyColumn:                          "modify column",
+	ActionRebaseAutoID:                          "rebase auto_increment ID",
+	ActionRenameTable:                           "rename table",
+	ActionRenameTables:                          "rename tables",
+	ActionSetDefaultValue:                       "set default value",
+	ActionShardRowID:                            "shard row ID",
+	ActionModifyTableComment:                    "modify table comment",
+	ActionRenameIndex:                           "rename index",
+	ActionAddTablePartition:                     "add partition",
+	ActionDropTablePartition:                    "drop partition",
+	ActionCreateView:                            "create view",
+	ActionModifyTableCharsetAndCollate:          "modify table charset and collate",
+	ActionTruncateTablePartition:                "truncate partition",
+	ActionDropView:                              "drop view",
+	ActionRecoverTable:                          "recover table",
+	ActionModifySchemaCharsetAndCollate:         "modify schema charset and collate",
+	ActionLockTable:                             "lock table",
+	ActionUnlockTable:                           "unlock table",
+	ActionRepairTable:                           "repair table",
+	ActionSetTiFlashReplica:                     "set tiflash replica",
+	ActionUpdateTiFlashReplicaStatus:            "update tiflash replica status",
+	ActionAddPrimaryKey:                         "add primary key",
+	ActionDropPrimaryKey:                        "drop primary key",
+	ActionCreateSequence:                        "create sequence",
+	ActionAlterSequence:                         "alter sequence",
+	ActionDropSequence:                          "drop sequence",
+	ActionModifyTableAutoIDCache:                "modify auto id cache",
+	ActionRebaseAutoRandomBase:                  "rebase auto_random ID",
+	ActionAlterIndexVisibility:                  "alter index visibility",
+	ActionExchangeTablePartition:                "exchange partition",
+	ActionAddCheckConstraint:                    "add check constraint",
+	ActionDropCheckConstraint:                   "drop check constraint",
+	ActionAlterCheckConstraint:                  "alter check constraint",
+	ActionAlterTableAttributes:                  "alter table attributes",
+	ActionAlterTablePartitionPlacement:          "alter table partition placement",
+	ActionAlterTablePartitionAttributes:         "alter table partition attributes",
+	ActionCreatePlacementPolicy:                 "create placement policy",
+	ActionAlterPlacementPolicy:                  "alter placement policy",
+	ActionDropPlacementPolicy:                   "drop placement policy",
+	ActionModifySchemaDefaultPlacement:          "modify schema default placement",
+	ActionAlterTablePlacement:                   "alter table placement",
+	ActionAlterCacheTable:                       "alter table cache",
+	ActionAlterNoCacheTable:                     "alter table nocache",
+	ActionAlterTableStatsOptions:                "alter table statistics options",
+	ActionMultiSchemaChange:                     "alter table multi-schema change",
+	ActionFlashbackCluster:                      "flashback cluster",
+	ActionRecoverSchema:                         "flashback schema",
+	ActionReorganizePartition:                   "alter table reorganize partition",
+	ActionAlterTTLInfo:                          "alter table ttl",
+	ActionAlterTTLRemove:                        "alter table no_ttl",
+	ActionCreateResourceGroup:                   "create resource group",
+	ActionAlterResourceGroup:                    "alter resource group",
+	ActionDropResourceGroup:                     "drop resource group",
+	ActionAlterTablePartitioning:                "alter table partition by",
+	ActionRemovePartitioning:                    "alter table remove partitioning",
+	ActionAddColumnarIndex:                      "add columnar index",
+	ActionModifyEngineAttribute:                 "modify engine attribute",
+	ActionAlterTableMode:                        "alter table mode",
+	ActionRefreshMeta:                           "refresh meta",
+	ActionModifySchemaReadOnly:                  "modify schema read only",
+	ActionAlterTableAffinity:                    "alter table affinity",
+	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
+	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -200,6 +211,47 @@ func (action ActionType) String() string {
 		return v
 	}
 	return "none"
+}
+
+// ModifyColumnType is used to indicate what type of modify column job it is.
+// Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
+// https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
+const (
+	ModifyTypeNone byte = iota
+	// modify column that guarantees no reorganization or check is needed.
+	ModifyTypeNoReorg
+
+	// modify column that don't need to reorg the data, but need to check the existing data.
+	ModifyTypeNoReorgWithCheck
+
+	// modify column that only needs to reorg the index
+	ModifyTypeIndexReorg
+
+	// modify column that needs to reorg both the row and index data.
+	ModifyTypeReorg
+
+	// A special type for varchar->char conversion with data precheck.
+	ModifyTypePrecheck
+)
+
+// ModifyTypeToString converts ModifyColumnType to string.
+func ModifyTypeToString(tp byte) string {
+	switch tp {
+	case ModifyTypeNone:
+		return "none"
+	case ModifyTypeNoReorg:
+		return "modify meta only"
+	case ModifyTypeNoReorgWithCheck:
+		return "modify meta only with range check"
+	case ModifyTypeIndexReorg:
+		return "reorg index only"
+	case ModifyTypeReorg:
+		return "reorg row and index"
+	case ModifyTypePrecheck:
+		return "prechecking"
+	}
+
+	return ""
 }
 
 // SchemaState is the state for schema elements.
@@ -307,10 +359,10 @@ type Job struct {
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
 
-	// CtxVars are variables attached to the job. It is for internal usage.
-	// E.g. passing arguments between functions by one single *Job pointer.
-	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
-	CtxVars []any `json:"-"`
+	// NeedReorg indicates whether the job needs reorg.
+	// It's only used by modify column and not the accurate value.
+	NeedReorg bool `json:"-"`
+
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
 	args []any
@@ -387,6 +439,14 @@ type Job struct {
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
+
+	// SessionVars store system variables used in the DDL execution.
+	// To keep the backward compatibility, we still name it SessionVars.
+	SessionVars map[string]string `json:"session_vars,omitempty"`
+
+	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
+	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
+	LastSchemaVersion int64 `json:"last_schema_version"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -512,6 +572,13 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 	return rawArgs, errors.Trace(err)
 }
 
+// UpdateJobArgsForTest updates job.args with the given update function.
+func UpdateJobArgsForTest(job *Job, update func(args []any) []any) {
+	if intest.InTest {
+		job.args = update(job.args)
+	}
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
@@ -561,12 +628,9 @@ func (job *Job) decodeArgs(args ...any) error {
 		return errors.Trace(err)
 	}
 
-	sz := len(rawArgs)
-	if sz > len(args) {
-		sz = len(args)
-	}
+	sz := min(len(rawArgs), len(args))
 
-	for i := 0; i < sz; i++ {
+	for i := range sz {
 		if err := json.Unmarshal(rawArgs[i], args[i]); err != nil {
 			return errors.Trace(err)
 		}
@@ -584,6 +648,10 @@ func (job *Job) String() string {
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
+		if job.Type == ActionModifyColumn {
+			ret += fmt.Sprintf(", analyze_state:%d", job.ReorgMeta.AnalyzeState)
+			ret += fmt.Sprintf(", stage:%d", job.ReorgMeta.Stage)
+		}
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
 	}
@@ -694,6 +762,19 @@ func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
 }
 
+// AddSystemVars adds a system variable to the DDL job.
+// These variables are passed from the front-end DDL session to the back-end worker that executes the job.
+// Retrieve them using job.GetSystemVars(xxx).
+func (job *Job) AddSystemVars(name string, value string) {
+	job.SessionVars[name] = value
+}
+
+// GetSystemVars get a system variable stored in DDL job.
+func (job *Job) GetSystemVars(name string) (string, bool) {
+	value, ok := job.SessionVars[name]
+	return value, ok
+}
+
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
@@ -701,15 +782,10 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
-		// TODO(joechenrh): remove CtxVars here
-		if len(job.CtxVars) > 0 {
-			needReorg, ok := job.CtxVars[0].(bool)
-			return ok && needReorg
-		}
-		return false
+		return job.NeedReorg
 	case ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := Job{Type: sub.Type, CtxVars: sub.CtxVars}
+			proxyJob := Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
 			if proxyJob.MayNeedReorg() {
 				return true
 			}
@@ -733,6 +809,10 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StateDeleteOnly ||
 			job.SchemaState == StateDeleteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionModifyColumn:
+		if job.SchemaState == StatePublic {
 			return false
 		}
 	case ActionAddTablePartition:
@@ -780,6 +860,36 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	}
 }
 
+// CheckInvolvingSchemaInfo check the job should set valid InvolvingSchemaInfo,
+// job scheduler uses this info to calculate job dependency, invalid
+// InvolvingSchemaInfo may cause job scheduler stuck or execute DDLs in wrong order.
+func (job *Job) CheckInvolvingSchemaInfo() error {
+	involvedSI := job.GetInvolvingSchemaInfo()
+	for _, info := range involvedSI {
+		var involvedObjTypes int
+		if info.Policy != InvolvingNone {
+			involvedObjTypes++
+		}
+		if info.ResourceGroup != InvolvingNone {
+			involvedObjTypes++
+		}
+		if info.Database != InvolvingNone || info.Table != InvolvingNone {
+			involvedObjTypes++
+		}
+		if involvedObjTypes != 1 {
+			return errors.New("InvolvingSchemaInfo must involve only one type of object among database/table, placement policy, resource group")
+		}
+		if info.Policy == InvolvingNone && info.ResourceGroup == InvolvingNone {
+			if info.Database == InvolvingNone || info.Table == InvolvingNone {
+				return errors.New("DDL job operating on schema or table, must have non-empty name set in InvolvingSchemaInfo")
+			} else if info.Database == InvolvingAll && info.Table != InvolvingAll {
+				return errors.New("DDL job operating on all databases, must not set table name in InvolvingSchemaInfo")
+			}
+		}
+	}
+	return nil
+}
+
 // ClearDecodedArgs clears the decoded args.
 func (job *Job) ClearDecodedArgs() {
 	job.args = nil
@@ -788,20 +898,22 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType `json:"type"`
-	JobArgs     JobArgs    `json:"-"`
-	args        []any
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
-	SnapshotVer uint64          `json:"snapshot_ver"`
-	RealStartTS uint64          `json:"real_start_ts"`
-	Revertible  bool            `json:"revertible"`
-	State       JobState        `json:"state"`
-	RowCount    int64           `json:"row_count"`
-	Warning     *terror.Error   `json:"warning"`
-	CtxVars     []any           `json:"-"`
-	SchemaVer   int64           `json:"schema_version"`
-	ReorgTp     ReorgType       `json:"reorg_tp"`
+	Type         ActionType `json:"type"`
+	JobArgs      JobArgs    `json:"-"`
+	args         []any
+	RawArgs      json.RawMessage `json:"raw_args"`
+	SchemaState  SchemaState     `json:"schema_state"`
+	SnapshotVer  uint64          `json:"snapshot_ver"`
+	RealStartTS  uint64          `json:"real_start_ts"`
+	Revertible   bool            `json:"revertible"`
+	State        JobState        `json:"state"`
+	RowCount     int64           `json:"row_count"`
+	Warning      *terror.Error   `json:"warning"`
+	NeedReorg    bool            `json:"-"`
+	SchemaVer    int64           `json:"schema_version"`
+	ReorgTp      ReorgType       `json:"reorg_tp"`
+	ReorgStage   ReorgStage      `json:"reorg_stage"`
+	AnalyzeState int8            `json:"analyze_state"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -824,6 +936,13 @@ func (sub *SubJob) IsFinished() bool {
 
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
+	var reorgMeta *DDLReorgMeta
+	if parentJob.ReorgMeta != nil {
+		reorgMeta = parentJob.ReorgMeta.ShallowCopy()
+		reorgMeta.ReorgTp = sub.ReorgTp
+		reorgMeta.Stage = sub.ReorgStage
+		reorgMeta.AnalyzeState = sub.AnalyzeState
+	}
 	return Job{
 		Version:         parentJob.Version,
 		ID:              parentJob.ID,
@@ -837,7 +956,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		ErrorCount:      0,
 		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
-		CtxVars:         sub.CtxVars,
+		NeedReorg:       sub.NeedReorg,
 		args:            sub.args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
@@ -847,7 +966,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		ReorgMeta:       parentJob.ReorgMeta,
+		ReorgMeta:       reorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
@@ -855,6 +974,8 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
+		SQLMode:         parentJob.SQLMode,
+		SessionVars:     parentJob.SessionVars,
 	}
 }
 
@@ -871,6 +992,8 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaVer = ver
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+		sub.ReorgStage = proxyJob.ReorgMeta.Stage
+		sub.AnalyzeState = proxyJob.ReorgMeta.AnalyzeState
 	}
 }
 
@@ -1116,6 +1239,8 @@ type SchemaDiff struct {
 	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
 	// infoschema should read latest meta directly.
 	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
+	// IsRefreshMeta is set to true only when this diff is initiated by refreshMeta DDL that's only used by BR
+	IsRefreshMeta bool `json:"-"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }
@@ -1217,5 +1342,12 @@ func NewJobW(job *Job, bytes []byte) *JobW {
 }
 
 func init() {
-	SetJobVerInUse(JobVersion1)
+	// as the cluster might be upgraded from old TiDB version, so we set to v1
+	// initially, and then we detect the right version when DDL start.
+	ver := JobVersion1
+	if kerneltype.IsNextGen() {
+		// nextgen doesn't need to consider the compatibility with old TiDB versions,
+		ver = JobVersion2
+	}
+	SetJobVerInUse(ver)
 }

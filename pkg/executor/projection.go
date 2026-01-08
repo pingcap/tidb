@@ -268,7 +268,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 	// Initialize projectionWorker.
 	e.workers = make([]*projectionWorker, 0, e.numWorkers)
-	for i := int64(0); i < e.numWorkers; i++ {
+	for i := range e.numWorkers {
 		e.workers = append(e.workers, &projectionWorker{
 			proj:            e,
 			ctx:             e.projectionExecutorContext,
@@ -485,7 +485,7 @@ func recoveryProjection(output *projectionOutput, r any) {
 	if output != nil {
 		output.done <- util.GetRecoverError(r)
 	}
-	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
+	logutil.BgLogger().Warn("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
 }
 
 func readProjection[T any](ch <-chan T, finishCh <-chan struct{}) (t T, isNil bool) {

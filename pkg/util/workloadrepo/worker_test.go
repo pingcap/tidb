@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -580,7 +581,7 @@ func validatePartitionsMatchExpected(ctx context.Context, t *testing.T,
 		ep[generatePartitionName(p.AddDate(0, 0, 1))] = struct{}{}
 	}
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 	require.NoError(t, err)
 	tbInfo := tbSchema.Meta()
@@ -646,15 +647,15 @@ func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
 	tbl := getTable(t, tableName, wrk)
 	createTableWithParts(ctx, t, tk, tbl, sess, partitions)
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.False(t, firstTestFails == checkTableExistsByIS(ctx, is, tbl.destTable, now))
 
-	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is = sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.NoError(t, createPartition(ctx, is, tbl, sess, now))
 
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, expectedParts))
 
-	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is = sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.True(t, checkTableExistsByIS(ctx, is, tbl.destTable, now))
 }
 
@@ -723,7 +724,7 @@ func validatePartitionDrop(ctx context.Context, now time.Time, t *testing.T,
 
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, partitions))
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	err := dropOldPartition(ctx, is, tbl, now, retention, sess)
 	if shouldErr {
 		require.Error(t, err)
@@ -926,7 +927,7 @@ func TestOwnerRandomDown(t *testing.T) {
 		var err error
 		prevSnapID := uint64(0)
 		breakOwnerIdx := -1
-		oldOwnerIdx := -1
+		var oldOwner *worker
 
 		// stop the current owner
 		for idx, wrk := range workers {
@@ -957,30 +958,30 @@ func TestOwnerRandomDown(t *testing.T) {
 					}
 				}
 
-				oldOwnerIdx = idx
+				oldOwner = wrk
 				break
 			}
 		}
 
 		// new owner elected
 		require.Eventually(t, func() bool {
-			return slice.AnyOf(workers, func(i int) bool {
-				workers[i].Lock()
-				defer workers[i].Unlock()
-				return workers[i].cancel != nil &&
-					workers[i].owner.IsOwner() && i != oldOwnerIdx
+			return slices.ContainsFunc(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				return wrk.cancel != nil &&
+					wrk.owner.IsOwner() && wrk != oldOwner
 			})
 		}, time.Minute, 100*time.Millisecond)
 
 		// new snapshot taken
 		require.Eventually(t, func() bool {
-			return slice.AnyOf(workers, func(i int) bool {
-				workers[i].Lock()
-				defer workers[i].Unlock()
-				if workers[i].cancel == nil {
+			return slices.ContainsFunc(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				if wrk.cancel == nil {
 					return false
 				}
-				newSnapID, err := workers[i].getSnapID(ctx)
+				newSnapID, err := wrk.getSnapID(ctx)
 				return err == nil && newSnapID > prevSnapID
 			})
 		}, time.Minute, 100*time.Millisecond)
@@ -993,11 +994,11 @@ func TestOwnerRandomDown(t *testing.T) {
 			}
 		}
 		require.Eventually(t, func() bool {
-			return slice.AllOf(workers, func(i int) bool {
-				workers[i].Lock()
-				defer workers[i].Unlock()
-				return workers[i].cancel != nil &&
-					workers[i].owner != nil
+			return slice.AllOf(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				return wrk.cancel != nil &&
+					wrk.owner != nil
 			})
 		}, time.Minute, 100*time.Millisecond)
 	}

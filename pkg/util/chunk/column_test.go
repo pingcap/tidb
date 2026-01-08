@@ -795,6 +795,59 @@ func TestResize(t *testing.T) {
 	}
 }
 
+func TestReserve(t *testing.T) {
+	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
+	require.Equal(t, 0, cap(col.data))
+	require.Equal(t, 1, cap(col.offsets))
+	require.Equal(t, 0, cap(col.nullBitmap))
+	col.Reserve(10, 10, 10)
+	require.Less(t, 10, cap(col.data))
+	require.Less(t, 11, cap(col.offsets))
+	require.Less(t, 10, cap(col.nullBitmap))
+
+	col.data = append(col.data, 12)
+	col.data = append(col.data, 24)
+	col.data = append(col.data, 35)
+	col.data = append(col.data, 56)
+	col.data = append(col.data, 78)
+
+	col.offsets = append(col.offsets, 10)
+	col.offsets = append(col.offsets, 20)
+	col.offsets = append(col.offsets, 50)
+	col.offsets = append(col.offsets, 66)
+	col.offsets = append(col.offsets, 99)
+
+	col.nullBitmap = append(col.nullBitmap, 1)
+	col.nullBitmap = append(col.nullBitmap, 0)
+	col.nullBitmap = append(col.nullBitmap, 1)
+	col.nullBitmap = append(col.nullBitmap, 0)
+	col.nullBitmap = append(col.nullBitmap, 1)
+
+	col.Reserve(100, 100, 100)
+	require.Less(t, 105, cap(col.data))
+	require.Less(t, 106, cap(col.offsets))
+	require.Less(t, 105, cap(col.nullBitmap))
+
+	require.Equal(t, 12, int(col.data[0]))
+	require.Equal(t, 24, int(col.data[1]))
+	require.Equal(t, 35, int(col.data[2]))
+	require.Equal(t, 56, int(col.data[3]))
+	require.Equal(t, 78, int(col.data[4]))
+
+	require.Equal(t, 0, int(col.offsets[0]))
+	require.Equal(t, 10, int(col.offsets[1]))
+	require.Equal(t, 20, int(col.offsets[2]))
+	require.Equal(t, 50, int(col.offsets[3]))
+	require.Equal(t, 66, int(col.offsets[4]))
+	require.Equal(t, 99, int(col.offsets[5]))
+
+	require.Equal(t, 1, int(col.nullBitmap[0]))
+	require.Equal(t, 0, int(col.nullBitmap[1]))
+	require.Equal(t, 1, int(col.nullBitmap[2]))
+	require.Equal(t, 0, int(col.nullBitmap[3]))
+	require.Equal(t, 1, int(col.nullBitmap[4]))
+}
+
 func BenchmarkDurationRow(b *testing.B) {
 	chk1 := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
 	col1 := chk1.Column(0)

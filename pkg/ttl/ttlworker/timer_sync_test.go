@@ -18,12 +18,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -35,12 +37,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// createTimerTableSQL returns a SQL to create timer table
+func createTimerTableSQL(dbName, tableName string) string {
+	return strings.Replace(metadef.CreateTiDBTimersTable, "mysql.tidb_timers", fmt.Sprintf("`%s`.`%s`", dbName, tableName), 1)
+}
+
 func TestTTLManualTriggerOneTimer(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(tablestore.CreateTimerTableSQL("test", "test_timers"))
+	tk.MustExec(createTimerTableSQL("test", "test_timers"))
 	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), "test", "test_timers", nil)
 	defer timerStore.Close()
 	var zeroWatermark time.Time
@@ -216,7 +223,7 @@ func TestTTLTimerSync(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(tablestore.CreateTimerTableSQL("test", "test_timers"))
+	tk.MustExec(createTimerTableSQL("test", "test_timers"))
 	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), "test", "test_timers", nil)
 	defer timerStore.Close()
 

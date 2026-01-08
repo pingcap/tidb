@@ -1,52 +1,167 @@
-set tidb_cost_model_version=1;
+set tidb_cost_model_version=2;
 create table t(a int, b int, c int);
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3);
+INSERT INTO t (a, b, c) VALUES
+(1, 1, 1),
+(1, 2, 2),
+(1, 3, 3),
+(2, 1, 4),
+(2, 2, 5),
+(2, 3, 6),
+(3, 1, 7),
+(3, 2, 8),
+(3, 3, 9),
+(NULL, 1, 10),
+(1, NULL, 11),
+(1, 1, NULL),
+(NULL, NULL, 12),
+(4, 1, 13),
+(4, 2, 14),
+(4, 3, 15);
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3) order by a, b, avgc;
+a	b	avgc
+3	3	9.0000
+4	3	15.0000
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3) order by a, b, avgc;
+id	task	access object	operator info
+Projection	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
+└─Sort	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5
+  └─Selection	root		gt(Column#5, 3)
+    └─HashAgg	root		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:avg(Column#9, Column#10)->Column#5, funcs:firstrow(agg_predicate_pushdown.t.a)->agg_predicate_pushdown.t.a, funcs:firstrow(agg_predicate_pushdown.t.b)->agg_predicate_pushdown.t.b
+      └─TableReader	root		data:HashAgg
+        └─HashAgg	cop[tikv]		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:count(agg_predicate_pushdown.t.c)->Column#9, funcs:sum(agg_predicate_pushdown.t.c)->Column#10
+          └─Selection	cop[tikv]		gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.a, 2), gt(agg_predicate_pushdown.t.b, 2)
+            └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3) order by a, b, avgc;
+a	b	avgc
+3	3	9.0000
+4	3	15.0000
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3) order by a, b, avgc;
+id	task	access object	operator info
+Projection	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
+└─Sort	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5
+  └─Selection	root		gt(Column#5, 3)
+    └─HashAgg	root		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:avg(Column#9, Column#10)->Column#5, funcs:firstrow(agg_predicate_pushdown.t.a)->agg_predicate_pushdown.t.a, funcs:firstrow(agg_predicate_pushdown.t.b)->agg_predicate_pushdown.t.b
+      └─TableReader	root		data:HashAgg
+        └─HashAgg	cop[tikv]		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:count(agg_predicate_pushdown.t.c)->Column#9, funcs:sum(agg_predicate_pushdown.t.c)->Column#10
+          └─Selection	cop[tikv]		gt(agg_predicate_pushdown.t.b, 2), or(gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.b, 2)), or(gt(agg_predicate_pushdown.t.a, 2), lt(agg_predicate_pushdown.t.b, 1))
+            └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3) order by a, b, avgc;
+a	b	avgc
+2	3	6.0000
+3	3	9.0000
+4	3	15.0000
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3) order by a, b, avgc;
+id	task	access object	operator info
+Projection	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
+└─Sort	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5
+  └─Selection	root		or(and(gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.b, 2)), or(and(gt(agg_predicate_pushdown.t.a, 2), lt(agg_predicate_pushdown.t.b, 1)), and(gt(agg_predicate_pushdown.t.b, 2), gt(Column#5, 3))))
+    └─HashAgg	root		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:avg(Column#9, Column#10)->Column#5, funcs:firstrow(agg_predicate_pushdown.t.a)->agg_predicate_pushdown.t.a, funcs:firstrow(agg_predicate_pushdown.t.b)->agg_predicate_pushdown.t.b
+      └─TableReader	root		data:HashAgg
+        └─HashAgg	cop[tikv]		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:count(agg_predicate_pushdown.t.c)->Column#9, funcs:sum(agg_predicate_pushdown.t.c)->Column#10
+          └─Selection	cop[tikv]		or(and(gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.b, 2)), or(and(gt(agg_predicate_pushdown.t.a, 2), lt(agg_predicate_pushdown.t.b, 1)), gt(agg_predicate_pushdown.t.b, 2)))
+            └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 or avg(c) > 1) and (a < 3) order by a, b, avgc;
+a	b	avgc
+1	NULL	11.0000
+1	2	2.0000
+1	3	3.0000
+2	1	4.0000
+2	2	5.0000
+2	3	6.0000
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 or avg(c) > 1) and (a < 3) order by a, b, avgc;
+id	task	access object	operator info
+Projection	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
+└─Sort	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5
+  └─Selection	root		or(gt(agg_predicate_pushdown.t.a, 1), gt(Column#5, 1))
+    └─HashAgg	root		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:avg(Column#9, Column#10)->Column#5, funcs:firstrow(agg_predicate_pushdown.t.a)->agg_predicate_pushdown.t.a, funcs:firstrow(agg_predicate_pushdown.t.b)->agg_predicate_pushdown.t.b
+      └─TableReader	root		data:HashAgg
+        └─HashAgg	cop[tikv]		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:count(agg_predicate_pushdown.t.c)->Column#9, funcs:sum(agg_predicate_pushdown.t.c)->Column#10
+          └─Selection	cop[tikv]		lt(agg_predicate_pushdown.t.a, 3)
+            └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 and avg(c) > 1) or (a < 3) order by a, b, avgc;
+a	b	avgc
+1	NULL	11.0000
+1	1	NULL
+1	1	1.0000
+1	2	2.0000
+1	3	3.0000
+2	1	4.0000
+2	2	5.0000
+2	3	6.0000
+3	1	7.0000
+3	2	8.0000
+3	3	9.0000
+4	1	13.0000
+4	2	14.0000
+4	3	15.0000
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 and avg(c) > 1) or (a < 3) order by a, b, avgc;
+id	task	access object	operator info
+Projection	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
+└─Sort	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5
+  └─Selection	root		or(and(gt(agg_predicate_pushdown.t.a, 1), gt(Column#5, 1)), lt(agg_predicate_pushdown.t.a, 3))
+    └─HashAgg	root		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:avg(Column#9, Column#10)->Column#5, funcs:firstrow(agg_predicate_pushdown.t.a)->agg_predicate_pushdown.t.a, funcs:firstrow(agg_predicate_pushdown.t.b)->agg_predicate_pushdown.t.b
+      └─TableReader	root		data:HashAgg
+        └─HashAgg	cop[tikv]		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:count(agg_predicate_pushdown.t.c)->Column#9, funcs:sum(agg_predicate_pushdown.t.c)->Column#10
+          └─Selection	cop[tikv]		or(gt(agg_predicate_pushdown.t.a, 1), lt(agg_predicate_pushdown.t.a, 3))
+            └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table t;
+CREATE TABLE t (
+id INT,
+tran_id INT,
+PRIMARY KEY (id)
+);
+INSERT INTO t (id, tran_id) VALUES
+(1, 1540776),
+(2, 1540776),
+(3, 1540776),
+(4, 1540777),
+(5, 1540777),
+(6, 1540778),
+(7, 1540778),
+(8, 1540779),
+(9, 1540779),
+(10, 1540780),
+(11, NULL),
+(12, NULL),
+(13, 1540776),
+(14, 1540777),
+(15, 1540778);
+SELECT *
+FROM t t1
+WHERE t1.tran_id = 1540776
+AND t1.id = (
+SELECT MAX(t0.id)
+FROM t t0
+WHERE t0.tran_id = t1.tran_id
+);
+id	tran_id
+13	1540776
+explain format='brief' SELECT *
+FROM t t1
+WHERE t1.tran_id = 1540776
+AND t1.id = (
+SELECT MAX(t0.id)
+FROM t t0
+WHERE t0.tran_id = t1.tran_id
+);
 id	estRows	task	access object	operator info
-Projection	711.11	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
-└─Selection	711.11	root		gt(Column#5, 3)
-  └─HashAgg	888.89	root		group by:Column#14, Column#15, Column#16, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->agg_predicate_pushdown.t.a, funcs:firstrow(Column#15)->agg_predicate_pushdown.t.b
-    └─Projection	1111.11	root		cast(agg_predicate_pushdown.t.c, decimal(10,0) BINARY)->Column#13, agg_predicate_pushdown.t.a->Column#14, agg_predicate_pushdown.t.b->Column#15, agg_predicate_pushdown.t.c->Column#16
-      └─TableReader	1111.11	root		data:Selection
-        └─Selection	1111.11	cop[tikv]		gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.a, 2), gt(agg_predicate_pushdown.t.b, 2)
-          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3);
-id	estRows	task	access object	operator info
-Projection	657.65	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
-└─Selection	657.65	root		gt(Column#5, 3)
-  └─HashAgg	822.06	root		group by:Column#14, Column#15, Column#16, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->agg_predicate_pushdown.t.a, funcs:firstrow(Column#15)->agg_predicate_pushdown.t.b
-    └─Projection	1027.57	root		cast(agg_predicate_pushdown.t.c, decimal(10,0) BINARY)->Column#13, agg_predicate_pushdown.t.a->Column#14, agg_predicate_pushdown.t.b->Column#15, agg_predicate_pushdown.t.c->Column#16
-      └─TableReader	1027.57	root		data:Selection
-        └─Selection	1027.57	cop[tikv]		gt(agg_predicate_pushdown.t.b, 2), or(gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.b, 2)), or(gt(agg_predicate_pushdown.t.a, 2), lt(agg_predicate_pushdown.t.b, 1))
-          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3);
-id	estRows	task	access object	operator info
-Projection	3027.54	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
-└─Selection	3027.54	root		or(and(gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.b, 2)), or(and(gt(agg_predicate_pushdown.t.a, 2), lt(agg_predicate_pushdown.t.b, 1)), and(gt(agg_predicate_pushdown.t.b, 2), gt(Column#5, 3))))
-  └─HashAgg	3784.43	root		group by:Column#14, Column#15, Column#16, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->agg_predicate_pushdown.t.a, funcs:firstrow(Column#15)->agg_predicate_pushdown.t.b
-    └─Projection	4730.53	root		cast(agg_predicate_pushdown.t.c, decimal(10,0) BINARY)->Column#13, agg_predicate_pushdown.t.a->Column#14, agg_predicate_pushdown.t.b->Column#15, agg_predicate_pushdown.t.c->Column#16
-      └─TableReader	4730.53	root		data:Selection
-        └─Selection	4730.53	cop[tikv]		or(and(gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.b, 2)), or(and(gt(agg_predicate_pushdown.t.a, 2), lt(agg_predicate_pushdown.t.b, 1)), gt(agg_predicate_pushdown.t.b, 2)))
-          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1 or avg(c) > 1) and (a < 3);
-id	estRows	task	access object	operator info
-Projection	2126.93	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
-└─Selection	2126.93	root		or(gt(agg_predicate_pushdown.t.a, 1), gt(Column#5, 1))
-  └─HashAgg	2658.67	root		group by:Column#14, Column#15, Column#16, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->agg_predicate_pushdown.t.a, funcs:firstrow(Column#15)->agg_predicate_pushdown.t.b
-    └─Projection	3323.33	root		cast(agg_predicate_pushdown.t.c, decimal(10,0) BINARY)->Column#13, agg_predicate_pushdown.t.a->Column#14, agg_predicate_pushdown.t.b->Column#15, agg_predicate_pushdown.t.c->Column#16
-      └─TableReader	3323.33	root		data:Selection
-        └─Selection	3323.33	cop[tikv]		lt(agg_predicate_pushdown.t.a, 3)
-          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1 and avg(c) > 1) or (a < 3);
-id	estRows	task	access object	operator info
-Projection	6393.60	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
-└─Selection	6393.60	root		or(and(gt(agg_predicate_pushdown.t.a, 1), gt(Column#5, 1)), lt(agg_predicate_pushdown.t.a, 3))
-  └─HashAgg	7992.00	root		group by:Column#14, Column#15, Column#16, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->agg_predicate_pushdown.t.a, funcs:firstrow(Column#15)->agg_predicate_pushdown.t.b
-    └─Projection	9990.00	root		cast(agg_predicate_pushdown.t.c, decimal(10,0) BINARY)->Column#13, agg_predicate_pushdown.t.a->Column#14, agg_predicate_pushdown.t.b->Column#15, agg_predicate_pushdown.t.c->Column#16
-      └─TableReader	9990.00	root		data:Selection
-        └─Selection	9990.00	cop[tikv]		or(gt(agg_predicate_pushdown.t.a, 1), lt(agg_predicate_pushdown.t.a, 3))
-          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	6.40	root		agg_predicate_pushdown.t.id, agg_predicate_pushdown.t.tran_id
+└─Selection	6.40	root		eq(agg_predicate_pushdown.t.id, Column#5)
+  └─HashAgg	8.00	root		group by:agg_predicate_pushdown.t.id, funcs:firstrow(agg_predicate_pushdown.t.id)->agg_predicate_pushdown.t.id, funcs:firstrow(agg_predicate_pushdown.t.tran_id)->agg_predicate_pushdown.t.tran_id, funcs:max(agg_predicate_pushdown.t.id)->Column#5
+    └─HashJoin	12.50	root		left outer join, left side:TableReader, equal:[eq(agg_predicate_pushdown.t.tran_id, agg_predicate_pushdown.t.tran_id)]
+      ├─TableReader(Build)	10.00	root		data:Selection
+      │ └─Selection	10.00	cop[tikv]		eq(agg_predicate_pushdown.t.tran_id, 1540776)
+      │   └─TableFullScan	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
+      └─TableReader(Probe)	10.00	root		data:Selection
+        └─Selection	10.00	cop[tikv]		eq(agg_predicate_pushdown.t.tran_id, 1540776)
+          └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

@@ -17,6 +17,7 @@ package filter
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,6 +40,7 @@ func TestIsSystemSchema(t *testing.T) {
 	}
 
 	for _, tt := range cases {
-		require.Equalf(t, tt.expected, IsSystemSchema(tt.name), "schema name = %s", tt.name)
+		name := ast.NewCIStr(tt.name)
+		require.Equalf(t, tt.expected, IsSystemSchema(name.L), "schema name = %s", tt.name)
 	}
 }

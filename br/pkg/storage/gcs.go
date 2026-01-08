@@ -8,6 +8,8 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"math/rand"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -15,9 +17,11 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -113,6 +117,7 @@ type GCSStorage struct {
 	handles      []*storage.BucketHandle
 	clients      []*storage.Client
 	clientCancel context.CancelFunc
+	accessRec    *recording.AccessStats
 }
 
 // CopyFrom implements Copier.
@@ -167,14 +172,26 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 	object := s.objectName(name)
 	err := s.GetBucketHandle().Object(object).Delete(ctx)
+	// for delete single file, files are deleted should be considered
+	if err != nil {
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
+			return nil
+		}
+	}
 	return errors.Trace(err)
 }
 
 // DeleteFiles delete the files in storage.
+// If the file does not exist, we will ignore it.
 func (s *GCSStorage) DeleteFiles(ctx context.Context, names []string) error {
 	for _, name := range names {
 		err := s.DeleteFile(ctx, name)
 		if err != nil {
+			// some real-TiKV test also delete objects, so we ignore the error if
+			// the object does not exist
+			if goerrors.Is(err, storage.ErrObjectNotExist) {
+				continue
+			}
 			return err
 		}
 	}
@@ -195,6 +212,7 @@ func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) er
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.accessRec.RecWrite(len(data))
 	return wc.Close()
 }
 
@@ -218,6 +236,7 @@ func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 		b = make([]byte, size)
 		_, err = io.ReadFull(rc, b)
 	}
+	s.accessRec.RecRead(len(b))
 	return b, errors.Trace(err)
 }
 
@@ -335,20 +354,18 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
 		wc.PredefinedACL = s.gcs.PredefinedAcl
-		return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+		return newFlushStorageWriter(wc, &emptyFlusher{}, wc, s.accessRec), nil
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
-	partSize := int64(gcsMinimumChunkSize)
-	if wo.PartSize > partSize {
-		partSize = wo.PartSize
-	}
+	partSize := max(wo.PartSize, int64(gcsMinimumChunkSize))
 	w, err := NewGCSWriter(ctx, s.getClient(), uri, partSize, wo.Concurrency, s.gcs.Bucket)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, int(partSize), NoCompression)
+	fw := newFlushStorageWriter(w, &emptyFlusher{}, w, s.accessRec)
+	// we already pass the accessRec to flushStorageWriter.
+	bw := newBufferedWriter(fw, int(partSize), NoCompression, nil)
 	return bw, nil
 }
 
@@ -393,7 +410,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 					clientOps = append(clientOps, option.WithoutAuthentication())
 					goto skipHandleCred
 				}
-				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--%s'", gcsCredentialsFile, err)
+				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--%s'", err, gcsCredentialsFile)
 			}
 			if opts.SendCredentials {
 				if len(creds.JSON) <= 0 {
@@ -415,11 +432,22 @@ skipHandleCred:
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
 
-	if opts.HTTPClient != nil {
+	httpClient := opts.HTTPClient
+	if opts.AccessRecording != nil {
+		if httpClient == nil {
+			transport, _ := http.DefaultTransport.(*http.Transport)
+			httpClient = &http.Client{Transport: transport.Clone()}
+		}
+		httpClient.Transport = &roundTripperWrapper{
+			RoundTripper: httpClient.Transport,
+			accessRec:    opts.AccessRecording,
+		}
+	}
+	if httpClient != nil {
 		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
 		// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
 		// type of credential-file.
-		newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
+		newTransport, err := htransport.NewTransport(ctx, httpClient.Transport,
 			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
 		if err != nil {
 			if intest.InTest && !mustReportCredErr {
@@ -427,9 +455,9 @@ skipHandleCred:
 			}
 			return nil, errors.Trace(err)
 		}
-		opts.HTTPClient.Transport = newTransport
+		httpClient.Transport = newTransport
 	skipHandleTransport:
-		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
+		clientOps = append(clientOps, option.WithHTTPClient(httpClient))
 	}
 
 	if !opts.SendCredentials {
@@ -442,6 +470,7 @@ skipHandleCred:
 		idx:       atomic.NewInt64(0),
 		clientCnt: gcsClientCnt,
 		clientOps: clientOps,
+		accessRec: opts.AccessRecording,
 	}
 	if err := ret.Reset(ctx); err != nil {
 		return nil, errors.Trace(err)
@@ -589,13 +618,17 @@ type gcsObjectReader struct {
 
 	prefetchSize int
 	// reader context used for implement `io.Seek`
-	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
-	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx context.Context
 }
 
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
+	failpoint.Inject("GCSReadUnexpectedEOF", func(n failpoint.Value) {
+		if r.prefetchSize > 0 && r.pos > 0 && rand.Intn(2) == 0 {
+			log.Info("ingest error in gcs reader read")
+			failpoint.Return(n.(int), io.ErrUnexpectedEOF)
+		}
+	})
 	if r.reader == nil {
 		length := r.endPos - r.pos
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)
@@ -610,6 +643,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 		}
 	}
 	n, err = r.reader.Read(p)
+	r.storage.accessRec.RecRead(n)
 	r.pos += int64(n)
 	return n, err
 }
@@ -674,4 +708,14 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 func (r *gcsObjectReader) GetFileSize() (int64, error) {
 	return r.totalSize, nil
+}
+
+type roundTripperWrapper struct {
+	http.RoundTripper
+	accessRec *recording.AccessStats
+}
+
+func (rt *roundTripperWrapper) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.accessRec.RecRequest(req)
+	return rt.RoundTripper.RoundTrip(req)
 }

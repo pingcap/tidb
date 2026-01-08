@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -177,9 +179,6 @@ const (
 	// inAnalyze is set when visiting an analyze statement.
 	inAnalyze
 )
-
-// Make linter happy.
-var _ = PreprocessorReturn{}.initedLastSnapshotTS
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
@@ -638,7 +637,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				break
 			}
 		}
-		if !valid {
+		if x.Format != "" && !valid {
 			p.err = plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs(x.Format)
 		}
 	case *ast.TableName:
@@ -1500,6 +1499,9 @@ var mysqlValidTableEngineNames = map[string]struct{}{
 	"myisam":     {},
 	"ndb":        {},
 	"heap":       {},
+	"aria":       {}, // https://mariadb.com/docs/server/server-usage/storage-engines/aria/aria-storage-engine
+	"myrocks":    {}, // https://mariadb.com/docs/server/server-usage/storage-engines/myrocks
+	"tokudb":     {}, // https://mariadb.com/docs/server/server-usage/storage-engines/legacy-storage-engines/tokudb
 }
 
 func checkTableEngine(engineName string) error {
@@ -1712,11 +1714,9 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		for _, cte := range p.preprocessWith.cteCanUsed {
-			if cte == tn.Name.L {
-				p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
-				return
-			}
+		if slices.Contains(p.preprocessWith.cteCanUsed, tn.Name.L) {
+			p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
+			return
 		}
 
 		currentDB := p.sctx.GetSessionVars().CurrentDB
@@ -1798,7 +1798,7 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	// Check the whether the repaired table is system table.
-	if util.IsMemOrSysDB(tn.Schema.L) {
+	if metadef.IsMemOrSysDB(tn.Schema.L) {
 		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
 		return
 	}
@@ -1986,7 +1986,6 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 
 func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName ast.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
 	skipLock := false
-	shouldLockMDL := false
 	var lockedID int64
 
 	defer func() {
@@ -2001,8 +2000,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			}
 		}
 
-		if shouldLockMDL && err == nil && !skipLock {
-			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[retTbl.Meta().ID] = struct{}{}
+		if err == nil {
+			sctx.GetSessionVars().StmtCtx.RelatedTableIDs[retTbl.Meta().ID] = struct{}{}
 		}
 
 		if lockedID != 0 && err != nil {
@@ -2033,7 +2032,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
-	shouldLockMDL = true
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -2050,10 +2048,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
 			lockedID = tableInfo.ID
 		}
-		dom := domain.GetDomain(sctx)
-		domainSchema := dom.InfoSchema()
-		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		tbl, err = domainSchema.TableByName(ctx, dbName, tableInfo.Name)
+		latestIS := sctx.GetLatestISWithoutSessExt().(infoschema.InfoSchema)
+		domainSchemaVer := latestIS.SchemaMetaVersion()
+		tbl, err = latestIS.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -2080,8 +2077,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 						copyTableInfo = tbl.Meta().Clone()
 					}
 					copyTableInfo.Indices[i].State = model.StateWriteReorganization
-					dbInfo, _ := domainSchema.SchemaByName(dbName)
-					allocs := autoid.NewAllocatorsFromTblInfo(dom, dbInfo.ID, copyTableInfo)
+					dbInfo, _ := latestIS.SchemaByName(dbName)
+					allocs := autoid.NewAllocatorsFromTblInfo(latestIS.GetAutoIDRequirement(), dbInfo.ID, copyTableInfo)
 					tbl, err = table.TableFromMeta(allocs, copyTableInfo)
 					if err != nil {
 						return nil, err
@@ -2112,7 +2109,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
 			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
-		db, _ := infoschema.SchemaByTable(domainSchema, tbl.Meta())
+		db, _ := infoschema.SchemaByTable(latestIS, tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
 			return nil, err

@@ -37,7 +37,7 @@ const (
 	defaultEnabled             = true
 	defaultEnableInternalQuery = false
 	defaultMaxStmtCount        = 3000
-	defaultMaxSQLLength        = 4096
+	defaultMaxSQLLength        = 32768
 	defaultRefreshInterval     = 30 * 60 // 30 min
 	defaultRotateCheckInterval = 1       // s
 )
@@ -412,7 +412,8 @@ func newStmtEvicted() *stmtEvicted {
 			AuthUsers:    make(map[string]struct{}),
 			MinLatency:   time.Duration(math.MaxInt64),
 			BackoffTypes: make(map[string]int),
-			FirstSeen:    time.Unix(math.MaxInt64, 0),
+			FirstSeen:    time.Now(),
+			LastSeen:     time.Now(),
 		},
 	}
 }

@@ -30,13 +30,13 @@ var _ StatementObserver = &StatementStats{}
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
 	// OnExecutionBegin should be called before statement execution.
-	OnExecutionBegin(sqlDigest, planDigest []byte)
+	OnExecutionBegin(sqlDigest, planDigest []byte, inNetworkBytes uint64)
 
 	// OnExecutionFinished should be called after the statement is executed.
 	// WARNING: Currently Only call StatementObserver API when TopSQL is enabled,
 	// there is no guarantee that both OnExecutionBegin and OnExecutionFinished will be called for a SQL,
 	// such as TopSQL is enabled during a SQL execution.
-	OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration)
+	OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration, outNetworkBytes uint64)
 }
 
 // StatementStats is a counter used locally in each session.
@@ -60,17 +60,18 @@ func CreateStatementStats() *StatementStats {
 }
 
 // OnExecutionBegin implements StatementObserver.OnExecutionBegin.
-func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
+func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte, inNetworkBytes uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 
 	item.ExecCount++
+	item.NetworkInBytes = inNetworkBytes
 	// Count more data here.
 }
 
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration) {
+func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration, outNetworkBytes uint64) {
 	ns := execDuration.Nanoseconds()
 	if ns < 0 {
 		return
@@ -82,6 +83,7 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execD
 
 	item.SumDurationNs += uint64(ns)
 	item.DurationCount++
+	item.NetworkOutBytes = outNetworkBytes
 	// Count more data here.
 }
 
@@ -182,6 +184,10 @@ type StatementStatsItem struct {
 	// DurationCount represents the number of SQL executions specially
 	// used to calculate SQLDuration.
 	DurationCount uint64
+	// NetworkInBytes represents the total number of network input bytes from client.
+	NetworkInBytes uint64
+	// NetworkOutBytes represents the total number of network input bytes to client.
+	NetworkOutBytes uint64
 }
 
 // NewStatementStatsItem creates an empty StatementStatsItem.
@@ -205,6 +211,8 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 	i.ExecCount += other.ExecCount
 	i.SumDurationNs += other.SumDurationNs
 	i.DurationCount += other.DurationCount
+	i.NetworkInBytes += other.NetworkInBytes
+	i.NetworkOutBytes += other.NetworkOutBytes
 	i.KvStatsItem.Merge(other.KvStatsItem)
 }
 

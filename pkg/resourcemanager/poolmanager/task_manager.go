@@ -49,10 +49,6 @@ func NewMeta(taskID uint64, exitCh chan struct{}, taskCh chan func(), concurrenc
 	return s
 }
 
-func (m *Meta) getOriginConcurrency() int32 {
-	return m.initialConcurrency
-}
-
 // TaskID is to get the task id.
 func (m *Meta) TaskID() uint64 {
 	return m.taskID
@@ -93,7 +89,7 @@ type TaskManager struct {
 // NewTaskManager create a new pool task manager.
 func NewTaskManager(c int32) TaskManager {
 	task := make([]TaskStatusContainer, shard)
-	for i := 0; i < shard; i++ {
+	for i := range shard {
 		task[i] = TaskStatusContainer{
 			stats: make(map[uint64]*Meta),
 		}
@@ -118,15 +114,6 @@ func (t *TaskManager) DeleteTask(taskID uint64) {
 	t.task[shardID].rw.Lock()
 	delete(t.task[shardID].stats, taskID)
 	t.task[shardID].rw.Unlock()
-}
-
-// hasTask check if the task is in the manager.
-func (t *TaskManager) hasTask(taskID uint64) bool {
-	shardID := getShardID(taskID)
-	t.task[shardID].rw.Lock()
-	defer t.task[shardID].rw.Unlock()
-	_, ok := t.task[shardID].stats[taskID]
-	return ok
 }
 
 // GetOriginConcurrency return the concurrency of the pool at the init.

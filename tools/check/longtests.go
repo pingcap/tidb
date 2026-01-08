@@ -20,6 +20,9 @@ var longTests = map[string][]string{
 		"TestParallelLockNewTask",
 		"TestJobManagerWithFault",
 	},
+	"pkg/ttl/cache": {
+		"TestRegionDisappearDuringSplitRange",
+	},
 }
 
 var longTestWorkerCount = 2

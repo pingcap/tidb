@@ -20,12 +20,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"go.uber.org/zap"
 )
 
 func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -210,6 +212,13 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			return ver, errors.Trace(err)
 		}
 
+		// Best-effort cleanup - log errors but continue with DROP DATABASE
+		if err := batchDeleteTableAffinityGroups(jobCtx, tables); err != nil {
+			logutil.DDLLogger().Warn("failed to delete affinity groups for batch tables, but operation will continue",
+				zap.Error(err),
+				zap.Int64("databaseID", dbInfo.ID))
+		}
+
 		err = metaMut.UpdateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -226,10 +235,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			tablesPerJob = 500
 		}
 		for i := 0; i < len(tables); i += tablesPerJob {
-			end := i + tablesPerJob
-			if end > len(tables) {
-				end = len(tables)
-			}
+			end := min(i+tablesPerJob, len(tables))
 			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, tables[i:end])
 			err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, int64(i/tablesPerJob), w.sess)
 			if err != nil {

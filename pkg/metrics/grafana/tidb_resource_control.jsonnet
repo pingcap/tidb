@@ -220,11 +220,26 @@ local RUPanel = graphPanel.new(
 ).addTarget(
   prometheus.target(
     'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)',
-    legendFormat="{{resource_group}}",
+    legendFormat="tp-{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
     'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m]))',
+    legendFormat="tp-total",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="ap-{{resource_group}}",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m]))',
+    legendFormat="ap-total",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap|tp"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap|tp"}[1m]))',
     legendFormat="total",
   )
 );
@@ -590,6 +605,54 @@ local SQLCPUTimePanel = graphPanel.new(
 ).addTarget(
   prometheus.target(
     'sum(rate(resource_manager_resource_sql_cpu_time_ms_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
+    legendFormat="total",
+  )
+);
+
+local CrossAZTrafficRead = graphPanel.new(
+  title="Cross AZ Traffic Bytes(Read)",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=false,
+  legend_max=true,
+  legend_avg=false,
+  legend_current=false,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="bytes",
+  description="The metrics about cross AZ network traffic involved in queries for all resource groups.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group", type="read"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="read"}[1m]))',
+    legendFormat="total",
+  )
+);
+
+local CrossAZTrafficWrite = graphPanel.new(
+  title="Cross AZ Traffic Bytes(Write)",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=false,
+  legend_max=true,
+  legend_avg=false,
+  legend_current=false,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="bytes",
+  description="The metrics about cross AZ network traffic involved in write for all resource groups.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group", type="write"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="write"}[1m]))',
     legendFormat="total",
   )
 );
@@ -1232,6 +1295,8 @@ TiDBResourceControlDash
   .addPanel(BytesWrittenPerQueryPanel, gridPos=rightPanelPos)
   .addPanel(KVCPUTimePanel, gridPos=leftPanelPos)
   .addPanel(SQLCPUTimePanel, gridPos=rightPanelPos)
+  .addPanel(CrossAZTrafficRead, gridPos=leftPanelPos)
+  .addPanel(CrossAZTrafficWrite, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 ).addPanel(

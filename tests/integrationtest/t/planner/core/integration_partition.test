@@ -587,27 +587,27 @@ select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
 select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
 --sorted_result
 select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
-explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
-explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
-explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
-explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
-explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
+explain format='plan_tree' select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
+explain format='plan_tree' select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
+explain format='plan_tree' select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
+explain format='plan_tree' select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
+explain format='plan_tree' select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
 --sorted_result
 select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 --sorted_result
 select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
 --sorted_result
 select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
-explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
+explain format='plan_tree' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 --sorted_result
 select * from t where a <= 11 and b <= '2022-01-01' and c < "Wow";
-explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
+explain format='plan_tree' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 create table tref (a int, b datetime, c varchar(255), key (a,b,c));
 set @@sql_mode = '';
 insert into tref select * from t;
 set @@sql_mode = DEFAULT;
-explain format = 'brief' select * from tref where a <= 10 and b <= '2022-01-01' and c < "Wow";
-explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
+explain format='plan_tree' select * from tref where a <= 10 and b <= '2022-01-01' and c < "Wow";
+explain format='plan_tree' select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
 --sorted_result
 select * from t where a = 2 and b = "2022-01-02" and c = "Hi" or b = '2022-01-01' and c = "Wow";
 --sorted_result
@@ -620,13 +620,13 @@ select * from t where a = 2 and b = "2022-01-02" and c < "Hi";
 select * from t where a < 2;
 --sorted_result
 select * from t where a <= 2 and b <= "2022-01-02" and c < "Hi";
-explain format = 'brief' select * from t where a < 2;
+explain format='plan_tree' select * from t where a < 2;
 --sorted_result
 select * from t where a < 2 and a > -22;
-explain format = 'brief' select * from t where a < 2 and a > -22;
+explain format='plan_tree' select * from t where a < 2 and a > -22;
 --sorted_result
 select * from t where c = "";
-explain format = 'brief' select * from t where c = "";
+explain format='plan_tree' select * from t where c = "";
 
 
 # TestRangeMultiColumnsPruning
@@ -658,10 +658,10 @@ select a,b from t where b = '2022-01-01';
 select a,b,c from t where a = 1;
 --sorted_result
 select a,b,c from t where a = 1 AND c = "Wow";
-explain format = 'brief' select a,b,c from t where a = 1 AND c = "Wow";
+explain format='plan_tree' select a,b,c from t where a = 1 AND c = "Wow";
 --sorted_result
 select a,b,c from t where a = 0 AND c = "Wow";
-explain format = 'brief' select a,b,c from t where a = 0 AND c = "Wow";
+explain format='plan_tree' select a,b,c from t where a = 0 AND c = "Wow";
 
 
 # TestRangeColumnsExpr
@@ -704,17 +704,17 @@ select * from t partition (p11);
 select * from t partition (p12);
 --sorted_result
 select * from t partition (p13);
-explain format = 'brief' select * from t where c = 3;
-explain format = 'brief' select * from t where b > 3 and c = 3;
-explain format = 'brief' select * from t where a = 5 and c = 3;
-explain format = 'brief' select * from t where a = 4 and c = 3;
-explain format = 'brief' select * from t where a in (4,14) and c = 3;
-explain format = 'brief' select * from t where a in (4,14) and b in (null,10);
+explain format='plan_tree' select * from t where c = 3;
+explain format='plan_tree' select * from t where b > 3 and c = 3;
+explain format='plan_tree' select * from t where a = 5 and c = 3;
+explain format='plan_tree' select * from t where a = 4 and c = 3;
+explain format='plan_tree' select * from t where a in (4,14) and c = 3;
+explain format='plan_tree' select * from t where a in (4,14) and b in (null,10);
 --sorted_result
 select * from tref where a in (4,14) and b in (null,10);
 --sorted_result
 select * from t where a in (4,14) and b in (null,10);
-explain format = 'brief' select * from t where a in (4,14) and (b in (11,10) OR b is null);
+explain format='plan_tree' select * from t where a in (4,14) and (b in (11,10) OR b is null);
 --sorted_result
 select * from tref where a in (4,14) and (b in (11,10) OR b is null);
 --sorted_result
@@ -743,8 +743,8 @@ select * from t partition(p5);
 select * from t where a > 'C' and a < 'q';
 --sorted_result
 select * from t where a > 'c' and a < 'Q';
-explain format = 'brief' select * from t where a > 'C' and a < 'q';
-explain format = 'brief' select * from t where a > 'c' and a < 'Q';
+explain format='plan_tree' select * from t where a > 'C' and a < 'q';
+explain format='plan_tree' select * from t where a > 'c' and a < 'Q';
 
 # TestPartitionRangePrunerDate
 drop database if exists rcd;
@@ -753,7 +753,7 @@ use rcd;
 set @@tidb_partition_prune_mode = 'dynamic';
 create table i (a int, b int, key (a,b));
 select * from i where a < 1 and a > 2;
-explain format = 'brief' select * from i where a < 1 and a > 2;
+explain format='plan_tree' select * from i where a < 1 and a > 2;
 create table t (a date) partition by range columns (a) (partition p0 values less than ('19990601'), partition p1 values less than ('2000-05-01'), partition p2 values less than ('20080401'), partition p3 values less than ('2010-03-01'), partition p4 values less than ('20160201'), partition p5 values less than ('2020-01-01'), partition p6 values less than (MAXVALUE));
 show create table t;
 insert into t values ('19990101'),('1999-06-01'),('2000-05-01'),('20080401'),('2010-03-01'),('2016-02-01'),('2020-01-01');
@@ -794,7 +794,7 @@ use rcd;
 create table t1 (a char, b char, c char) partition by range columns (a,b,c) ( partition p0 values less than ('a','b','c'), partition p1 values less than ('b','c','d'), partition p2 values less than ('d','e','f'));
 insert into t1 values ('a', NULL, 'd');
 analyze table t1;
-explain format=brief select * from t1 where a = 'a' AND c = 'd';
+explain format='plan_tree' select * from t1 where a = 'a' AND c = 'd';
 --sorted_result
 select * from t1 where a = 'a' AND c = 'd';
 drop table t1;
@@ -804,11 +804,11 @@ drop table t1;
 drop table if exists q1, q2;
 create table q1(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
 create table q2(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
-explain format=brief select * from q1,q2;
+explain format='plan_tree' select * from q1,q2;
 analyze table q1;
-explain format=brief select * from q1,q2;
+explain format='plan_tree' select * from q1,q2;
 analyze table q2;
-explain format=brief select * from q1,q2;
+explain format='plan_tree' select * from q1,q2;
 
 
 # TestIssue42323

@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "sqlsvrapi",
+    srcs = ["server.go"],
+    importpath = "github.com/pingcap/tidb/pkg/domain/sqlsvrapi",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/owner",
+        "//pkg/util",
+    ],
+)

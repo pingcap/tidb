@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/israce"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -56,7 +57,9 @@ func LogInfo(name AppName) {
 		zap.String("git-branch", GitBranch),
 		zap.String("go-version", goVersion),
 		zap.String("utc-build-time", BuildTS),
-		zap.Bool("race-enabled", israce.RaceEnabled))
+		zap.Bool("race-enabled", israce.RaceEnabled),
+		zap.Bool("for-next-gen?", kerneltype.IsNextGen()),
+	)
 }
 
 // Info returns version information.
@@ -67,6 +70,11 @@ func Info() string {
 	fmt.Fprintf(&buf, "Git Branch: %s\n", GitBranch)
 	fmt.Fprintf(&buf, "Go Version: %s\n", goVersion)
 	fmt.Fprintf(&buf, "UTC Build Time: %s\n", BuildTS)
-	fmt.Fprintf(&buf, "Race Enabled: %t", israce.RaceEnabled)
+	fmt.Fprintf(&buf, "Race Enabled: %t\n", israce.RaceEnabled)
+	kt := "Classic"
+	if kerneltype.IsNextGen() {
+		kt = "Next-Gen"
+	}
+	fmt.Fprintf(&buf, "Kernel Type: %s", kt)
 	return buf.String()
 }

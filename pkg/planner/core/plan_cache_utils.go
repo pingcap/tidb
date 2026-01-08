@@ -22,8 +22,6 @@ import (
 	"hash"
 	"math"
 	"slices"
-	"sort"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,11 +37,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -128,13 +129,13 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
 	paramCount := len(extractor.markers)
-	for i := 0; i < paramCount; i++ {
+	for i := range paramCount {
 		extractor.markers[i].SetOrder(i)
 	}
 
 	prepared := &ast.Prepared{
 		Stmt:     paramStmt,
-		StmtType: ast.GetStmtLabel(paramStmt),
+		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
@@ -190,10 +191,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	// Collect information for metadata lock.
-	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
-	for id := range vars.StmtCtx.MDLRelatedTableIDs {
+	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
+	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
+	for id := range vars.StmtCtx.RelatedTableIDs {
 		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
@@ -237,14 +238,64 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	return preparedObj, p, paramCount, nil
 }
 
+// tableIDSlicePool is a pool for int64 slices used in hashInt64Uint64Map.
+var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
+
 func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
-	keys := make([]int64, 0, len(m))
+	n := len(m)
+
+	// Fast path for common cases (covers most scenarios)
+	if n == 0 {
+		return b
+	}
+	if n == 1 {
+		// Single table: no need for allocation or sorting
+		for k, v := range m {
+			b = codec.EncodeInt(b, k)
+			b = codec.EncodeUint(b, v)
+			return b
+		}
+	}
+	if n == 2 {
+		// Two tables: direct comparison without array allocation
+		var k1, k2 int64
+		var v1, v2 uint64
+		i := 0
+		for k, v := range m {
+			if i == 0 {
+				k1, v1 = k, v
+			} else {
+				k2, v2 = k, v
+			}
+			i++
+		}
+		// Ensure sorted order
+		if k1 > k2 {
+			k1, k2 = k2, k1
+			v1, v2 = v2, v1
+		}
+		b = codec.EncodeInt(b, k1)
+		b = codec.EncodeUint(b, v1)
+		b = codec.EncodeInt(b, k2)
+		b = codec.EncodeUint(b, v2)
+		return b
+	}
+
+	// Slow path for multiple tables
+	keys := tableIDSlicePool.Get()[:0]
+	defer tableIDSlicePool.Put(keys)
+
+	// Ensure sufficient capacity
+	if cap(keys) < n {
+		keys = make([]int64, 0, n)
+	}
+
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i] < keys[j]
-	})
+	slices.Sort(keys)
 
 	for _, k := range keys {
 		v := m[k]
@@ -259,10 +310,7 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
-	binding, ignored := bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
-	if ignored {
-		return "", binding, false, "ignore plan cache by binding", nil
-	}
+	binding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
@@ -289,6 +337,13 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	if stmt.SchemaVersion == 0 && !intest.InTest {
 		return "", "", false, "", errors.New("Schema version uninitialized")
 	}
+	if stmt.hasSubquery && !vars.EnablePlanCacheForSubquery {
+		return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
+	}
+	if len(stmt.limits) > 0 && !vars.EnablePlanCacheForParamLimit {
+		return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
+	}
+
 	stmtDB := stmt.StmtDB
 	if stmtDB == "" {
 		stmtDB = vars.CurrentDB
@@ -309,11 +364,36 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the user might switch the prune mode dynamically
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 
-	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
-	hash = append(hash, hack.Slice(userName)...)
-	hash = append(hash, hack.Slice(hostName)...)
-	hash = append(hash, hack.Slice(stmtDB)...)
-	hash = append(hash, hack.Slice(stmt.StmtText)...)
+	// precalculate the length of the hash buffer, note each time add an element to the buffer, need
+	// to update hashLen accordingly
+	// basic informations
+	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
+	// schemaVersion + relateVersion + pruneMode
+	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
+	// latestSchemaVersion + sqlMode + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 8 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
+	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	if len(stmt.limits) > 0 {
+		// '|' + each limit count/offset takes 8 bytes + '|'
+		hashLen += 2 + len(stmt.limits)*2*8
+	}
+	if vars.GetSessionVars().PlanCacheInvalidationOnFreshStats {
+		// statsVerHash
+		hashLen += 8
+	}
+	// dirty tables
+	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
+	// txn status
+	hashLen += 6
+
+	hash := make([]byte, 0, hashLen)
+	// hashInitCap is not used, just for test purposes
+	hashInitCap := cap(hash)
+	hash = append(hash, userName...)
+	hash = append(hash, hostName...)
+	hash = append(hash, stmtDB...)
+	hash = append(hash, stmt.StmtText...)
 	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
 	hash = append(hash, pruneMode...)
@@ -334,33 +414,23 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = append(hash, kv.TiFlash.Name()...)
 	}
 	hash = codec.EncodeInt(hash, int64(vars.SelectLimit))
-	hash = append(hash, hack.Slice(binding)...)
-	hash = append(hash, hack.Slice(connCharset)...)
-	hash = append(hash, hack.Slice(connCollation)...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vars.InRestrictedSQL))...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vardef.RestrictedReadOnly.Load()))...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vardef.VarTiDBSuperReadOnly.Load()))...)
+	hash = append(hash, binding...)
+	hash = append(hash, connCharset...)
+	hash = append(hash, connCollation...)
+	hash = append(hash, bool2Byte(vars.InRestrictedSQL))
+	hash = append(hash, bool2Byte(vardef.RestrictedReadOnly.Load()))
+	hash = append(hash, bool2Byte(vardef.VarTiDBSuperReadOnly.Load()))
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 
 	// whether this query has sub-query
-	if stmt.hasSubquery {
-		if !vars.EnablePlanCacheForSubquery {
-			return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
-		}
-		hash = append(hash, '1')
-	} else {
-		hash = append(hash, '0')
-	}
+	hash = append(hash, bool2Byte(stmt.hasSubquery))
 
 	// this variable might affect the plan
 	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {
-		if !vars.EnablePlanCacheForParamLimit {
-			return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
-		}
 		hash = append(hash, '|')
 		for _, node := range stmt.limits {
 			for _, valNode := range []ast.ExprNode{node.Count, node.Offset} {
@@ -394,17 +464,23 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// handle dirty tables
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
-		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
+		// Get int64 slice from pool
+		dirtyTableIDs := dirtyTableIDsPool.Get()[:0]
+		if cap(dirtyTableIDs) < len(dirtyTables) {
+			dirtyTableIDs = make([]int64, 0, len(dirtyTables))
+		}
 		for t, dirty := range dirtyTables {
 			if !dirty {
 				continue
 			}
 			dirtyTableIDs = append(dirtyTableIDs, t.ID)
 		}
-		sort.Slice(dirtyTableIDs, func(i, j int) bool { return dirtyTableIDs[i] < dirtyTableIDs[j] })
+		slices.Sort(dirtyTableIDs)
 		for _, id := range dirtyTableIDs {
 			hash = codec.EncodeInt(hash, id)
 		}
+		// Return slice to pool
+		dirtyTableIDsPool.Put(dirtyTableIDs)
 	}
 
 	// txn status
@@ -415,7 +491,13 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
-	return string(hash), binding, true, "", nil
+	if intest.InTest {
+		if cap(hash) != hashInitCap {
+			panic("unexpected hash buffer realloc in NewPlanCacheKey")
+		}
+	}
+
+	return string(hack.String(hash)), binding, true, "", nil
 }
 
 func bool2Byte(flag bool) byte {
@@ -489,11 +571,11 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	switch x := v.Plan.(type) {
 	case base.PhysicalPlan:
 		sum = x.MemoryUsage()
-	case *Insert:
+	case *physicalop.Insert:
 		sum = x.MemoryUsage()
-	case *Update:
+	case *physicalop.Update:
 		sum = x.MemoryUsage()
-	case *Delete:
+	case *physicalop.Delete:
 		sum = x.MemoryUsage()
 	default:
 		sum = unKnownMemoryUsage
@@ -527,6 +609,11 @@ var planCacheHasherPool = sync.Pool{
 	},
 }
 
+// dirtyTableIDsPool is a pool for int64 slices used in NewPlanCacheKey.
+var dirtyTableIDsPool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
+
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(
 	sctx sessionctx.Context,
@@ -548,7 +635,7 @@ func NewPlanCacheValue(
 	}
 
 	flat := FlattenPhysicalPlan(plan, false)
-	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat)
+	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat, false)
 
 	// calculate opt env hash using cacheKey and paramTypes
 	// (cacheKey, paramTypes) contains all factors that can affect the plan
@@ -623,7 +710,7 @@ type PointGetExecutorCache struct {
 	// FastPlan is only used for instance plan cache.
 	// To ensure thread-safe, we have to clone each plan before reusing if using instance plan cache.
 	// To reduce the memory allocation and increase performance, we cache the FastPlan here.
-	FastPlan *PointGetPlan
+	FastPlan *physicalop.PointGetPlan
 }
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields

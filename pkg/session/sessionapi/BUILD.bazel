@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "sessionapi",
+    srcs = ["session.go"],
+    importpath = "github.com/pingcap/tidb/pkg/session/sessionapi",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/extension",
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/planner/core/resolve",
+        "//pkg/privilege/conn",
+        "//pkg/session/sessmgr",
+        "//pkg/session/txninfo",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/sessionstates",
+        "//pkg/util/sqlexec",
+    ],
+)

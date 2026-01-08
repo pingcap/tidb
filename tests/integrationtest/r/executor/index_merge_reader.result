@@ -52,13 +52,13 @@ c0
 drop table if exists t1;
 create table t1(a int primary key, b int, c int, key(b), key(c));
 INSERT INTO t1 VALUES (10, 10, 10), (11, 11, 11);
-explain format='brief' select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
-id	estRows	task	access object	operator info
-IndexMerge	0.01	root		type: union
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c(c)	range:[10,10], keep order:false, stats:pseudo
-├─TableRangeScan(Build)	1.00	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
-└─Selection(Probe)	0.01	cop[tikv]		or(eq(executor__index_merge_reader.t1.c, 10), and(eq(executor__index_merge_reader.t1.b, 10), eq(executor__index_merge_reader.t1.a, 10)))
-  └─TableRowIDScan	11.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
+id	task	access object	operator info
+IndexMerge	root		type: union
+├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c(c)	range:[10,10], keep order:false, stats:pseudo
+├─TableRangeScan(Build)	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
+└─Selection(Probe)	cop[tikv]		or(eq(executor__index_merge_reader.t1.c, 10), and(eq(executor__index_merge_reader.t1.b, 10), eq(executor__index_merge_reader.t1.a, 10)))
+  └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
 a	b	c
 10	10	10
@@ -73,41 +73,41 @@ a	b	a	b
 drop table if exists t;
 set @@tidb_enable_index_merge = 1;
 create table t (a int, b int, c int, primary key(a), key(b));
-explain format='brief' select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1;
-id	estRows	task	access object	operator info
-Projection	13.74	root		executor__index_merge_reader.t.a, executor__index_merge_reader.t.b, executor__index_merge_reader.t.c, executor__index_merge_reader.t.a, executor__index_merge_reader.t.b, executor__index_merge_reader.t.c
-└─IndexJoin	13.74	root		inner join, inner:TableReader, outer key:executor__index_merge_reader.t.a, inner key:executor__index_merge_reader.t.a, equal cond:eq(executor__index_merge_reader.t.a, executor__index_merge_reader.t.a), eq(executor__index_merge_reader.t.c, executor__index_merge_reader.t.c), other cond:or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
-  ├─TableReader(Build)	9990.00	root		data:Selection
-  │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__index_merge_reader.t.c))
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─TableReader(Probe)	10.98	root		data:Selection
-    └─Selection	10.98	cop[tikv]		not(isnull(executor__index_merge_reader.t.c)), or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
-      └─TableRangeScan	9990.00	cop[tikv]	table:t2	range: decided by [executor__index_merge_reader.t.a], keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1;
+id	task	access object	operator info
+Projection	root		executor__index_merge_reader.t.a, executor__index_merge_reader.t.b, executor__index_merge_reader.t.c, executor__index_merge_reader.t.a, executor__index_merge_reader.t.b, executor__index_merge_reader.t.c
+└─IndexJoin	root		inner join, inner:TableReader, outer key:executor__index_merge_reader.t.a, inner key:executor__index_merge_reader.t.a, equal cond:eq(executor__index_merge_reader.t.a, executor__index_merge_reader.t.a), eq(executor__index_merge_reader.t.c, executor__index_merge_reader.t.c)
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(executor__index_merge_reader.t.c))
+  │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(executor__index_merge_reader.t.c)), or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
+      └─TableRangeScan	cop[tikv]	table:t2	range: decided by [executor__index_merge_reader.t.a], keep order:false, stats:pseudo
 set @@tidb_enable_index_merge = default;
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, pk int, key(c1), key(c2), key(c3), primary key(pk));
 begin;
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
 id	estRows	task	access object	operator info
-IndexMerge_9	1841.86	root		type: union
-├─IndexRangeScan_5(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-└─Selection_8(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
-  └─TableRowIDScan_7	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexMerge_10	1841.86	root		type: union
+├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+└─Selection_9(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
+  └─TableRowIDScan_8	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;
 id	estRows	task	access object	operator info
-IndexMerge_9	1106.67	root		type: union
-├─TableRangeScan_5(Build)	3333.33	cop[tikv]	table:t1	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-└─Selection_8(Probe)	1106.67	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
-  └─TableRowIDScan_7	3330.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexMerge_10	1106.67	root		type: union
+├─TableRangeScan_6(Build)	3333.33	cop[tikv]	table:t1	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+└─Selection_9(Probe)	1106.67	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
+  └─TableRowIDScan_8	3330.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where c1 < 10 and c2 < 10 and c3 < 10;
 id	estRows	task	access object	operator info
-IndexMerge_9	367.05	root		type: intersection
-├─IndexRangeScan_5(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
-└─TableRowIDScan_8(Probe)	367.05	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexMerge_10	367.05	root		type: intersection
+├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	367.05	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
 c1	c2	c3	pk
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
@@ -183,25 +183,25 @@ set tx_isolation = 'READ-COMMITTED';
 begin;
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
 id	estRows	task	access object	operator info
-IndexMerge_9	1841.86	root		type: union
-├─IndexRangeScan_5(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-└─Selection_8(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
-  └─TableRowIDScan_7	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexMerge_10	1841.86	root		type: union
+├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+└─Selection_9(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
+  └─TableRowIDScan_8	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;
 id	estRows	task	access object	operator info
-IndexMerge_9	1106.67	root		type: union
-├─TableRangeScan_5(Build)	3333.33	cop[tikv]	table:t1	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-└─Selection_8(Probe)	1106.67	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
-  └─TableRowIDScan_7	3330.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexMerge_10	1106.67	root		type: union
+├─TableRangeScan_6(Build)	3333.33	cop[tikv]	table:t1	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+└─Selection_9(Probe)	1106.67	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
+  └─TableRowIDScan_8	3330.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where c1 < 10 and c2 < 10 and c3 < 10;
 id	estRows	task	access object	operator info
-IndexMerge_9	367.05	root		type: intersection
-├─IndexRangeScan_5(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
-└─TableRowIDScan_8(Probe)	367.05	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexMerge_10	367.05	root		type: intersection
+├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	367.05	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
 c1	c2	c3	pk
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
@@ -277,20 +277,20 @@ create table t1(c1 int, c2 int, c3 int, pk int, key(c1), key(c2), key(c3), prima
 begin;
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;
 id	estRows	task	access object	operator info
-SelectLock_6	1841.86	root		for update 0
-└─IndexMerge_11	1841.86	root		type: union
-  ├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_10(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
-    └─TableRowIDScan_9	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+SelectLock_7	1841.86	root		for update 0
+└─IndexMerge_12	1841.86	root		type: union
+  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection_11(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
+    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;
 id	estRows	task	access object	operator info
-SelectLock_6	1106.67	root		for update 0
-└─IndexMerge_11	1106.67	root		type: union
-  ├─TableRangeScan_7(Build)	3333.33	cop[tikv]	table:t1	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_10(Probe)	1106.67	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
-    └─TableRowIDScan_9	3330.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+SelectLock_7	1106.67	root		for update 0
+└─IndexMerge_12	1106.67	root		type: union
+  ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t1	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection_11(Probe)	1106.67	cop[tikv]		lt(executor__index_merge_reader.t1.c3, 10)
+    └─TableRowIDScan_10	3330.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;
 c1	c2	c3	pk
 insert into t1 values(1, 1, 1, 1);
@@ -403,12 +403,12 @@ begin;
 insert into t1 values(1, 1, 1, 1);
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < 10) and c4 < 10;
 id	estRows	task	access object	operator info
-UnionScan_6	1841.86	root		lt(executor__index_merge_reader.t1.c4, 10), or(lt(executor__index_merge_reader.t1.c1, -1), lt(executor__index_merge_reader.t1.c3, 10))
-└─IndexMerge_11	1841.86	root		type: union
-  ├─TableRangeScan_7(Build)	3323.33	cop[tikv]	table:t1	range:[-inf,-1), keep order:false, stats:pseudo
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_10(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c4, 10)
-    └─TableRowIDScan_9	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+UnionScan_7	1841.86	root		lt(executor__index_merge_reader.t1.c4, 10), or(lt(executor__index_merge_reader.t1.c1, -1), lt(executor__index_merge_reader.t1.c3, 10))
+└─IndexMerge_12	1841.86	root		type: union
+  ├─TableRangeScan_8(Build)	3323.33	cop[tikv]	table:t1	range:[-inf,-1), keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection_11(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c4, 10)
+    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < 10) and c4 < 10;
 c1	c2	c3	c4
 1	1	1	1
@@ -424,12 +424,12 @@ begin;
 insert into t1 values('b', 1, 1, 1);
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) and c4 < 10;
 id	estRows	task	access object	operator info
-UnionScan_6	1841.86	root		lt(executor__index_merge_reader.t1.c4, 10), or(lt(executor__index_merge_reader.t1.c1, "a"), lt(executor__index_merge_reader.t1.c3, 10))
-└─IndexMerge_11	1841.86	root		type: union
-  ├─TableRangeScan_7(Build)	3323.33	cop[tikv]	table:t1	range:[-inf,"a"), keep order:false, stats:pseudo
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_10(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c4, 10)
-    └─TableRowIDScan_9	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+UnionScan_7	1841.86	root		lt(executor__index_merge_reader.t1.c4, 10), or(lt(executor__index_merge_reader.t1.c1, "a"), lt(executor__index_merge_reader.t1.c3, 10))
+└─IndexMerge_12	1841.86	root		type: union
+  ├─TableRangeScan_8(Build)	3323.33	cop[tikv]	table:t1	range:[-inf,"a"), keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection_11(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c4, 10)
+    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) and c4 < 10;
 c1	c2	c3	c4
 b	1	1	1
@@ -468,14 +468,14 @@ pk
 drop table if exists t;
 create table t(a int, b int, c int, index idx(a, c), index idx2(b, c));
 insert into t values(1, 1, 1), (2, 2, 2);
-explain format='brief' select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
-id	estRows	task	access object	operator info
-IndexMerge	1.00	root		type: union, limit embedded(offset:0, count:1)
-├─Limit(Build)	0.50	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan	0.50	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:false, stats:pseudo
-├─Limit(Build)	0.50	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan	0.50	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
+id	task	access object	operator info
+IndexMerge	root		type: union, limit embedded(offset:0, count:1)
+├─Limit(Build)	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:false, stats:pseudo
+├─Limit(Build)	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
 a	b	c
 1	1	1
@@ -486,12 +486,12 @@ begin;
 insert into t values(1, 1, -3);
 explain select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2;
 id	estRows	task	access object	operator info
-Limit_15	2.00	root		offset:0, count:2
-└─UnionScan_21	2.00	root		or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
-  └─IndexMerge_25	2.00	root		type: union
-    ├─IndexRangeScan_22(Build)	1.00	cop[tikv]	table:t, index:idx1(a, c)	range:[1,1], keep order:true, stats:pseudo
-    ├─IndexRangeScan_23(Build)	1.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
-    └─TableRowIDScan_24(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit_16	2.00	root		offset:0, count:2
+└─UnionScan_22	2.00	root		or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
+  └─IndexMerge_26	2.00	root		type: union
+    ├─IndexRangeScan_23(Build)	1.00	cop[tikv]	table:t, index:idx1(a, c)	range:[1,1], keep order:true, stats:pseudo
+    ├─IndexRangeScan_24(Build)	1.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
+    └─TableRowIDScan_25(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2;
 a	b	c
 1	1	-3
@@ -501,12 +501,12 @@ begin;
 insert into t values(1, 2, 4);
 explain select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c desc limit 2;
 id	estRows	task	access object	operator info
-Limit_15	2.00	root		offset:0, count:2
-└─UnionScan_21	2.00	root		or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
-  └─IndexMerge_25	2.00	root		type: union
-    ├─IndexRangeScan_22(Build)	1.00	cop[tikv]	table:t, index:idx1(a, c)	range:[1,1], keep order:true, desc, stats:pseudo
-    ├─IndexRangeScan_23(Build)	1.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, desc, stats:pseudo
-    └─TableRowIDScan_24(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit_16	2.00	root		offset:0, count:2
+└─UnionScan_22	2.00	root		or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
+  └─IndexMerge_26	2.00	root		type: union
+    ├─IndexRangeScan_23(Build)	1.00	cop[tikv]	table:t, index:idx1(a, c)	range:[1,1], keep order:true, desc, stats:pseudo
+    ├─IndexRangeScan_24(Build)	1.00	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, desc, stats:pseudo
+    └─TableRowIDScan_25(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c desc limit 2;
 a	b	c
 1	2	4
@@ -515,15 +515,15 @@ rollback;
 drop table if exists t1;
 create table t1(pk varchar(100) primary key, c1 int, c2 int, index idx1(c1), index idx2(c2));
 insert into t1 values('TXwuGSfZfrgVbTksgvQBilqiUXlNEXzyXNqWRTCidzXFbrkpGFJalRMdVGQOAOojditwludthMcitNqNtvirGAudSNBtdIkpJIHQ', 1, 1), ('LSiKhgTNnuyjdBtuKKuRgzrcxbHrIlfxSkEuooaPYwfOBVQfNYAyatHiWvmUWRUvBLvXmpqAJUWRXXHFCLCjuJqFbVxQdUxqRuqW', 1, 1), ('qCOSFbvtmansHENQaAQbnyYOwCTPctlejpbpueHbtzskmPOazrMWdcMLaYjyfxYQUgDDjCnAnnExepNqwYIzHVjNVndlOzFaAOcf', 1, 1), ('qBqdtPyXIqLKynGNHnRlrufuUCZPqhxUYEqIrYERnQdqXRjVWcoYclxYXoqdpQboKydzhOHOWBwtmcXzGwCWQVdbpozvIaXxiBQj', 1, 1), ('TXZlGHnXOiSWGyRafAqworFmxuadHRTHcYyzLqZMzIMGUUBQmgiIJKQOqbHhoPEKbYBgfPDZJwwqgnCbMxZKaZfvGyVRRUOgRhoq', 1, 1), ('SwFEtKDfPDQpsyxTdTruPyNDLvEOLRdQtSttxJmgBuZiVKsflHCDZaGvkLHMqhHqLayfbZFrxUHzWHgfoPFCWCdCHScabWRNCHCL', 1, 1), ('BuZhnsTMGNtMJtrjjdMMrguutSpiLnZNCdgiNkWDPymzIymcujjBtsnKCAVRSErvbzPaOwLTTPWkGmbXltqOJXmkXnSWWlWaaBqe', 1, 1), ('LuJCpJrLUwDJutwBDtGEsGduteBWPHeGLVhmVJYVrmjunKNuplEeWDCMIAxHPoiRmdPnXneQEQWRvJkPBoXOPaGZhhFLFgGraLmH', 1, 1), ('JKJwMlPmymduJWOmKLFBmZyCFrcUvKcGQkzJmzGjuFoZweyCBptswEPHTkaIhWEEBMWzNBawtfYKKAugBNlxcwmpJSfuIAUSIxeG', 1, 1), ('IqQbehKwleoSUnwxrVLKSbzRqlEFfkwQtRtIfaVpEGfESyGjDJeAOWQPRYVQYvlPNPROQEraCqwQTzanPSrsnUvEXHSxcYjUJvzk', 1, 1), ('zNHmiBGCLUUEDgMAeIGuTgNJFPBtePpxcQrQlgnRlvosJfeYbhRfJdfMwXIRlXxVoOowhEvPhMQPlplzkUfjjmzdJKwGATvfDAiT', 1, 1), ('OjQvpfdsHSdZUAmGfmtQaYKYONAFHGNLeLKRYECqshxygiOzfKkqRwSYGgClqqnpHqPMZpqsjIYSalziqSfMbbtmmzxkOVgglVOh', 1, 1), ('dXXZaWDwdfhjIysLTNMSfwvoEBJhWOVpJnfXFofWSWMfMbUlRgAkobxoCxXPXNUWzAQczbQclQpvIvvATHHcQgdXUvwSTHqLXZny', 1, 1), ('haPqYVwFNUkedfIKPOPyUxIvbSkaUbsEWNvnDtXZsQQqafIhDXlajYpuXOSYiOwGJYAMVLUvXfwOIuyHKElzJHpOUdCiQiXRHubI', 1, 1), ('nQzOwSsVBjCpehVVmLeyYwyVEwYGAfkhCtkkaKyiXzYCRPRVZpNVnOXGbuWrQEgTuPEPFPApUaYLdCtyBEQulFEwyHlORrMfIJxr', 1, 1), ('ksGDopwNPvpjeCtAMaTrznDSgCLpRDQoCdsahWSjwumVEJITbNBPAAtkoxHuwmNQsryoILqCPBPiUSxAWjnFEdtxDIgEtqDiFvpO', 1, 1), ('AdWEZYzxCMhfcZseNVmNQpyqJrVKcKaZpKKcwZXfDPeIBMzkLzpJpOenidMBtBPBIbaiqfpSxBnGtRHAksBOgpigQTVomZzJhCFb', 1, 1), ('bVMNkLOAuRHqnCtGvVPLvmVSKihYFotmHTjObiAIARHawZTruAabGpFxeYxYTTFRxteFYyBfkBfiSEIFvOPquDnlVRNUUubssEMz', 1, 1), ('kXmcjqMYzGxvHBRRCovSTWavDnVajKLlxguJgniJeNkWQUxjHjYjBsveLfojybWkbqHBVzrOoqgXFrDnnRJPcybmnuAEUTPUoIjO', 1, 1), ('rVXzZDKudOpWCBuRCoQCpukHxenZnsaptDeJCCFzxMVvNucFwLKIiSceLsqUHHQuEfAIygjQCCkIbfInGthSnoLdNGWbsLDsxnrY', 1, 1);
-explain format='brief' select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
-id	estRows	task	access object	operator info
-Projection	1104.45	root		executor__index_merge_reader.t1.c1
-└─IndexMerge	1104.45	root		type: intersection
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:idx1(c1)	range:[-inf,1024), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:idx2(c2)	range:[-inf,1024), keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	1104.45	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
+id	task	access object	operator info
+Projection	root		executor__index_merge_reader.t1.c1
+└─IndexMerge	root		type: intersection
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx1(c1)	range:[-inf,1024), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx2(c2)	range:[-inf,1024), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set global tidb_mem_oom_action='CANCEL';
-set @@tidb_mem_quota_query = 4000;
+set @@tidb_mem_quota_query = 3000;
 select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
 Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
 set global tidb_mem_oom_action = DEFAULT;

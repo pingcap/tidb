@@ -17,8 +17,6 @@ package costusage
 import (
 	"fmt"
 	"strconv"
-
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // optimizetrace and costusage is isolated from `util` because `core/base` depended on them
@@ -46,10 +44,6 @@ const (
 	// CostFlagTrace indicates whether to trace the cost calculation.
 	CostFlagTrace
 )
-
-func init() {
-	optimizetrace.CostFlagTrace = CostFlagTrace
-}
 
 // CostVer2 is a structure  of cost basic of version2
 type CostVer2 struct {
@@ -97,7 +91,7 @@ func HasCostFlag(costFlag, flag uint64) bool {
 }
 
 // TraceCost indicates whether to trace cost.
-func TraceCost(option *optimizetrace.PlanCostOption) bool {
+func TraceCost(option *PlanCostOption) bool {
 	if option != nil && HasCostFlag(option.CostFlag, CostFlagTrace) {
 		return true
 	}
@@ -105,7 +99,7 @@ func TraceCost(option *optimizetrace.PlanCostOption) bool {
 }
 
 // NewCostVer2 is the constructor of CostVer2.
-func NewCostVer2(option *optimizetrace.PlanCostOption, factor CostVer2Factor, cost float64,
+func NewCostVer2(option *PlanCostOption, factor CostVer2Factor, cost float64,
 	lazyFormula func() string) (ret CostVer2) {
 	ret.cost = cost
 	if TraceCost(option) {
@@ -141,10 +135,12 @@ func SumCostVer2(costs ...CostVer2) (ret CostVer2) {
 			for factor, factorCost := range c.trace.factorCosts {
 				ret.trace.factorCosts[factor] += factorCost
 			}
-			if ret.trace.formula != "" {
-				ret.trace.formula += " + "
+			if c.trace.formula != "" { // this empty formula is created NewZeroCostVer2 and no update happened,
+				if ret.trace.formula != "" {
+					ret.trace.formula += " + "
+				}
+				ret.trace.formula += "(" + c.trace.formula + ")"
 			}
-			ret.trace.formula += "(" + c.trace.formula + ")"
 		}
 	}
 	return ret
@@ -178,3 +174,29 @@ func MulCostVer2(cost CostVer2, scale float64) (ret CostVer2) {
 
 // ZeroCostVer2 is a pre-defined zero CostVer2.
 var ZeroCostVer2 = NewZeroCostVer2(false)
+
+// AddCostWithoutTrace adds a cost value to the given CostVer2 without affecting its trace.
+// This is useful for adding small tie-breaker costs that should not appear in explain output.
+func AddCostWithoutTrace(cost CostVer2, additionalCost float64) CostVer2 {
+	cost.cost += additionalCost
+	return cost
+}
+
+// NewDefaultPlanCostOption returns PlanCostOption
+func NewDefaultPlanCostOption() *PlanCostOption {
+	return &PlanCostOption{}
+}
+
+// PlanCostOption indicates option during GetPlanCost
+type PlanCostOption struct {
+	CostFlag uint64
+}
+
+// WithCostFlag set cost flag
+func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
+	if op == nil {
+		return nil
+	}
+	op.CostFlag = flag
+	return op
+}

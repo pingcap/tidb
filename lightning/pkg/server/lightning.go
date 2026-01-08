@@ -192,10 +192,7 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
 	// keep first part of the response for logging, max 1K
 	if lrw.body == "" && len(d) > 0 {
-		length := len(d)
-		if length > 1024 {
-			length = 1024
-		}
+		length := min(len(d), 1024)
 		lrw.body = string(d[:length])
 	}
 	return lrw.ResponseWriter.Write(d)
@@ -452,7 +449,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	l.metrics = metrics
 
 	ctx := metric.WithMetric(taskCtx, metrics)
-	ctx = log.NewContext(ctx, o.logger)
+	ctx = logutil.WithLogger(ctx, o.logger.Logger)
 	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
@@ -1029,34 +1026,9 @@ func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) e
 	return nil
 }
 
-// CheckpointRemove removes the checkpoint of the given table.
-func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	//nolint: errcheck
-	defer cpdb.Close()
-
-	// try to remove the metadata first.
-	taskCp, err := cpdb.TaskCheckpoint(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// a empty id means this task is not inited, we needn't further check metas.
-	if taskCp != nil && taskCp.TaskID != 0 {
-		// try to clean up table metas if exists
-		if err = CleanupMetas(ctx, cfg, tableName); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return errors.Trace(cpdb.RemoveCheckpoint(ctx, tableName))
-}
-
 // CleanupMetas removes the table metas of the given table.
 func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
-	if tableName == "all" {
+	if tableName == common.AllTables {
 		tableName = ""
 	}
 	// try to clean up table metas if exists

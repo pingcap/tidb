@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "affinity",
+    srcs = [
+        "interface.go",
+        "manager.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/domain/affinity",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/logutil",
+        "@com_github_tikv_pd_client//http",
+        "@org_uber_go_zap//:zap",
+    ],
+)

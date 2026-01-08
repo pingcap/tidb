@@ -11,11 +11,11 @@ insert into naaj_B values (1,2,2);
 
 # assert 1: both side don't have null values.
 # AntiLeftOuterSemiJoin
-explain format = 'brief' select (a, b) not in (select a, b from naaj_B) from naaj_A;
+explain format = 'plan_tree' select (a, b) not in (select a, b from naaj_B) from naaj_A;
 select (a, b) not in (select a, b from naaj_B) from naaj_A;
 
 # AntiSemiJoin
-explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+explain format = 'plan_tree' select * from naaj_A where (a, b) not in (select a, b from naaj_B);
 select * from naaj_A where (a, b) not in (select a, b from naaj_B);
 
 # assert 2: right side has same key bucket.
@@ -29,16 +29,16 @@ select (a, b) not in (select a, b from naaj_B) from naaj_A;
 select * from naaj_A where (a, b) not in (select a, b from naaj_B);
 
 # assert 4: right side have null values, but it can't pass the inner(join key related or not) filter.
-explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+explain format = 'plan_tree' select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 
-explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c);
+explain format = 'plan_tree' select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c);
 select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c);
 
-explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
+explain format = 'plan_tree' select (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
 select (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
 
-explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a);
+explain format = 'plan_tree' select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a);
 select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a);
 
 # assert 5: right side is empty.
@@ -83,15 +83,15 @@ select * from naaj_A where (a, b) not in (select a, b from naaj_B);
 # assert 4: left side has null, while the right has no valid rows (equivalent to ).
 insert into naaj_B values(2, null, 2);
 insert into naaj_B values(null, null, 2);
-explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+explain format = 'plan_tree' select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
-explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
+explain format = 'plan_tree' select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
 select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
 
 # assert 5: When the inner subq has a correlated EQ condition, we won't built the NA-EQ connecting condition here.
-explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
+explain format = 'plan_tree' select (a, b) not in (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
 select (a, b) not in (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
-explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
+explain format = 'plan_tree' select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
 select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
 
 # case 3: assert the cases for the equivalent semantic predicate of != ALL
@@ -104,11 +104,11 @@ insert into naaj_B values (1,2,2);
 
 # assert 1: both side don't have null values.
 # AntiLeftOuterSemiJoin
-explain format = 'brief' select (a, b) != all (select a, b from naaj_B) from naaj_A;
+explain format = 'plan_tree' select (a, b) != all (select a, b from naaj_B) from naaj_A;
 select (a, b) != all (select a, b from naaj_B) from naaj_A;
 
 # AntiSemiJoin
-explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B);
 select * from naaj_A where (a, b) != all (select a, b from naaj_B);
 
 # assert 2: right side has same key bucket.
@@ -122,16 +122,16 @@ select (a, b) != all (select a, b from naaj_B) from naaj_A;
 select * from naaj_A where (a, b) != all (select a, b from naaj_B);
 
 # assert 4: right side have null values, but it can't pass the inner(join key related or not) filter.
-explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+explain format = 'plan_tree' select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 
-explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c);
+explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c);
 select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c);
 
-explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
+explain format = 'plan_tree' select (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
 select (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
 
-explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a);
+explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a);
 select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a);
 
 # assert 5: right side is empty.
@@ -176,15 +176,15 @@ select * from naaj_A where (a, b) != all (select a, b from naaj_B);
 # assert 4: left side has null, while the right has no valid rows (equivalent to ).
 insert into naaj_B values(2, null, 2);
 insert into naaj_B values(null, null, 2);
-explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+explain format = 'plan_tree' select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
 select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
-explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
+explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
 select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
 
 # assert 5: When the inner subq has a correlated EQ condition, we won't built the NA-EQ connecting condition here.
-explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
+explain format = 'plan_tree' select (a, b) != all (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
 select (a, b) != all (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
-explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
+explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
 select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
 
 # case 5: assert some bugs.
@@ -199,16 +199,25 @@ select (a,b) not in (select a, b from naaj_B) from naaj_A;
 select * from naaj_A where (a,b) not in (select a, b from naaj_B);
 
 # assert 2: should inject the projection under join.
-explain select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
+explain format='plan_tree' select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 insert into naaj_B values(2,2,2);
 select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 
-explain select * from naaj_A where (a+1,b*2) not in (select a+1, b-1 from naaj_B);
+explain format='plan_tree' select * from naaj_A where (a+1,b*2) not in (select a+1, b-1 from naaj_B);
 select * from naaj_A where (a+1,b*2) not in (select a, b from naaj_B);
 
 # assert 3: NA-EQ and EQ can't co-exist at the same time.
-explain select (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a) from naaj_A;
-explain select /*+ set_var(tidb_hash_join_version=legacy) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
-explain select /*+ set_var(tidb_hash_join_version=optimized) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
+explain format='plan_tree' select (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a) from naaj_A;
+explain format='plan_tree' select /*+ set_var(tidb_hash_join_version=legacy) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
+explain format='plan_tree' select /*+ set_var(tidb_hash_join_version=optimized) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
 set @@session.tidb_enable_null_aware_anti_join=0;
+
+# fix issue #60866
+drop table if exists chqin,chqin1;
+create table chqin(id int, f1 int,f2 int);
+create table chqin1(id int, f1 int,f2 int);
+insert into chqin values (1,1,1),(2,2,2),(3,3,3);
+insert into chqin1 values (4,4,4),(5,5,5),(6,6,6);
+explain format='plan_tree' SELECT -1405353984 FROM chqin t1 WHERE t1.f1 not IN (  SELECT a1.f2 FROM chqin1 a1 WHERE  ( 1 >= t1.id ) ) ;
+SELECT -1405353984 as myName FROM chqin t1 WHERE t1.f1 not IN (  SELECT a1.f2 FROM chqin1 a1 WHERE  ( 1 >= t1.id ) ) ;

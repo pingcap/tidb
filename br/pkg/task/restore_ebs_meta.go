@@ -203,7 +203,7 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	}
 
 	if h.cfg.SkipAWS {
-		for i := 0; i < int(h.metaInfo.GetStoreCount()); i++ {
+		for i := range int(h.metaInfo.GetStoreCount()) {
 			progress.Inc()
 			log.Info("mock: create volume from snapshot finished.", zap.Int("index", i))
 			time.Sleep(800 * time.Millisecond)
@@ -228,7 +228,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		err         error
 		totalSize   int64
 		// a map whose key is available zone, and value is the snapshot id array
-		snapshotsIDsMap = make(map[string][]*string)
+		snapshotsIDsMap = make(map[string][]string)
 	)
 	ec2Session, err = aws.NewEC2Session(h.cfg.CloudAPIConcurrency, h.cfg.S3.Region)
 	if err != nil {

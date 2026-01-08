@@ -3,57 +3,67 @@
     "Name": "TestExplainNonEvaledSubquery",
     "Cases": [
       {
-        "SQL": "explain format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a = (select a from t2 limit 1)",
         "Plan": [
-          "Selection 8000.00 root  eq(test.t1.a, ScalarQueryCol#9)",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "ScalarSubQuery N/A root  Output: ScalarQueryCol#9",
-          "└─MaxOneRow 1.00 root  ",
-          "  └─Limit 1.00 root  offset:0, count:1",
-          "    └─TableReader 1.00 root  data:Limit",
-          "      └─Limit 1.00 cop[tikv]  offset:0, count:1",
-          "        └─TableFullScan 1.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Selection root  eq(test.t1.a, ScalarQueryCol#9)",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#9",
+          "└─MaxOneRow root  ",
+          "  └─Limit root  offset:0, count:1",
+          "    └─TableReader root  data:Limit",
+          "      └─Limit cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Error": ""
       },
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual 0.00 0 root ",
+          "ScalarSubQuery N/A 0 root ",
+          "└─MaxOneRow 1.00 1 root ",
+          "  └─Limit 1.00 0 root ",
+          "    └─TableReader 1.00 0 root ",
+          "      └─Limit 1.00 0 cop[tikv] ",
+          "        └─TableFullScan 1.00 0 cop[tikv] table:t2"
         ],
         "Error": ""
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 where exists(select 1 from t2 where a = 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where a = 1)",
         "Plan": [
-          "Selection 8000.00 root  ScalarQueryCol#10",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "ScalarSubQuery N/A root  Output: ScalarQueryCol#10",
-          "└─TableReader 10.00 root  data:Selection",
-          "  └─Selection 10.00 cop[tikv]  eq(test.t2.a, 1)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Selection root  ScalarQueryCol#10",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#10",
+          "└─TableReader root  data:Selection",
+          "  └─Selection cop[tikv]  eq(test.t2.a, 1)",
+          "    └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Error": ""
       },
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual 0.00 0 root ",
+          "ScalarSubQuery N/A 0 root ",
+          "└─TableReader 10.00 0 root ",
+          "  └─Selection 10.00 0 cop[tikv] ",
+          "    └─TableFullScan 10000.00 0 cop[tikv] table:t2"
         ],
         "Error": ""
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where not exists(select 1 from t2 where a = 1)",
         "Plan": [
-          "Selection 8000.00 root  not(ScalarQueryCol#10)",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "ScalarSubQuery N/A root  Output: ScalarQueryCol#10",
-          "└─TableReader 10.00 root  data:Selection",
-          "  └─Selection 10.00 cop[tikv]  eq(test.t2.a, 1)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Selection root  not(istrue_with_null(ScalarQueryCol#10))",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#10",
+          "└─TableReader root  data:Selection",
+          "  └─Selection cop[tikv]  eq(test.t2.a, 1)",
+          "    └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Error": ""
       },
@@ -61,58 +71,251 @@
         "SQL": "explain analyze format = 'brief' select * from t1 where not exists(select 1 from t2 where a = 1)",
         "Plan": [
           "TableReader 10000.00 0 root ",
-          "└─TableFullScan 10000.00 0 cop[tikv] table:t1"
+          "└─TableFullScan 10000.00 0 cop[tikv] table:t1",
+          "ScalarSubQuery N/A 0 root ",
+          "└─TableReader 10.00 0 root ",
+          "  └─Selection 10.00 0 cop[tikv] ",
+          "    └─TableFullScan 10000.00 0 cop[tikv] table:t2"
         ],
         "Error": ""
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "SQL": "explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
         "Plan": [
-          "Selection 8000.00 root  ScalarQueryCol#15",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "ScalarSubQuery N/A root  Output: ScalarQueryCol#13",
-          "└─MaxOneRow 1.00 root  ",
-          "  └─Limit 1.00 root  offset:0, count:1",
-          "    └─TableReader 1.00 root  data:Limit",
-          "      └─Limit 1.00 cop[tikv]  offset:0, count:1",
-          "        └─TableFullScan 1.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "ScalarSubQuery N/A root  Output: ScalarQueryCol#15",
-          "└─Selection 6400.00 root  eq(cast(test.t2.a, double BINARY), cast(ScalarQueryCol#13, double BINARY)), eq(cast(test.t2.b, double BINARY), cast(ScalarQueryCol#13, double BINARY))",
-          "  └─TableReader 8000.00 root  data:Selection",
-          "    └─Selection 8000.00 cop[tikv]  eq(test.t2.b, test.t2.a)",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Selection root  ScalarQueryCol#15",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#13",
+          "└─MaxOneRow root  ",
+          "  └─Limit root  offset:0, count:1",
+          "    └─TableReader root  data:Limit",
+          "      └─Limit cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#15",
+          "└─Selection root  eq(cast(test.t2.a, double BINARY), cast(ScalarQueryCol#13, double BINARY)), eq(cast(test.t2.b, double BINARY), cast(ScalarQueryCol#13, double BINARY))",
+          "  └─TableReader root  data:Selection",
+          "    └─Selection cop[tikv]  eq(test.t2.b, test.t2.a)",
+          "      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Error": ""
       },
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual 0.00 0 root ",
+          "ScalarSubQuery N/A 0 root ",
+          "└─MaxOneRow 1.00 1 root ",
+          "  └─Limit 1.00 0 root ",
+          "    └─TableReader 1.00 0 root ",
+          "      └─Limit 1.00 0 cop[tikv] ",
+          "        └─TableFullScan 1.00 0 cop[tikv] table:t3",
+          "ScalarSubQuery N/A 0 root ",
+          "└─TableDual 0.00 0 root "
         ],
         "Error": ""
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
         "Plan": [
-          "Selection 8000.00 root  eq(test.t1.a, ScalarQueryCol#9), eq(test.t1.b, ScalarQueryCol#10)",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "ScalarSubQuery N/A root  Output: ScalarQueryCol#9,ScalarQueryCol#10",
-          "└─MaxOneRow 1.00 root  ",
-          "  └─Limit 1.00 root  offset:0, count:1",
-          "    └─TableReader 1.00 root  data:Limit",
-          "      └─Limit 1.00 cop[tikv]  offset:0, count:1",
-          "        └─TableFullScan 1.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Selection root  eq(test.t1.a, ScalarQueryCol#9), eq(test.t1.b, ScalarQueryCol#10)",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#9, ScalarQueryCol#10",
+          "└─MaxOneRow root  ",
+          "  └─Limit root  offset:0, count:1",
+          "    └─TableReader root  data:Limit",
+          "      └─Limit cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Error": ""
       },
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual 0.00 0 root ",
+          "ScalarSubQuery N/A 0 root ",
+          "└─MaxOneRow 1.00 1 root ",
+          "  └─Limit 1.00 0 root ",
+          "    └─TableReader 1.00 0 root ",
+          "      └─Limit 1.00 0 cop[tikv] ",
+          "        └─TableFullScan 1.00 0 cop[tikv] table:t2"
         ],
         "Error": ""
+      }
+    ]
+  },
+  {
+    "Name": "TestSubqueryInExplainAnalyze",
+    "Cases": [
+      {
+        "SQL": "explain analyze select *,(select a from t2 limit 1) from t1 where a = (select a from t2 limit 1)",
+        "Plan": [
+          "Projection_43 root test.t1.a, test.t1.b, test.t1.c, test.t1.d, test.t1.e, test.t1.f, test.t1.g, test.t1.h, test.t1.i, test.t1.j, test.t1.k, test.t1.l, test.t1.m, test.t1.n, test.t1.o, test.t1.p, test.t1.q, test.t1.r, test.t1.s, test.t1.t, test.t1.u, test.t1.v, test.t1.w, test.t1.x, test.t1.y, ScalarQueryCol#124(127)->Column#125",
+          "└─TableReader_46 root data:Selection_45",
+          "  └─Selection_45 cop[tikv] eq(test.t1.a, ScalarQueryCol#91(127))",
+          "    └─TableFullScan_44 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_22 root Output: ScalarQueryCol#91",
+          "└─MaxOneRow_10 root ",
+          "  └─Limit_13 root offset:0, count:1",
+          "    └─TableReader_19 root data:Limit_18",
+          "      └─Limit_18 cop[tikv] offset:0, count:1",
+          "        └─TableFullScan_17 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_42 root Output: ScalarQueryCol#124",
+          "└─MaxOneRow_30 root ",
+          "  └─Limit_33 root offset:0, count:1",
+          "    └─TableReader_39 root data:Limit_38",
+          "      └─Limit_38 cop[tikv] offset:0, count:1",
+          "        └─TableFullScan_37 cop[tikv] keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain analyze select a, (select max(b) from t2 where t2.a ) as max_b, (select count(*) from t3 where t3.a) as count_t3 from t1",
+        "Plan": [
+          "Projection_78 root test.t1.a, ScalarQueryCol#123(32767)->Column#124, ScalarQueryCol#159(1)->Column#160",
+          "└─TableReader_81 root data:TableFullScan_80",
+          "  └─TableFullScan_80 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_47 root Output: ScalarQueryCol#123",
+          "└─MaxOneRow_14 root ",
+          "  └─StreamAgg_22 root funcs:max(test.t2.b)->Column#122",
+          "    └─TopN_37 root test.t2.b:desc, offset:0, count:1",
+          "      └─TableReader_45 root data:TopN_44",
+          "        └─TopN_44 cop[tikv] test.t2.b:desc, offset:0, count:1",
+          "          └─Selection_31 cop[tikv] not(isnull(test.t2.b)), test.t2.a",
+          "            └─TableFullScan_30 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_77 root Output: ScalarQueryCol#159",
+          "└─MaxOneRow_53 root ",
+          "  └─StreamAgg_71 root funcs:count(Column#158)->Column#156",
+          "    └─TableReader_72 root data:StreamAgg_60",
+          "      └─StreamAgg_60 cop[tikv] funcs:count(1)->Column#158",
+          "        └─Selection_70 cop[tikv] test.t3.a",
+          "          └─TableFullScan_69 cop[tikv] keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain analyze select * from t1 where a = (select a from t2 where b = (select b from t3 where c = (select c from t4 where a = 1)))",
+        "Plan": [
+          "TableDual_43 root rows:0",
+          "ScalarSubQuery_21 root Output: ScalarQueryCol#127",
+          "└─MaxOneRow_11 root ",
+          "  └─TableReader_20 root data:Projection_14",
+          "    └─Projection_14 cop[tikv] test.t4.c",
+          "      └─Selection_19 cop[tikv] eq(test.t4.a, 1)",
+          "        └─TableFullScan_18 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_30 root Output: ScalarQueryCol#128",
+          "└─MaxOneRow_25 root ",
+          "  └─TableDual_28 root rows:0",
+          "ScalarSubQuery_39 root Output: ScalarQueryCol#129",
+          "└─MaxOneRow_34 root ",
+          "  └─TableDual_37 root rows:0"
+        ]
+      },
+      {
+        "SQL": "explain analyze with cte1 as (select a, b from t1 where c > (select avg(c) from t2)), cte2 as (select a, b from t2 where a in (select a from t3 where b > 20)) select cte1.*, cte2.* from cte1 join cte2 on cte1.a = cte2.a",
+        "Plan": [
+          "HashJoin_99 root inner join, equal:[eq(Column#259, test.t3.a)]",
+          "├─HashAgg_141(Build) root group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "│ └─TableReader_142 root data:HashAgg_133",
+          "│   └─HashAgg_133 cop[tikv] group by:test.t3.a, ",
+          "│     └─Selection_140 cop[tikv] gt(test.t3.b, 20)",
+          "│       └─TableFullScan_139 cop[tikv] keep order:false, stats:pseudo",
+          "└─HashJoin_116(Probe) root inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader_119(Build) root data:Selection_118",
+          "  │ └─Selection_118 cop[tikv] gt(test.t1.c, ScalarQueryCol#193(8388607.0000)), not(isnull(test.t1.a))",
+          "  │   └─TableFullScan_117 cop[tikv] keep order:false, stats:pseudo",
+          "  └─Projection_122(Probe) root test.t2.a, test.t2.b, cast(test.t2.a, double BINARY)->Column#259",
+          "    └─TableReader_126 root data:Selection_125",
+          "      └─Selection_125 cop[tikv] not(isnull(test.t2.a))",
+          "        └─TableFullScan_124 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_27 root Output: ScalarQueryCol#64",
+          "└─MaxOneRow_7 root ",
+          "  └─StreamAgg_22 root funcs:avg(Column#62, Column#63)->Column#59",
+          "    └─TableReader_23 root data:StreamAgg_14",
+          "      └─StreamAgg_14 cop[tikv] funcs:count(test.t2.c)->Column#62, funcs:sum(test.t2.c)->Column#63",
+          "        └─TableFullScan_21 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_64 root Output: ScalarQueryCol#193",
+          "└─MaxOneRow_44 root ",
+          "  └─StreamAgg_59 root funcs:avg(Column#191, Column#192)->Column#188",
+          "    └─TableReader_60 root data:StreamAgg_51",
+          "      └─StreamAgg_51 cop[tikv] funcs:count(test.t2.c)->Column#191, funcs:sum(test.t2.c)->Column#192",
+          "        └─TableFullScan_58 cop[tikv] keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain analyze select * from t1 where a > (select count(*) from t2) and b < (select max(b) from t3) and c = (select avg(c) from t4)",
+        "Plan": [
+          "TableReader_99 root data:Selection_98",
+          "└─Selection_98 cop[tikv] eq(cast(test.t1.c, double BINARY), ScalarQueryCol#138(456.78900146484375)), gt(test.t1.a, ScalarQueryCol#62(1)), lt(test.t1.b, ScalarQueryCol#95(790))",
+          "  └─TableFullScan_97 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_27 root Output: ScalarQueryCol#62",
+          "└─MaxOneRow_7 root ",
+          "  └─StreamAgg_22 root funcs:count(Column#61)->Column#59",
+          "    └─TableReader_23 root data:StreamAgg_14",
+          "      └─StreamAgg_14 cop[tikv] funcs:count(1)->Column#61",
+          "        └─TableFullScan_21 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_69 root Output: ScalarQueryCol#95",
+          "└─MaxOneRow_36 root ",
+          "  └─StreamAgg_44 root funcs:max(test.t3.b)->Column#94",
+          "    └─TopN_59 root test.t3.b:desc, offset:0, count:1",
+          "      └─TableReader_67 root data:TopN_66",
+          "        └─TopN_66 cop[tikv] test.t3.b:desc, offset:0, count:1",
+          "          └─Selection_53 cop[tikv] not(isnull(test.t3.b))",
+          "            └─TableFullScan_52 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_94 root Output: ScalarQueryCol#138",
+          "└─MaxOneRow_74 root ",
+          "  └─StreamAgg_89 root funcs:avg(Column#136, Column#137)->Column#133",
+          "    └─TableReader_90 root data:StreamAgg_81",
+          "      └─StreamAgg_81 cop[tikv] funcs:count(test.t4.c)->Column#136, funcs:sum(test.t4.c)->Column#137",
+          "        └─TableFullScan_88 cop[tikv] keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain analyze select * from t1 where a + (select max(a) from t2) > (select avg(b) from t3)",
+        "Plan": [
+          "TableReader_74 root data:Selection_73",
+          "└─Selection_73 cop[tikv] gt(plus(test.t1.a, ScalarQueryCol#60(127)), ScalarQueryCol#97(789))",
+          "  └─TableFullScan_72 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_44 root Output: ScalarQueryCol#60",
+          "└─MaxOneRow_11 root ",
+          "  └─StreamAgg_19 root funcs:max(test.t2.a)->Column#59",
+          "    └─TopN_34 root test.t2.a:desc, offset:0, count:1",
+          "      └─TableReader_42 root data:TopN_41",
+          "        └─TopN_41 cop[tikv] test.t2.a:desc, offset:0, count:1",
+          "          └─Selection_28 cop[tikv] not(isnull(test.t2.a))",
+          "            └─TableFullScan_27 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_69 root Output: ScalarQueryCol#97",
+          "└─MaxOneRow_49 root ",
+          "  └─StreamAgg_64 root funcs:avg(Column#95, Column#96)->Column#92",
+          "    └─TableReader_65 root data:StreamAgg_56",
+          "      └─StreamAgg_56 cop[tikv] funcs:count(test.t3.b)->Column#95, funcs:sum(test.t3.b)->Column#96",
+          "        └─TableFullScan_63 cop[tikv] keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain analyze select * from t1 where a > (select a from t2 where b = (select b from t3 where c = (select c from t4 where aa = 255))) and b < (select bb from t2 where cc = (select dd from t3 where ee = (select ff from t4 where gg = 32767)))",
+        "Plan": [
+          "TableDual_72 root rows:0",
+          "ScalarSubQuery_21 root Output: ScalarQueryCol#127",
+          "└─MaxOneRow_11 root ",
+          "  └─TableReader_20 root data:Projection_14",
+          "    └─Projection_14 cop[tikv] test.t4.c",
+          "      └─Selection_19 cop[tikv] eq(test.t4.aa, 255)",
+          "        └─TableFullScan_18 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_34 root Output: ScalarQueryCol#128",
+          "└─MaxOneRow_24 root ",
+          "  └─TableReader_33 root data:Projection_27",
+          "    └─Projection_27 cop[tikv] test.t3.b",
+          "      └─Selection_32 cop[tikv] eq(cast(test.t3.c, double BINARY), ScalarQueryCol#127(456.789))",
+          "        └─TableFullScan_31 cop[tikv] keep order:false, stats:pseudo",
+          "ScalarSubQuery_43 root Output: ScalarQueryCol#129",
+          "└─MaxOneRow_38 root ",
+          "  └─TableDual_41 root rows:0",
+          "ScalarSubQuery_62 root Output: ScalarQueryCol#230",
+          "└─MaxOneRow_52 root ",
+          "  └─TableReader_61 root data:Projection_55",
+          "    └─Projection_55 cop[tikv] test.t4.ff",
+          "      └─Selection_60 cop[tikv] eq(test.t4.gg, 32767)",
+          "        └─TableFullScan_59 cop[tikv] keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

@@ -19,7 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 // TableLockType is the type of the table lock.
@@ -272,7 +272,7 @@ type CIStr struct {
 }
 
 // Hash64 implements HashEquals interface.
-func (cis *CIStr) Hash64(h types.IHasher) {
+func (cis *CIStr) Hash64(h util.IHasher) {
 	h.HashString(cis.L)
 }
 

@@ -12,31 +12,31 @@ Warning	8265	Auto analyze is not effective for index 'idx', need analyze manuall
 insert into t values (1, 'a'), (2, 'b'), (3, 'C'), (4, 'd'), (5, 'x');
 insert into t values (3, 'c');
 Error 1062 (23000): Duplicate entry 'c' for key 't.idx'
-explain format='brief' select * from t use index(idx) where lower(b) = 'c';
-id	estRows	task	access object	operator info
-Projection	1.00	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
-└─Point_Get	1.00	root	table:t, index:idx(lower(`b`))	
+explain format='plan_tree' select * from t use index(idx) where lower(b) = 'c';
+id	task	access object	operator info
+Projection	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
+└─Point_Get	root	table:t, index:idx(lower(`b`))	
 select * from t use index(idx) where lower(b) = 'c';
 a	b
 3	C
-explain format='brief' select * from t use index(idx) where lower(b) > 'c' order by lower(b);
-id	estRows	task	access object	operator info
-Projection	3333.33	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
-└─Projection	3333.33	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b, lower(globalindex__expression_index.t.b)
-  └─IndexLookUp	3333.33	root	partition:all	
-    ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx(lower(`b`))	range:("c",+inf], keep order:true, stats:pseudo
-    └─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t use index(idx) where lower(b) > 'c' order by lower(b);
+id	task	access object	operator info
+Projection	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
+└─Projection	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b, lower(globalindex__expression_index.t.b)
+  └─IndexLookUp	root	partition:all	
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(lower(`b`))	range:("c",+inf], keep order:true, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index(idx) where lower(b) > 'c' order by lower(b);
 a	b
 4	d
 5	x
-explain format='brief' select * from t partition(p0) use index(idx) where lower(b) > 'c';
-id	estRows	task	access object	operator info
-Projection	3333.33	root	NULL	globalindex__expression_index.t.a, globalindex__expression_index.t.b
-└─IndexLookUp	3333.33	root	partition:p0	NULL
-  ├─Selection(Build)	3333.33	cop[tikv]	NULL	in(_tidb_tid, tid0)
-  │ └─IndexRangeScan	3333.33	cop[tikv]	table:t, index:idx(lower(`b`))	range:("c",+inf], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t partition(p0) use index(idx) where lower(b) > 'c';
+id	task	access object	operator info
+Projection	root	NULL	globalindex__expression_index.t.a, globalindex__expression_index.t.b
+└─IndexLookUp	root	partition:p0	NULL
+  ├─Selection(Build)	cop[tikv]	NULL	in(_tidb_tid, tid0)
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(lower(`b`))	range:("c",+inf], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p0) use index(idx) where lower(b) > 'c';
 a	b
 5	x

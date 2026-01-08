@@ -29,6 +29,7 @@ go_test(
     timeout = "short",
     srcs = ["exec_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":exec",
         "//pkg/parser/ast",

@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -49,13 +49,13 @@ func TestCompareCol2Len(t *testing.T) {
 		{
 			c1:         util.Col2Len{1: -1, 2: -1},
 			c2:         util.Col2Len{1: -1, 2: 5, 3: -1},
-			res:        0,
+			res:        -1,
 			comparable: false,
 		},
 		{
 			c1:         util.Col2Len{1: -1, 2: 10},
 			c2:         util.Col2Len{1: -1, 2: 5, 3: -1},
-			res:        0,
+			res:        -1,
 			comparable: false,
 		},
 		{
@@ -67,7 +67,7 @@ func TestCompareCol2Len(t *testing.T) {
 		{
 			c1:         util.Col2Len{1: -1, 2: -1},
 			c2:         util.Col2Len{1: -1, 2: 10},
-			res:        0,
+			res:        -1,
 			comparable: false,
 		},
 	}
@@ -79,7 +79,7 @@ func TestCompareCol2Len(t *testing.T) {
 }
 
 func TestOnlyPointRange(t *testing.T) {
-	sctx := core.MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(sctx)
 		do.StatsHandle().Close()

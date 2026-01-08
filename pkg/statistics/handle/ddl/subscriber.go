@@ -112,7 +112,11 @@ func (h subscriber) handle(
 			}
 		}
 	case model.ActionModifyColumn:
-		newTableInfo, modifiedColumnInfo := change.GetModifyColumnInfo()
+		newTableInfo, modifiedColumnInfo, analyzed := change.GetModifyColumnInfo()
+		// since tidb_stats_update_during_ddl will do analyze in ddl, skip col init here.
+		if analyzed {
+			return nil
+		}
 		ids, err := getPhysicalIDs(sctx, newTableInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -456,7 +460,7 @@ func updateGlobalTableStats4ExchangePartition(
 	}
 
 	// Update the global stats.
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
 	if ok {
@@ -572,7 +576,7 @@ func updateGlobalTableStats4TruncatePartition(
 		return nil
 	}
 
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
 	if ok {

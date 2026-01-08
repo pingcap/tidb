@@ -56,11 +56,9 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, vardef.DefIndexLookupSize, vars.IndexLookupSize)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupConcurrency)
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.indexSerialScanConcurrency)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupJoinConcurrency)
 	require.Equal(t, vardef.DefTiDBHashJoinConcurrency, vars.hashJoinConcurrency)
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupConcurrency())
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.IndexSerialScanConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.HashJoinConcurrency())
 	require.Equal(t, vardef.DefTiDBAllowBatchCop, vars.AllowBatchCop)
@@ -99,7 +97,7 @@ func TestNewSessionVars(t *testing.T) {
 }
 
 func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {
-	for i := 0; i < val.NumField(); i++ {
+	for i := range val.NumField() {
 		fieldVal := val.Field(i)
 		require.Greater(t, fieldVal.Int(), int64(0))
 	}
@@ -205,12 +203,6 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar("sql_mode", "REAL_AS_FLOAT,ANSI_QUOTES")
 	require.NoError(t, err)
 	require.Equal(t, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes, v.SQLMode)
-
-	// Test case for tidb_index_serial_scan_concurrency.
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, v.IndexSerialScanConcurrency())
-	err = v.SetSystemVar(vardef.TiDBIndexSerialScanConcurrency, "4")
-	require.NoError(t, err)
-	require.Equal(t, 4, v.IndexSerialScanConcurrency())
 
 	// Test case for tidb_batch_insert.
 	require.False(t, v.BatchInsert)
@@ -373,19 +365,19 @@ func TestVarsutil(t *testing.T) {
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "follower", val)
-	require.Equal(t, kv.ReplicaReadFollower, v.GetReplicaRead())
+	require.Equal(t, kv.ReplicaReadFollower, v.replicaRead)
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader", val)
-	require.Equal(t, kv.ReplicaReadLeader, v.GetReplicaRead())
+	require.Equal(t, kv.ReplicaReadLeader, v.replicaRead)
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader-and-follower")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader-and-follower", val)
-	require.Equal(t, kv.ReplicaReadMixed, v.GetReplicaRead())
+	require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
 
 	for _, c := range []struct {
 		a string
@@ -399,9 +391,9 @@ func TestVarsutil(t *testing.T) {
 		{"marker", "MARKER"},
 		{"2", "MARKER"},
 	} {
-		err = v.SetSystemVar(vardef.TiDBRedactLog, c.a)
+		err = v.GlobalVarsAccessor.SetGlobalSysVar(context.TODO(), vardef.TiDBRedactLog, c.a)
 		require.NoError(t, err)
-		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBRedactLog)
+		val, err = v.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBRedactLog)
 		require.NoError(t, err)
 		require.Equal(t, c.b, val)
 	}

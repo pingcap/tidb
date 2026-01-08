@@ -599,10 +599,10 @@ func illegalMixCollationErr(ctx EvalContext, funcName string, args []Expression)
 
 	switch len(args) {
 	case 2:
-		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], funcName)
+		return collate.ErrIllegalMix2Collation.FastGenByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], funcName)
 	case 3:
-		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], args[2].GetType(ctx).GetCollate(), coerString[args[2].Coercibility()], funcName)
+		return collate.ErrIllegalMix3Collation.FastGenByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], args[2].GetType(ctx).GetCollate(), coerString[args[2].Coercibility()], funcName)
 	default:
-		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
+		return collate.ErrIllegalMixCollation.FastGenByArgs(funcName)
 	}
 }

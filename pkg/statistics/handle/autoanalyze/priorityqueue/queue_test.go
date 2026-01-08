@@ -16,6 +16,9 @@ package priorityqueue_test
 
 import (
 	"context"
+	"errors"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,14 +40,9 @@ func TestCallAPIBeforeInitialize(t *testing.T) {
 	defer pq.Close()
 
 	t.Run("IsEmpty", func(t *testing.T) {
-		isEmpty, err := pq.IsEmpty()
+		isEmpty, err := pq.IsEmptyForTest()
 		require.Error(t, err)
 		require.False(t, isEmpty)
-	})
-
-	t.Run("Push", func(t *testing.T) {
-		err := pq.Push(nil)
-		require.Error(t, err)
 	})
 
 	t.Run("Pop", func(t *testing.T) {
@@ -58,7 +57,7 @@ func TestCallAPIBeforeInitialize(t *testing.T) {
 	})
 
 	t.Run("Peek", func(t *testing.T) {
-		job, err := pq.Peek()
+		job, err := pq.PeekForTest()
 		require.Error(t, err)
 		require.Nil(t, job)
 	})
@@ -105,7 +104,7 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 	})
 
 	t.Run("IsEmpty And Pop", func(t *testing.T) {
-		isEmpty, err := pq.IsEmpty()
+		isEmpty, err := pq.IsEmptyForTest()
 		require.NoError(t, err)
 		require.False(t, isEmpty)
 
@@ -117,7 +116,7 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, poppedJob)
 
-		isEmpty, err = pq.IsEmpty()
+		isEmpty, err = pq.IsEmptyForTest()
 		require.NoError(t, err)
 		require.True(t, isEmpty)
 
@@ -150,7 +149,7 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
 
@@ -255,15 +254,15 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	updatedJob1, err := pq.Peek()
+	updatedJob1, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob1.GetWeight())
 	require.Equal(t, tbl1.Meta().ID, updatedJob1.GetTableID())
 
-	// Update some rows in t2.
-	tk.MustExec("update t2 set a = 3 where a = 2")
-	tk.MustExec("update t2 set a = 4 where a = 3")
-	tk.MustExec("update t2 set a = 5 where a = 4")
+	// Update 15 times on t2.
+	for i := 0; i < 15; i++ {
+		tk.MustExec("update t2 set a = a + 1 where a = " + strconv.Itoa(i+3))
+	}
 
 	// Dump the stats to kv.
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
@@ -273,10 +272,10 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	updatedJob2, err := pq.Peek()
+	updatedJob2, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob2.GetWeight())
-	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size")
+	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size and more changes")
 }
 
 func TestProcessDMLChanges(t *testing.T) {
@@ -323,7 +322,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	runningJobs := pq.GetRunningJobs()
 	require.Len(t, runningJobs, 0)
 	// Check no jobs are in the queue.
-	isEmpty, err := pq.IsEmpty()
+	isEmpty, err := pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
@@ -458,7 +457,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tbl1.Meta().ID, job.GetTableID())
 
@@ -470,7 +469,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
 
@@ -519,7 +518,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	require.NoError(t, err)
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
 	require.Equal(t, tableID, job.GetTableID())
@@ -544,7 +543,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tableID, job.GetTableID())
 }
@@ -582,7 +581,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs.
-	job, err := pq.Peek()
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	pid := tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
@@ -607,7 +606,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.Peek()
+	job, err = pq.PeekForTest()
 	require.NoError(t, err)
 	pid = tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
@@ -664,7 +663,7 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 
 	// Drop the table and mock the table stats is removed from the cache.
 	tk.MustExec("drop table t1")
-	deleteEvent := findEvent(handle.DDLEventCh(), model.ActionDropTable)
+	deleteEvent := statstestutil.FindEvent(handle.DDLEventCh(), model.ActionDropTable)
 	require.NotNil(t, deleteEvent)
 	err = statstestutil.HandleDDLEventWithTxn(handle, deleteEvent)
 	require.NoError(t, err)
@@ -677,4 +676,130 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 	require.NotPanics(t, func() {
 		pq.RefreshLastAnalysisDuration()
 	})
+}
+
+func TestConcurrentCloseAndBackgroundOperations(t *testing.T) {
+	// Enable the failpoint to simulate long-running operations
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue/tryBlockCloseAnalysisPriorityQueue", "return(true)")
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	ctx := context.Background()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	require.NoError(t, pq.Initialize(ctx))
+
+	// Use a channel to signal when Close() completes
+	closeDone := make(chan struct{})
+	go func() {
+		pq.Close()
+		close(closeDone)
+	}()
+
+	// Wait for Close() to complete with a timeout
+	select {
+	case <-closeDone:
+		// Success - Close() completed without deadlock
+		require.False(t, pq.IsInitialized(), "Queue should not be initialized after Close()")
+	case <-time.After(6 * time.Second):
+		t.Fatal("Close() timed out during concurrent operations - likely deadlock detected!")
+	}
+}
+
+func TestConcurrentClose(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	ctx := context.Background()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	require.NoError(t, pq.Initialize(ctx))
+	require.True(t, pq.IsInitialized())
+
+	const numGoroutines = 20
+	var wg sync.WaitGroup
+	for i := 0; i < numGoroutines; i++ {
+		wg.Go(
+			func() {
+				defer func() {
+					// Ensure no panics occur during concurrent Close()
+					if r := recover(); r != nil {
+						t.Errorf("Close() panicked: %v", r)
+					}
+				}()
+				pq.Close()
+			},
+		)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Concurrent Close() calls timed out - likely deadlock detected!")
+	}
+
+	// Verify the queue is properly closed
+	require.False(t, pq.IsInitialized(), "Queue should not be initialized after Close()")
+}
+
+func TestConcurrentInitializeAndClose(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	ctx := context.Background()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+
+	const numIterations = 5
+	done := make(chan struct{})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Initialize/Close sequence panicked: %v", r)
+			}
+			close(done)
+		}()
+
+		for i := 0; i < numIterations; i++ {
+			if err := pq.Initialize(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				t.Errorf("Initialize() failed: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	go func() {
+		for i := 0; i < numIterations*2; i++ {
+			time.Sleep(5 * time.Millisecond)
+			pq.Close()
+		}
+	}()
+
+	// Wait for completion with timeout
+	select {
+	case <-done:
+		// Success - all operations completed without deadlock or panic
+	case <-time.After(10 * time.Second):
+		t.Fatal("Concurrent Initialize/Close operations timed out - likely deadlock detected!")
+	}
+	pq.Close()
+	require.False(t, pq.IsInitialized(), "Queue should not be initialized after Close()")
+}
+
+func TestPanicAndRecoverInQueueRun(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	ctx := context.Background()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+
+	// Enable the failpoint to simulate a panic during background operations
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue/panicInAnalysisPriorityQueueRun", "return(true)")
+
+	require.NoError(t, pq.Initialize(ctx))
+	pq.Close()
+	require.False(t, pq.IsInitialized(), "Queue should not be initialized after Close()")
 }

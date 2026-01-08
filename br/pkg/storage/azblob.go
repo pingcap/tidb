@@ -23,7 +23,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
-	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -421,7 +421,7 @@ func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec
 		return errors.Annotatef(err, "failed to copy blob from %s to %s", url, spec.To)
 	}
 	copyID := resp.CopyID
-	deref := aws.StringValue
+	deref := aws.ToString
 
 	for {
 		prop, err := dstBlob.GetProperties(ctx, &blob.GetPropertiesOptions{})
@@ -445,12 +445,9 @@ func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec
 				return errors.Annotate(err, "failed to parse progress")
 			}
 			rem := total - finished
-			toSleep := time.Duration(rem/azblobPremisedCopySpeedPerMilliSecond) * time.Millisecond
 			// In practice, most copies finish when the initial request returns.
 			// To avoid a busy loop of requesting, we need a minimal sleep duration.
-			if toSleep < azblobCopyPollPendingMinimalDuration {
-				toSleep = azblobCopyPollPendingMinimalDuration
-			}
+			toSleep := max(time.Duration(rem/azblobPremisedCopySpeedPerMilliSecond)*time.Millisecond, azblobCopyPollPendingMinimalDuration)
 			logutil.CL(ctx).Info("AzureBlobStorage: asynchronous copy triggered",
 				zap.Int("finished", finished), zap.Int("total", total),
 				zap.Stringp("copy-id", prop.CopyID), zap.Duration("to-sleep", toSleep),
@@ -717,7 +714,7 @@ func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOptio
 		cpkInfo:  s.cpkInfo,
 	}
 
-	uploaderWriter := newBufferedWriter(uploader, azblobChunkSize, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, azblobChunkSize, NoCompression, nil)
 	return uploaderWriter, nil
 }
 
@@ -753,10 +750,7 @@ type azblobObjectReader struct {
 
 // Read implement the io.Reader interface.
 func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
-	maxCnt := r.endPos - r.pos
-	if maxCnt > int64(len(p)) {
-		maxCnt = int64(len(p))
-	}
+	maxCnt := min(r.endPos-r.pos, int64(len(p)))
 	if maxCnt == 0 {
 		return 0, io.EOF
 	}
@@ -826,6 +820,11 @@ func (r *azblobObjectReader) reopenReader() error {
 		if err != nil {
 			log.Warn("failed to close azblob reader", zap.Error(err))
 		}
+	}
+
+	if r.pos == r.totalSize {
+		r.reader = io.NopCloser(bytes.NewReader(nil))
+		return nil
 	}
 
 	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{

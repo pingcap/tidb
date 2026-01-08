@@ -93,6 +93,9 @@ func (w *worker) run() {
 func testWithWorkers(TKs []*testkit.TestKit, stmts []*testStmt) {
 	nStmts := make([][]*testStmt, len(TKs))
 	for _, stmt := range stmts {
+		if stmt == nil {
+			continue
+		}
 		if isDML(stmt.normalStmt) { // avoid duplicate DML
 			x := rand.Intn(len(TKs))
 			nStmts[x] = append(nStmts[x], stmt)
@@ -194,6 +197,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		switch rand.Intn(2) {
 		case 0: // update sbtest set k=k+1 where id=?
 			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+			if id == txnLeastID {
+				return nil // avoid updating duplicated row id and deadlock
+			}
 			txnLeastID = id
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set k=k+1 where id=%v", id),
@@ -203,6 +209,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 		default: // update sbtest set c=? where id=?
 			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+			if id == txnLeastID {
+				return nil // avoid updating duplicated row id and deadlock
+			}
 			txnLeastID = id
 			c := fmt.Sprintf("%v", rand.Intn(10000))
 			return &testStmt{
@@ -227,6 +236,9 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	}
 	genDelete := func() *testStmt {
 		id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+		if id == txnLeastID {
+			return nil // avoid deleting duplicated row id and deadlock
+		}
 		txnLeastID = id
 		return &testStmt{
 			normalStmt: fmt.Sprintf("delete from normal.sbtest where id=%v", id),
@@ -279,20 +291,20 @@ func TestInstancePlanCacheIndexJoin(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int, b int)`)
 	tk.MustExec(`create table t2 (a int, key(a))`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v)", i, i))
 		tk.MustExec(fmt.Sprintf("insert into t2 values (%v)", i))
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tki := testkit.NewTestKit(t, store)
 			tki.MustExec(`use test`)
 			tki.MustExec(`prepare st from 'select /*+ tidb_inlj(t2) */ t2.a from t1, t2 where t1.a=t2.a and t1.b=?'`)
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				v := rand.Intn(100)
 				tki.MustExec("set @v = ?", v)
 				tki.MustQuery("execute st using @v").Check(testkit.Rows(fmt.Sprintf("%v", v)))
@@ -308,19 +320,19 @@ func TestInstancePlanCacheTableIndexScan(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, primary key(a), key(b))`)
 	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tki := testkit.NewTestKit(t, store)
 			tki.MustExec(`use test`)
 
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				if rand.Intn(2) == 0 { // table scan
 					tki.MustExec(`prepare st from 'select a from t use index(primary) where a>=? and a<=?'`)
 				} else { // index scan
@@ -358,19 +370,19 @@ func TestInstancePlanCacheConcurrencyPointPartitioning(t *testing.T) {
     		partition p8 values less than (90),
     		partition p9 values less than (100))`)
 	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%v)", i))
 		tk.MustExec(fmt.Sprintf("insert into t2 values (%v)", i))
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tki := testkit.NewTestKit(t, store)
 			tki.MustExec(`use test`)
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				tName := fmt.Sprintf("t%v", rand.Intn(2)+1)
 				tki.MustExec(fmt.Sprintf("prepare st from 'select * from %v where a=?'", tName))
 				a := rand.Intn(100)
@@ -388,19 +400,19 @@ func TestInstancePlanCacheConcurrencyPointMultipleColPKNoTxn(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, primary key(a, b))`)
 	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tki := testkit.NewTestKit(t, store)
 			tki.MustExec(`use test`)
 			tki.MustExec(`prepare st from 'select * from t where a=? and b=?'`)
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				a := rand.Intn(100)
 				tki.MustExec("set @a = ?, @b = ?", a, a)
 				tki.MustQuery("execute st using @a, @b").Check(testkit.Rows(fmt.Sprintf("%v %v", a, a)))
@@ -416,19 +428,19 @@ func TestInstancePlanCacheConcurrencyPointNoTxn(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, primary key(a))`)
 	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tki := testkit.NewTestKit(t, store)
 			tki.MustExec(`use test`)
 			tki.MustExec(`prepare st from 'select * from t where a=?'`)
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				a := rand.Intn(100)
 				tki.MustExec("set @a = ?", a)
 				tki.MustQuery("execute st using @a").Check(testkit.Rows(fmt.Sprintf("%v %v", a, a)))
@@ -444,11 +456,11 @@ func TestInstancePlanCacheBatchPointMultiColIndex(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, d int, primary key(a, b), unique key(c, d))`)
 	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v, %v)", i, i, i, i))
 	}
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -459,7 +471,7 @@ func TestInstancePlanCacheBatchPointMultiColIndex(t *testing.T) {
 			} else {
 				tki.MustExec(`prepare st from 'select a from t where (c, d) in ((?, ?), (?, ?))'`)
 			}
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				a1, a2 := rand.Intn(50), 50+rand.Intn(50)
 				tki.MustExec("set @a1 = ?, @a2 = ?", a1, a2)
 				v1, v2 := fmt.Sprintf("%v", a1), fmt.Sprintf("%v", a2)
@@ -480,19 +492,19 @@ func TestInstancePlanCacheConcurrencyBatchPointNoTxn(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, primary key(a))`)
 	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tki := testkit.NewTestKit(t, store)
 			tki.MustExec(`use test`)
 			tki.MustExec(`prepare st from 'select a from t where a in (?, ?)'`)
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				a1, a2 := rand.Intn(50), 50+rand.Intn(50)
 				tki.MustExec("set @a1 = ?, @a2 = ?", a1, a2)
 				v1, v2 := fmt.Sprintf("%v", a1), fmt.Sprintf("%v", a2)
@@ -516,7 +528,7 @@ func TestInstancePlanCacheConcurrencyPoint(t *testing.T) {
 	for _, db := range []string{"normal", "prepared"} {
 		tk.MustExec("use " + db)
 		tk.MustExec(`create table t1 (col1 int, col2 int, primary key(col1), unique key(col2))`)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v)", i, i))
 		}
 	}
@@ -581,18 +593,18 @@ func TestInstancePlanCacheConcurrencyPartitioning(t *testing.T) {
     			partition p7 values less than (80),
     			partition p8 values less than (90),
     			partition p9 values less than (100))`)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v)", i))
 	}
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tki := testkit.NewTestKit(t, store)
 			tki.MustExec(`use test`)
 
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				switch rand.Intn(3) {
 				case 0: // point get
 					tki.MustExec(`prepare st from 'select * from t where a=?'`)

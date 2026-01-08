@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path"
@@ -631,6 +632,13 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if rateLimitUnit, err = flags.GetUint64(flagRateLimitUnit); err != nil {
 		return errors.Trace(err)
 	}
+	// Check for multiplication overflow when both values are non-zero
+	// This prevents silent wraparound that would cause incorrect rate limiting
+	if rateLimit > 0 && rateLimitUnit > 0 && rateLimit > math.MaxUint64/rateLimitUnit {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"rate limit calculation overflow: %d * %d exceeds uint64 max (consider max ~17PB/s)",
+			rateLimit, rateLimitUnit)
+	}
 	cfg.RateLimit = rateLimit * rateLimitUnit
 
 	cfg.Schemas = make(map[string]struct{})
@@ -663,11 +671,14 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 				Schema: db,
 				Name:   tbl,
 			})
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.`%s`", db, tbl)}
 		} else {
 			cfg.TableFilter = filter.NewSchemasFilter(db)
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.*", db)}
 		}
 	} else {
 		cfg.TableFilter, _ = filter.Parse([]string{"*.*"})
+		cfg.FilterStr = []string{"*.*"}
 	}
 	if !caseSensitive {
 		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
@@ -1002,7 +1013,7 @@ func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, tota
 		cur := progress.GetCurrent()
 		p := float64(cur) / float64(total)
 		p *= 100
-		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		err := os.WriteFile(progressFile, fmt.Appendf(nil, "%.2f", p), 0600)
 		if err != nil {
 			log.Warn("failed to update tmp progress file", zap.Error(err))
 		}

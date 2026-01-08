@@ -85,11 +85,11 @@ PARTITION P4 VALUES LESS THAN (75),
 PARTITION P5 VALUES LESS THAN (90),
 PARTITION PMX VALUES LESS THAN (MAXVALUE)
 ) ;
-explain format='brief' select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
-id	estRows	task	access object	operator info
-IndexLookUp	3.00	root	partition:P3,PMX	
-├─IndexRangeScan(Build)	3.00	cop[tikv]	table:UK_RP16939, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:UK_RP16939	keep order:false, stats:pseudo
+explain format='plan_tree' select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
+id	task	access object	operator info
+IndexLookUp	root	partition:P3,PMX	
+├─IndexRangeScan(Build)	cop[tikv]	table:UK_RP16939, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:UK_RP16939	keep order:false, stats:pseudo
 select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
 col1	col2
 drop table if exists UK_RP16939;
@@ -106,11 +106,11 @@ PARTITION P0 VALUES IN (-44, -23),
 PARTITION P1 VALUES IN (-22, 63),
 PARTITION P2 VALUES IN (75, 90)
 ) ;
-explain format='brief' select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
-id	estRows	task	access object	operator info
-IndexLookUp	3.00	root	partition:dual	
-├─IndexRangeScan(Build)	3.00	cop[tikv]	table:UK_RP16939, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:UK_RP16939	keep order:false, stats:pseudo
+explain format='plan_tree' select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
+id	task	access object	operator info
+IndexLookUp	root	partition:dual	
+├─IndexRangeScan(Build)	cop[tikv]	table:UK_RP16939, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:UK_RP16939	keep order:false, stats:pseudo
 select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
 col1	col2
 drop table if exists UK_RP16939;
@@ -129,59 +129,59 @@ drop table if exists t;
 create table t(a binary(2) primary key, b binary(2));
 insert into t values("a", "b");
 set @@sql_mode="";
-explain format='brief' select * from t where a = "a";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t where a = "a";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t where a = "a";
 a	b
-explain format='brief' select * from t where a = "a ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t where a = "a ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t where a = "a ";
 a	b
-explain format='brief' select * from t where a = "a  ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t where a = "a  ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t where a = "a  ";
 a	b
-explain format='brief' select hex(a), hex(b) from t where a = "a\0";
-id	estRows	task	access object	operator info
-Projection	1.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
-└─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select hex(a), hex(b) from t where a = "a\0";
+id	task	access object	operator info
+Projection	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+└─Point_Get	root	table:t, index:PRIMARY(a)	
 select hex(a), hex(b) from t where a = "a\0";
 hex(a)	hex(b)
 6100	6200
 insert into t values("a ", "b ");
-explain format='brief' select * from t where a = "a";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t where a = "a";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t where a = "a";
 a	b
-explain format='brief' select * from t where a = "a ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t where a = "a ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t where a = "a ";
 a	b
 a 	b 
-explain format='brief' select * from t where a = "a  ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t where a = "a  ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t where a = "a  ";
 a	b
-explain format='brief' select * from t where a = "a";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t where a = "a";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t where a = "a";
 a	b
-explain format='brief' select * from t where a = "a ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t where a = "a ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t where a = "a ";
 a	b
 a 	b 
-explain format='brief' select * from t where a = "a  ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t where a = "a  ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t where a = "a  ";
 a	b
 set @@sql_mode=DEFAULT;
@@ -189,59 +189,59 @@ drop table if exists t;
 create table t(a binary(2) primary key, b binary(2));
 insert into t values("a", "b");
 set @@sql_mode="";
-explain format='brief' select * from t tmp where a = "a";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t tmp where a = "a";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t tmp where a = "a";
 a	b
-explain format='brief' select * from t tmp where a = "a ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t tmp where a = "a ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t tmp where a = "a ";
 a	b
-explain format='brief' select * from t tmp where a = "a  ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t tmp where a = "a  ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t tmp where a = "a  ";
 a	b
-explain format='brief' select hex(a), hex(b) from t tmp where a = "a\0";
-id	estRows	task	access object	operator info
-Projection	1.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
-└─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select hex(a), hex(b) from t tmp where a = "a\0";
+id	task	access object	operator info
+Projection	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+└─Point_Get	root	table:t, index:PRIMARY(a)	
 select hex(a), hex(b) from t tmp where a = "a\0";
 hex(a)	hex(b)
 6100	6200
 insert into t values("a ", "b ");
-explain format='brief' select * from t tmp where a = "a";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t tmp where a = "a";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t tmp where a = "a";
 a	b
-explain format='brief' select * from t tmp where a = "a ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t tmp where a = "a ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t tmp where a = "a ";
 a	b
 a 	b 
-explain format='brief' select * from t tmp where a = "a  ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t tmp where a = "a  ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t tmp where a = "a  ";
 a	b
-explain format='brief' select * from t tmp where a = "a";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t tmp where a = "a";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t tmp where a = "a";
 a	b
-explain format='brief' select * from t tmp where a = "a ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t tmp where a = "a ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t tmp where a = "a ";
 a	b
 a 	b 
-explain format='brief' select * from t tmp where a = "a  ";
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+explain format='plan_tree' select * from t tmp where a = "a  ";
+id	task	access object	operator info
+Point_Get	root	table:t, index:PRIMARY(a)	
 select * from t tmp where a = "a  ";
 a	b
 set @@sql_mode=DEFAULT;
@@ -249,110 +249,110 @@ drop table if exists t;
 create table t(a binary(2), b binary(2), index idx_1(a));
 insert into t values("a", "b");
 set @@sql_mode="";
-explain format='brief' select * from t where a = "a";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = "a";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a";
 a	b
-explain format='brief' select * from t where a = "a ";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = "a ";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a ";
 a	b
-explain format='brief' select * from t where a = "a  ";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = "a  ";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a  ";
 a	b
-explain format='brief' select hex(a), hex(b) from t where a = "a\0";
-id	estRows	task	access object	operator info
-Projection	10.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
-└─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select hex(a), hex(b) from t where a = "a\0";
+id	task	access object	operator info
+Projection	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select hex(a), hex(b) from t where a = "a\0";
 hex(a)	hex(b)
 6100	6200
 set @@sql_mode="";
-explain format='brief' select * from t tmp where a = "a";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t tmp where a = "a";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:tmp, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:tmp	keep order:false, stats:pseudo
 select * from t tmp where a = "a";
 a	b
-explain format='brief' select * from t tmp where a = "a ";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t tmp where a = "a ";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:tmp, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:tmp	keep order:false, stats:pseudo
 select * from t tmp where a = "a ";
 a	b
-explain format='brief' select * from t tmp where a = "a  ";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t tmp where a = "a  ";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:tmp, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:tmp	keep order:false, stats:pseudo
 select * from t tmp where a = "a  ";
 a	b
-explain format='brief' select hex(a), hex(b) from t tmp where a = "a\0";
-id	estRows	task	access object	operator info
-Projection	10.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
-└─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
+explain format='plan_tree' select hex(a), hex(b) from t tmp where a = "a\0";
+id	task	access object	operator info
+Projection	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:tmp, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:tmp	keep order:false, stats:pseudo
 select hex(a), hex(b) from t tmp where a = "a\0";
 hex(a)	hex(b)
 6100	6200
 insert into t values("a ", "b ");
-explain format='brief' select * from t where a = "a";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = "a";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a";
 a	b
-explain format='brief' select * from t where a = "a ";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = "a ";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a ";
 a	b
 a 	b 
-explain format='brief' select * from t where a = "a  ";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = "a  ";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a  ";
 a	b
-explain format='brief' select * from t where a = "a";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = "a";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a";
 a	b
-explain format='brief' select * from t where a = "a ";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = "a ";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a ";
 a	b
 a 	b 
-explain format='brief' select * from t where a = "a  ";
-id	estRows	task	access object	operator info
-IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where a = "a  ";
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a  ";
 a	b
 set sql_mode=default;
@@ -371,115 +371,115 @@ id	a
 drop table if exists t;
 create table t(pk int1 primary key);
 insert into t values(125);
-explain format='brief' select * from t where pk = 9223372036854775807;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 18446744073709551616;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 9223372036854775808;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 18446744073709551615;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 128;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format='plan_tree' select * from t where pk = 9223372036854775807;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 18446744073709551616;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 9223372036854775808;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 18446744073709551615;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 128;
+id	task	access object	operator info
+TableDual	root		rows:0
 drop table if exists t;
 create table t(pk int8 primary key);
 insert into t values(9223372036854775807);
 select * from t where pk = 9223372036854775807;
 pk
 9223372036854775807
-explain format='brief' select * from t where pk = 9223372036854775807;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t	handle:9223372036854775807
-explain format='brief' select * from t where pk = 18446744073709551616;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 9223372036854775808;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 18446744073709551615;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format='plan_tree' select * from t where pk = 9223372036854775807;
+id	task	access object	operator info
+Point_Get	root	table:t	handle:9223372036854775807
+explain format='plan_tree' select * from t where pk = 18446744073709551616;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 9223372036854775808;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 18446744073709551615;
+id	task	access object	operator info
+TableDual	root		rows:0
 drop table if exists t;
 create table t(pk int1 unsigned primary key);
 insert into t values(255);
 select * from t where pk = 255;
 pk
 255
-explain format='brief' select * from t where pk = 256;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 9223372036854775807;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 18446744073709551616;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 9223372036854775808;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 18446744073709551615;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format='plan_tree' select * from t where pk = 256;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 9223372036854775807;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 18446744073709551616;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 9223372036854775808;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 18446744073709551615;
+id	task	access object	operator info
+TableDual	root		rows:0
 drop table if exists t;
 create table t(pk int8 unsigned primary key);
 insert into t value(18446744073709551615);
-explain format='brief' select * from t where pk = 18446744073709551615;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t	handle:18446744073709551615
+explain format='plan_tree' select * from t where pk = 18446744073709551615;
+id	task	access object	operator info
+Point_Get	root	table:t	handle:18446744073709551615
 select * from t where pk = 18446744073709551615;
 pk
 18446744073709551615
-explain format='brief' select * from t where pk = 9223372036854775807;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t	handle:9223372036854775807
-explain format='brief' select * from t where pk = 18446744073709551616;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
-explain format='brief' select * from t where pk = 9223372036854775808;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t	handle:9223372036854775808
+explain format='plan_tree' select * from t where pk = 9223372036854775807;
+id	task	access object	operator info
+Point_Get	root	table:t	handle:9223372036854775807
+explain format='plan_tree' select * from t where pk = 18446744073709551616;
+id	task	access object	operator info
+TableDual	root		rows:0
+explain format='plan_tree' select * from t where pk = 9223372036854775808;
+id	task	access object	operator info
+Point_Get	root	table:t	handle:9223372036854775808
 drop table if exists t;
 create table t(pk int1 primary key);
 insert into t values(1);
-explain format='brief' select * from t where pk = 1.1;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format='plan_tree' select * from t where pk = 1.1;
+id	task	access object	operator info
+TableDual	root		rows:0
 select * from t where pk = 1.1;
 pk
-explain format='brief' select * from t where pk = '1.1';
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format='plan_tree' select * from t where pk = '1.1';
+id	task	access object	operator info
+TableDual	root		rows:0
 select * from t where pk = '1.1';
 pk
-explain format='brief' select * from t where pk = 1;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t	handle:1
+explain format='plan_tree' select * from t where pk = 1;
+id	task	access object	operator info
+Point_Get	root	table:t	handle:1
 select * from t where pk = 1;
 pk
 1
-explain format='brief' select * from t where pk = '1';
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t	handle:1
+explain format='plan_tree' select * from t where pk = '1';
+id	task	access object	operator info
+Point_Get	root	table:t	handle:1
 select * from t where pk = '1';
 pk
 1
-explain format='brief' select * from t where pk = '1.0';
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t	handle:1
+explain format='plan_tree' select * from t where pk = '1.0';
+id	task	access object	operator info
+Point_Get	root	table:t	handle:1
 select * from t where pk = '1.0';
 pk
 1
 drop table if exists t;
 create table t (a varchar(20), b int);
 insert into t values("aaa", 12);
-explain format = 'brief' select * from t where t._tidb_rowid = 1;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t	handle:1
+explain format = 'plan_tree' select * from t where t._tidb_rowid = 1;
+id	task	access object	operator info
+Point_Get	root	table:t	handle:1
 select * from t where t._tidb_rowid = 1;
 a	b
 aaa	12
@@ -488,7 +488,7 @@ create table t (a varchar(255) charset gbk primary key /*T![clustered_index] clu
 insert into t values ('你好', 1);
 explain select * from t where a = 0xC4E3BAC3;
 id	estRows	task	access object	operator info
-Point_Get_5	1.00	root	table:t, clustered index:PRIMARY(a)	
+Point_Get_6	1.00	root	table:t, clustered index:PRIMARY(a)	
 select * from t where a = 0xC4E3BAC3;
 a	b
 你好	1
@@ -515,14 +515,14 @@ admin check table pgt;
 drop table if exists snp;
 create table snp(id1 int, id2 int, v int, primary key(id1, id2));
 insert snp values (1, 1, 1), (2, 2, 2), (2, 3, 3);
-explain format = 'brief' select * from snp where id1 = 1;
-id	estRows	task	access object	operator info
-TableReader	10.00	root		data:TableRangeScan
-└─TableRangeScan	10.00	cop[tikv]	table:snp	range:[1,1], keep order:false, stats:pseudo
-explain format = 'brief' select * from snp where id1 in (1, 100);
-id	estRows	task	access object	operator info
-TableReader	20.00	root		data:TableRangeScan
-└─TableRangeScan	20.00	cop[tikv]	table:snp	range:[1,1], [100,100], keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from snp where id1 = 1;
+id	task	access object	operator info
+TableReader	root		data:TableRangeScan
+└─TableRangeScan	cop[tikv]	table:snp	range:[1,1], keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from snp where id1 in (1, 100);
+id	task	access object	operator info
+TableReader	root		data:TableRangeScan
+└─TableRangeScan	cop[tikv]	table:snp	range:[1,1], [100,100], keep order:false, stats:pseudo
 select * from snp where id1 = 2;
 id1	id2	v
 2	2	2
@@ -536,49 +536,49 @@ insert into t1 values(1,1,1),(2,2,2),(3,3,3);
 insert into t2 values('111',1),('222',2),('333',3);
 analyze table t1 all columns;
 analyze table t2 all columns;
-explain format = 'brief' select * from t1 where a = 1 and b = 1 and c = 1;
-id	estRows	task	access object	operator info
-Selection	0.11	root		eq(executor__point_get.t1.c, 1)
-└─Point_Get	1.00	root	table:t1, clustered index:PRIMARY(a, b)	
+explain format = 'plan_tree' select * from t1 where a = 1 and b = 1 and c = 1;
+id	task	access object	operator info
+Selection	root		eq(executor__point_get.t1.c, 1)
+└─Point_Get	root	table:t1, clustered index:PRIMARY(a, b)	
 select * from t1 where a = 1 and b = 1 and c = 1;
 a	b	c
 1	1	1
-explain format = 'brief' select * from t2 where t2.a = '111' and t2.b = 1;
-id	estRows	task	access object	operator info
-Selection	0.33	root		eq(executor__point_get.t2.b, 1)
-└─Point_Get	1.00	root	table:t2, clustered index:PRIMARY(a)	
+explain format = 'plan_tree' select * from t2 where t2.a = '111' and t2.b = 1;
+id	task	access object	operator info
+Selection	root		eq(executor__point_get.t2.b, 1)
+└─Point_Get	root	table:t2, clustered index:PRIMARY(a)	
 select * from t2 where t2.a = '111' and t2.b = 1;
 a	b
 111	1
-explain format = 'brief' select * from t1 join t2 on t1.a = t2.b where t1.a = 1;
-id	estRows	task	access object	operator info
-HashJoin	1.00	root		CARTESIAN inner join
-├─Point_Get(Build)	1.00	root	table:t2, index:b(b)	
-└─TableReader(Probe)	1.00	root		data:TableRangeScan
-  └─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1,1], keep order:false
+explain format = 'plan_tree' select * from t1 join t2 on t1.a = t2.b where t1.a = 1;
+id	task	access object	operator info
+MergeJoin	root		inner join, left key:executor__point_get.t1.a, right key:executor__point_get.t2.b
+├─Point_Get(Build)	root	table:t2, index:b(b)	
+└─TableReader(Probe)	root		data:TableRangeScan
+  └─TableRangeScan	cop[tikv]	table:t1	range:[1,1], keep order:true
 select * from t1 join t2 on t1.a = t2.b where t1.a = 1;
 a	b	c	a	b
 1	1	1	111	1
-explain format = 'brief' select * from t1 where (a,b) in ((1,1),(2,2)) and c = 2;
-id	estRows	task	access object	operator info
-Selection	0.56	root		eq(executor__point_get.t1.c, 2)
-└─Batch_Point_Get	2.00	root	table:t1, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+explain format = 'plan_tree' select * from t1 where (a,b) in ((1,1),(2,2)) and c = 2;
+id	task	access object	operator info
+Selection	root		eq(executor__point_get.t1.c, 2)
+└─Batch_Point_Get	root	table:t1, clustered index:PRIMARY(a, b)	keep order:false, desc:false
 select * from t1 where (a,b) in ((1,1),(2,2)) and c = 2;
 a	b	c
 2	2	2
-explain format = 'brief' select * from t2 where a in ('111','222') and b = 2;
-id	estRows	task	access object	operator info
-Selection	0.67	root		eq(executor__point_get.t2.b, 2)
-└─Batch_Point_Get	2.00	root	table:t2, clustered index:PRIMARY(a)	keep order:false, desc:false
+explain format = 'plan_tree' select * from t2 where a in ('111','222') and b = 2;
+id	task	access object	operator info
+Selection	root		eq(executor__point_get.t2.b, 2)
+└─Batch_Point_Get	root	table:t2, clustered index:PRIMARY(a)	keep order:false, desc:false
 select * from t2 where a in ('111','222') and b = 2;
 a	b
 222	2
-explain format = 'brief' select * from t2 where a in ('111','222') union all select a,c from t1 where (a,b) in ((1,1),(2,2));
-id	estRows	task	access object	operator info
-Union	3.67	root		
-├─Batch_Point_Get	2.00	root	table:t2, clustered index:PRIMARY(a)	keep order:false, desc:false
-└─Projection	1.67	root		cast(executor__point_get.t1.a, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, executor__point_get.t1.c->Column#7
-  └─Batch_Point_Get	2.00	root	table:t1, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+explain format = 'plan_tree' select * from t2 where a in ('111','222') union all select a,c from t1 where (a,b) in ((1,1),(2,2));
+id	task	access object	operator info
+Union	root		
+├─Batch_Point_Get	root	table:t2, clustered index:PRIMARY(a)	keep order:false, desc:false
+└─Projection	root		cast(executor__point_get.t1.a, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, executor__point_get.t1.c->Column#7
+  └─Batch_Point_Get	root	table:t1, clustered index:PRIMARY(a, b)	keep order:false, desc:false
 select * from t2 where a in ('111','222') union all select a,c from t1 where (a,b) in ((1,1),(2,2));
 a	b
 1	1

@@ -163,10 +163,9 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 	}
 	casted, err := point.value.ConvertTo(sctx.TypeCtx, newTp)
 	if err != nil {
-		if sctx.InPreparedPlanBuilding {
-			// skip plan cache in this case for safety.
-			sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
-		}
+		// skip plan cache in this case for safety.
+		sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
+
 		//revive:disable:empty-block
 		if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
@@ -474,19 +473,18 @@ func BuildColumnRange(conds []expression.Expression, sctx *rangerctx.RangerConte
 	return buildColumnRange(conds, sctx, tp, false, colLen, rangeMemQuota)
 }
 
-func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
-	accessConds []expression.Expression) (ranges Ranges, _, _ []expression.Expression, err error) {
+func (d *rangeDetacher) buildRangeOnColsByCNFCond(eqAndInCount int, accessConds []expression.Expression) (ranges Ranges, _, _ []expression.Expression, err error) {
 	rb := builder{sctx: d.sctx}
 	var (
 		rangeFallback bool
 	)
 	for i := range eqAndInCount {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessConds[i], newTp[i], d.lengths[i], d.convertToSortKey)
+		point := rb.build(accessConds[i], d.newTpSlice[i], d.lengths[i], d.convertToSortKey)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
-		tmpNewTp := newTp[i]
+		tmpNewTp := d.newTpSlice[i]
 		if d.convertToSortKey {
 			tmpNewTp = convertStringFTToBinaryCollate(tmpNewTp)
 		}
@@ -506,11 +504,11 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
-		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
+		collator := collate.GetCollator(d.newTpSlice[eqAndInCount].GetCollate())
 		if d.convertToSortKey {
 			collator = collate.GetCollator(charset.CollationBin)
 		}
-		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], newTp[eqAndInCount], d.lengths[eqAndInCount], d.convertToSortKey), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], d.newTpSlice[eqAndInCount], d.lengths[eqAndInCount], d.convertToSortKey), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -518,9 +516,9 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	var tmpNewTp *types.FieldType
 	if eqAndInCount == 0 || eqAndInCount < len(accessConds) {
 		if d.convertToSortKey {
-			tmpNewTp = convertStringFTToBinaryCollate(newTp[eqAndInCount])
+			tmpNewTp = convertStringFTToBinaryCollate(d.newTpSlice[eqAndInCount])
 		} else {
-			tmpNewTp = newTp[eqAndInCount]
+			tmpNewTp = d.newTpSlice[eqAndInCount]
 		}
 	}
 	if eqAndInCount == 0 {
@@ -551,9 +549,8 @@ func convertStringFTToBinaryCollate(ft *types.FieldType) *types.FieldType {
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
-func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCount int,
-	accessConds []expression.Expression) (ranges Ranges, newAccessConds, remainedConds []expression.Expression, err error) {
-	ranges, newAccessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessConds)
+func (d *rangeDetacher) buildCNFIndexRange(eqAndInCount int, accessConds []expression.Expression) (ranges Ranges, newAccessConds, remainedConds []expression.Expression, err error) {
+	ranges, newAccessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(eqAndInCount, accessConds)
 	if err != nil {
 		return nil, nil, nil, err
 	}

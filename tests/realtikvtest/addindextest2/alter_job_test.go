@@ -21,8 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -32,6 +34,9 @@ import (
 )
 
 func TestAlterThreadRightAfterJobFinish(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled on nextgen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -70,6 +75,9 @@ func TestAlterThreadRightAfterJobFinish(t *testing.T) {
 }
 
 func TestAlterJobOnDXF(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("resource params are calculated automatically on nextgen for add-index, we don't support alter them")
+	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -77,7 +85,9 @@ func TestAlterJobOnDXF(t *testing.T) {
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
-	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	if kerneltype.IsClassic() {
+		tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	}
 	tk.MustExec("create table t1(a bigint auto_random primary key);")
 	for range 16 {
 		tk.MustExec("insert into t1 values (), (), (), ()")
@@ -85,10 +95,13 @@ func TestAlterJobOnDXF(t *testing.T) {
 	tk.MustExec("split table t1 between (3) and (8646911284551352360) regions 50;")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
-	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 16")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
-	})
+	tk.MustExec(`set @@global.tidb_cloud_storage_uri = ""`)
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 16")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
+		})
+	}
 	var pipeClosed bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
@@ -102,7 +115,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 		require.EqualValues(t, 1024, be.GetWriteSpeedLimit())
 	})
 	var modified atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterDetectAndHandleParamModify", func(_ proto.Step) {
 		modified.Store(true)
 	})
 	var once sync.Once

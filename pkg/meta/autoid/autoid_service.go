@@ -97,14 +97,25 @@ func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (auto
 	if d.mu.AutoIDAllocClient != nil {
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
-
-	resp, err := d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
+	// write a for loop to retry in case of etcd connection error.
+	var resp *clientv3.GetResponse
+	var err error
+	var bo backoffer
+retry:
+	resp, err = d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
-		return nil, 0, errors.New("autoid service leader not found")
+		// If the key is not found, it means the autoid service leader is not elected yet.
+		// We can retry to get the leader.
+		if err := ctx.Err(); err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		bo.Backoff()
+		goto retry
 	}
+	bo.Reset()
 
 	addr := string(resp.Kvs[0].Value)
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
@@ -138,18 +149,21 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 	r, ctx := tracing.StartRegionEx(ctx, "autoid.Alloc")
 	defer r.End()
 
+	logutil.BgLogger().Info("alloc autoid",
+		zap.Int64("dbID", sp.dbID))
 	if !validIncrementAndOffset(increment, offset) {
 		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 	}
 
 	var bo backoffer
+	start := time.Now()
 retry:
 	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	start := time.Now()
+	clientStart := time.Now()
 	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
@@ -159,10 +173,13 @@ retry:
 		IsUnsigned: sp.isUnsigned,
 		KeyspaceID: sp.keyspaceID,
 	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			sp.resetConn(ver, err)
+			if err := ctx.Err(); err != nil {
+				return 0, 0, errors.Trace(err)
+			}
 			bo.Backoff()
 			goto retry
 		}
@@ -179,8 +196,8 @@ retry:
 	return resp.Min, resp.Max, err
 }
 
-const backoffMin = 200 * time.Millisecond
-const backoffMax = 5 * time.Second
+const backoffMin = 5 * time.Millisecond
+const backoffMax = 100 * time.Millisecond
 
 type backoffer struct {
 	time.Duration
@@ -237,8 +254,13 @@ func (d *ClientDiscover) ResetConn(reason error) {
 	}
 }
 
-func (*singlePointAlloc) Transfer(_, _ int64) error {
-	return nil
+func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
+	if sp.dbID == databaseID && sp.tblID == tableID {
+		return nil
+	}
+	sp.dbID = databaseID
+	sp.tblID = tableID
+	return sp.Rebase(context.Background(), sp.lastAllocated+1, false)
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering

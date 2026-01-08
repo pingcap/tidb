@@ -2,13 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "admintest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "admin_test.go",
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 24,
+    shard_count = 27,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -19,6 +19,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/server",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",

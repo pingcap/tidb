@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -70,7 +70,7 @@ type IndexLookUpMergeJoin struct {
 	KeyOff2IdxOff []int
 
 	// LastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
-	LastColHelper *plannercore.ColWithCmpFuncManager
+	LastColHelper *physicalop.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage
 	prepared   bool
@@ -127,7 +127,7 @@ type outerMergeWorker struct {
 	maxBatchSize int
 	batchSize    int
 
-	nextColCompareFilters *plannercore.ColWithCmpFuncManager
+	nextColCompareFilters *physicalop.ColWithCmpFuncManager
 
 	resultCh chan<- *lookUpMergeJoinTask
 	innerCh  chan<- *lookUpMergeJoinTask
@@ -148,7 +148,7 @@ type innerMergeWorker struct {
 
 	maxChunkSize          int
 	indexRanges           []*ranger.Range
-	nextColCompareFilters *plannercore.ColWithCmpFuncManager
+	nextColCompareFilters *physicalop.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
 }
 
@@ -181,9 +181,9 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	resultCh := make(chan *lookUpMergeJoinTask, concurrency)
 	e.resultCh = resultCh
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
-		for j := 0; j < numResChkHold; j++ {
+		for range numResChkHold {
 			e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.RetFieldTypes(), e.MaxChunkSize())
 		}
 	}
@@ -193,7 +193,7 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	e.WorkerWg.Add(1)
 	go e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.WorkerWg, e.cancelFunc)
 	e.WorkerWg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		go e.newInnerMergeWorker(innerCh, i).run(workerCtx, e.WorkerWg, e.cancelFunc)
 	}
 }
@@ -425,7 +425,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	if imw.outerMergeCtx.Filter != nil {
 		task.outerMatch = make([][]bool, numOuterChks)
 		exprCtx := imw.ctx.GetExprCtx()
-		for i := 0; i < numOuterChks; i++ {
+		for i := range numOuterChks {
 			chk := task.outerResult.GetChunk(i)
 			task.outerMatch[i] = make([]bool, chk.NumRows())
 			task.outerMatch[i], err = expression.VectorizedFilter(exprCtx.GetEvalCtx(), imw.ctx.GetSessionVars().EnableVectorizedExpression, imw.outerMergeCtx.Filter, chunk.NewIterator4Chunk(chk), task.outerMatch[i])
@@ -436,9 +436,9 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	}
 	task.memTracker.Consume(int64(cap(task.outerMatch)))
 	task.outerOrderIdx = make([]chunk.RowPtr, 0, task.outerResult.Len())
-	for i := 0; i < numOuterChks; i++ {
+	for i := range numOuterChks {
 		numRow := task.outerResult.GetChunk(i).NumRows()
-		for j := 0; j < numRow; j++ {
+		for j := range numRow {
 			task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 		}
 	}
@@ -482,7 +482,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	// So at the end, we should generate the ascending deDupedLookUpContents to build the correct range for inner read.
 	if imw.Desc {
 		lenKeys := len(dLookUpKeys)
-		for i := 0; i < lenKeys/2; i++ {
+		for i := range lenKeys / 2 {
 			dLookUpKeys[i], dLookUpKeys[lenKeys-i-1] = dLookUpKeys[lenKeys-i-1], dLookUpKeys[i]
 		}
 	}
@@ -640,7 +640,7 @@ func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) 
 func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask) ([]*IndexJoinLookUpContent, error) {
 	numRows := len(task.outerOrderIdx)
 	dLookUpKeys := make([]*IndexJoinLookUpContent, 0, numRows)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		dLookUpKey, err := imw.constructDatumLookupKey(task, task.outerOrderIdx[i])
 		if err != nil {
 			return nil, err

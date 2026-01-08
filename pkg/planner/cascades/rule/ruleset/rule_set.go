@@ -35,7 +35,7 @@ const (
 
 // DefaultRuleSets indicates the all rule set.
 var DefaultRuleSets = map[pattern.Operand]*OperandRules{
-	pattern.OperandApply: OperandApplyRules,
+	// pattern.OperandApply: OperandApplyRules,
 }
 
 // OperandRules wrapper all the rules rooted from one specified operator.

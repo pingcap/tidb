@@ -16,15 +16,20 @@ package keyspace
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 const (
+	// System is the keyspace name for SYSTEM keyspace.
+	// see doc.go for more detail.
+	System = "SYSTEM"
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
 )
@@ -52,6 +57,22 @@ func MakeKeyspaceEtcdNamespaceSlash(c tikv.Codec) string {
 func GetKeyspaceNameBySettings() (keyspaceName string) {
 	keyspaceName = config.GetGlobalKeyspaceName()
 	return keyspaceName
+}
+
+var keyspaceNameBytes []byte
+var genKeyspaceNameOnce sync.Once
+
+// GetKeyspaceNameBytesBySettings is used to get keyspace name setting as a byte slice.
+func GetKeyspaceNameBytesBySettings() []byte {
+	genKeyspaceNameOnce.Do(func() {
+		if !kerneltype.IsNextGen() {
+			return
+		}
+
+		keyspaceName := config.GetGlobalKeyspaceName()
+		keyspaceNameBytes = []byte(keyspaceName)
+	})
+	return keyspaceNameBytes
 }
 
 // IsKeyspaceNameEmpty is used to determine whether keyspaceName is set.

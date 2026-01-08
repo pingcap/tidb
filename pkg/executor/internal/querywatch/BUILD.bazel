@@ -31,6 +31,7 @@ go_test(
     ],
     embed = [":querywatch"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/errno",

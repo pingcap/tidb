@@ -124,7 +124,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	return txn.MayFlush()
 }
 
-func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
+func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string]kv.ValueEntry, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchUniqueIndices")
 	defer r.End()
 
@@ -153,7 +153,7 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 	return txn.BatchGet(ctx, batchKeys)
 }
 
-func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string][]byte) error {
+func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string]kv.ValueEntry) error {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchConflictedOldRows")
 	defer r.End()
 
@@ -167,7 +167,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 					// temp indexes.
 					continue
 				}
-				handle, err := tablecodec.DecodeHandleInIndexValue(val)
+				handle, err := tablecodec.DecodeHandleInIndexValue(val.Value)
 				if err != nil {
 					return err
 				}

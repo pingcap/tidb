@@ -16,6 +16,7 @@ package utils
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -96,6 +97,41 @@ func (r *RewriteRules) Clone() *RewriteRules {
 	}
 }
 
+func (r *RewriteRules) Equal(rhs *RewriteRules) bool {
+	if !bytes.Equal(r.NewKeyspace, rhs.NewKeyspace) ||
+		!bytes.Equal(r.OldKeyspace, rhs.OldKeyspace) ||
+		r.NewTableID != rhs.NewTableID ||
+		r.ShiftStartTs != rhs.ShiftStartTs ||
+		r.StartTs != rhs.StartTs ||
+		r.RestoredTs != rhs.RestoredTs {
+		return false
+	}
+
+	if len(r.TableIDRemapHint) != len(rhs.TableIDRemapHint) {
+		return false
+	}
+	for i, remap := range r.TableIDRemapHint {
+		if remap.Origin != rhs.TableIDRemapHint[i].Origin ||
+			remap.Rewritten != rhs.TableIDRemapHint[i].Rewritten {
+			return false
+		}
+	}
+	if len(r.Data) != len(rhs.Data) {
+		return false
+	}
+	for i, rule := range r.Data {
+		rhsRule := rhs.Data[i]
+		if !bytes.Equal(rule.NewKeyPrefix, rhsRule.NewKeyPrefix) ||
+			!bytes.Equal(rule.OldKeyPrefix, rhsRule.OldKeyPrefix) ||
+			rule.NewTimestamp != rhsRule.NewTimestamp ||
+			rule.IgnoreAfterTimestamp != rhsRule.IgnoreAfterTimestamp ||
+			rule.IgnoreBeforeTimestamp != rhsRule.IgnoreBeforeTimestamp {
+			return false
+		}
+	}
+	return true
+}
+
 // TableIDRemap presents a remapping of table id during rewriting.
 type TableIDRemap struct {
 	Origin    int64
@@ -117,13 +153,10 @@ func SetTimeRangeFilter(tableRules *RewriteRules,
 	var ignoreBeforeTs uint64
 	switch {
 	case strings.Contains(cfName, DefaultCFName):
-		ignoreBeforeTs = tableRules.ShiftStartTs
-		if ignoreBeforeTs > tableRules.StartTs {
-			// for default cf, shift start ts could less than start ts
-			// this could happen when large kv txn happen after small kv txn.
-			// use the start ts to filter out irrelevant data for default cf is more safe
-			ignoreBeforeTs = tableRules.StartTs
-		}
+		// for default cf, shift start ts could be less than start ts
+		// this could happen when large kv txn happen after small kv txn.
+		// use the start ts to filter out irrelevant data for default cf is more safe
+		ignoreBeforeTs = min(tableRules.ShiftStartTs, tableRules.StartTs)
 	case strings.Contains(cfName, WriteCFName):
 		ignoreBeforeTs = tableRules.StartTs
 	default:
@@ -453,7 +486,7 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.
 	// We should search the dataRules firstly.
 	for _, rule := range rewriteRules.Data {
 		if bytes.HasPrefix(s, rule.GetOldKeyPrefix()) {
-			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...), rule
+			return slices.Concat(rule.GetNewKeyPrefix(), s[len(rule.GetOldKeyPrefix()):]), rule
 		}
 	}
 

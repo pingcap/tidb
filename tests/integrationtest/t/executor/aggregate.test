@@ -371,7 +371,7 @@ DROP TABLE IF EXISTS customer, orders;
 CREATE TABLE `customer` (  `C_CUSTKEY` bigint(20) NOT NULL,  `C_NAME` varchar(25) NOT NULL,  `C_ADDRESS` varchar(40) NOT NULL,  `C_NATIONKEY` bigint(20) NOT NULL,  `C_PHONE` char(15) NOT NULL,  `C_ACCTBAL` decimal(15,2) NOT NULL,  `C_MKTSEGMENT` char(10) NOT NULL,  `C_COMMENT` varchar(117) NOT NULL,  PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 CREATE TABLE `orders` (  `O_ORDERKEY` bigint(20) NOT NULL,  `O_CUSTKEY` bigint(20) NOT NULL,  `O_ORDERSTATUS` char(1) NOT NULL,  `O_TOTALPRICE` decimal(15,2) NOT NULL,  `O_ORDERDATE` date NOT NULL,  `O_ORDERPRIORITY` char(15) NOT NULL,  `O_CLERK` char(15) NOT NULL,  `O_SHIPPRIORITY` bigint(20) NOT NULL,  `O_COMMENT` varchar(79) NOT NULL,  PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 set tidb_opt_agg_push_down=ON;
-explain format='brief' SELECT  /*+ hash_join_build(customer) */ c_custkey, count(o_orderkey)  as  c_count  from customer left join orders on c_custkey = o_custkey and o_comment not like '%special%requests%'        group by c_custkey;
+explain format='plan_tree' SELECT  /*+ hash_join_build(customer) */ c_custkey, count(o_orderkey)  as  c_count  from customer left join orders on c_custkey = o_custkey and o_comment not like '%special%requests%'        group by c_custkey;
 set tidb_opt_agg_push_down=default;
 
 # TestIssue26885
@@ -634,8 +634,12 @@ select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop
 drop table t;
 create table t(a int, b bigint, c float, d double, e decimal);
 insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1);
+# On Mac arm64 floating point calculations slightly different than x86
+--replace_regex /1.1808222222222222/1.1808222222222229/
 select variance(b), variance(c), variance(d), variance(e) from t group by a;
 insert into t values(1, 255, 6.8, 6.08, 1);
+# On Mac arm64 floating point calculations slightly different than x86
+--replace_regex /1.1808222222222222/1.1808222222222229/
 select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
 insert into t values(2, 322, 0.8, 2.22, 6);
 --sorted_result
@@ -1050,9 +1054,9 @@ commit;
 drop table if exists t;
 create table t (i int);
 insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);
-explain format = 'brief' select * from t order by i + 1;
+explain format = 'plan_tree' select * from t order by i + 1;
 select * from t order by i + 1;
-explain format = 'brief' select * from t order by i + 1 limit 2;
+explain format = 'plan_tree' select * from t order by i + 1 limit 2;
 select * from t order by i + 1 limit 2;
 select i, i, i from t order by i + 1;
 
@@ -1061,8 +1065,53 @@ insert into mysql.opt_rule_blacklist value("decorrelate");
 drop table if exists test;
 create table test (a int);
 insert into test value(1);
+analyze table test;
 select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
-explain format = 'brief' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
+explain format = 'plan_tree' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
 
+# TestIssue61735AggregateTruncatedDecimal
+--enable_warnings
+select distinct avg(nullif(77.15, PI()));
+--disable_warnings
+
+# TestIssue62672
+drop table if exists t_a;
+CREATE TABLE `t_a` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',
+  `a` bigint(20) unsigned NOT NULL DEFAULT '0' COMMENT 'merchant id',
+  `b` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total amount',
+  `c` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'settlement amount',
+  `d` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total fee',
+  `e` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'settle time',
+  `f` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'create time',
+  `g` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'is deleted',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='settlement table';
+
+explain format = 'plan_tree' SELECT
+  MAX(id) AS id,
+  LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
+  a,
+  SUM(b) AS total_amount,
+  SUM(c) AS settlement_amount,
+  SUM(d) AS total_fee
+FROM `t_a`
+WHERE `f` >= 1753632000
+  AND `f` <= 1753718399
+  AND `g` = 0
+GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+
+SELECT
+  MAX(id) AS id,
+  LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
+  a,
+  SUM(b) AS total_amount,
+  SUM(c) AS settlement_amount,
+  SUM(d) AS total_fee
+FROM `t_a`
+WHERE `f` >= 1753632000
+  AND `f` <= 1753718399
+  AND `g` = 0
+GROUP BY `a`, left(FROM_UNIXTIME(e), 10);

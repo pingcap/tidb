@@ -6,6 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/lightning/backend",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/storage",
+        "//pkg/ingestor/engineapi",
         "//pkg/lightning/backend/encode",
         "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",
@@ -13,6 +15,7 @@ go_library(
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",
         "//pkg/meta/model",
+        "//pkg/util/logutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

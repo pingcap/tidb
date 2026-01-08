@@ -16,16 +16,11 @@ package logicalop
 
 import (
 	"bytes"
-	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -53,8 +48,8 @@ func (ls *LogicalSort) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range ls.ByItems {
-		ruleutil.ResolveExprAndReplace(byItem.Expr, replace)
+	for i, byItem := range ls.ByItems {
+		ls.ByItems[i].Expr = ruleutil.ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
@@ -69,12 +64,12 @@ func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column)
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
-func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	var cols []*expression.Column
-	ls.ByItems, cols = pruneByItems(ls, ls.ByItems, opt)
+	ls.ByItems, cols = pruneByItems(ls, ls.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
-	ls.Children()[0], err = ls.Children()[0].PruneColumns(parentUsedCols, opt)
+	ls.Children()[0], err = ls.Children()[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -86,20 +81,19 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *op
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
-func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
 	if topN == nil {
-		return ls.BaseLogicalPlan.PushDownTopN(nil, opt)
+		return ls.BaseLogicalPlan.PushDownTopN(nil)
 	} else if topN.IsLimit() {
 		topN.ByItems = ls.ByItems
-		appendSortPassByItemsTraceStep(ls, topN, opt)
-		return ls.Children()[0].PushDownTopN(topN, opt)
+		return ls.Children()[0].PushDownTopN(topN)
 	}
 	// If a TopN is pushed down, this sort is useless.
-	return ls.Children()[0].PushDownTopN(topN, opt)
+	return ls.Children()[0].PushDownTopN(topN)
 }
 
 // DeriveTopN inherits BaseLogicalPlan.LogicalPlan.<6th> implementation.
@@ -123,11 +117,6 @@ func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]
 		return nil
 	}
 	return [][]*expression.Column{propCols}
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (ls *LogicalSort) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalSort(ls, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -165,25 +154,6 @@ func (ls *LogicalSort) GetUsedCols() (usedCols []*expression.Column) {
 		usedCols = append(usedCols, expression.ExtractColumns(byItem.Expr)...)
 	}
 	return usedCols
-}
-
-func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *optimizetrace.LogicalOptimizeOp) {
-	ectx := sort.SCtx().GetExprCtx().GetEvalCtx()
-	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v passes ByItems[", sort.TP(), sort.ID()))
-		for i, item := range sort.ByItems {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
-		return buffer.String()
-	}
-	reason := func() string {
-		return fmt.Sprintf("%v_%v is Limit originally", topN.TP(), topN.ID())
-	}
-	opt.AppendStepToCurrent(sort.ID(), sort.TP(), reason, action)
 }
 
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {

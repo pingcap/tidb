@@ -24,12 +24,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	plannerbase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/serialization"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
@@ -192,12 +193,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	physicalRows := chk.Column(0).Rows()
 	j.usedRows = chk.Sel()
 	if j.usedRows == nil {
-		if cap(j.selRows) >= logicalRows {
-			j.selRows = j.selRows[:logicalRows]
+		if logicalRows <= fakeSelLength {
+			j.selRows = fakeSel[:logicalRows]
 		} else {
-			j.selRows = make([]int, 0, logicalRows)
-			for i := 0; i < logicalRows; i++ {
-				j.selRows = append(j.selRows, i)
+			j.selRows = make([]int, logicalRows)
+			for i := range logicalRows {
+				j.selRows[i] = i
 			}
 		}
 		j.usedRows = j.selRows
@@ -213,7 +214,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.matchedRowsHashValue = make([]uint64, logicalRows)
 	}
-	for i := 0; i < int(j.ctx.partitionNumber); i++ {
+	for i := range int(j.ctx.partitionNumber) {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 	if j.ctx.ProbeFilter != nil {
@@ -229,7 +230,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		} else {
 			j.nullKeyVector = make([]bool, physicalRows)
 		}
-		for i := 0; i < physicalRows; i++ {
+		for i := range physicalRows {
 			j.nullKeyVector[i] = false
 		}
 	}
@@ -238,7 +239,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.serializedKeys = make([][]byte, logicalRows)
 	}
-	for i := 0; i < logicalRows; i++ {
+	for i := range logicalRows {
 		j.serializedKeys[i] = j.serializedKeys[i][:0]
 	}
 	if j.ctx.ProbeFilter != nil {
@@ -259,7 +260,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
 	// spillTriggered can only be set in build stage, so it's ok to get it without lock
 	if j.ctx.spillHelper.isSpillTriggered() && len(j.spillTmpChk) == 0 {
-		for i := 0; i < int(j.ctx.partitionNumber); i++ {
+		for range int(j.ctx.partitionNumber) {
 			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.ctx.spillHelper.probeSpillFieldTypes, spillChunkSize))
 		}
 	}
@@ -304,7 +305,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	}
 
 	j.currentProbeRow = 0
-	for i := 0; i < int(j.ctx.partitionNumber); i++ {
+	for i := range int(j.ctx.partitionNumber) {
 		for index := range j.hashValues[i] {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
 		}
@@ -332,7 +333,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	colNum := chk.NumCols()
 	if j.usedColIdx == nil {
 		j.usedColIdx = make([]int, 0, colNum-2)
-		for i := 0; i < colNum-2; i++ {
+		for i := range colNum - 2 {
 			j.usedColIdx = append(j.usedColIdx, i+2)
 		}
 	}
@@ -344,7 +345,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.selRows = j.selRows[:logicalRows]
 	} else {
 		j.selRows = make([]int, 0, logicalRows)
-		for i := 0; i < logicalRows; i++ {
+		for i := range logicalRows {
 			j.selRows = append(j.selRows, i)
 		}
 	}
@@ -367,7 +368,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.matchedRowsHashValue = make([]uint64, logicalRows)
 	}
 
-	for i := 0; i < int(j.ctx.partitionNumber); i++ {
+	for i := range int(j.ctx.partitionNumber) {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 
@@ -377,7 +378,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.serializedKeys = make([][]byte, logicalRows)
 	}
 
-	for i := 0; i < logicalRows; i++ {
+	for i := range logicalRows {
 		j.serializedKeys[i] = j.serializedKeys[i][:0]
 	}
 
@@ -422,7 +423,7 @@ func (j *baseJoinProbe) SpillRemainingProbeChunks() error {
 		return nil
 	}
 
-	for i := 0; i < int(j.ctx.partitionNumber); i++ {
+	for i := range int(j.ctx.partitionNumber) {
 		if j.spillTmpChk[i].NumRows() > 0 {
 			err := j.ctx.spillHelper.spillProbeChk(int(j.workID), i, j.spillTmpChk[i])
 			if err != nil {
@@ -527,7 +528,7 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		}
 		return
 	}
-	for i := 0; i < j.nextCachedBuildRowIndex; i++ {
+	for i := range j.nextCachedBuildRowIndex {
 		if j.cachedBuildRows[i].buildRowOffset == 0 {
 			j.ctx.hashTableMeta.advanceToRowData(&j.cachedBuildRows[i])
 		}
@@ -561,12 +562,12 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 			currentColumn = chk.Column(indexInDstChk)
 			readNullMapThreadSafe := meta.isReadNullMapThreadSafe(columnIndex)
 			if readNullMapThreadSafe {
-				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
+				for index := range j.nextCachedBuildRowIndex {
 					currentColumn.AppendNullBitmap(!meta.isColumnNull(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), columnIndex))
 					j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, *(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset)
 				}
 			} else {
-				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
+				for index := range j.nextCachedBuildRowIndex {
 					currentColumn.AppendNullBitmap(!meta.isColumnNullThreadSafe(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), columnIndex))
 					j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, *(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset)
 				}
@@ -574,12 +575,12 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		} else {
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
-				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
+				for index := range j.nextCachedBuildRowIndex {
 					size := *(*uint32)(unsafe.Add(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset))
 					j.cachedBuildRows[index].buildRowOffset += sizeOfElementSize + int(size)
 				}
 			} else {
-				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
+				for index := range j.nextCachedBuildRowIndex {
 					j.cachedBuildRows[index].buildRowOffset += meta.columnsSize[columnIndex]
 				}
 			}
@@ -610,22 +611,76 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 	if len(used) == 0 || len(j.offsetAndLengthArray) == 0 {
 		return
 	}
+
+	totalTimes := 0
+	preAllocMemForCol := func(srcCol *chunk.Column, dstCol *chunk.Column) {
+		dataMemTotalLenDelta := int64(0)
+
+		if totalTimes == 0 {
+			for _, offsetAndLength := range j.offsetAndLengthArray {
+				totalTimes += offsetAndLength.length
+			}
+		}
+
+		offsetTotalLenDelta := int64(0)
+		nullBitmapTotalLenDelta := dstCol.CalculateLenDeltaForAppendCellNTimesForNullBitMap(totalTimes)
+		if dstCol.IsFixed() {
+			dataMemTotalLenDelta = dstCol.CalculateLenDeltaForAppendCellNTimesForFixedElem(srcCol, totalTimes)
+		} else {
+			for _, offsetAndLength := range j.offsetAndLengthArray {
+				dataMemTotalLenDelta += dstCol.CalculateLenDeltaForAppendCellNTimesForVarElem(srcCol, offsetAndLength.offset, offsetAndLength.length)
+			}
+			offsetTotalLenDelta = int64(totalTimes)
+		}
+
+		dstCol.Reserve(nullBitmapTotalLenDelta, dataMemTotalLenDelta, offsetTotalLenDelta)
+	}
+
 	if forOtherCondition {
 		usedColumnMap := make(map[int]struct{})
 		for _, colIndex := range used {
 			if _, ok := usedColumnMap[colIndex]; !ok {
 				srcCol := probeChk.Column(colIndex)
 				dstCol := chk.Column(colIndex + collOffset)
+
+				preAllocMemForCol(srcCol, dstCol)
+
+				nullBitmapCapBefore := 0
+				offsetCapBefore := 0
+				dataCapBefore := 0
+				if intest.InTest {
+					nullBitmapCapBefore = dstCol.GetNullBitmapCap()
+					offsetCapBefore = dstCol.GetOffsetCap()
+					dataCapBefore = dstCol.GetDataCap()
+				}
+
 				for _, offsetAndLength := range j.offsetAndLengthArray {
 					dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
 				}
 				usedColumnMap[colIndex] = struct{}{}
+
+				if intest.InTest {
+					if nullBitmapCapBefore != dstCol.GetNullBitmapCap() {
+						panic("Don't reserve enough memory")
+					}
+
+					if offsetCapBefore != dstCol.GetOffsetCap() {
+						panic("Don't reserve enough memory")
+					}
+
+					if dataCapBefore != dstCol.GetDataCap() {
+						panic("Don't reserve enough memory")
+					}
+				}
 			}
 		}
 	} else {
 		for index, colIndex := range used {
 			srcCol := probeChk.Column(colIndex)
 			dstCol := chk.Column(index + collOffset)
+
+			preAllocMemForCol(srcCol, dstCol)
+
 			for _, offsetAndLength := range j.offsetAndLengthArray {
 				dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
 			}
@@ -725,7 +780,7 @@ func commonInitForScanRowTable(base *baseJoinProbe) *rowIter {
 }
 
 // NewJoinProbe create a join probe used for hash join v2
-func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType plannerbase.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
@@ -751,11 +806,11 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 	base.matchedRowsHeaders = make([]taggedPtr, 0, chunk.InitialCapacity)
 	base.matchedRowsHashValue = make([]uint64, 0, chunk.InitialCapacity)
 	base.selRows = make([]int, 0, chunk.InitialCapacity)
-	for i := 0; i < chunk.InitialCapacity; i++ {
+	for i := range chunk.InitialCapacity {
 		base.selRows = append(base.selRows, i)
 	}
 	base.hashValues = make([][]posAndHashValue, ctx.partitionNumber)
-	for i := 0; i < int(ctx.partitionNumber); i++ {
+	for i := range int(ctx.partitionNumber) {
 		base.hashValues[i] = make([]posAndHashValue, 0, chunk.InitialCapacity)
 	}
 	base.serializedKeys = make([][]byte, 0, chunk.InitialCapacity)
@@ -772,23 +827,23 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		base.rowIndexInfos = make([]matchedRowInfo, 0, chunk.InitialCapacity)
 	}
 	switch joinType {
-	case logicalop.InnerJoin:
+	case plannerbase.InnerJoin:
 		return &innerJoinProbe{base}
-	case logicalop.LeftOuterJoin:
+	case plannerbase.LeftOuterJoin:
 		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
-	case logicalop.RightOuterJoin:
+	case plannerbase.RightOuterJoin:
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
-	case logicalop.SemiJoin:
+	case plannerbase.SemiJoin:
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for semi join")
 		}
 		return newSemiJoinProbe(base, !rightAsBuildSide)
-	case logicalop.AntiSemiJoin:
+	case plannerbase.AntiSemiJoin:
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for anti semi join")
 		}
 		return newAntiSemiJoinProbe(base, !rightAsBuildSide)
-	case logicalop.LeftOuterSemiJoin:
+	case plannerbase.LeftOuterSemiJoin:
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for left outer semi join")
 		}
@@ -796,7 +851,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 			return newLeftOuterSemiJoinProbe(base, false)
 		}
 		panic("unsupported join type")
-	case logicalop.AntiLeftOuterSemiJoin:
+	case plannerbase.AntiLeftOuterSemiJoin:
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for left outer anti semi join")
 		}

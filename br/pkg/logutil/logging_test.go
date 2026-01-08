@@ -86,7 +86,7 @@ func TestFiles(t *testing.T) {
 
 	for _, cs := range cases {
 		ranges := make([]*backuppb.File, cs.count)
-		for j := 0; j < cs.count; j++ {
+		for j := range cs.count {
 			ranges[j] = newFile(j)
 		}
 		assertTrimEqual(t, logutil.Files(ranges), cs.expect)
@@ -117,8 +117,8 @@ func TestKeys(t *testing.T) {
 
 	for _, cs := range cases {
 		keys := make([][]byte, cs.count)
-		for j := 0; j < cs.count; j++ {
-			keys[j] = []byte(fmt.Sprintf("%04d", j))
+		for j := range cs.count {
+			keys[j] = fmt.Appendf(nil, "%04d", j)
 		}
 		assertTrimEqual(t, logutil.Keys(keys), cs.expect)
 	}

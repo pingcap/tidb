@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +45,7 @@ func TestDomainSession(t *testing.T) {
 		err := store.Close()
 		require.NoError(t, err)
 	}()
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	ddl.DisableTiFlashPoll(domain.DDL())
@@ -76,7 +77,7 @@ func TestNormalSessionPool(t *testing.T) {
 		err := store.Close()
 		require.NoError(t, err)
 	}()
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
@@ -109,7 +110,7 @@ func TestAbnormalSessionPool(t *testing.T) {
 		err := store.Close()
 		require.NoError(t, err)
 	}()
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
@@ -140,7 +141,7 @@ func TestTetchAllSchemasWithTables(t *testing.T) {
 		err := store.Close()
 		require.NoError(t, err)
 	}()
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
@@ -170,7 +171,7 @@ func TestFetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 		err := store.Close()
 		require.NoError(t, err)
 	}()
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
@@ -194,10 +195,7 @@ func TestFetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 	require.Equal(t, len(dbs), 1003)
 
 	// inject the failpoint
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables", "return()"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/failed-fetch-schemas-with-tables", "return()")
 	dbs, err = domain.FetchAllSchemasWithTables(m)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failpoint: failed to fetch schemas with tables")

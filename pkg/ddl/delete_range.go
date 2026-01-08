@@ -226,7 +226,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 			defer iter.Close()
 
 			txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			for i := 0; i < delBatchSize; i++ {
+			for range delBatchSize {
 				if !iter.Valid() {
 					break
 				}
@@ -288,10 +288,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 		tableIDs := args.AllDroppedTableIDs
 		for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
-			batchEnd := len(tableIDs)
-			if batchEnd > i+batchInsertDeleteRangeSize {
-				batchEnd = i + batchInsertDeleteRangeSize
-			}
+			batchEnd := min(len(tableIDs), i+batchInsertDeleteRangeSize)
 			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, tableIDs[i:batchEnd], ea, "drop schema: table IDs"); err != nil {
 				return errors.Trace(err)
 			}
@@ -552,11 +549,7 @@ func (sdr *sessionDelRangeExecWrapper) AppendParamsList(jobID, elemID int64, sta
 }
 
 func (sdr *sessionDelRangeExecWrapper) ConsumeDeleteRange(ctx context.Context, sql string) error {
-	// set session disk full opt
-	sdr.sctx.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := sdr.sctx.GetSQLExecutor().ExecuteInternal(ctx, sql, sdr.paramsList...)
-	// clear session disk full opt
-	sdr.sctx.GetSessionVars().ClearDiskFullOpt()
 	sdr.paramsList = nil
 	return errors.Trace(err)
 }

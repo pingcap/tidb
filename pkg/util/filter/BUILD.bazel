@@ -9,7 +9,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/filter",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser/mysql",
+        "//pkg/meta/metadef",
+        "//pkg/util/intest",
         "//pkg/util/table-filter",
         "//pkg/util/table-rule-selector",
         "@com_github_pingcap_errors//:errors",
@@ -25,5 +26,8 @@ go_test(
     ],
     embed = [":filter"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "//pkg/parser/ast",
+        "@com_github_stretchr_testify//require",
+    ],
 )

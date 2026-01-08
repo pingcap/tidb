@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -82,13 +83,13 @@ func (s *precheckImplSuite) generateMockData(
 	sizeAndDataAndSuffixFunc func(dbID int, tblID int, fileID int) ([]byte, int, string),
 ) map[string]*mock.DBSourceData {
 	result := make(map[string]*mock.DBSourceData)
-	for dbID := 0; dbID < dbCount; dbID++ {
+	for dbID := range dbCount {
 		dbName := fmt.Sprintf("db%d", dbID+1)
 		tables := make(map[string]*mock.TableSourceData)
-		for tblID := 0; tblID < eachDBTableCount; tblID++ {
+		for tblID := range eachDBTableCount {
 			tblName := fmt.Sprintf("tbl%d", tblID+1)
 			files := []*mock.SourceFile{}
-			for fileID := 0; fileID < eachTableFileCount; fileID++ {
+			for fileID := range eachTableFileCount {
 				fileData, totalSize, suffix := sizeAndDataAndSuffixFunc(dbID, tblID, fileID)
 				mockSrcFile := &mock.SourceFile{
 					FileName:  fmt.Sprintf("/%s/%s/data.%d.%s", dbName, tblName, fileID+1, suffix),
@@ -375,6 +376,9 @@ func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 }
 
 func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("we only support global sort in nextgen kernel, this is for local-sort")
+	}
 	var (
 		err    error
 		ci     precheck.Checker

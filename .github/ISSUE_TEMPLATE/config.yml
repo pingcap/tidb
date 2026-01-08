@@ -1,8 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: TiDB Forum
-    url: https://ask.pingcap.com/
-    about: Ask a question on the TiDB Forum
+  - name: Discord
+    url: https://discord.com/invite/KVRZBR2DrG
+    about: Ask questions and connect with TiDB users on Discord.
+  - name: Slack
+    url: https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap
+    about: Ask questions and connect with TiDB users on Slack.
   - name: TiDB Forum(Chinese)
     url: https://asktug.com/
     about: Ask a question on the TiDB user group (Chinese)

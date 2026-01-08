@@ -7,9 +7,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/parser/ast",
         "//pkg/planner/core/base",
         "//pkg/planner/property",
-        "//pkg/planner/util/optimizetrace",
+        "//pkg/planner/util",
+        "//pkg/planner/util/costusage",
+        "//pkg/table",
         "//pkg/util/execdetails",
+        "//pkg/util/hint",
     ],
 )

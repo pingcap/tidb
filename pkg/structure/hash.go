@@ -17,6 +17,7 @@ package structure
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -42,7 +43,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 // HGet gets the value of a hash field.
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
-	value, err := t.reader.Get(context.TODO(), dataKey)
+	value, err := kv.GetValue(context.TODO(), t.reader, dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
@@ -144,7 +145,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 func (t *TxStructure) HKeys(key []byte) ([][]byte, error) {
 	var keys [][]byte
 	err := t.IterateHash(key, func(field []byte, _ []byte) error {
-		keys = append(keys, append([]byte{}, field...))
+		keys = append(keys, slices.Clone(field))
 		return nil
 	})
 
@@ -156,8 +157,8 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	var res []HashPair
 	err := t.IterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
-			Field: append([]byte{}, field...),
-			Value: append([]byte{}, value...),
+			Field: slices.Clone(field),
+			Value: slices.Clone(value),
 		}
 		res = append(res, pair)
 		return nil
@@ -170,8 +171,8 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
 	return t.IterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
-			Field: append([]byte{}, field...),
-			Value: append([]byte{}, value...),
+			Field: slices.Clone(field),
+			Value: slices.Clone(value),
 		}
 
 		return fn(pair)
@@ -194,8 +195,8 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 	res := make([]HashPair, 0, num)
 	err := t.iterReverseHash(key, func(field []byte, value []byte) (bool, error) {
 		pair := HashPair{
-			Field: append([]byte{}, field...),
-			Value: append([]byte{}, value...),
+			Field: slices.Clone(field),
+			Value: slices.Clone(value),
 		}
 		res = append(res, pair)
 		if len(res) >= num {
@@ -274,6 +275,10 @@ func (t *TxStructure) IterateHashWithBoundedKey(hashStartKey []byte, hashEndKey 
 	for it.Valid() {
 		key, field, err = t.decodeHashDataKey(it.Key())
 		if err != nil {
+			err = it.Next()
+			if err != nil {
+				return errors.Trace(err)
+			}
 			continue
 		}
 		if err = fn(key, field, it.Value()); err != nil {
@@ -396,7 +401,7 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 }
 
 func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
-	v, err := t.reader.Get(context.TODO(), dataKey)
+	v, err := kv.GetValue(context.TODO(), t.reader, dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 		v = nil

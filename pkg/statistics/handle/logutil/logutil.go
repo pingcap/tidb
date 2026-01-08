@@ -27,6 +27,12 @@ func StatsLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("category", "stats"))
 }
 
+// StatsErrVerboseLogger is used to log error messages with verbose details.
+// Do not use it to log the message that is not related to statistics.
+func StatsErrVerboseLogger() *zap.Logger {
+	return logutil.ErrVerboseLogger().With(zap.String("category", "stats"))
+}
+
 var (
 	sampleLoggerFactory = logutil.SampleLoggerFactory(5*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 	// sampleErrVerboseLoggerFactory creates a logger for error messages with a higher

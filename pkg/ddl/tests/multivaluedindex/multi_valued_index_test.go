@@ -29,7 +29,7 @@ func TestCreateMultiValuedIndexHasBinaryCollation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create table test.t (pk varchar(4) primary key clustered, j json, str varchar(255), value int, key idx((cast(j as char(100) array)), str));")
-	is := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.NotNil(t, is)
 
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

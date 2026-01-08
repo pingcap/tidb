@@ -57,8 +57,8 @@ func (m *memBuffer) UpdateFlags(k kv.Key, ops ...kv.FlagsOp) {
 	m.MemBuffer.UpdateFlags(k, getTiKVFlagsOps(ops)...)
 }
 
-func (m *memBuffer) Get(ctx context.Context, key kv.Key) ([]byte, error) {
-	data, err := m.MemBuffer.Get(ctx, key)
+func (m *memBuffer) Get(ctx context.Context, key kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+	data, err := m.MemBuffer.Get(ctx, key, options...)
 	return data, derr.ToTiDBErr(err)
 }
 
@@ -144,8 +144,8 @@ func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 	return data, derr.ToTiDBErr(err)
 }
 
-func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
-	data, err := m.MemBuffer.BatchGet(ctx, keys)
+func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+	data, err := m.MemBuffer.BatchGet(ctx, keys, options...)
 	return data, derr.ToTiDBErr(err)
 }
 
@@ -157,8 +157,8 @@ func newKVGetter(getter tikv.Getter) kv.Getter {
 	return &tikvGetter{Getter: getter}
 }
 
-func (g *tikvGetter) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	data, err := g.Getter.Get(ctx, k)
+func (g *tikvGetter) Get(ctx context.Context, k kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+	data, err := g.Getter.Get(ctx, k, options...)
 	return data, derr.ToTiDBErr(err)
 }
 

@@ -17,6 +17,7 @@ package collate
 import (
 	_ "embed"
 	"encoding/binary"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
@@ -39,21 +40,7 @@ func (*gb18030ChineseCICollator) Clone() Collator {
 
 // Compare implements Collator interface.
 func (*gb18030ChineseCICollator) Compare(a, b string) int {
-	a = truncateTailingSpace(a)
-	b = truncateTailingSpace(b)
-
-	r1, r2 := rune(0), rune(0)
-	ai, bi := 0, 0
-	for ai < len(a) && bi < len(b) {
-		r1, ai = decodeRune(a, ai)
-		r2, bi = decodeRune(b, bi)
-
-		cmp := int(gb18030ChineseCISortKey(r1)) - int(gb18030ChineseCISortKey(r2))
-		if cmp != 0 {
-			return sign(cmp)
-		}
-	}
-	return sign((len(a) - ai) - (len(b) - bi))
+	return compareCommon(a, b, gb18030ChineseCISortKey)
 }
 
 // Key implements Collator interface.
@@ -61,13 +48,27 @@ func (g *gb18030ChineseCICollator) Key(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gb18030ChineseCICollator) ImmutableKey(str string) []byte {
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*gb18030ChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
-	i := 0
+	i, rLen := 0, 0
 	r := rune(0)
 	for i < len(str) {
-		r, i = decodeRune(str, i)
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		r, rLen = utf8.DecodeRuneInString(str[i:])
+		invalid := r == utf8.RuneError && rLen == 1
+		if invalid {
+			return buf
+		}
+
+		i = i + rLen
 		u32 := gb18030ChineseCISortKey(r)
 		if u32 > 0xFFFFFF {
 			buf = append(buf, byte(u32>>24))

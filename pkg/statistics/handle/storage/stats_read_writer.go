@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -310,8 +309,7 @@ func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, pa
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (s *statsReadWriter) LoadNeededHistograms(is infoschema.InfoSchema) (err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-		return LoadNeededHistograms(sctx, is, s.statsHandler, loadFMSketch)
+		return LoadNeededHistograms(sctx, is, s.statsHandler)
 	}, util.FlagWrapTxn)
 	return err
 }
@@ -321,7 +319,7 @@ func (s *statsReadWriter) ReloadExtendedStatistics() error {
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		tables := make([]*statistics.Table, 0, s.statsHandler.Len())
 		for _, tbl := range s.statsHandler.Values() {
-			t, err := ExtendedStatsFromStorage(sctx, tbl.Copy(), tbl.PhysicalID, true)
+			t, err := ExtendedStatsFromStorage(sctx, tbl.CopyAs(statistics.ExtendedStatsWritable), tbl.PhysicalID, true)
 			if err != nil {
 				return err
 			}

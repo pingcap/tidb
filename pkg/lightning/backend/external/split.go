@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -163,8 +164,12 @@ func NewRangeSplitter(
 // Close release the resources of RangeSplitter.
 func (r *RangeSplitter) Close() error {
 	err := r.propIter.Close()
-	r.logger.Info("close range splitter", zap.Error(err))
-	return err
+	if err != nil {
+		r.logger.Error("close range splitter error", zap.Error(err))
+		return err
+	}
+	r.logger.Info("close range splitter")
+	return nil
 }
 
 // SplitOneRangesGroup splits one ranges group may contain multiple range jobs
@@ -247,7 +252,10 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			r.recordRegionSplitAfterNextProp = false
 		}
 
-		if r.curRangeJobSize >= r.rangeJobSize || r.curRangeJobKeyCnt >= r.rangeJobKeyCnt {
+		// each KV need additional memory for 2 slice.
+		// we can enhance it later using SliceLocation.
+		rangeMemSize := r.curRangeJobSize + r.curRangeJobKeyCnt*size.SizeOfSlice*2
+		if rangeMemSize >= r.rangeJobSize || r.curRangeJobKeyCnt >= r.rangeJobKeyCnt {
 			r.curRangeJobSize = 0
 			r.curRangeJobKeyCnt = 0
 			r.recordRangeJobAfterNextProp = true

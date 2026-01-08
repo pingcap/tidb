@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package driver
+package driver_test
 
 import (
 	"context"
@@ -21,12 +21,13 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
 func TestFailBusyServerCop(t *testing.T) {
-	store, _ := createTestStore(t)
+	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)

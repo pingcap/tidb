@@ -19,16 +19,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net/http"
-	"net/http/httptest"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -36,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,6 +84,39 @@ func TestSQLModeVar(t *testing.T) {
 	sqlMode, err = mysql.GetSQLMode(val)
 	require.NoError(t, err)
 	require.Equal(t, sqlMode, vars.SQLMode)
+}
+
+func TestTiDBTraceEventSysVar(t *testing.T) {
+	t.Cleanup(func() {
+		if fr := traceevent.GetFlightRecorder(); fr != nil {
+			fr.Close()
+		}
+	})
+
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiDBTraceEvent)
+
+	if kerneltype.IsClassic() {
+		err := sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["*"], "dump_trigger": {"type": "sampling", "sampling": 1}}`)
+		require.Error(t, err)
+		return
+	}
+
+	err := sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["*"], "dump_trigger": {"type": "sampling", "sampling": 1}}`)
+	require.NoError(t, err)
+	var config traceevent.FlightRecorderConfig
+	config.EnabledCategories = []string{"*"}
+	config.DumpTrigger.Type = "sampling"
+	config.DumpTrigger.Sampling = 1
+	require.Equal(t, traceevent.GetFlightRecorder().Config, &config)
+
+	config.DumpTrigger.Sampling = 10
+	config.EnabledCategories = []string{"general"}
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, `{"enabled_categories": ["general"], "dump_trigger": {"type": "sampling", "sampling": 10}}`))
+	require.Equal(t, traceevent.GetFlightRecorder().Config, &config)
+
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, ""))
+	require.Nil(t, traceevent.GetFlightRecorder())
 }
 
 func TestMaxExecutionTime(t *testing.T) {
@@ -1035,7 +1067,7 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 		val, err = mock.GetGlobalSysVar(vardef.TiDBServerMemoryLimit)
 		require.NoError(t, err)
 		require.Equal(t, "75%", val)
-		require.Equal(t, memory.ServerMemoryLimit.Load(), total/100*75)
+		require.Equal(t, memory.ServerMemoryLimit.Load(), total*75/100)
 	}
 	// Test can't obtain physical memory
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/GetMemTotalError", `return(true)`))
@@ -1489,73 +1521,6 @@ func TestTiDBTiFlashReplicaRead(t *testing.T) {
 	require.Equal(t, vardef.DefTiFlashReplicaRead, val)
 }
 
-func TestSetTiDBCloudStorageURI(t *testing.T) {
-	vars := NewSessionVars(nil)
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-	cloudStorageURI := GetSysVar(vardef.TiDBCloudStorageURI)
-	require.Len(t, vardef.CloudStorageURI.Load(), 0)
-	defer func() {
-		vardef.CloudStorageURI.Store("")
-	}()
-
-	// Default empty
-	require.Len(t, cloudStorageURI.Value, 0)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	// Set to noop
-	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
-	err := mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, noopURI)
-	require.NoError(t, err)
-	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
-	require.NoError(t, err1)
-	require.Equal(t, noopURI, val)
-	require.Equal(t, noopURI, vardef.CloudStorageURI.Load())
-
-	// Set to s3, should fail
-	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, "s3://blackhole")
-	require.Error(t, err, "unreachable storage URI")
-
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	}))
-	defer s.Close()
-
-	// Set to s3, should return uri without variable
-	s3URI := "s3://tiflow-test/?access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
-	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, s3URI)
-	require.NoError(t, err)
-	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
-	require.NoError(t, err1)
-	require.True(t, strings.HasPrefix(val, "s3://tiflow-test/"))
-	require.Contains(t, val, "access-key=xxxxxx")
-	require.Contains(t, val, "secret-access-key=xxxxxx")
-	require.Contains(t, val, "session-token=xxxxxx")
-	require.Equal(t, s3URI, vardef.CloudStorageURI.Load())
-
-	// ks3 is like s3
-	ks3URI := "ks3://tiflow-test/?region=test&access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
-	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, ks3URI)
-	require.NoError(t, err)
-	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
-	require.NoError(t, err1)
-	require.True(t, strings.HasPrefix(val, "ks3://tiflow-test/"))
-	require.Contains(t, val, "access-key=xxxxxx")
-	require.Contains(t, val, "secret-access-key=xxxxxx")
-	require.Contains(t, val, "session-token=xxxxxx")
-	require.Equal(t, ks3URI, vardef.CloudStorageURI.Load())
-
-	// Set to empty, should return no error
-	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, "")
-	require.NoError(t, err)
-	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
-	require.NoError(t, err1)
-	require.Len(t, val, 0)
-	cancel()
-}
-
 func TestGlobalSystemVariableInitialValue(t *testing.T) {
 	vars := []struct {
 		name    string
@@ -1595,7 +1560,12 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBTxnAssertionLevel,
 			vardef.DefTiDBTxnAssertionLevel,
-			vardef.AssertionFastStr,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.AssertionStrictStr
+				}
+				return vardef.AssertionFastStr
+			}(),
 		},
 		{
 			vardef.TiDBEnableMutationChecker,
@@ -1605,12 +1575,17 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBPessimisticTransactionFairLocking,
 			BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking),
-			vardef.On,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.Off
+				}
+				return vardef.On
+			}(),
 		},
 	}
 	for _, v := range vars {
 		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
-		require.Equal(t, v.initVal, initVal)
+		require.Equal(t, v.initVal, initVal, v.name)
 	}
 }
 
@@ -1761,28 +1736,32 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestTiDBCircuitBreakerPDMetadataErrorRateThresholdPct(t *testing.T) {
-	sv := GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct)
+func TestTiDBCircuitBreakerPDMetadataErrorRateThresholdRatio(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio)
 	vars := NewSessionVars(nil)
 
 	// Too low, will get raised to the min value
 	val, err := sv.Validate(vars, "-1", vardef.ScopeGlobal)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatInt(GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct).MinValue, 10), val)
+	require.Equal(t, strconv.FormatInt(GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MinValue, 10), val)
 	warn := vars.StmtCtx.GetWarnings()[0].Err
-	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_pct value: '-1'", warn.Error())
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '-1'", warn.Error())
 
 	// Too high, will get lowered to the max value
-	val, err = sv.Validate(vars, "101", vardef.ScopeGlobal)
+	val, err = sv.Validate(vars, "1.1", vardef.ScopeGlobal)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct).MaxValue, 10), val)
+	require.Equal(t, strconv.FormatUint(GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MaxValue, 10), val)
 	warn = vars.StmtCtx.GetWarnings()[1].Err
-	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_pct value: '101'", warn.Error())
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '1.1'", warn.Error())
 
 	// valid
-	val, err = sv.Validate(vars, "10", vardef.ScopeGlobal)
+	val, err = sv.Validate(vars, "0.9", vardef.ScopeGlobal)
 	require.NoError(t, err)
-	require.Equal(t, "10", val)
+	require.Equal(t, "0.9", val)
+
+	val, err = sv.Validate(vars, "0.0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0.0", val)
 }
 
 func TestEnableWindowFunction(t *testing.T) {
@@ -1830,13 +1809,6 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 		expectError         bool
 	}{
 		{
-			name:                "Both enabled, valid input",
-			autoAnalyze:         true,
-			autoAnalyzePriority: true,
-			input:               "10",
-			expectError:         false,
-		},
-		{
 			name:                "Auto analyze disabled",
 			autoAnalyze:         false,
 			autoAnalyzePriority: true,
@@ -1857,6 +1829,14 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			input:               "10",
 			expectError:         true,
 		},
+		// Last so it ends as its defaults
+		{
+			name:                "Both enabled, valid input",
+			autoAnalyze:         true,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1874,5 +1854,154 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 				require.NoError(t, err)
 			}
 		})
+	}
+}
+
+func TestTiDBOptSelectivityFactor(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.8, val)
+
+	// set valid value
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBOptSelectivityFactor, "0.7"))
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.7, val)
+
+	// set invalid value
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBOptSelectivityFactor, "1.1")
+	require.NoError(t, err)
+	_, err = mock.GetGlobalSysVar(vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
+}
+
+func TestSynonyms(t *testing.T) {
+	sysVar := GetSysVar(vardef.TxnIsolation)
+	require.NotNil(t, sysVar)
+
+	vars := NewSessionVars(nil)
+
+	// It does not permit SERIALIZABLE by default.
+	_, err := sysVar.Validate(vars, "SERIALIZABLE", vardef.ScopeSession)
+	require.Error(t, err)
+	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
+
+	// Enable Skip isolation check
+	require.Nil(t, GetSysVar(vardef.TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"))
+
+	// Serializable is now permitted.
+	_, err = sysVar.Validate(vars, "SERIALIZABLE", vardef.ScopeSession)
+	require.NoError(t, err)
+
+	// Currently TiDB returns a warning because of SERIALIZABLE, but in future
+	// it may also return a warning because TxnIsolation is deprecated.
+
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", warn.Error())
+
+	require.Nil(t, sysVar.SetSessionFromHook(vars, "SERIALIZABLE"))
+
+	// When we set TxnIsolation, it also updates TransactionIsolation.
+	require.Equal(t, "SERIALIZABLE", vars.systems[vardef.TxnIsolation])
+	require.Equal(t, vars.systems[vardef.TxnIsolation], vars.systems[vardef.TransactionIsolation])
+}
+
+func TestScope(t *testing.T) {
+	sv := SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.True(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeGlobal, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.False(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeSession, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.True(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeNone, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.False(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
+	require.True(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeInstance, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.False(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+	require.True(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: vardef.ScopeSession, Name: "mynewsysvar", Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.Error(t, sv.validateScope(vardef.ScopeGlobal))
+}
+
+// TestSkipInitIsUsed ensures that no new variables are added with skipInit: true.
+// This feature is deprecated, and if you need to run code to differentiate between init and "SET" (rare),
+// you can instead check if s.StmtCtx.StmtType == "Set".
+// The reason it is deprecated is that the behavior is typically wrong:
+// it means session settings won't inherit from global and don't apply until you first set
+// them in each session. This is a very weird behavior.
+// See: https://github.com/pingcap/tidb/issues/35051
+func TestSkipInitIsUsed(t *testing.T) {
+	for _, sv := range GetSysVars() {
+		if sv.skipInit {
+			// skipInit only ever applied to session scope, so if anyone is setting it on
+			// a variable without session, that doesn't make sense.
+			require.True(t, sv.HasSessionScope(), fmt.Sprintf("skipInit has no effect on a variable without session scope: %s", sv.Name))
+			// Since SetSession is the "init function" there is no init function to skip.
+			require.NotNil(t, sv.SetSession, fmt.Sprintf("skipInit has no effect on variables without an init (setsession) func: %s", sv.Name))
+			// Skipinit has no use on noop funcs, since noop funcs always skipinit.
+			require.False(t, sv.IsNoop, fmt.Sprintf("skipInit has no effect on noop variables: %s", sv.Name))
+
+			// Test for variables that have a default of "0" or "OFF"
+			// If it is session-only scoped there is likely no bug now.
+			// If it is also global-scoped, then there is a bug as soon as the global changes.
+			if !(sv.Name == vardef.RandSeed1 || sv.Name == vardef.RandSeed2) {
+				// The bug is because the tests might not realize the SetSession func was not called on init,
+				// because it would initialize some session field to the empty value anyway.
+				require.NotEqual(t, "0", sv.Value, fmt.Sprintf("default value is zero: %s", sv.Name))
+				require.NotEqual(t, "OFF", sv.Value, fmt.Sprintf("default value is OFF: %s", sv.Name))
+			}
+
+			// Many of these variables might allow skipInit to be removed,
+			// they need to be checked first. The purpose of this test is to make
+			// sure we don't introduce any new variables with skipInit, which seems
+			// to be a problem.
+			switch sv.Name {
+			case vardef.TiDBSnapshot,
+				vardef.TiDBEnableChunkRPC,
+				vardef.TxnIsolationOneShot,
+				vardef.TiDBDDLReorgPriority,
+				vardef.TiDBSlowQueryFile,
+				vardef.TiDBWaitSplitRegionFinish,
+				vardef.TiDBWaitSplitRegionTimeout,
+				vardef.TiDBMetricSchemaStep,
+				vardef.TiDBMetricSchemaRangeDuration,
+				vardef.RandSeed1,
+				vardef.RandSeed2,
+				vardef.CollationDatabase,
+				vardef.CollationConnection,
+				vardef.CharsetDatabase,
+				vardef.CharacterSetConnection,
+				vardef.CharacterSetServer,
+				vardef.TiDBOptTiFlashConcurrencyFactor,
+				vardef.TiDBOptSeekFactor:
+				continue
+			}
+			require.Equal(t, false, sv.skipInit, fmt.Sprintf("skipInit should not be set on new system variables. variable %s is in violation", sv.Name))
+		}
 	}
 }

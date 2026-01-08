@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/printer"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -299,14 +299,17 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		storage.ExtractQueryParameters(storageURL, &cfg.S3)
 	case "gs", "gcs":
 		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
+
+	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
+	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
 	case "hdfs":
-		if sem.IsEnabled() {
+		if semv1.IsEnabled() {
 			// Storage is not permitted to be hdfs when SEM is enabled.
 			b.err = plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
 			return nil
 		}
 	case "local", "file", "":
-		if sem.IsEnabled() {
+		if semv1.IsEnabled() {
 			// Storage is not permitted to be local when SEM is enabled.
 			b.err = plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
 			return nil
@@ -815,7 +818,7 @@ func (gs *tidbGlueSession) Close() {
 	CloseSession(gs.se)
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
@@ -828,6 +831,38 @@ func (gs *tidbGlueSession) GetGlobalSysVar(name string) (string, error) {
 // GetSessionCtx implements glue.Glue
 func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
+}
+
+// AlterTableMode implements glue.Session.
+func (gs *tidbGlueSession) AlterTableMode(
+	_ context.Context,
+	schemaID int64,
+	tableID int64,
+	tableMode model.TableMode) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("ALTER TABLE MODE SCHEMA_ID=%d TABLE_ID=%d TO %s", schemaID, tableID, tableMode.String()))
+	args := &model.AlterTableModeArgs{
+		SchemaID:  schemaID,
+		TableID:   tableID,
+		TableMode: tableMode,
+	}
+	return d.AlterTableMode(gs.se, args)
+}
+
+// RefreshMeta implements glue.Session.
+func (gs *tidbGlueSession) RefreshMeta(
+	_ context.Context,
+	args *model.RefreshMetaArgs) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("REFRESH META SCHEMA_ID=%d TABLE_ID=%d INVOLVED_DB=%s INVOLVED_TABLE=%s",
+			args.SchemaID, args.TableID, args.InvolvedDB, args.InvolvedTable))
+	return d.RefreshMeta(gs.se, args)
 }
 
 func restoreQuery(stmt *ast.BRIEStmt) string {

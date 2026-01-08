@@ -149,7 +149,7 @@ func TestKVReadWrite(t *testing.T) {
 	kvCnt := rand.Intn(10) + 10
 	keys := make([][]byte, kvCnt)
 	values := make([][]byte, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		randLen := rand.Intn(10) + 1
 		keys[i] = make([]byte, randLen)
 		rand.Read(keys[i])
@@ -164,15 +164,15 @@ func TestKVReadWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test", memStore, 0, bufSize)
 	require.NoError(t, err)
-	for i := 0; i < kvCnt; i++ {
-		key, value, err := kvReader.nextKV()
+	for i := range kvCnt {
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, keys[i], key)
 		require.Equal(t, values[i], value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 
 	require.NoError(t, kvReader.Close())

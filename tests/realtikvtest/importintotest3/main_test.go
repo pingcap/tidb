@@ -19,11 +19,11 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -50,6 +50,7 @@ func TestImportInto(t *testing.T) {
 
 func (s *mockGCSSuite) SetupSuite() {
 	s.Require().True(*realtikvtest.WithRealTiKV)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	testutil.ReduceCheckInterval(s.T())
 	var err error
 	opt := fakestorage.Options{
@@ -75,13 +76,17 @@ func (s *mockGCSSuite) cleanupSysTables() {
 }
 
 func (s *mockGCSSuite) prepareAndUseDB(db string) {
-	s.tk.MustExec("drop database if exists " + db)
-	s.tk.MustExec("create database " + db)
-	s.tk.MustExec("use " + db)
+	prepareAndUseDB(db, s.tk)
+}
+
+func prepareAndUseDB(db string, tk *testkit.TestKit) {
+	tk.MustExec("drop database if exists " + db)
+	tk.MustExec("create database " + db)
+	tk.MustExec("use " + db)
 }
 
 func init() {
-	testutils.UpdateTiDBConfig()
+	realtikvtest.UpdateTiDBConfig()
 }
 
 func TestMain(m *testing.M) {

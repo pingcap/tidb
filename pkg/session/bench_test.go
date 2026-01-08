@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -46,7 +46,7 @@ import (
 var smallCount = 100
 var bigCount = 10000
 
-func prepareBenchSession() (sessiontypes.Session, *domain.Domain, kv.Storage) {
+func prepareBenchSession() (sessionapi.Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
 		cfg.Instance.EnableSlowLog.Store(false)
 	})
@@ -68,32 +68,32 @@ func prepareBenchSession() (sessiontypes.Session, *domain.Domain, kv.Storage) {
 	return se, domain, store
 }
 
-func prepareBenchData(se sessiontypes.Session, colType string, valueFormat string, valueCount int) {
+func prepareBenchData(se sessionapi.Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s, index idx (col))", colType))
 	mustExecute(se, "begin")
-	for i := 0; i < valueCount; i++ {
+	for i := range valueCount {
 		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
 	}
 	mustExecute(se, "commit")
 }
 
-func prepareNonclusteredBenchData(se sessiontypes.Session, colType string, valueFormat string, valueCount int) {
+func prepareNonclusteredBenchData(se sessionapi.Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key /*T![clustered_index] NONCLUSTERED */ auto_increment, col %s, index idx (col))", colType))
 	mustExecute(se, "begin")
-	for i := 0; i < valueCount; i++ {
+	for i := range valueCount {
 		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
 	}
 	mustExecute(se, "commit")
 }
 
-func prepareSortBenchData(se sessiontypes.Session, colType string, valueFormat string, valueCount int) {
+func prepareSortBenchData(se sessionapi.Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
 	mustExecute(se, "begin")
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for i := 0; i < valueCount; i++ {
+	for i := range valueCount {
 		if i%1000 == 0 {
 			mustExecute(se, "commit")
 			mustExecute(se, "begin")
@@ -103,11 +103,11 @@ func prepareSortBenchData(se sessiontypes.Session, colType string, valueFormat s
 	mustExecute(se, "commit")
 }
 
-func prepareJoinBenchData(se sessiontypes.Session, colType string, valueFormat string, valueCount int) {
+func prepareJoinBenchData(se sessionapi.Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
 	mustExecute(se, "begin")
-	for i := 0; i < valueCount; i++ {
+	for i := range valueCount {
 		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
 	}
 	mustExecute(se, "commit")
@@ -128,7 +128,7 @@ func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
 	rs.Close()
 }
 
-func hasPlan(ctx context.Context, b *testing.B, se sessiontypes.Session, plan string) {
+func hasPlan(ctx context.Context, b *testing.B, se sessionapi.Session, plan string) {
 	find := false
 	rs, err := se.Execute(ctx, "explain select * from t where col = 'hello 64'")
 	if err != nil {
@@ -1661,7 +1661,7 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	var build strings.Builder
 	build.WriteString(`create table t (id int, dt date) partition by range columns (dt) (`)
 	start := time.Date(2020, 5, 15, 0, 0, 0, 0, time.UTC)
-	for i := 0; i < 1023; i++ {
+	for i := range 1023 {
 		start = start.Add(24 * time.Hour)
 		fmt.Fprintf(&build, "partition p%d values less than ('%s'),\n", i, start.Format(time.DateOnly))
 	}
@@ -1766,9 +1766,9 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 	mustExecute(se, `set @@tmp_table_size = 1000000000`)
 	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		mustExecute(se, "begin")
-		for lines := 0; lines < 100; lines++ {
+		for range 100 {
 			mustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
 		}
 		mustExecute(se, "commit")
@@ -1962,9 +1962,9 @@ func BenchmarkPipelinedSimpleInsert(b *testing.B) {
 	}()
 	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
-	for i := 0; i < batchNum; i++ {
+	for range batchNum {
 		mustExecute(se, "begin")
-		for lines := 0; lines < batchSize; lines++ {
+		for range batchSize {
 			mustExecute(se, "insert into src values (42, repeat('x', 512))")
 		}
 		mustExecute(se, "commit")
@@ -1992,9 +1992,9 @@ func BenchmarkPipelinedInsertIgnoreNoDuplicates(b *testing.B) {
 	}()
 	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
-	for i := 0; i < batchNum; i++ {
+	for range batchNum {
 		mustExecute(se, "begin")
-		for lines := 0; lines < batchSize; lines++ {
+		for range batchSize {
 			mustExecute(se, "insert into src values (42, repeat('x', 512))")
 		}
 		mustExecute(se, "commit")
@@ -2021,9 +2021,9 @@ func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
 	}()
 	mustExecute(se, `create table tmp (id int, dt varchar(512), unique key k1(id))`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
-	for i := 0; i < batchNum; i++ {
+	for i := range batchNum {
 		mustExecute(se, "begin")
-		for lines := 0; lines < batchSize; lines++ {
+		for lines := range batchSize {
 			mustExecute(se,
 				fmt.Sprintf(
 					"insert into src values (%d, repeat('x', 512))",
@@ -2055,9 +2055,9 @@ func BenchmarkPipelinedDelete(b *testing.B) {
 	}()
 	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
-	for i := 0; i < batchNum; i++ {
+	for range batchNum {
 		mustExecute(se, "begin")
-		for lines := 0; lines < batchSize; lines++ {
+		for range batchSize {
 			mustExecute(se, "insert into src values (42, repeat('x', 512))")
 		}
 		mustExecute(se, "commit")
@@ -2089,9 +2089,9 @@ func BenchmarkPipelinedReplaceNoDuplicates(b *testing.B) {
 	}()
 	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
-	for i := 0; i < batchNum; i++ {
+	for range batchNum {
 		mustExecute(se, "begin")
-		for lines := 0; lines < batchSize; lines++ {
+		for range batchSize {
 			mustExecute(se, "insert into src values (42, repeat('x', 512))")
 		}
 		mustExecute(se, "commit")
@@ -2117,9 +2117,9 @@ func BenchmarkPipelinedUpdate(b *testing.B) {
 		st.Close()
 	}()
 	mustExecute(se, `create table src (id int, dt varchar(128))`)
-	for i := 0; i < batchNum; i++ {
+	for range batchNum {
 		mustExecute(se, "begin")
-		for lines := 0; lines < batchSize; lines++ {
+		for range batchSize {
 			mustExecute(se, "insert into src values (42, repeat('x', 128))")
 		}
 		mustExecute(se, "commit")

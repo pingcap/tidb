@@ -4,7 +4,7 @@
     "cases": [
       // Test normal non-correlated scalar sub query.
       {
-        "SQL": "explain format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a = (select a from t2 limit 1)",
         "IsExplainAnalyze": false,
         "HasErr": false
       },
@@ -15,7 +15,7 @@
       },
       // Test EXISTS non-correlated scalar sub query.
       {
-        "SQL": "explain format = 'brief' select * from t1 where exists(select 1 from t2 where a = 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where a = 1)",
         "IsExplainAnalyze": false,
         "HasErr": false
       },
@@ -25,7 +25,7 @@
         "HasErr": false
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where not exists(select 1 from t2 where a = 1)",
         "IsExplainAnalyze": false,
         "HasErr": false
       },
@@ -36,7 +36,7 @@
       },
       // Test with constant propagation.
       {
-        "SQL": "explain format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "SQL": "explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
         "IsExplainAnalyze": false,
         "HasErr": false
       },
@@ -47,12 +47,52 @@
       },
       // Test multiple returns.
       {
-        "SQL": "explain format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
         "IsExplainAnalyze": false,
         "HasErr": false
       },
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "IsExplainAnalyze": true,
+        "HasErr": false
+      }
+    ]
+  },
+  {
+    "name": "TestSubqueryInExplainAnalyze",
+    "cases": [
+      {
+        "SQL": "explain analyze select *,(select a from t2 limit 1) from t1 where a = (select a from t2 limit 1)",
+        "IsExplainAnalyze": true,
+        "HasErr": false
+      },
+      {
+        "SQL": "explain analyze select a, (select max(b) from t2 where t2.a ) as max_b, (select count(*) from t3 where t3.a) as count_t3 from t1",
+        "IsExplainAnalyze": true,
+        "HasErr": false
+      },
+      {
+        "SQL": "explain analyze select * from t1 where a = (select a from t2 where b = (select b from t3 where c = (select c from t4 where a = 1)))",
+        "IsExplainAnalyze": true,
+        "HasErr": false
+      },
+      {
+        "SQL": "explain analyze with cte1 as (select a, b from t1 where c > (select avg(c) from t2)), cte2 as (select a, b from t2 where a in (select a from t3 where b > 20)) select cte1.*, cte2.* from cte1 join cte2 on cte1.a = cte2.a",
+        "IsExplainAnalyze": true,
+        "HasErr": false
+      },
+      {
+        "SQL": "explain analyze select * from t1 where a > (select count(*) from t2) and b < (select max(b) from t3) and c = (select avg(c) from t4)",
+        "IsExplainAnalyze": true,
+        "HasErr": false
+      },
+      {
+        "SQL": "explain analyze select * from t1 where a + (select max(a) from t2) > (select avg(b) from t3)",
+        "IsExplainAnalyze": true,
+        "HasErr": false
+      },
+      {
+        "SQL": "explain analyze select * from t1 where a > (select a from t2 where b = (select b from t3 where c = (select c from t4 where aa = 255))) and b < (select bb from t2 where cc = (select dd from t3 where ee = (select ff from t4 where gg = 32767)))",
         "IsExplainAnalyze": true,
         "HasErr": false
       }

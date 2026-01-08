@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_golangci_golangci_lint//pkg/result",
+        "@com_github_golangci_golangci_lint_v2//pkg/result",
         "@com_github_golangci_gosec//:gosec",
         "@com_github_golangci_gosec//rules",
         "@org_golang_x_tools//go/analysis",

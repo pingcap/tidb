@@ -28,11 +28,14 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -41,6 +44,18 @@ import (
 	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
+
+// getKeyspaceAwareKey uses the store codec to encode keys properly in NextGen mode
+// This ensures compatibility with keyspace encoding
+func getKeyspaceAwareKey(store kv.Storage, key []byte) []byte {
+	if !kerneltype.IsNextGen() || store == nil {
+		return key
+	}
+
+	// Use the store's codec to encode the key - single source of truth
+	codec := store.GetCodec()
+	return codec.EncodeKey(key)
+}
 
 func TestHotRegion(t *testing.T) {
 	store := createMockStore(t)
@@ -150,9 +165,16 @@ func createMockStore(t *testing.T) (store helper.Storage) {
 	server := mockPDHTTPServer()
 
 	pdAddrs := []string{"invalid_pd_address", server.URL[len("http://"):]}
-	s, err := mockstore.NewMockStore(
+
+	// Get keyspace-aware region boundary by creating a temp store to access codec
+	tempStore, err := teststore.NewMockStoreWithoutBootstrap()
+	require.NoError(t, err)
+	xKey := getKeyspaceAwareKey(tempStore, []byte("x"))
+	tempStore.Close()
+
+	s, err := teststore.NewMockStoreWithoutBootstrap(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
+			mockstore.BootstrapWithMultiRegions(c, xKey)
 		}),
 		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("store-helper-test", pdAddrs)),
 		mockstore.WithPDAddr(pdAddrs),

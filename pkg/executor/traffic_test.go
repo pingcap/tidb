@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -175,7 +176,7 @@ func TestCapturePath(t *testing.T) {
 	handlers := make([]*mockHTTPHandler, 0, tiproxyNum)
 	servers := make([]*http.Server, 0, tiproxyNum)
 	ports := make([]int, 0, tiproxyNum)
-	for i := 0; i < tiproxyNum; i++ {
+	for range tiproxyNum {
 		httpHandler := &mockHTTPHandler{t: t, httpOK: true}
 		handlers = append(handlers, httpHandler)
 		server, port := runServer(t, httpHandler)
@@ -197,7 +198,7 @@ func TestCapturePath(t *testing.T) {
 
 	paths := make([]string, 0, tiproxyNum)
 	expectedPaths := make([]string, 0, tiproxyNum)
-	for i := 0; i < tiproxyNum; i++ {
+	for i := range tiproxyNum {
 		httpHandler := handlers[i]
 		output := httpHandler.getForm().Get("output")
 		require.True(t, strings.HasPrefix(output, prefix), output)
@@ -214,7 +215,7 @@ func TestReplayPath(t *testing.T) {
 	handlers := make([]*mockHTTPHandler, 0, tiproxyNum)
 	servers := make([]*http.Server, 0, tiproxyNum)
 	ports := make([]int, 0, tiproxyNum)
-	for i := 0; i < tiproxyNum; i++ {
+	for range tiproxyNum {
 		httpHandler := &mockHTTPHandler{t: t, httpOK: true}
 		handlers = append(handlers, httpHandler)
 		server, port := runServer(t, httpHandler)
@@ -266,7 +267,7 @@ func TestReplayPath(t *testing.T) {
 		store.paths = test.paths
 		suite := newTrafficTestSuite(t, 10)
 		exec := suite.build(ctx, fmt.Sprintf("traffic replay from '%s?%s' user='root'", prefix, suffix))
-		for j := 0; j < tiproxyNum; j++ {
+		for j := range tiproxyNum {
 			handlers[j].reset()
 		}
 		err := exec.Next(ctx, nil)
@@ -284,7 +285,7 @@ func TestReplayPath(t *testing.T) {
 		}
 
 		formPaths := make([]string, 0, len(test.formPaths))
-		for j := 0; j < tiproxyNum; j++ {
+		for j := range tiproxyNum {
 			httpHandler := handlers[j]
 			if httpHandler.getMethod() != "" {
 				form := httpHandler.getForm()
@@ -308,7 +309,7 @@ func TestTrafficShow(t *testing.T) {
 	handlers := make([]*mockHTTPHandler, 0, 2)
 	servers := make([]*http.Server, 0, 2)
 	ports := make([]int, 0, 2)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		httpHandler := &mockHTTPHandler{t: t, httpOK: true}
 		handlers = append(handlers, httpHandler)
 		server, port := runServer(t, httpHandler)
@@ -387,7 +388,7 @@ func TestTrafficShow(t *testing.T) {
 		executor := suite.build(ctx, "show traffic jobs")
 		require.NoError(t, executor.Open(ctx), "case %d", i)
 		chk := chunk.New(fields, 2, 2)
-		for j := 0; j < len(test.chks); j++ {
+		for j := range test.chks {
 			require.NoError(t, executor.Next(ctx, chk), "case %d, %d", i, j)
 			require.Equal(t, test.chks[j], chk.ToString(fields), "case %d, %d", i, j)
 		}
@@ -466,7 +467,7 @@ func TestTrafficPrivilege(t *testing.T) {
 		chk := chunk.New(fields, 2, 2)
 		jobs := make([]string, 0, 2)
 		require.NoError(t, exec.Next(ctx, chk))
-		for j := 0; j < chk.NumRows(); j++ {
+		for j := range chk.NumRows() {
 			jobs = append(jobs, chk.Column(3).GetString(j))
 		}
 		sort.Strings(jobs)
@@ -485,9 +486,9 @@ func newTrafficTestSuite(t *testing.T, chunkSize int) *trafficTestSuite {
 	parser := parser.New()
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().MaxChunkSize = chunkSize
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
-	execBuilder := NewMockExecutorBuilderForTest(sctx, is)
+	execBuilder := NewMockExecutorBuilderForTest(sctx, is, nil)
 	return &trafficTestSuite{
 		t:           t,
 		parser:      parser,

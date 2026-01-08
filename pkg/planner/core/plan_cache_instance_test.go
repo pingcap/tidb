@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +45,7 @@ func _miss(t *testing.T, pc sessionctx.InstancePlanCache, testKey, statsHash int
 }
 
 func TestInstancePlanCacheBasic(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -124,7 +125,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 }
 
 func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -188,7 +189,7 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 }
 
 func TestInstancePlanCacheEvictAll(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -209,7 +210,7 @@ func TestInstancePlanCacheEvictAll(t *testing.T) {
 }
 
 func TestInstancePlanCacheConcurrentRead(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -217,8 +218,8 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 
 	pc := NewInstancePlanCache(300, 100000)
 	var flag [100][100]bool
-	for k := 0; k < 100; k++ {
-		for statsHash := 0; statsHash < 100; statsHash++ {
+	for k := range 100 {
+		for statsHash := range 100 {
 			if rand.Intn(10) < 7 {
 				_put(pc, int64(k), 1, int64(statsHash))
 				flag[k][statsHash] = true
@@ -227,11 +228,11 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 10000; i++ {
+			for range 10000 {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if flag[k][statsHash] {
 					_hit(t, pc, k, statsHash)
@@ -246,7 +247,7 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 }
 
 func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -254,11 +255,11 @@ func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
 	var flag [100][100]atomic.Bool
 	pc := NewInstancePlanCache(300, 100000)
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ { // writers
+	for range 5 { // writers
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 1000; i++ {
+			for range 1000 {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if _put(pc, int64(k), 1, int64(statsHash)) {
 					flag[k][statsHash].Store(true)
@@ -267,11 +268,11 @@ func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
 			}
 		}()
 	}
-	for i := 0; i < 5; i++ { // readers
+	for range 5 { // readers
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 2000; i++ {
+			for range 2000 {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if flag[k][statsHash].Load() {
 					_hit(t, pc, k, statsHash)

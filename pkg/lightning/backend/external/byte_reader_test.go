@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/errors"
@@ -214,17 +214,19 @@ func TestSwitchMode(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	st := storage.NewMemStorage()
 	// Prepare
+	var kvAndStat [2]string
 	ctx := context.Background()
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
+		SetOnCloseFunc(func(summary *WriterSummary) { kvAndStat = summary.MultipleFilesStats[0].Filenames[0] }).
 		BuildOneFile(st, "/test", "0")
 
 	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 	kvCnt := 1000000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
 		_, err := rand.Read(kvs[i].Key)
@@ -244,9 +246,9 @@ func TestSwitchMode(t *testing.T) {
 	require.NoError(t, err)
 	pool := membuf.NewPool()
 	ConcurrentReaderBufferSizePerConc = rand.Intn(100) + 1
-	kvReader, err := newKVReader(context.Background(), "/test/0/one-file", st, 0, 64*1024)
+	kvReader, err := NewKVReader(context.Background(), kvAndStat[0], st, 0, 64*1024)
 	require.NoError(t, err)
-	kvReader.byteReader.enableConcurrentRead(st, "/test/0/one-file", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
+	kvReader.byteReader.enableConcurrentRead(st, kvAndStat[0], 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
 	modeUseCon := false
 	i := 0
 	for {
@@ -259,7 +261,7 @@ func TestSwitchMode(t *testing.T) {
 				modeUseCon = true
 			}
 		}
-		key, val, err := kvReader.nextKV()
+		key, val, err := kvReader.NextKV()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
@@ -278,12 +280,16 @@ func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*sto
 	err := backend.CreateBucket("test")
 	require.NoError(t, err)
 
-	config := aws.NewConfig()
-	config.WithEndpoint(ts.URL)
-	config.WithRegion("region")
-	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
-	config.WithS3ForcePathStyle(true) // Removes need for subdomain
-	svc := s3.New(session.New(), config)
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("region"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("dummy-access", "dummy-secret", "")),
+	)
+	require.NoError(t, err)
+
+	svc := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+		o.UsePathStyle = true // Removes need for subdomain
+	})
 
 	st := storage.NewS3StorageForTest(svc, &backuppb.S3{
 		Region:       "region",
@@ -292,6 +298,6 @@ func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*sto
 		Acl:          "acl",
 		Sse:          "sse",
 		StorageClass: "sc",
-	})
+	}, nil)
 	return st, ts.Close
 }

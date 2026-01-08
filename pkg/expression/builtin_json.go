@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	goJSON "encoding/json"
+	"fmt"
+	"hash/crc32"
 	"strconv"
 	"strings"
 
@@ -35,6 +37,7 @@ import (
 
 var (
 	_ functionClass = &jsonTypeFunctionClass{}
+	_ functionClass = &jsonSumCRC32FunctionClass{}
 	_ functionClass = &jsonExtractFunctionClass{}
 	_ functionClass = &jsonUnquoteFunctionClass{}
 	_ functionClass = &jsonQuoteFunctionClass{}
@@ -64,6 +67,7 @@ var (
 	_ functionClass = &jsonLengthFunctionClass{}
 
 	_ builtinFunc = &builtinJSONTypeSig{}
+	_ builtinFunc = &builtinJSONSumCRC32Sig{}
 	_ builtinFunc = &builtinJSONQuoteSig{}
 	_ builtinFunc = &builtinJSONUnquoteSig{}
 	_ builtinFunc = &builtinJSONArraySig{}
@@ -139,7 +143,7 @@ func verifyJSONArgsType(ctx EvalContext, funcName string, useJSONErr bool, args 
 	if jsonArgsIndex == nil {
 		// if no index is specified, verify all args
 		jsonArgsIndex = make([]int, len(args))
-		for i := 0; i < len(args); i++ {
+		for i := range args {
 			jsonArgsIndex[i] = i
 		}
 	}
@@ -178,6 +182,112 @@ func (b *builtinJSONTypeSig) evalString(ctx EvalContext, row chunk.Row) (val str
 		return "", isNull, err
 	}
 	return j.Type(), false, nil
+}
+
+type jsonSumCRC32FunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (c *jsonSumCRC32FunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+
+	if args[0].GetType(ctx).EvalType() != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
+	}
+
+	return nil
+}
+
+func (c *jsonSumCRC32FunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
+		return nil, err
+	}
+	arrayType := c.tp.ArrayType()
+	switch arrayType.GetType() {
+	case mysql.TypeYear, mysql.TypeJSON, mysql.TypeFloat, mysql.TypeNewDecimal:
+		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating json_sum_crc32 on array of %s", arrayType.String()))
+	}
+	if arrayType.EvalType() == types.ETString && arrayType.GetCharset() != charset.CharsetUTF8MB4 && arrayType.GetCharset() != charset.CharsetBin {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("unsupported charset")
+	}
+	if arrayType.EvalType() == types.ETString && arrayType.GetFlen() == types.UnspecifiedLength {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("calculating json_sum_crc32 on array of char/binary BLOBs with unspecified length")
+	}
+
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	if err != nil {
+		return nil, err
+	}
+	sig = &builtinJSONSumCRC32Sig{bf}
+	return sig, nil
+}
+
+type builtinJSONSumCRC32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONSumCRC32Sig) Clone() builtinFunc {
+	newSig := &builtinJSONSumCRC32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalJSON(ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	if val.TypeCode != types.JSONTypeCodeArray {
+		return 0, false, ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
+	}
+
+	ft := b.tp.ArrayType()
+	f := convertJSON2Tp(ft.EvalType())
+	if f == nil {
+		return 0, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
+	}
+
+	var sum int64
+	for i := range val.GetElemCount() {
+		item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
+		if err != nil {
+			if ErrInvalidJSONForFuncIndex.Equal(err) {
+				err = errors.Errorf("Invalid JSON value for CAST to type %s", ft.CompactStr())
+			}
+			return 0, false, err
+		}
+		sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
+	}
+
+	return sum, false, err
+}
+
+// BuildJSONSumCrc32FunctionWithCheck builds a JSON_SUM_CRC32 ScalarFunction from the Expression and return error if any.
+// The logic is almost the same as build CAST function, except that the return type is fixed to bigint.
+func BuildJSONSumCrc32FunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
+	argType := expr.GetType(ctx.GetEvalCtx())
+	// If source argument's nullable, then target type should be nullable
+	if !mysql.HasNotNullFlag(argType.GetFlag()) {
+		tp.DelFlag(mysql.NotNullFlag)
+	}
+	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
+
+	if tp.EvalType() != types.ETJson || !tp.IsArray() {
+		return nil, errors.Errorf("json_sum_crc32 can only built on JSON array, got type %s", tp.EvalType())
+	}
+
+	fc := &jsonSumCRC32FunctionClass{baseFunctionClass{ast.JSONSumCrc32, 1, 1}, tp}
+	f, err := fc.getFunction(ctx, []Expression{expr})
+	return &ScalarFunction{
+		FuncName: ast.NewCIStr(ast.JSONSumCrc32),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Function: f,
+	}, err
 }
 
 type jsonExtractFunctionClass struct {
@@ -866,7 +976,7 @@ func (b *builtinJSONMemberOfSig) evalInt(ctx EvalContext, row chunk.Row) (res in
 	}
 
 	elemCount := obj.GetElemCount()
-	for i := 0; i < elemCount; i++ {
+	for i := range elemCount {
 		if types.CompareBinaryJSON(obj.ArrayGetElem(i), target) == 0 {
 			return 1, false, nil
 		}

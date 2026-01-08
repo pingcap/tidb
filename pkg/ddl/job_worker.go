@@ -35,9 +35,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -48,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	kvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -56,8 +60,6 @@ import (
 var (
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = atomicutil.NewInt32(0)
-	// backfillContextID is used for generating the next backfill context ID.
-	backfillContextID = atomicutil.NewInt32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 
@@ -127,16 +129,24 @@ func (c *jobContext) initStepCtx() {
 	}
 }
 
-func (c *jobContext) cleanStepCtx() {
+func (c *jobContext) cleanStepCtx(cause error) {
 	// reorgTimeoutOccurred indicates whether the current reorg process
 	// was temporarily exit due to a timeout condition. When set to true,
 	// it prevents premature cleanup of step context.
-	if c.reorgTimeoutOccurred {
+	if cause == context.Canceled && c.reorgTimeoutOccurred {
 		c.reorgTimeoutOccurred = false // reset flag
 		return
 	}
-	c.stepCtxCancel(context.Canceled)
+	if c.stepCtxCancel != nil {
+		c.stepCtxCancel(cause)
+	}
 	c.stepCtx = nil // unset stepCtx for the next step initialization
+}
+
+// genReorgTimeoutErr generates a reorganization timeout error.
+func (c *jobContext) genReorgTimeoutErr() error {
+	c.reorgTimeoutOccurred = true
+	return dbterror.ErrWaitReorgTimeout
 }
 
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
@@ -161,6 +171,8 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
+	// backgroundWorker is the worker that can use auto-scaled tidb-workers in next-gen.
+	backgroundWorker workerType = 2
 )
 
 // worker is used for handling DDL jobs.
@@ -195,6 +207,11 @@ type ReorgContext struct {
 
 	resourceGroupName string
 	cloudStorageURI   string
+	analyzeDone       chan error
+	// analyzeStartTime records when the analyze for a job was started.
+	analyzeStartTime time.Time
+	// analyzeCumulativeTimeout stores the computed cumulative timeout for analyze
+	analyzeCumulativeTimeout time.Duration
 }
 
 // NewReorgContext returns a new ddl job context.
@@ -229,6 +246,8 @@ func (w *worker) typeStr() string {
 		str = "general"
 	case addIdxWorker:
 		str = "add index"
+	case backgroundWorker:
+		str = "background"
 	default:
 		str = "unknown"
 	}
@@ -293,6 +312,8 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err er
 
 // updateDDLJob updates the DDL job information.
 func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs bool) error {
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.updateDDLJob")
+	defer r.End()
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
@@ -308,7 +329,7 @@ func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs 
 
 // registerMDLInfo registers metadata lock info.
 func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
-	if !vardef.EnableMDL.Load() {
+	if !vardef.IsMDLEnabled() {
 		return nil
 	}
 	if ver == 0 {
@@ -324,7 +345,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	ownerID := w.ownerManager.ID()
 	ids := rows[0].GetString(0)
 	var sql string
-	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+	if metadef.IsSystemRelatedDB(strings.ToLower(job.SchemaName)) {
 		// DDLs that modify system tables could only happen in upgrade process,
 		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
 		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
@@ -539,7 +560,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 		return txn, err
 	}
 	// Only general DDLs are allowed to be executed when TiKV is disk full.
-	if w.tp == addIdxWorker && job.IsRunning() {
+	if w.tp != generalWorker && job.IsRunning() {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
 	w.setDDLLabelForTopSQL(job.ID, job.Query)
@@ -564,6 +585,9 @@ func (w *worker) transitOneJobStep(
 	jobW *model.JobW,
 ) (int64, error) {
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.transitOneJobStep")
+	defer r.End()
+
 	job := jobW.Job
 	txn, err := w.prepareTxn(job)
 	if err != nil {
@@ -702,7 +726,7 @@ func (w *ReorgContext) getResourceGroupTaggerForTopSQL() *kv.ResourceGroupTagBui
 	}
 
 	digest := w.cacheDigest
-	return kv.NewResourceGroupTagBuilder().SetSQLDigest(digest)
+	return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(digest)
 }
 
 func (w *ReorgContext) ddlJobSourceType() string {
@@ -728,7 +752,7 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 
 	logger := jobCtx.logger
 	// Load global DDL variables.
-	if err1 := loadDDLVars(w); err1 != nil {
+	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	errorCount := vardef.GetDDLErrorCountLimit()
@@ -755,7 +779,7 @@ func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) er
 	logger.Warn("run DDL job error", zap.Error(err))
 
 	// Load global DDL variables.
-	if err1 := loadDDLVars(w); err1 != nil {
+	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	// Check error limit to avoid falling into an infinite loop.
@@ -811,6 +835,9 @@ func (w *worker) runOneJobStep(
 			w.countForPanic(jobCtx, job)
 		}, false)
 
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.runOneJobStep")
+	defer r.End()
+
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
@@ -843,6 +870,14 @@ func (w *worker) runOneJobStep(
 
 	// It would be better to do the positive check, but no idea to list all valid states here now.
 	if job.IsRollingback() {
+		if jobCtx.stepCtx != nil && jobCtx.stepCtx.Err() == nil {
+			// If the job switched to rolling back immediately after a reorg step
+			// timed out, the step context may still be active and hold reorg
+			// resources (workers, tickers, goroutines). Clean the step context
+			// explicitly to release those resources and avoid leaks before we
+			// continue rollback processing.
+			jobCtx.cleanStepCtx(dbterror.ErrCancelledDDLJob)
+		}
 		// when rolling back, we use worker context to process.
 		jobCtx.stepCtx = w.workCtx
 	} else {
@@ -854,7 +889,7 @@ func (w *worker) runOneJobStep(
 			defer close(stopCheckingJobCancelled)
 
 			jobCtx.initStepCtx()
-			defer jobCtx.cleanStepCtx()
+			defer jobCtx.cleanStepCtx(context.Canceled)
 			w.wg.Run(func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()
@@ -893,12 +928,6 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateDone, model.JobStateSynced:
 							return
-						case model.JobStateRunning:
-							if latestJob.IsAlterable() {
-								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
-								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
-								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
-							}
 						}
 					}
 				}
@@ -907,12 +936,15 @@ func (w *worker) runOneJobStep(
 	}
 	// When upgrading from a version where the ReorgMeta fields did not exist in the DDL job information,
 	// the unmarshalled job will have a nil value for the ReorgMeta field.
-	if w.tp == addIdxWorker && job.ReorgMeta == nil {
+	if (w.tp == addIdxWorker || w.tp == backgroundWorker) && job.ReorgMeta == nil {
 		job.ReorgMeta = &model.DDLReorgMeta{}
 	}
 
 	prevState := job.State
 
+	if traceevent.IsEnabled(tracing.DDLJob) {
+		traceevent.TraceEvent(jobCtx.ctx, tracing.DDLJob, "runDDLJob callback", zap.String("ActionType", job.Type.String()))
+	}
 	// For every type, `schema/table` modification and `job` modification are conducted
 	// in the one kv transaction. The `schema/table` modification can be always discarded
 	// by kv reset when meets an unhandled error, but the `job` modification can't.
@@ -1046,11 +1078,16 @@ func (w *worker) runOneJobStep(
 		ver, err = onDropCheckConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
+	case model.ActionRefreshMeta:
+		ver, err = onRefreshMeta(jobCtx, job)
+	case model.ActionAlterTableAffinity:
+		ver, err = onAlterTableAffinity(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
+	job.LastSchemaVersion = ver
 
 	// there are too many job types, instead let every job type output its own
 	// updateRawArgs, we try to use these rules as a generalization:
@@ -1070,7 +1107,9 @@ func (w *worker) runOneJobStep(
 	return ver, updateRawArgs, err
 }
 
-func loadDDLVars(w *worker) error {
+// loadGlobalVars loads global variables from system table
+// and store in vardef if possible.
+func (w *worker) loadGlobalVars(varName ...string) error {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.Get()
@@ -1078,7 +1117,7 @@ func loadDDLVars(w *worker) error {
 		return errors.Trace(err)
 	}
 	defer w.sessPool.Put(ctx)
-	return util.LoadDDLVars(ctx)
+	return util.LoadGlobalVars(ctx, varName...)
 }
 
 func toTError(err error) *terror.Error {
@@ -1119,7 +1158,7 @@ func updateGlobalVersionAndWaitSynced(
 	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if vardef.EnableMDL.Load() {
+		if vardef.IsMDLEnabled() {
 			return err
 		}
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
@@ -1138,7 +1177,7 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 	}
 
 	affects := make([]*model.AffectedOption, len(oldIDs))
-	for i := 0; i < len(oldIDs); i++ {
+	for i := range oldIDs {
 		affects[i] = &model.AffectedOption{
 			OldTableID: oldIDs[i],
 			TableID:    newIDs[i],

@@ -20,6 +20,7 @@ go_library(
         "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/owner",
         "//pkg/parser/ast",

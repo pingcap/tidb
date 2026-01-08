@@ -507,6 +507,7 @@ func (op *DataSource) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
+	h.HashInt64(int64(op.PhysicalTableID))
 	h.HashInt64(int64(op.PreferStoreType))
 	h.HashBool(op.IsForUpdateRead)
 }
@@ -547,6 +548,9 @@ func (op *DataSource) Equals(other any) bool {
 		if !one.Equals(op2.AllConds[i]) {
 			return false
 		}
+	}
+	if op.PhysicalTableID != op2.PhysicalTableID {
+		return false
 	}
 	if op.PreferStoreType != op2.PreferStoreType {
 		return false
@@ -1055,6 +1059,39 @@ func (op *LogicalWindow) Equals(other any) bool {
 		}
 	}
 	if !op.Frame.Equals(op2.Frame) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
+func (op *LogicalLock) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeLock)
+	op.BaseLogicalPlan.Hash64(h)
+	if op.Lock == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		op.Lock.Hash64(h)
+	}
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalLock pointer.
+func (op *LogicalLock) Equals(other any) bool {
+	op2, ok := other.(*LogicalLock)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.BaseLogicalPlan.Equals(&op2.BaseLogicalPlan) {
+		return false
+	}
+	if !op.Lock.Equals(op2.Lock) {
 		return false
 	}
 	return true

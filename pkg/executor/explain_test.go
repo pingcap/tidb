@@ -195,7 +195,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	// testSuite1 use default mockstore which is unistore
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t_unistore_act_rows")
 	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
 	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
@@ -349,7 +349,7 @@ func TestTotalTimeCases(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 bigint, c2 int, c3 int, c4 int, primary key(c1, c2), index (c3));")
 	lineNum := 1000
-	for i := 0; i < lineNum; i++ {
+	for i := range lineNum {
 		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d, %d);", i, i+1, i+2, i+3))
 	}
 	tk.MustExec("analyze table t1")
@@ -360,7 +360,7 @@ func TestTotalTimeCases(t *testing.T) {
 	require.True(t, len(rows) == 11)
 
 	// Line3 is tikv_task, others should be all walltime
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		if i != 3 {
 			require.True(t, strings.HasPrefix(rows[i][5].(string), "time:"))
 		}
@@ -372,7 +372,7 @@ func TestTotalTimeCases(t *testing.T) {
 	require.True(t, len(rows) == 11)
 	// Line0-2 is walltime, Line3 is tikv_task, Line9 Line10 are special, they are total time in integration environment, while
 	// walltime in uts due to only one IndexLookUp executor is actually open, others should be all total_time.
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		if i == 9 || i == 10 {
 			continue
 		}
@@ -527,4 +527,26 @@ func TestExplainImportFromSelect(t *testing.T) {
 	require.Contains(t, rs[0][0], "ImportInto")
 	require.Contains(t, rs[1][0], "TableReader")
 	require.Contains(t, rs[2][0], "TableFullScan")
+}
+
+func TestExplainFormatPlanTree(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, index idx(a))")
+
+	// Test the new plan_tree format
+	rows := testKit.MustQuery("explain format='plan_tree' select * from t where a = 5").Rows()
+
+	// Test that each row has exactly 4 columns
+	for i, row := range rows {
+		require.Equal(t, 4, len(row), "Row %d should have 4 columns", i)
+	}
+
+	// Test that explain analyze format='plan_tree' fails with an error message
+	err := testKit.ExecToErr("explain analyze format='plan_tree' select * from t")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "plan_tree")
 }

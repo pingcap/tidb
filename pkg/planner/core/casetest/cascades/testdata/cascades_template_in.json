@@ -1,0 +1,9 @@
+[
+  {
+    "name": "TestCascadesTemplate",
+    "cases": [
+      "select count(1) from t group by a, b",
+      "select a+b from t where b > 2"
+    ]
+  }
+]

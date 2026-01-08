@@ -15,6 +15,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"unsafe"
 
@@ -40,6 +41,41 @@ const (
 	CurrLatestColumnInfoVersion = ColumnInfoVersion2
 )
 
+const (
+	// changingColumnPrefix the prefix is used to initialize new column name created in modify column.
+	// The new name will be like "_Col$_<old_column_name>_n".
+	// TODO(joechenrh): using name to distinguish different stage of the column seems not to be a good
+	// idea, we can add new flag in FieldType to make it more clear later.
+	changingColumnPrefix = "_Col$_"
+
+	// removingObjPrefix the prefix is used to initialize the removing column/index name created in modify column.
+	removingObjPrefix = "_Tombstone$_"
+)
+
+// GenUniqueChangingColumnName generates a unique changing column name for modifying column.
+func GenUniqueChangingColumnName(tblInfo *TableInfo, oldCol *ColumnInfo) string {
+	// Check whether the new column name is used.
+	columnNameMap := make(map[string]bool, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		columnNameMap[col.Name.L] = true
+	}
+	suffix := 0
+	newColumnName := fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
+	for columnNameMap[strings.ToLower(newColumnName)] {
+		suffix++
+		newColumnName = fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
+	}
+	return newColumnName
+}
+
+// GenRemovingObjName gets the removing object name with the prefix.
+func GenRemovingObjName(name string) string {
+	if strings.HasPrefix(name, removingObjPrefix) {
+		return name
+	}
+	return fmt.Sprintf("%s%s", removingObjPrefix, name)
+}
+
 // ChangeStateInfo is used for recording the information of schema changing.
 type ChangeStateInfo struct {
 	// DependencyColumnOffset is the changing column offset that the current column depends on when executing modify/change column.
@@ -61,8 +97,10 @@ type ColumnInfo struct {
 	GeneratedStored     bool                `json:"generated_stored"`
 	Dependences         map[string]struct{} `json:"dependences"`
 	FieldType           types.FieldType     `json:"type"`
-	State               SchemaState         `json:"state"`
-	Comment             string              `json:"comment"`
+	// ChangingFieldType is used to store the new type of modify column.
+	ChangingFieldType *types.FieldType `json:"changing_type,omitempty"`
+	State             SchemaState      `json:"state"`
+	Comment           string           `json:"comment"`
 	// A hidden column is used internally(expression index) and are not accessible by users.
 	Hidden           bool `json:"hidden"`
 	*ChangeStateInfo `json:"change_state_info"`
@@ -72,11 +110,6 @@ type ColumnInfo struct {
 	// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
 	//              This will fix bug in version 0. For compatibility with version 0, we add version field in column info struct.
 	Version uint64 `json:"version"`
-}
-
-// IsVirtualGenerated checks the column if it is virtual.
-func (c *ColumnInfo) IsVirtualGenerated() bool {
-	return c.IsGenerated() && !c.GeneratedStored
 }
 
 // Clone clones ColumnInfo.
@@ -178,9 +211,39 @@ func (c *ColumnInfo) SetElems(elems []string) {
 	c.FieldType.SetElems(elems)
 }
 
-// IsGenerated returns true if the column is generated column.
+// IsGenerated checks if the column is a generated column.
 func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
+}
+
+// IsVirtualGenerated checks if the column is a virtual generated column.
+func (c *ColumnInfo) IsVirtualGenerated() bool {
+	return c.IsGenerated() && !c.GeneratedStored
+}
+
+// IsChanging checks if the column is a new column added in modify column.
+func (c *ColumnInfo) IsChanging() bool {
+	return strings.HasPrefix(c.Name.O, changingColumnPrefix)
+}
+
+// IsRemoving checks if the column is a column to be removed used in modify column.
+func (c *ColumnInfo) IsRemoving() bool {
+	return strings.HasPrefix(c.Name.O, removingObjPrefix)
+}
+
+// GetRemovingOriginName gets the origin name of the removing column.
+func (c *ColumnInfo) GetRemovingOriginName() string {
+	return strings.TrimPrefix(c.Name.O, removingObjPrefix)
+}
+
+// GetChangingOriginName gets the origin name of the changing column.
+func (c *ColumnInfo) GetChangingOriginName() string {
+	columnName := strings.TrimPrefix(c.Name.O, changingColumnPrefix)
+	var pos int
+	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
+		return columnName
+	}
+	return columnName[:pos]
 }
 
 // SetOriginDefaultValue sets the origin default value.

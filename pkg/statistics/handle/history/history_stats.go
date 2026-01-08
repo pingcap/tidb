@@ -109,7 +109,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 				return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, tableID)
 			}, handleutil.FlagWrapTxn)
 			if err != nil {
-				statslogutil.StatsLogger().Error("record historical stats meta failed",
+				statslogutil.StatsLogger().Warn("record historical stats meta failed",
 					zap.Uint64("version", version),
 					zap.String("source", source),
 					zap.Int64("tableID", tableID),

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -149,8 +148,6 @@ type IndicatorsJSON struct {
 // We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
 // Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
-	owner.Listener
-
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
 
@@ -192,6 +189,10 @@ type StatsAnalyze interface {
 
 	// GetPriorityQueueSnapshot returns the stats priority queue.
 	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
+
+	// ClosePriorityQueue closes the stats priority queue if initialized.
+	// NOTE: This does NOT stop the analyze worker. Only the priority queue is closed.
+	ClosePriorityQueue()
 
 	// Close closes the analyze worker.
 	Close()
@@ -507,20 +508,14 @@ type StatsHandle interface {
 	// TableInfoGetter is used to get table meta info.
 	handleutil.TableInfoGetter
 
-	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
+	// GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
+	// physicalTableID can be a table ID or partition ID.
+	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
 
-	// GetTableStatsForAutoAnalyze retrieves the statistics table from cache, but it will not return pseudo.
-	GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table
-
-	// GetPartitionStats retrieves the partition stats from cache.
-	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
-
-	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
-	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
-
-	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
-	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table
+	// GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
+	// physicalTableID can be a table ID or partition ID.
+	// Note: this function may return nil if the table is not found in the cache.
+	GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool)
 
 	// StatsGC is used to do the GC job.
 	StatsGC

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -39,7 +40,10 @@ import (
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
 func TestSyncerSimple(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled in next-gen TiDB")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -57,7 +61,7 @@ func TestSyncerSimple(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	syncers := make([]schemaver.Syncer, 0, 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		id := strconv.Itoa(i + 1)
 		schemaVerSyncer := schemaver.NewEtcdSyncer(cli, id)
 		require.NoError(t, schemaVerSyncer.Init(ctx))
@@ -104,7 +108,8 @@ func TestSyncerSimple(t *testing.T) {
 
 	// for CheckAllVersions
 	childCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-	require.Error(t, syncers[0].WaitVersionSynced(childCtx, 0, currentVer))
+	_, err2 := syncers[0].WaitVersionSynced(childCtx, 0, currentVer, false)
+	require.Error(t, err2)
 	cancel()
 
 	// for UpdateSelfVersion
@@ -114,15 +119,19 @@ func TestSyncerSimple(t *testing.T) {
 	childCtx, cancel = context.WithTimeout(ctx, minInterval)
 	defer cancel()
 	err := syncers[1].UpdateSelfVersion(childCtx, 0, currentVer)
-	require.True(t, isTimeoutError(err))
+	require.True(t, isTimeoutError(err), err)
 
 	// for CheckAllVersions
-	require.NoError(t, syncers[0].WaitVersionSynced(context.Background(), 0, currentVer-1))
-	require.NoError(t, syncers[0].WaitVersionSynced(context.Background(), 0, currentVer))
+	syncSummary, err2 := syncers[0].WaitVersionSynced(context.Background(), 0, currentVer-1, false)
+	require.NoError(t, err2)
+	require.Equal(t, &schemaver.SyncSummary{ServerCount: 2}, syncSummary)
+	syncSummary, err2 = syncers[0].WaitVersionSynced(context.Background(), 0, currentVer, false)
+	require.NoError(t, err2)
+	require.Equal(t, &schemaver.SyncSummary{ServerCount: 2}, syncSummary)
 
 	childCtx, cancel = context.WithTimeout(ctx, minInterval)
 	defer cancel()
-	err = syncers[0].WaitVersionSynced(childCtx, 0, currentVer)
+	_, err = syncers[0].WaitVersionSynced(childCtx, 0, currentVer, false)
 	require.True(t, isTimeoutError(err))
 
 	// for Close
@@ -175,7 +184,7 @@ func TestPutKVToEtcdMono(t *testing.T) {
 	require.NoError(t, err)
 
 	eg := util.NewErrorGroupWithRecover()
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		eg.Go(func() error {
 			err := util2.PutKVToEtcdMono(ctx, cli, 1, "testKey", strconv.Itoa(5))
 			return err
@@ -185,7 +194,7 @@ func TestPutKVToEtcdMono(t *testing.T) {
 	require.Error(t, eg.Wait())
 
 	eg = util.NewErrorGroupWithRecover()
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		eg.Go(func() error {
 			err := util2.PutKVToEtcd(ctx, cli, 1, "testKey", strconv.Itoa(5))
 			return err

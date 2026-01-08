@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -127,7 +127,7 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 		{[]any{1}, []any{1, 1}, false},
 		{[]any{nil}, []any{1}, false},
 	}
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	base := exec.NewBaseExecutor(ctx, nil, 0)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()

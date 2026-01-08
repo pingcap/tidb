@@ -136,7 +136,7 @@ func (j *NonPartitionedTableAnalysisJob) ValidateAndPrepare(
 			j.failureHook(j, needRetry)
 		}
 	}
-	is := sctx.GetDomainInfoSchema()
+	is := sctx.GetLatestInfoSchema()
 	tableInfo, ok := is.TableInfoByID(j.TableID)
 	if !ok {
 		callFailureHook(false)

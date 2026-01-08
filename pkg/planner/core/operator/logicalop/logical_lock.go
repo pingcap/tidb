@@ -18,18 +18,15 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
-	BaseLogicalPlan
+	BaseLogicalPlan `hash64-equals:"true"`
 
-	Lock         *ast.SelectLockInfo
+	Lock         *ast.SelectLockInfo `hash64-equals:"true"`
 	TblID2Handle map[int64][]util.HandleCols
 
 	// tblID2phyTblIDCol is used for partitioned tables,
@@ -51,14 +48,14 @@ func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
 // PredicatePushDown inherits BaseLogicalPlan.LogicalPlan.<1st> implementation.
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	var err error
 	if !IsSupportedSelectLockType(p.Lock.LockType) {
 		// when use .baseLogicalPlan to call the PruneColumns, it means current plan itself has
 		// nothing to pruning or plan change, so they resort to its children's column pruning logic.
 		// so for the returned logical plan here, p is definitely determined, we just need to collect
 		// those extra deeper call error in handling children's column pruning.
-		_, err = p.BaseLogicalPlan.PruneColumns(parentUsedCols, opt)
+		_, err = p.BaseLogicalPlan.PruneColumns(parentUsedCols)
 		if err != nil {
 			return nil, err
 		}
@@ -76,7 +73,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
 	}
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
+	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -88,13 +85,13 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
-func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
 	if topN != nil {
-		p.Children()[0] = p.Children()[0].PushDownTopN(topN, opt)
+		p.Children()[0] = p.Children()[0].PushDownTopN(topN)
 	}
 	return p.Self()
 }
@@ -114,11 +111,6 @@ func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalLock(p, prop)
-}
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
 

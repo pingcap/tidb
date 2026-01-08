@@ -12,19 +12,19 @@ insert into t values (1, 3);
 analyze table t all columns;
 
 --echo # TestGlobalIndexJoin
-explain format='brief' select * from p inner join t on p.id = t.id;
+explain format='plan_tree' select * from p inner join t on p.id = t.id;
 select * from p inner join t on p.id = t.id;
 
-explain format='brief' select * from p inner join t on p.id = t.id;
+explain format='plan_tree' select * from p inner join t on p.id = t.id;
 select p.id from p inner join t on p.id = t.id;
 
 --echo # TestGlobalIndexJoinSpecifiedPartition
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid1)/
-explain format='brief' select * from p partition(p1) inner join t on p.id = t.id;
+explain format='plan_tree' select * from p partition(p1) inner join t on p.id = t.id;
 select * from p partition(p1) inner join t on p.id = t.id;
 
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid1)/
-explain format='brief' select p.id from p partition(p1) inner join t on p.id = t.id;
+explain format='plan_tree' select p.id from p partition(p1) inner join t on p.id = t.id;
 select p.id from p partition(p1) inner join t on p.id = t.id;
 
 --echo # Prepare tables with clustered index
@@ -40,18 +40,18 @@ insert into t values (1, 3);
 analyze table t all columns;
 
 --echo # TestGlobalIndexJoinForClusteredIndex
-explain format='brief' select * from p inner join t on p.id = t.id;
+explain format='plan_tree' select * from p inner join t on p.id = t.id;
 select * from p inner join t on p.id = t.id;
 
-explain format='brief' select * from p inner join t on p.id = t.id;
+explain format='plan_tree' select * from p inner join t on p.id = t.id;
 select p.id from p inner join t on p.id = t.id;
 
 --echo # TestGlobalIndexJoinForClusteredSpecifiedPartition
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid1)/
-explain format='brief' select * from p partition(p1) inner join t on p.id = t.id;
+explain format='plan_tree' select * from p partition(p1) inner join t on p.id = t.id;
 select * from p partition(p1) inner join t on p.id = t.id;
 
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid1)/
-explain format='brief' select p.id from p partition(p1) inner join t on p.id = t.id;
+explain format='plan_tree' select p.id from p partition(p1) inner join t on p.id = t.id;
 select p.id from p partition(p1) inner join t on p.id = t.id;
 

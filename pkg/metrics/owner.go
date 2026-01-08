@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -36,7 +37,7 @@ var (
 
 // InitOwnerMetrics initializes owner metrics.
 func InitOwnerMetrics() {
-	NewSessionHistogram = NewHistogramVec(
+	NewSessionHistogram = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "owner",
@@ -45,7 +46,7 @@ func InitOwnerMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 0.5ms ~ 1048s
 		}, []string{LblType, LblResult})
 
-	WatchOwnerCounter = NewCounterVec(
+	WatchOwnerCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "owner",
@@ -53,7 +54,7 @@ func InitOwnerMetrics() {
 			Help:      "Counter of watch owner.",
 		}, []string{LblType, LblResult})
 
-	CampaignOwnerCounter = NewCounterVec(
+	CampaignOwnerCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "owner",

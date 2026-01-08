@@ -23,6 +23,7 @@ go_test(
     ],
     embed = [":parse"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/parser/mysql",
         "//pkg/server/internal/handshake",

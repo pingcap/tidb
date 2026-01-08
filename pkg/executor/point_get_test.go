@@ -50,7 +50,7 @@ func TestSelectCheckVisibility(t *testing.T) {
 	ts := txn.StartTS()
 	sessionStore := tk.Session().GetStore().(tikv.Storage)
 	// Update gc safe time for check data visibility.
-	sessionStore.UpdateSPCache(ts+1, time.Now())
+	sessionStore.UpdateTxnSafePointCache(ts+1, time.Now())
 	checkSelectResultError := func(sql string, expectErr *terror.Error) {
 		re, err := tk.Exec(sql)
 		require.NoError(t, err)
@@ -60,15 +60,15 @@ func TestSelectCheckVisibility(t *testing.T) {
 		require.True(t, expectErr.Equal(err))
 	}
 	// Test point get.
-	checkSelectResultError("select * from t where a='1'", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a='1'", storeerr.ErrTxnAbortedByGC)
 	// Test batch point get.
-	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrTxnAbortedByGC)
 	// Test Index look up read.
-	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrTxnAbortedByGC)
 	// Test Index read.
-	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrTxnAbortedByGC)
 	// Test table read.
-	checkSelectResultError("select * from t", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t", storeerr.ErrTxnAbortedByGC)
 }
 
 func TestReturnValues(t *testing.T) {
@@ -229,7 +229,7 @@ func TestPartitionMemCacheReadLock(t *testing.T) {
 }
 
 func TestPointGetLockExistKey(t *testing.T) {
-	testLock := func(rc bool, key string, tableName string) {
+	testLock := func(t *testing.T, rc bool, key string, tableName string) {
 		store := testkit.CreateMockStore(t)
 		tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
 
@@ -336,9 +336,11 @@ func TestPointGetLockExistKey(t *testing.T) {
 		{rc: true, key: "unique key"},
 	} {
 		tableName := fmt.Sprintf("t_%d", i)
-		func(rc bool, key string, tableName string) {
-			testLock(rc, key, tableName)
-		}(one.rc, one.key, tableName)
+		t.Run(tableName, func(t *testing.T) {
+			func(rc bool, key string, tableName string) {
+				testLock(t, rc, key, tableName)
+			}(one.rc, one.key, tableName)
+		})
 	}
 }
 

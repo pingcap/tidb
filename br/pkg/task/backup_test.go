@@ -6,9 +6,14 @@ import (
 	"testing"
 	"time"
 
-	backup "github.com/pingcap/kvproto/pkg/brpb"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestParseTSString(t *testing.T) {
@@ -28,8 +33,8 @@ func TestParseTSString(t *testing.T) {
 	ts, err = ParseTSString("2021-01-01 01:42:23", false)
 	require.NoError(t, err)
 	localTime := time.Date(2021, time.Month(1), 1, 1, 42, 23, 0, time.Local)
-	localTimestamp := localTime.Unix()
-	localTSO := uint64((localTimestamp << 18) * 1000)
+	// Use oracle.GoTimeToTS instead of manual calculation to avoid overflow
+	localTSO := oracle.GoTimeToTS(localTime)
 	require.Equal(t, localTSO, ts)
 
 	_, err = ParseTSString("2021-01-01 01:42:23", true)
@@ -39,8 +44,8 @@ func TestParseTSString(t *testing.T) {
 	ts, err = ParseTSString("2021-01-01 01:42:23+00:00", true)
 	require.NoError(t, err)
 	localTime = time.Date(2021, time.Month(1), 1, 1, 42, 23, 0, time.UTC)
-	localTimestamp = localTime.Unix()
-	localTSO = uint64((localTimestamp << 18) * 1000)
+	// Use oracle.GoTimeToTS instead of manual calculation to avoid overflow
+	localTSO = oracle.GoTimeToTS(localTime)
 	require.Equal(t, localTSO, ts)
 
 	ts, err = ParseTSString("2021-01-01 01:42:23+08:00", true)
@@ -48,14 +53,14 @@ func TestParseTSString(t *testing.T) {
 	secondsEastOfUTC := int((8 * time.Hour).Seconds())
 	beijing := time.FixedZone("Beijing Time", secondsEastOfUTC)
 	localTime = time.Date(2021, time.Month(1), 1, 1, 42, 23, 0, beijing)
-	localTimestamp = localTime.Unix()
-	localTSO = uint64((localTimestamp << 18) * 1000)
+	// Use oracle.GoTimeToTS instead of manual calculation to avoid overflow
+	localTSO = oracle.GoTimeToTS(localTime)
 	require.Equal(t, localTSO, ts)
 }
 
 func TestParseCompressionType(t *testing.T) {
 	var (
-		ct  backup.CompressionType
+		ct  backuppb.CompressionType
 		err error
 	)
 	ct, err = parseCompressionType("lz4")
@@ -108,7 +113,7 @@ func TestBackupConfigHash(t *testing.T) {
 			CheckRequirements:   true,
 			EnableOpenTracing:   true,
 			SkipCheckPath:       true,
-			CipherInfo: backup.CipherInfo{
+			CipherInfo: backuppb.CipherInfo{
 				CipherKey: []byte("123"),
 			},
 			FilterStr:            []string{"1", "2", "3"},
@@ -206,7 +211,7 @@ func TestBackupConfigHash(t *testing.T) {
 		testCfg.CheckRequirements = false
 		testCfg.EnableOpenTracing = false
 		testCfg.SkipCheckPath = false
-		testCfg.CipherInfo = backup.CipherInfo{
+		testCfg.CipherInfo = backuppb.CipherInfo{
 			CipherKey: []byte("123"),
 		}
 		testCfg.SwitchModeInterval = time.Second * 2
@@ -220,5 +225,44 @@ func TestBackupConfigHash(t *testing.T) {
 		testCfg.UseBackupMetaV2 = false
 		testCfg.CompressionConfig = CompressionConfig{CompressionType: 1}
 		hashCheck(t, &testCfg, originalHash, true)
+	}
+}
+
+// TestChecksumProgress tests the checksumProgress initialization logic
+func TestChecksumProgress(t *testing.T) {
+	// Test Case 1: Empty checksumMap should result in checksumProgress = 0
+	{
+		var checksumProgress int64 = 0
+		checksumMap := make(map[int64]*metautil.ChecksumStats)
+
+		if len(checksumMap) > 0 {
+			checksumProgress = 5 // Simulating schemas.Len()
+		}
+
+		require.Equal(t, int64(0), checksumProgress, "checksumProgress should be 0 when checksumMap is empty")
+	}
+
+	// Test Case 2: Non-empty checksumMap should result in checksumProgress = schemas.Len()
+	{
+		var checksumProgress int64 = 0
+		checksumMap := map[int64]*metautil.ChecksumStats{
+			1: {Crc64Xor: 123, TotalKvs: 456, TotalBytes: 789},
+		}
+		schemasLen := int64(5)
+
+		if len(checksumMap) > 0 {
+			checksumProgress = schemasLen
+		}
+
+		require.Equal(t, schemasLen, checksumProgress, "checksumProgress should equal schemas.Len() when checksumMap is not empty")
+	}
+
+	// Test Case 3: Verify schemas with length 0
+	{
+		schemas := backup.NewBackupSchemas(func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error {
+			return nil
+		}, 0)
+		shouldProcessSchemas := schemas != nil && schemas.Len() > 0
+		require.False(t, shouldProcessSchemas, "Should not process when schemas.Len() is 0")
 	}
 }

@@ -75,10 +75,6 @@ type columnList struct {
 	allocColumns []*Column
 }
 
-func (cList *columnList) add(col *Column) {
-	cList.freeColumns = append(cList.freeColumns, col)
-}
-
 // columnList Len Get the number of elements in the list
 func (cList *columnList) Len() int {
 	return len(cList.freeColumns) + len(cList.allocColumns)
@@ -227,11 +223,6 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 		l.push(col)
 	}
 }
-
-// freeList is defined as a map, rather than a list, because when recycling chunk
-// columns, there could be duplicated one: some of the chunk columns are just the
-// reference to the others.
-type freeList map[*Column]struct{}
 
 func (cList *columnList) empty() bool {
 	return len(cList.freeColumns) == 0

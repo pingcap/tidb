@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
@@ -75,11 +76,11 @@ func TestIndexMergePathGeneration(t *testing.T) {
 	var input, output []string
 	indexMergeSuiteData.LoadTestCases(t, &input, &output)
 	ctx := context.TODO()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockView()})
 
 	parser := parser.New()
 
@@ -89,7 +90,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		err = Preprocess(context.Background(), sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
-		sctx := MockContext()
+		sctx := coretestsdk.MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, nodeW)
 		if err != nil {

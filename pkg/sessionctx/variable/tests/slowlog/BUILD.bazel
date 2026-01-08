@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "slowlog_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "slow_log_test.go",
+    ],
+    flaky = True,
+    shard_count = 9,
+    deps = [
+        "//pkg/executor",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/slowlogrule",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/execdetails",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

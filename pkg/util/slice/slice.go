@@ -14,28 +14,38 @@
 
 package slice
 
-import "reflect"
-
-// AnyOf returns true if any element in the slice matches the predict func.
-func AnyOf(s any, p func(int) bool) bool {
-	l := reflect.ValueOf(s).Len()
-	for i := range l {
-		if p(i) {
-			return true
-		}
-	}
-	return false
-}
-
-// NoneOf returns true if no element in the slice matches the predict func.
-func NoneOf(s any, p func(int) bool) bool {
-	return !AnyOf(s, p)
-}
+import (
+	"slices"
+	"strconv"
+)
 
 // AllOf returns true if all elements in the slice match the predict func.
-func AllOf(s any, p func(int) bool) bool {
-	np := func(i int) bool {
-		return !p(i)
+func AllOf[T any](s []T, p func(T) bool) bool {
+	// Use the inverse of ContainsFunc with negated predicate
+	// AllOf(s, p) is equivalent to !ContainsFunc(s, !p)
+	return !slices.ContainsFunc(s, func(x T) bool {
+		return !p(x)
+	})
+}
+
+// Int64sToStrings converts a slice of int64 to a slice of string.
+func Int64sToStrings(ints []int64) []string {
+	strs := make([]string, len(ints))
+	for i, v := range ints {
+		strs[i] = strconv.FormatInt(v, 10)
 	}
-	return NoneOf(s, np)
+	return strs
+}
+
+// DeepClone uses Clone() to clone a slice.
+// The elements in the slice must implement func (T) Clone() T.
+func DeepClone[T interface{ Clone() T }](s []T) []T {
+	if s == nil {
+		return nil
+	}
+	cloned := make([]T, 0, len(s))
+	for _, item := range s {
+		cloned = append(cloned, item.Clone())
+	}
+	return cloned
 }

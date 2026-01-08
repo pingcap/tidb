@@ -27,18 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func skipPostOptimizedProjection(plan [][]any) int {
-	for i, r := range plan {
-		cost := r[2].(string)
-		if cost == "0.00" && strings.Contains(r[0].(string), "Projection") {
-			// projection injected in post-optimization, whose cost is always 0 under the old cost implementation
-			continue
-		}
-		return i
-	}
-	return 0
-}
-
 func TestTrueCardCost(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

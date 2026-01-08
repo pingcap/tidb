@@ -456,7 +456,7 @@ func TestConcurrentAlloc(t *testing.T) {
 	allocIDs := func() {
 		ctx := context.Background()
 		alloc := autoid.NewAllocator(mockRequirement{store}, dbID, tblID, false, autoid.RowIDAllocType)
-		for j := 0; j < int(autoid.GetStep())+5; j++ {
+		for range int(autoid.GetStep()) + 5 {
 			_, id, err1 := alloc.Alloc(ctx, 1, 1, 1)
 			if err1 != nil {
 				errCh <- err1
@@ -497,7 +497,7 @@ func TestConcurrentAlloc(t *testing.T) {
 			mu.Unlock()
 		}
 	}
-	for i := 0; i < count; i++ {
+	for range count {
 		num := 1
 		wg.Run(func() {
 			time.Sleep(time.Duration(num%10) * time.Microsecond)

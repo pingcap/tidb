@@ -160,7 +160,7 @@ CREATE TABLE `te` (
   KEY `idx_third_tran_no` (`third_tran_no`(10))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='';
 
-explain format = 'brief' SELECT te.expect_time AS expected_time FROM
+explain format = 'plan_tree' SELECT te.expect_time AS expected_time FROM
     tr tr inner JOIN te te ON te.trade_id = tr.id
     left JOIN p p ON p.relate_id = tr.id
 WHERE
@@ -187,9 +187,9 @@ desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b 
 # test ExpectedCnt of join's children
 drop table if exists t;
 create table t(a int not null, index idx(a));
-explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
-explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
-explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
-explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
-explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
-explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+explain format = 'plan_tree' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+explain format = 'plan_tree' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+explain format = 'plan_tree' select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+explain format = 'plan_tree' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;

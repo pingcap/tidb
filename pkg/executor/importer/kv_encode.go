@@ -16,7 +16,6 @@ package importer
 
 import (
 	"context"
-	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -25,57 +24,69 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-// KVEncoder encodes a row of data into a KV pair.
-type KVEncoder interface {
-	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
-	io.Closer
-}
-
-// tableKVEncoder encodes a row of data into a KV pair.
-type tableKVEncoder struct {
+// TableKVEncoder encodes a row of data into a KV pair.
+type TableKVEncoder struct {
 	*kv.BaseKVEncoder
 	// see import.go
-	columnAssignments  []expression.Expression
-	columnsAndUserVars []*ast.ColumnNameOrUserVar
-	fieldMappings      []*FieldMapping
-	insertColumns      []*table.Column
+	columnAssignments []expression.Expression
+	fieldMappings     []*FieldMapping
+	insertColumns     []*table.Column
+	// Following cache use to avoid `runtime.makeslice`.
+	insertColumnRowCache []types.Datum
+	rowCache             []types.Datum
+	hasValueCache        []bool
 }
 
-var _ KVEncoder = &tableKVEncoder{}
-
-// NewTableKVEncoder creates a new tableKVEncoder.
+// NewTableKVEncoder creates a new TableKVEncoder.
 // exported for test.
 func NewTableKVEncoder(
 	config *encode.EncodingConfig,
-	ti *TableImporter,
-) (KVEncoder, error) {
+	ctrl *LoadDataController,
+) (*TableKVEncoder, error) {
+	return newTableKVEncoderInner(config, ctrl, ctrl.FieldMappings, ctrl.InsertColumns)
+}
+
+// NewTableKVEncoderForDupResolve creates a new TableKVEncoder for duplicate resolution.
+func NewTableKVEncoderForDupResolve(
+	config *encode.EncodingConfig,
+	ctrl *LoadDataController,
+) (*TableKVEncoder, error) {
+	mappings, _ := ctrl.tableVisCols2FieldMappings()
+	return newTableKVEncoderInner(config, ctrl, mappings, ctrl.Table.VisibleCols())
+}
+
+func newTableKVEncoderInner(
+	config *encode.EncodingConfig,
+	ctrl *LoadDataController,
+	fieldMappings []*FieldMapping,
+	insertColumns []*table.Column,
+) (*TableKVEncoder, error) {
 	baseKVEncoder, err := kv.NewBaseKVEncoder(config)
 	if err != nil {
 		return nil, err
 	}
-	colAssignExprs, _, err := ti.CreateColAssignSimpleExprs(baseKVEncoder.SessionCtx.GetExprCtx())
+	colAssignExprs, _, err := ctrl.CreateColAssignSimpleExprs(baseKVEncoder.SessionCtx.GetExprCtx())
 	if err != nil {
 		return nil, err
 	}
 
-	return &tableKVEncoder{
-		BaseKVEncoder:      baseKVEncoder,
-		columnAssignments:  colAssignExprs,
-		columnsAndUserVars: ti.ColumnsAndUserVars,
-		fieldMappings:      ti.FieldMappings,
-		insertColumns:      ti.InsertColumns,
+	return &TableKVEncoder{
+		BaseKVEncoder:     baseKVEncoder,
+		columnAssignments: colAssignExprs,
+		fieldMappings:     fieldMappings,
+		insertColumns:     insertColumns,
 	}, nil
 }
 
-// Encode implements the KVEncoder interface.
-func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
+// Encode table row into KVs.
+func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
 	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
 	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
 	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
@@ -90,8 +101,11 @@ func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 }
 
 // todo merge with code in load_data.go
-func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
-	row := make([]types.Datum, 0, len(en.insertColumns))
+func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
+	if cap(en.insertColumnRowCache) < len(en.insertColumns) {
+		en.insertColumnRowCache = make([]types.Datum, 0, len(en.insertColumns))
+	}
+	row := en.insertColumnRowCache[:0]
 	setVar := func(name string, col *types.Datum) {
 		// User variable names are not case-sensitive
 		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
@@ -103,31 +117,51 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 		}
 	}
 
-	for i := 0; i < len(en.fieldMappings); i++ {
+	rowLen := len(en.Columns)
+	if cap(en.rowCache) < rowLen || cap(en.hasValueCache) < rowLen {
+		en.rowCache = make([]types.Datum, rowLen)
+		en.hasValueCache = make([]bool, rowLen)
+	} else {
+		en.rowCache = en.rowCache[:0]
+		en.hasValueCache = en.hasValueCache[:0]
+		for range rowLen {
+			en.rowCache = append(en.rowCache, types.Datum{})
+			en.hasValueCache = append(en.hasValueCache, false)
+		}
+	}
+	hasValue := en.hasValueCache
+	for i := range en.insertColumns {
+		offset := en.insertColumns[i].Offset
+		hasValue[offset] = true
+	}
+
+	for i := range en.fieldMappings {
+		col := en.fieldMappings[i].Column
 		if i >= len(parserData) {
-			if en.fieldMappings[i].Column == nil {
+			if col == nil {
 				setVar(en.fieldMappings[i].UserVar.Name, nil)
 				continue
 			}
 
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(en.fieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(en.fieldMappings[i].Column.GetFlag()) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(en.fieldMappings[i].Column.GetType())))
+			if types.IsTypeTime(col.GetType()) && mysql.HasNotNullFlag(col.GetFlag()) {
+				row = append(row, types.NewTimeDatum(types.CurrentTime(col.GetType())))
 				continue
 			}
 
 			row = append(row, types.NewDatum(nil))
+			hasValue[col.Offset] = false
 			continue
 		}
 
-		if en.fieldMappings[i].Column == nil {
+		if col == nil {
 			setVar(en.fieldMappings[i].UserVar.Name, &parserData[i])
 			continue
 		}
 
 		row = append(row, parserData[i])
 	}
-	for i := 0; i < len(en.columnAssignments); i++ {
+	for i := range en.columnAssignments {
 		// eval expression of `SET` clause
 		d, err := en.columnAssignments[i].Eval(en.SessionCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
@@ -137,7 +171,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	}
 
 	// a new row buffer will be allocated in getRow
-	newRow, err := en.getRow(row, rowID)
+	newRow, err := en.getRow(row, hasValue, rowID)
 	if err != nil {
 		return nil, err
 	}
@@ -149,10 +183,9 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
 // copied from InsertValues
-func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
-	row := make([]types.Datum, len(en.Columns))
-	hasValue := make([]bool, len(en.Columns))
-	for i := 0; i < len(en.insertColumns); i++ {
+func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
+	row := en.rowCache
+	for i := range en.insertColumns {
 		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
 			return nil, err
@@ -160,23 +193,24 @@ func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 
 		offset := en.insertColumns[i].Offset
 		row[offset] = casted
-		hasValue[offset] = true
 	}
 
 	return en.fillRow(row, hasValue, rowID)
 }
 
-func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
+func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
 	var value types.Datum
 	var err error
 
 	record := en.GetOrCreateRecord()
 	for i, col := range en.Columns {
 		var theDatum *types.Datum
+		doCast := true
 		if hasValue[i] {
 			theDatum = &row[i]
+			doCast = false
 		}
-		value, err = en.ProcessColDatum(col, rowID, theDatum)
+		value, err = en.ProcessColDatum(col, rowID, theDatum, doCast)
 		if err != nil {
 			return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
 		}
@@ -204,7 +238,38 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	return record, nil
 }
 
-func (en *tableKVEncoder) Close() error {
+// Close the TableKVEncoder.
+func (en *TableKVEncoder) Close() error {
 	en.SessionCtx.Close()
 	return nil
+}
+
+// GetNumOfIndexGenKV gets the number of indices that generate index KVs.
+func GetNumOfIndexGenKV(tblInfo *model.TableInfo) int {
+	return len(GetIndicesGenKV(tblInfo))
+}
+
+// GenKVIndex is used to store index info that generates index KVs.
+type GenKVIndex struct {
+	name   string
+	Unique bool
+}
+
+// GetIndicesGenKV gets all indices that generate index KVs.
+func GetIndicesGenKV(tblInfo *model.TableInfo) map[int64]GenKVIndex {
+	res := make(map[int64]GenKVIndex, len(tblInfo.Indices))
+	for _, idxInfo := range tblInfo.Indices {
+		// all public non-primary index generates index KVs
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
+			continue
+		}
+		res[idxInfo.ID] = GenKVIndex{
+			name:   idxInfo.Name.L,
+			Unique: idxInfo.Unique,
+		}
+	}
+	return res
 }
