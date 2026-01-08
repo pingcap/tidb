@@ -1194,8 +1194,7 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 		},
 	}
 
-	// Generate file with 2 row groups and estimate row size based on 1st group.
-	md.WriteParquetFile(s.sourceDir, fileName, pc, 2, count)
+	md.WriteParquetFile(s.sourceDir, fileName, pc, count)
 	_, avgRowSize, err := md.SampleStatisticsFromParquet(ctx, store, fileName)
 	require.NoError(t, err)
 

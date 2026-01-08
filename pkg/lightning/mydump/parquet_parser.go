@@ -52,7 +52,7 @@ const (
 )
 
 var (
-	// ParquetParserMemoryLimit is the memory limit for the parquet parser
+	// parquetParserMemoryLimit is the memory limit for the parquet parser
 	// during precheck. It is used to validate that parsing a parquet file
 	// does not consume excessive memory. If the peak memory usage exceeds this
 	// limit, the precheck will fail to prevent potential OOM during the actual
@@ -64,9 +64,7 @@ var (
 	// CPU:MEM 1:2 is only around 1.8GiB per core. Assuming half of the memory is
 	// allocated to the external writer, we set this limit to 460 MiB to ensure
 	// safe operation.
-	//
-	// Exported for test.
-	ParquetParserMemoryLimit int64 = 460 * units.MiB
+	parquetParserMemoryLimit int64 = 460 * units.MiB
 )
 
 var (
@@ -99,8 +97,7 @@ func estimateRowSize(row []types.Datum) int {
 	return length
 }
 
-// innerReader defines the interface for reading value with given type T from
-// parquet column reader.
+// innerReader defines the interface for reading value with given type T from parquet column reader.
 type innerReader[T parquet.ColumnTypes] interface {
 	ReadBatchInPage(batchSize int64, values []T, defLvls, repLvls []int16) (int64, int, error)
 }
@@ -690,12 +687,12 @@ func SampleStatisticsFromParquet(
 
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
-		return 1, 0, err
+		return 2, 1, err
 	}
 
 	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
 	if err != nil {
-		return 1, 0, err
+		return 2, 1, err
 	}
 
 	//nolint: errcheck
@@ -705,7 +702,7 @@ func SampleStatisticsFromParquet(
 
 	reader := parser.readers[0]
 	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
-		return 1, 0, nil
+		return 2, 1, nil
 	}
 
 	var (
@@ -720,7 +717,7 @@ func SampleStatisticsFromParquet(
 			if errors.Cause(err) == io.EOF {
 				break
 			}
-			return 1, 0, err
+			return 2, 1, err
 		}
 		lastRow := parser.LastRow()
 		rowSize += int64(lastRow.Length)
@@ -733,22 +730,20 @@ func SampleStatisticsFromParquet(
 	return
 }
 
-// ValidateParquetFile performs a validation of a Parquet file.
-// It attempts to parse the file and track parser memory usage to detect
-// cases that may cause excessive memory consumption during import. If the
-// observed peak allocation exceeds `ParquetParserMemoryLimit`, a warning is
-// logged. Since this validation doesn't prevent the import, it's best-effort:
-// it does not return an error and only logs warnings when problems are detected.
-func ValidateParquetFile(
+// PrecheckParquetFile checks a Parquet file's schema and performs a parse to
+// estimate parser memory usage. If the observed peak allocation exceeds
+// `parquetParserMemoryLimit`, a warning is logged; this warning is advisory and
+// does not block the import.
+func PrecheckParquetFile(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	path string,
-) {
-	logger := logutil.Logger(ctx)
+) error {
+	logger := logutil.Logger(ctx).With(zap.String("path", path))
 
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
-		return
+		return err
 	}
 
 	allocator := &trackingAllocator{}
@@ -756,10 +751,10 @@ func ValidateParquetFile(
 
 	if err != nil {
 		if goerrors.Is(err, common.ErrParquetSchemaInvalid) {
-			logger.Warn("the schema of parquet file is invalid",
-				zap.String("path", path), zap.Error(err))
+			logger.Error("the schema of parquet file is invalid",
+				zap.Error(err))
 		}
-		return
+		return err
 	}
 
 	//nolint: errcheck
@@ -767,22 +762,23 @@ func ValidateParquetFile(
 
 	reader := parser.readers[0]
 	if len(reader.MetaData().RowGroups) == 0 {
-		return
+		return nil
 	}
 
 	for range reader.MetaData().RowGroups[0].NumRows {
 		if err = parser.ReadRow(); err != nil {
-			return
+			return nil
 		}
 
-		if allocator.peakAllocation.Load() >= ParquetParserMemoryLimit {
-			logger.Warn("the memory consumption of parquet parser exceeds the limit during precheck",
-				zap.String("path", path),
-				zap.String("limit", units.HumanSize(float64(ParquetParserMemoryLimit))),
+		if allocator.peakAllocation.Load() >= parquetParserMemoryLimit {
+			logger.Warn("memory consumption of parquet parser exceeds the limit",
+				zap.String("limit", units.HumanSize(float64(parquetParserMemoryLimit))),
 			)
-			return
+			break
 		}
 	}
+
+	return nil
 }
 
 // addressOf returns the address of a buffer, return 0 if the buffer is nil or

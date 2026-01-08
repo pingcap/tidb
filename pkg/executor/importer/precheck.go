@@ -67,8 +67,10 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionct
 		if err := e.checkCDCPiTRTasks(ctx, se); err != nil {
 			return err
 		}
-		if e.Format == DataFormatParquet {
-			mydump.ValidateParquetFile(ctx, e.dataStore, e.dataFiles[0].Path)
+		if e.Format == DataFormatParquet && len(e.dataFiles) > 0 {
+			if err := mydump.PrecheckParquetFile(ctx, e.dataStore, e.dataFiles[0].Path); err != nil {
+				return err
+			}
 		}
 	}
 	if e.IsGlobalSort() {

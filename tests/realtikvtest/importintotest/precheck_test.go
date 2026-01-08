@@ -24,15 +24,11 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
-
-//go:embed memorycheck.parquet
-var parquetCheckContent []byte
 
 //go:embed list.parquet
 var listParquetContent []byte
@@ -41,17 +37,11 @@ var listParquetContent []byte
 var mapParquetContent []byte
 
 func (s *mockGCSSuite) TestPrecheckParquet() {
-	bak := mydump.ParquetParserMemoryLimit
-	s.T().Cleanup(func() {
-		mydump.ParquetParserMemoryLimit = bak
-	})
-
 	s.prepareAndUseDB("check_parquet")
 
 	type testCase struct {
 		name        string
 		content     []byte
-		memoryLimit int64
 		expectError error
 	}
 
@@ -62,27 +52,13 @@ func (s *mockGCSSuite) TestPrecheckParquet() {
 			// Note: we will support list type in the future, but not now.
 			name:        "list.parquet",
 			content:     listParquetContent,
-			memoryLimit: 0,
 			expectError: exeerrors.ErrLoadDataPreCheckFailed,
 		},
 		{
 			// Map logical type is not supported.
 			name:        "map.parquet",
 			content:     mapParquetContent,
-			memoryLimit: 0,
 			expectError: exeerrors.ErrLoadDataPreCheckFailed,
-		},
-		{
-			name:        "memorycheck.parquet",
-			content:     parquetCheckContent,
-			memoryLimit: 512,
-			expectError: exeerrors.ErrLoadDataPreCheckFailed,
-		},
-		{
-			name:        "memorycheck.parquet",
-			content:     parquetCheckContent,
-			memoryLimit: 0,
-			expectError: nil,
 		},
 	} {
 		s.server.CreateObject(fakestorage.Object{
@@ -92,12 +68,6 @@ func (s *mockGCSSuite) TestPrecheckParquet() {
 			},
 			Content: tc.content,
 		})
-
-		if tc.memoryLimit > 0 {
-			mydump.ParquetParserMemoryLimit = tc.memoryLimit
-		} else {
-			mydump.ParquetParserMemoryLimit = bak
-		}
 
 		s.tk.MustExec("drop table if exists t;")
 		s.tk.MustExec("create table t (a char(16))")

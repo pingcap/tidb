@@ -41,6 +41,14 @@ type writeWrapper struct {
 	Writer storage.ExternalFileWriter
 }
 
+func (*writeWrapper) Seek(_ int64, _ int) (int64, error) {
+	return 0, nil
+}
+
+func (*writeWrapper) Read(_ []byte) (int, error) {
+	return 0, nil
+}
+
 func (w *writeWrapper) Write(b []byte) (int, error) {
 	return w.Writer.Write(context.Background(), b)
 }
@@ -69,7 +77,6 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int,
 	if err != nil {
 		return err
 	}
-
 	writer, err := s.Create(context.Background(), fileName, nil)
 	if err != nil {
 		return err
