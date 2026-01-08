@@ -212,7 +212,7 @@ func assertMatchSQLBinding(cache *BindingCacheItem, hit bool, binding *Binding, 
 				cache.binding == binding &&
 				cache.scope == scope
 		}
-		return cache == nil || cache.matched == false
+		return cache == nil || !cache.matched
 	})
 }
 
