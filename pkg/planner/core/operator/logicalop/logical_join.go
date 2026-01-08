@@ -17,7 +17,6 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
-	"iter"
 	"maps"
 	"math"
 	"math/bits"
@@ -41,7 +40,6 @@ import (
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
-	iterutil "github.com/pingcap/tidb/pkg/util/iter"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -267,58 +265,43 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
-// filterOutNullEQ4ConvertAntiJoin is to iterate all equal condition's out columns except NullEQ ones.
-func filterOutNullEQ4ConvertAntiJoin(inner int, sf []*expression.ScalarFunction) iter.Seq[*expression.Column] {
-	return func(yield func(*expression.Column) bool) {
-		for _, s := range sf {
-			if s.FuncName.L == ast.NullEQ {
-				continue
+// filterOutNullEQAndOtherCondition4ConvertAntiJoin is to iterate all equal condition's out columns except NullEQ ones
+// and all other condition's columns except GT, GE, LE, LT, NE ones.
+func filterOutNullEQAndOtherCondition4ConvertAntiJoin(inner int, joinOuterKeySch *intset.FastIntSet, eq []*expression.ScalarFunction, other []expression.Expression) {
+	for _, s := range eq {
+		if s.FuncName.L == ast.NullEQ {
+			continue
+		}
+		col1, col2, ok := expression.IsColOpCol(s)
+		if ok {
+			var col *expression.Column
+			// In left outer join，equal condition is inner colomn =  outer column
+			// In right outer join, equal condition is outer colomn = inner column
+			if inner == 0 {
+				col = col2
+			} else {
+				col = col1
 			}
-			col1, col2, ok := expression.IsColOpCol(s)
-			if ok {
-				var col *expression.Column
-				// In left outer join，equal condition is inner colomn =  outer column
-				// In right outer join, equal condition is outer colomn = inner column
-				if inner == 0 {
-					col = col2
-				} else {
-					col = col1
-				}
-				if !yield(col) {
-					// yield will retun false if the calling
-					// range loop has exited/stopped
-					return
-				}
-			}
+			joinOuterKeySch.Insert(int(col.UniqueID))
 		}
 	}
-}
-
-// filterOutOtherCondition4ConvertAntiJoin is to iterate all other condition's out columns except GT, GE, LE, LT, NE ones.
-func filterOutOtherCondition4ConvertAntiJoin(inner int, sf []expression.Expression) iter.Seq[*expression.Column] {
-	return func(yield func(*expression.Column) bool) {
-		for _, s := range sf {
-			if sf, ok := s.(*expression.ScalarFunction); ok {
-				switch sf.FuncName.L {
-				case ast.GT, ast.GE, ast.LE, ast.LT, ast.NE:
-					col1, col2, ok := expression.IsColOpCol(sf)
-					if ok {
-						var col *expression.Column
-						// In left outer join，equal condition is inner colomn =  outer column
-						// In right outer join, equal condition is outer colomn = inner column
-						if inner == 0 {
-							col = col2
-						} else {
-							col = col1
-						}
-						if !yield(col) {
-							// yield will retun false if the calling
-							// range loop has exited/stopped
-							return
-						}
+	for _, s := range other {
+		if sf, ok := s.(*expression.ScalarFunction); ok {
+			switch sf.FuncName.L {
+			case ast.GT, ast.GE, ast.LE, ast.LT, ast.NE:
+				col1, col2, ok := expression.IsColOpCol(sf)
+				if ok {
+					var col *expression.Column
+					// In left outer join，equal condition is inner colomn =  outer column
+					// In right outer join, equal condition is outer colomn = inner column
+					if inner == 0 {
+						col = col2
+					} else {
+						col = col1
 					}
-				default:
+					joinOuterKeySch.Insert(int(col.UniqueID))
 				}
+			default:
 			}
 		}
 	}
@@ -340,6 +323,96 @@ func vaildProj4ConvertAntiJoin(proj *LogicalProjection) bool {
 }
 
 // CanConvertAntiJoin is used in outer-join-to-semi-join rule.
+/*
+#### Scenario 1: IS NULL on the Join Condition Column
+//
+- In this scenario, the IS NULL filter is applied directly to the join key from the outer table.
+//
+##### Table Schema
+CREATE TABLE Table_A (id INT, name VARCHAR(50));
+CREATE TABLE Table_B (id INT, info VARCHAR(50));
+//
+##### Plan
+//
+-- The optimizer rewrites the LEFT JOIN ... WHERE ... IS NULL pattern into an efficient
+-- Anti Semi Join to retrieve rows from Table A that have no match in Table B.
+```
+SELECT Table_A.id, Table_A.name
+FROM
+	Table_A
+LEFT JOIN
+	Table_B ON Table_A.id = Table_B.id
+WHERE
+	Table_B.id IS NULL;
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+| id                       | task      | access object | operator info                                                                        |
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+| Projection               | root      |               | test.table_a.id, test.table_a.name                                                   |
+| └─Selection              | root      |               | isnull(test.table_b.id)                                                              |
+|   └─HashJoin             | root      |               | left outer join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
+|     ├─TableReader(Build) | root      |               | data:Selection                                                                       |
+|     │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                         |
+|     │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                       |
+|     └─TableReader(Probe) | root      |               | data:TableFullScan                                                                   |
+|       └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                       |
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+=>
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+| id                   | task      | access object | operator info                                                                       |
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+| HashJoin             | root      |               | anti semi join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
+| ├─TableReader(Build) | root      |               | data:Selection                                                                      |
+| │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                        |
+| │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                      |
+| └─TableReader(Probe) | root      |               | data:TableFullScan                                                                  |
+|   └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                      |
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+```
+#### Scenario 2: IS NULL on a Non-Join NOT NULL Column
+
+If a column in the outer table is defined as `NOT NULL` in the schema, but is filtered as `IS NULL` after the join, it implies that the join failed to find a match. This allows us to convert the join into ```ANTI SEMI JOIN``` even if the column is not part of the join keys.
+
+##### Table Schema:
+
+CREATE TABLE Table_A (id INT,name VARCHAR(50));
+CREATE TABLE Table_B (
+	id INT,
+	status VARCHAR(20) NOT NULL -- Non-join column with NOT NULL constraint
+);
+
+##### Plan
+```
+-- Even though 'status' is not a join key, its NOT NULL constraint
+-- ensures that 'B.status IS NULL' only occurs when no match is found.
+SELECT A.* FROM Table_A A
+LEFT JOIN Table_B B ON A.id = B.id
+WHERE B.status IS NULL;
+
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+| id                       | task      | access object | operator info                                                                        |
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+| Projection               | root      |               | test.table_a.id, test.table_a.name                                                   |
+| └─Selection              | root      |               | isnull(test.table_b.status)                                                          |
+|   └─HashJoin             | root      |               | left outer join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
+|     ├─TableReader(Build) | root      |               | data:Selection                                                                       |
+|     │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                         |
+|     │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                       |
+|     └─TableReader(Probe) | root      |               | data:TableFullScan                                                                   |
+|       └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                       |
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+ =>
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+| id                   | task      | access object | operator info                                                                       |
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+| HashJoin             | root      |               | anti semi join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
+| ├─TableReader(Build) | root      |               | data:Selection                                                                      |
+| │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                        |
+| │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                      |
+| └─TableReader(Probe) | root      |               | data:TableFullScan                                                                  |
+|   └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                      |
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+```
+*/
 func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (result *LogicalProjection, selConditionColInOuter bool) {
 	if len(ret) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
 		// ret can only have one expression.
@@ -389,12 +462,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 	if !vaildProj4ConvertAntiJoin(proj) {
 		return nil, false
 	}
-	iter := iterutil.Concat(
-		filterOutNullEQ4ConvertAntiJoin(innerChildIdx, p.EqualConditions),
-		filterOutOtherCondition4ConvertAntiJoin(innerChildIdx, p.OtherConditions))
-	for s := range iter {
-		joinOuterKeySch.Insert(int(s.UniqueID))
-	}
+	filterOutNullEQAndOtherCondition4ConvertAntiJoin(innerChildIdx, &joinOuterKeySch, p.EqualConditions, p.OtherConditions)
 	selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
 	// proj is to generate the NULL values for the columns of the outer table, which is the
 	// expected result for this kind of anti-join query.
