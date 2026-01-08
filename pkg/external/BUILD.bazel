@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "external",
+    srcs = ["external_storage.go"],
+    importpath = "github.com/pingcap/tidb/pkg/external",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/storage",
+        "//pkg/config",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "external_test",
+    timeout = "short",
+    srcs = ["external_storage_test.go"],
+    embed = [":external"],
+    flaky = True,
+    deps = [
+        "//br/pkg/storage",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
