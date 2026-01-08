@@ -466,6 +466,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 		},
 	}
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
 	for _, testcase := range testcases {
 		for _, fileName := range testcase.fileNames {
 			c.Format = DataFormatAuto

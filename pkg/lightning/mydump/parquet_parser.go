@@ -31,6 +31,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -681,6 +682,12 @@ func SampleStatisticsFromParquet(
 	avgRowSize float64,
 	err error,
 ) {
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2, 1, nil)
+		}
+	})
+
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
 		return 1, 0, err
@@ -703,7 +710,7 @@ func SampleStatisticsFromParquet(
 
 	var (
 		totalReadRows = reader.MetaData().NumRows
-		readRows      = min(totalReadRows, int64(1024))
+		readRows      = min(totalReadRows, int64(512))
 		rowCount      int64
 	)
 
