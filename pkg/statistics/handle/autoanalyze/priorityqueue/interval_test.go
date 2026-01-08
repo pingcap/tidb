@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -29,7 +29,7 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(session.CreateAnalyzeJobsTable)
+	tk.MustExec(metadef.CreateAnalyzeJobsTable)
 	// Empty table.
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
@@ -94,7 +94,7 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(session.CreateAnalyzeJobsTable)
+	tk.MustExec(metadef.CreateAnalyzeJobsTable)
 	// Empty table.
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)

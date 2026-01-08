@@ -15,7 +15,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/executor/importer",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -42,6 +41,7 @@ go_library(
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",
