@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,9 +68,9 @@ func TestGetSchemaVersionFromStatsMeta(t *testing.T) {
 
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	downstreamStatsMeta2, err := info.TableInfoByName(ast.NewCIStr("test_ver2"), ast.NewCIStr("stats_meta"))
+	downstreamStatsMeta2, err := info.TableInfoByName(pmodel.NewCIStr("test_ver2"), pmodel.NewCIStr("stats_meta"))
 	require.NoError(t, err)
-	downstreamStatsMeta1, err := info.TableInfoByName(ast.NewCIStr("test_ver1"), ast.NewCIStr("stats_meta"))
+	downstreamStatsMeta1, err := info.TableInfoByName(pmodel.NewCIStr("test_ver1"), pmodel.NewCIStr("stats_meta"))
 	require.NoError(t, err)
 
 	// case 1: upstream version is Version2
@@ -78,7 +78,7 @@ func TestGetSchemaVersionFromStatsMeta(t *testing.T) {
 	require.NoError(t, err)
 	info, err = cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	upstreamStatsMeta2, err := info.TableInfoByName(ast.NewCIStr("__TiDB_BR_Temporary_mysql"), ast.NewCIStr("stats_meta"))
+	upstreamStatsMeta2, err := info.TableInfoByName(pmodel.NewCIStr("__TiDB_BR_Temporary_mysql"), pmodel.NewCIStr("stats_meta"))
 	require.NoError(t, err)
 	require.Equal(t, snapclient.Version2, snapclient.GetSchemaVersionFromStatsMeta(downstreamStatsMeta2))
 	// case 1-1: downstream version is Version2, nothing happens
@@ -93,7 +93,7 @@ func TestGetSchemaVersionFromStatsMeta(t *testing.T) {
 	require.NoError(t, err)
 	info, err = cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	newUpstreamStatsMeta2, err := info.TableInfoByName(ast.NewCIStr("__TiDB_BR_Temporary_mysql"), ast.NewCIStr("stats_meta"))
+	newUpstreamStatsMeta2, err := info.TableInfoByName(pmodel.NewCIStr("__TiDB_BR_Temporary_mysql"), pmodel.NewCIStr("stats_meta"))
 	require.NoError(t, err)
 	require.Equal(t, snapclient.Version1, snapclient.GetSchemaVersionFromStatsMeta(newUpstreamStatsMeta2))
 	err = se.ExecuteInternal(ctx, "DROP TABLE __TiDB_BR_Temporary_mysql.stats_meta")
@@ -104,7 +104,7 @@ func TestGetSchemaVersionFromStatsMeta(t *testing.T) {
 	require.NoError(t, err)
 	info, err = cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	upstreamStatsMeta1, err := info.TableInfoByName(ast.NewCIStr("__TiDB_BR_Temporary_mysql"), ast.NewCIStr("stats_meta"))
+	upstreamStatsMeta1, err := info.TableInfoByName(pmodel.NewCIStr("__TiDB_BR_Temporary_mysql"), pmodel.NewCIStr("stats_meta"))
 	require.NoError(t, err)
 	require.Equal(t, snapclient.Version1, snapclient.GetSchemaVersionFromStatsMeta(downstreamStatsMeta1))
 	// case 2-1: downstream version is Version1, nothing happens
@@ -119,7 +119,7 @@ func TestGetSchemaVersionFromStatsMeta(t *testing.T) {
 	require.NoError(t, err)
 	info, err = cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	newUpstreamStatsMeta1, err := info.TableInfoByName(ast.NewCIStr("__TiDB_BR_Temporary_mysql"), ast.NewCIStr("stats_meta"))
+	newUpstreamStatsMeta1, err := info.TableInfoByName(pmodel.NewCIStr("__TiDB_BR_Temporary_mysql"), pmodel.NewCIStr("stats_meta"))
 	require.NoError(t, err)
 	require.Equal(t, snapclient.Version2, snapclient.GetSchemaVersionFromStatsMeta(newUpstreamStatsMeta1))
 	err = se.ExecuteInternal(ctx, "DROP TABLE __TiDB_BR_Temporary_mysql.stats_meta")

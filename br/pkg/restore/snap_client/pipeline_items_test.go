@@ -453,14 +453,14 @@ func TestReplaceTablesWithoutUpdateStatsMeta(t *testing.T) {
 	count, err := client.ReplaceTables(ctx, []*restoreutils.CreatedTable{
 		{
 			OldTable: &metautil.Table{
-				DB:   &model.DBInfo{Name: ast.NewCIStr("__TiDB_BR_Temporary_mysql")},
-				Info: &model.TableInfo{Name: ast.NewCIStr("stats_meta")},
+				DB:   &model.DBInfo{Name: pmodel.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: pmodel.NewCIStr("stats_meta")},
 			},
 		},
 		{
 			OldTable: &metautil.Table{
-				DB:   &model.DBInfo{Name: ast.NewCIStr("__TiDB_BR_Temporary_mysql")},
-				Info: &model.TableInfo{Name: ast.NewCIStr("global_priv")},
+				DB:   &model.DBInfo{Name: pmodel.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: pmodel.NewCIStr("global_priv")},
 			},
 		},
 	}, 123, true, true, nil, false, 1)
@@ -527,14 +527,14 @@ func TestReplaceTablesWithoutUpdateStatsMeta2(t *testing.T) {
 	count, err := client.ReplaceTables(ctx, []*restoreutils.CreatedTable{
 		{
 			OldTable: &metautil.Table{
-				DB:   &model.DBInfo{Name: ast.NewCIStr("__TiDB_BR_Temporary_mysql")},
-				Info: &model.TableInfo{Name: ast.NewCIStr("stats_meta")},
+				DB:   &model.DBInfo{Name: pmodel.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: pmodel.NewCIStr("stats_meta")},
 			},
 		},
 		{
 			OldTable: &metautil.Table{
-				DB:   &model.DBInfo{Name: ast.NewCIStr("__TiDB_BR_Temporary_mysql")},
-				Info: &model.TableInfo{Name: ast.NewCIStr("global_priv")},
+				DB:   &model.DBInfo{Name: pmodel.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: pmodel.NewCIStr("global_priv")},
 			},
 		},
 	}, 123, true, true, nil, false, 1)

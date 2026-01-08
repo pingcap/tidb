@@ -152,11 +152,11 @@ func updateStatsTableSchema(
 			if !ok {
 				continue
 			}
-			downstreamTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr(schemaName), ast.NewCIStr(tableName))
+			downstreamTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr(schemaName), pmodel.NewCIStr(tableName))
 			if err != nil {
 				return errors.Annotatef(err, "failed to get downstream table info, schema: %s, table: %s", schemaName, tableName)
 			}
-			upstreamTableInfo, err := infoSchema.TableInfoByName(utils.TemporaryDBName(schemaName), ast.NewCIStr(tableName))
+			upstreamTableInfo, err := infoSchema.TableInfoByName(utils.TemporaryDBName(schemaName), pmodel.NewCIStr(tableName))
 			if err != nil {
 				return errors.Annotatef(err, "failed to get upstream table info, schema: %s, table: %s", utils.TemporaryDBName(schemaName).O, tableName)
 			}
