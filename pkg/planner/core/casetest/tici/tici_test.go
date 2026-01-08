@@ -150,3 +150,46 @@ func TestTiCIWithIndexHintCases(t *testing.T) {
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
 }
+
+func TestTiCIWithDirtyWrites(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+	}()
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec(`(i bigint, ts timestamp(5), d datetime(3), t text, primary key(i))`)
+	tk.MustExec(`create hybrid index idx1 on t1(i, ts, d, t) parameter '{
+		"inverted": {
+			"columns": ["i", "ts", "d"]
+		},
+		"sort": {
+			"columns": ["i", "ts", "d"],
+			"order": ["asc", "desc", "asc"]
+		}
+	}'`)
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+
+	// Without dirty write, TiCI index can be used.
+	tk.MustQuery("explain format='brief' select * from t1 use index(idx1) where d bewteen '2026-01-01' and '2026-01-03'").CheckContain("idx1")
+
+	// With dirty write, TiCI index cannot be used.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(1, '2026-01-01 10:10:10', '2026-01-01 10:10:10', 'text1')")
+	tk.MustQuery("explain format='brief' select * from t1 use index(idx1) where d bewteen '2026-01-01' and '2026-01-03'").CheckNotContain("idx1")
+	tk.MustExec("rollback")
+}
